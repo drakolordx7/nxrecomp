@@ -1,0 +1,6 @@
+# Python 3.13, installed into C:\mpr\tools\.venv
+# uv pip install --python C:\mpr\tools\.venv -r recomp\requirements.txt
+unicorn==2.1.4      # reference CPU for the differential and end-to-end oracles
+capstone==5.0.9     # instruction decode for the tier-2 lifter and for corpus shape names
+lz4                 # NSO segment decompression (nxrecomp/nso.py)
+pyelftools          # ELF reading for test programs
