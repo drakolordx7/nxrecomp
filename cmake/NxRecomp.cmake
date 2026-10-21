@@ -16,7 +16,7 @@
 # expects the runtime to provide the functions ctx.h declares as runtime-provided. Public include directories: recomp/include
 # (nxrecomp/ctx.h) and the generated folder (funcs.h).
 #
-# Flags: clang-cl, C++17, no exceptions/RTTI, -fno-strict-aliasing and -ffp-contract=off (smo-recomp's: lifted FP must not be
+# Flags: clang-cl, C++20, no exceptions/RTTI, -fno-strict-aliasing and -ffp-contract=off (smo-recomp's: lifted FP must not be
 # fused or reordered), -mcx16 (128-bit exclusives are cmpxchg16b). Functions longer than the game config's optnone_insns are
 # emitted with NX_OPTNONE by the lifter itself (bounded compile time); cmake/nx_cc_launcher.py adds the time-limit fallback.
 
@@ -26,7 +26,7 @@ set(NX_OPT "/O1" CACHE STRING "optimisation flag of the lifted code (clang-cl sy
 option(NX_USE_LAUNCHER "wrap lifted-code compiles in cmake/nx_cc_launcher.py (time-limit fallback to optnone / -O0)" OFF)
 
 file(GLOB NX_LIFTER_SOURCES CONFIGURE_DEPENDS
-     "${NXRECOMP_ROOT}/nxrecomp/*.py" "${NXRECOMP_ROOT}/nxrecomp/lift/*.py"
+     "${NXRECOMP_ROOT}/nxrecomp/*.py" "${NXRECOMP_ROOT}/nxrecomp/lift/*.py" "${NXRECOMP_ROOT}/nxrecomp/lift/tier2/*.py"
      "${NXRECOMP_ROOT}/include/nxrecomp/*.h")
 
 function(nxrecomp_add_module target)
@@ -81,7 +81,7 @@ function(nxrecomp_add_module target)
     VERBATIM)
   add_library(${target} STATIC ${shard_srcs} "${A_OUTDIR}/module_${A_NAME}.cpp")
   target_include_directories(${target} PUBLIC "${NXRECOMP_ROOT}/include" "${A_OUTDIR}")
-  target_compile_features(${target} PUBLIC cxx_std_17)
+  target_compile_features(${target} PUBLIC cxx_std_20)
   if(MSVC)   # clang-cl
     target_compile_options(${target} PRIVATE ${NX_OPT} /w /EHs-c- /GR- -fno-strict-aliasing -ffp-contract=off -mcx16)
   else()

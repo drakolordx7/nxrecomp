@@ -110,6 +110,8 @@ def main():
     if r.returncode:
         print(r.stdout[-3000:], r.stderr[-3000:])
         return 2
+    for old in glob.glob(os.path.join(bdir, 'run_*.exe')):
+        os.remove(old)                                   # a stale exe must never be mistaken for this build's
     r = sh(['cmake', '--build', bdir, '-j', str(a.jobs), '--', '-k', '0'])
     built = {c: os.path.exists(os.path.join(bdir, 'run_%s.exe' % c)) for c, _ in cases}
     if not all(built.values()):
