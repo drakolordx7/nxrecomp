@@ -552,3 +552,9 @@ inline V128 clmul64(uint64_t a, uint64_t b) {
 }
 
 }  // namespace nx
+
+#include "cxx_fp.h"
+#include "cxx_lse.h"
+#include "cxx_ldst.h"
+#include "cxx_neon1.h"
+#include "cxx_neon2.h"

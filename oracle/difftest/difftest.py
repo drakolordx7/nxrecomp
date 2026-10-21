@@ -51,7 +51,7 @@ for rt in (0, 7, 30):
     SYSREG_WORDS += [0xd53bd040 | rt, 0xd53bd060 | rt, 0xd51bd040 | rt, 0xd53b4400 | rt, 0xd53b4420 | rt,
                      0xd51b4400 | rt, 0xd51b4420 | rt, 0xd53b4200 | rt, 0xd51b4200 | rt]
 # words that are not instructions of the CPU: permanently undefined / reserved encodings and BRK
-TRAP_WORDS = [0xe7ffdefe, 0x00000000, 0x0000dead, 0x00010000, 0x1fffffff, 0xd4200000, 0xd43eec60]
+TRAP_WORDS = [0xe7ffdefe, 0x00000000, 0x0000dead, 0x00010000, 0x02000000, 0x04000000, 0x06aabbcc, 0xd4200000, 0xd43eec60]
 
 
 def dt_env():
@@ -124,13 +124,13 @@ class Tests:
             return 'branch', stmt
         if re.search(r'\b(goto|return|call_indirect|guest_svc|f_7)', stmt) or 'guest_trap' in stmt:
             return None, 'leaves straight-line code'
-        if bits(w, 29, 24) == 8 and is_mem(w) and not bits(w, 26, 26) and not bits(w, 23, 23):
-            return None, 'exclusive access (tested as sequences)'
+        if bits(w, 29, 24) == 8 and is_mem(w) and not bits(w, 26, 26) and not bits(w, 23, 23) and not (bits(w, 21, 21) and not bits(w, 31, 31)):
+            return None, 'exclusive access (tested as sequences)'      # LDXR / STXR / LDXP / STXP families (CASP is not one)
         return 'straight', stmt
 
     def add(self, kind, key, word, stmt, **kw):
         t = {'kind': kind, 'key': key, 'word': word, 'stmt': stmt, 'mem': 0, 'rn': bits(word, 9, 5), 'rm': -1, 'fpmode': 0,
-             'k': 0, 'frm': -1, 'target': 0, 'style': 0, 'words': [word]}
+             'k': 0, 'frm': -1, 'target': 0, 'style': 0, 'words': [word], 'model': 'a57'}
         t.update(kw)
         self.tests.append(t)
 
@@ -148,6 +148,7 @@ def build_tests(corpus, filt, states):
         kinds = set()
         for w in info['words']:
             kind, stmt = T.classify(w, key, info['class'])
+            model = 'max' if info['class'] == 'lse' else 'a57'
             if kind == 'untranslated':
                 T.untranslated.append((key, w, stmt))
                 kinds.add('UNTRANSLATED')
@@ -164,11 +165,11 @@ def build_tests(corpus, filt, states):
                 continue
             if kind == 'branch':
                 m = re.search(r'goto L_([0-9a-f]+);', stmt)
-                T.add('branch', key, w, stmt, target=int(m.group(1), 16))
+                T.add('branch', key, w, stmt, target=int(m.group(1), 16), model=model)
                 kinds.add('branch')
                 continue
             for style in range(states):
-                T.add('straight', key, w, stmt, mem=mem, rm=rm, style=style)
+                T.add('straight', key, w, stmt, mem=mem, rm=rm, style=style, model=model)
             kinds.add('straight')
             if key.split()[0].startswith('f'):
                 mode = fp_mode(w)
@@ -176,7 +177,7 @@ def build_tests(corpus, filt, states):
                     unary = bool(re.match(r'^(fabs|fneg|fsqrt|fcvt|frint|frecpe|frsqrte|fmov|fcmp[a-z]*0|fcm\w+ .*#)', key)) or key.count(',') < 2
                     n = len(SPECIAL[mode])
                     for k in range(0, n if unary else n * n, 1 if unary else SPECIAL_STEP):
-                        T.add('special', key + ' [special]', w, stmt, mem=0, fpmode=mode, k=k,
+                        T.add('special', key + ' [special]', w, stmt, mem=0, fpmode=mode, k=k, model=model,
                               frm=-1 if unary else bits(w, 20, 16))
         T.shape_kinds[key] = sorted(kinds)
     if not filt:
@@ -324,8 +325,10 @@ def cmd_build(a, gen=None, bdir=None):
     print('built %s (%d generated tests did not compile)' % (os.path.join(bdir, 'difftest.exe'), len(broken)))
 
 
-def reference(uc, A, xr, vr, t, i, window):
-    """-> ((regs crc, memory crc), event, error)"""
+def reference(models, t, i, window):
+    """-> ((regs crc, memory crc), event, error). models: {'a57': make_uc('a57'), 'max': make_uc('max')}; every test runs on
+    the Cortex-A57 model (the console's CPU) except the LSE atomics, which only the max model has."""
+    uc, A, xr, vr = models['max' if t.get('model') == 'max' else 'a57']
     from unicorn import UcError
     x, v, flags, tp0, tp1 = initial_state(i, t['mem'], t['rn'], t['rm'], t['style'])
     if t.get('fpmode'):
@@ -339,6 +342,7 @@ def reference(uc, A, xr, vr, t, i, window):
     uc.reg_write(A.UC_ARM64_REG_TPIDR_EL0, tp0)
     uc.reg_write(A.UC_ARM64_REG_TPIDRRO_EL0, tp1)
     uc.reg_write(A.UC_ARM64_REG_FPCR, 0)
+    uc.reg_write(A.UC_ARM64_REG_FPSR, 0)
     uc.mem_write(WIN_LO, window)
     words = t.get('words') or [t['word']]
     uc.mem_write(CODE, b''.join(struct.pack('<I', w) for w in words))
@@ -374,7 +378,7 @@ def cmd_check(a):
     host = run_host(a)
     bpath = os.path.join(a.work, 'broken.json')
     broken = set(json.load(open(bpath))) if os.path.exists(bpath) else set()
-    uc, A, xr, vr = make_uc(a.uc_model)
+    models = {'a57': make_uc('a57'), 'max': make_uc('max')}
     window = pattern()[WIN_LO - REGION:WIN_HI - REGION]
     bad = collections.defaultdict(list)
     ok, total = collections.Counter(), collections.Counter()
@@ -383,7 +387,7 @@ def cmd_check(a):
         if i in broken:
             bad['(generated code does not compile) ' + t['key']].append(i)
             continue
-        ref, ev, err = reference(uc, A, xr, vr, t, i, window)
+        ref, ev, err = reference(models, t, i, window)
         h = host.get(i)
         if t['kind'] == 'trap':
             good = err is not None and h is not None and h[1] == 2
@@ -417,11 +421,12 @@ def cmd_show(a):
     tests = json.load(open(os.path.join(a.work, 'tests.json')))
     t = tests[a.index]
     print('#%d %s %s %s\n  %s' % (a.index, t['kind'], ' '.join('%08x' % w for w in t['words']), t['key'], t['stmt']))
-    uc, A, xr, vr = make_uc(a.uc_model)
+    models = {'a57': make_uc('a57'), 'max': make_uc('max')}
+    uc, A, xr, vr = models['max' if t.get('model') == 'max' else 'a57']
     x, v, flags, tp0, tp1 = initial_state(a.index, t['mem'], t['rn'], t['rm'], t['style'])
     if t.get('fpmode'):
         v = fp_special_v(t)
-    reference(uc, A, xr, vr, t, a.index, pattern()[WIN_LO - REGION:WIN_HI - REGION])
+    reference(models, t, a.index, pattern()[WIN_LO - REGION:WIN_HI - REGION])
     ref = {('x%d' % i): uc.reg_read(r) for i, r in enumerate(xr)}
     ref['sp'] = uc.reg_read(A.UC_ARM64_REG_SP)
     ref.update({('v%d' % i): uc.reg_read(r) for i, r in enumerate(vr)})

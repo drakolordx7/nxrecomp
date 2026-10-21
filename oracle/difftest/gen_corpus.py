@@ -177,7 +177,7 @@ def classify(seen, cap):
             ii = list(cap.disasm(struct.pack('<I', w), CODE))[0]
             if unpredictable(ii, w):
                 continue
-            x, v, flags = initial_state(w, is_mem(w), (w >> 5) & 31, (w >> 16) & 31, 0)
+            x, v, flags = initial_state(w, is_mem(w), (w >> 5) & 31, (w >> 16) & 31, 0)[:3]
             if runs('a57', w, (x, v, flags)):
                 c = 'a57'
             elif LSE.match(mnem) and runs('max', w, (x, v, flags)):
