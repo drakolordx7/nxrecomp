@@ -26,6 +26,7 @@ namespace {
 
 constexpr DWORD kTrapCode = 0xE0000001u;
 constexpr DWORD kUntranslatedCode = 0xE0000002u;
+constexpr DWORD kGuestBreakCode = 0xE0000003u;   // svcBreak / svcReturnFromException (svc_thread.cpp)
 constexpr size_t kMaxHostFrames = 32;
 constexpr int kMaxGuestFrames = 24;
 constexpr DWORD kOverflowWaitMs = 30000;
@@ -142,6 +143,7 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
     const char* code_name = nullptr;
     if (rec->ExceptionCode == kTrapCode) code_name = "GUEST TRAP";
     else if (rec->ExceptionCode == kUntranslatedCode) code_name = "UNTRANSLATED INSTRUCTION";
+    else if (rec->ExceptionCode == kGuestBreakCode) code_name = "GUEST BREAK (svcBreak)";
     if (code_name) {
         appendf(out, "HOST EXCEPTION 0x%08lX (%s) at host address 0x%llx on thread %s (tid %lu)\n",
                 static_cast<unsigned long>(rec->ExceptionCode), code_name, static_cast<unsigned long long>(rip),

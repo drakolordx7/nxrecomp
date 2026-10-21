@@ -23,6 +23,7 @@ SRWLOCK g_list_lock = SRWLOCK_INIT;
 std::vector<std::shared_ptr<KThread>> g_all;
 std::atomic<uint64_t> g_next_id{0x50};
 thread_local KThread* t_self = nullptr;
+thread_local std::shared_ptr<KThread> t_keepalive;   // released explicitly before ExitThread (which skips destructors)
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 
@@ -34,9 +35,10 @@ void finish_current(KThread& t) {
 
 DWORD WINAPI host_thread_main(LPVOID param) {
     auto* box = static_cast<std::shared_ptr<KThread>*>(param);
-    std::shared_ptr<KThread> t = std::move(*box);
+    t_keepalive = std::move(*box);
     delete box;
-    t_self = t.get();
+    KThread* t = t_keepalive.get();
+    t_self = t;
     t->host_tid = GetCurrentThreadId();
     log_set_thread_name(t->name.c_str());
     diag_register_thread(t->name.c_str(), &t->ctx, t->id);
@@ -45,6 +47,7 @@ DWORD WINAPI host_thread_main(LPVOID param) {
     dispatch_call(&t->ctx, t->entry);
     NXLOG_D("thread", "%s returned from its entry function", t->name.c_str());
     finish_current(*t);
+    t_keepalive.reset();
     return 0;
 }
 
@@ -134,6 +137,7 @@ void thread_exit() {
     if (t) {
         NXLOG_D("thread", "%s exits (svcExitThread)", t->name.c_str());
         finish_current(*t);
+        t_keepalive.reset();     // the object may die here: t must not be touched again
     }
     ExitThread(0);
     for (;;) {}
@@ -162,6 +166,10 @@ uint32_t main_thread_adopt(uint64_t stack_size, const char* name) {
     sched_apply(*t);
     NXLOG_I("thread", "host thread %lu is now the guest main thread (stack 0x%llx..0x%llx)", GetCurrentThreadId(), (unsigned long long)stack, (unsigned long long)p.stack_top);
     return h;
+}
+
+void main_thread_release() {
+    if (KThread* t = t_self) finish_current(*t);
 }
 
 std::vector<std::shared_ptr<KThread>> threads() {

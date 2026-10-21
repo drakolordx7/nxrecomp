@@ -65,7 +65,7 @@ std::string crash_build_report(void* exception_pointers /* EXCEPTION_POINTERS* *
 uint32_t crash_exceptions_reported();
 
 // ---- freeze watchdog ------------------------------------------------------------------------------------------------------
-// A thread checks once per second whether diag_frame_tick() advanced; after `seconds` without a tick it dumps every registered
+// A thread checks every poll_ms whether diag_frame_tick() advanced; after `seconds` without a tick it dumps every registered
 // thread's host stack (SuspendThread, capture RIP/stack through RtlVirtualUnwind into a fixed buffer, ResumeThread: no
 // allocation while a thread is suspended), symbolised, plus guest lr / x29 chain, to the log and to the report file, then calls
 // on_fire. It fires once per freeze (re-arms after the next tick).
