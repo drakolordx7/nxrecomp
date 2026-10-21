@@ -2,8 +2,9 @@
 // Frame limiter for the low-latency design: begin_frame() waits for the frame's scheduled start BEFORE the caller samples input,
 // so input is read as late as possible and the display queue stays short. The wait is a high-resolution waitable timer for
 // the bulk and a spin on the performance counter for the last stretch. Schedules are absolute (next = previous + period), so
-// the average rate does not drift; a frame that runs long does not make the next ones run short (no catch-up bursts): after a
-// stall of more than 4 periods the schedule restarts from now.
+// the average rate does not drift for small hiccups; a frame that starts late is made up for by at most 10 % of a period (so
+// the next interval is never shorter than 0.9 period: no catch-up bursts) and after a stall of more than 4 periods the
+// schedule restarts from now.
 #pragma once
 #include <cstdint>
 

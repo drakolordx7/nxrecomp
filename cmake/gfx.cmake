@@ -20,7 +20,11 @@ file(GLOB_RECURSE NXRT_GFX_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR
 add_library(nxrt_gfx STATIC ${NXRT_GFX_SOURCES})
 target_include_directories(nxrt_gfx PUBLIC include PRIVATE src/gfx)
 target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling SDL3::SDL3-static)
-target_compile_definitions(nxrt_gfx PUBLIC VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=0)
+target_compile_definitions(nxrt_gfx PUBLIC VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+
+add_executable(nxrt_gfx_demo apps/gfx_demo.cpp)
+target_link_libraries(nxrt_gfx_demo PRIVATE nxrt_gfx)
+target_link_options(nxrt_gfx_demo PRIVATE /MAP /DEBUG /STACK:8388608)
 
 if(NXRT_BUILD_TESTS)
     file(GLOB_RECURSE NXRT_GFX_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gfx/*.cpp")

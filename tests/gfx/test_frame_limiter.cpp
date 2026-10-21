@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_framework.h"
 
-#define NOMINMAX
 #include <windows.h>
 #include <immintrin.h>
 
@@ -48,6 +47,23 @@ std::vector<uint64_t> run_frames(FrameLimiter& l, int n, double fps) {
 
 double ns_to_ms(double ns) { return ns / 1e6; }
 
+// The limiter is meant for a game's render thread, which runs at high priority: the timing cases do too, so that other
+// processes on the machine (builds, other agents) do not preempt the measurement for tens of milliseconds.
+struct ScopedBoost {
+    DWORD old_class;
+    int old_prio;
+    ScopedBoost() {
+        old_class = GetPriorityClass(GetCurrentProcess());
+        old_prio = GetThreadPriority(GetCurrentThread());
+        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    }
+    ~ScopedBoost() {
+        SetThreadPriority(GetCurrentThread(), old_prio);
+        SetPriorityClass(GetCurrentProcess(), old_class);
+    }
+};
+
 struct RateResult {
     FrameLimiter::Stats st;
     double p99_dev_ms = 0;  // p99 of |interval - period|, from the frame starts of this run
@@ -55,6 +71,7 @@ struct RateResult {
 };
 
 RateResult measure_rate(double fps, int frames) {
+    ScopedBoost boost;
     FrameLimiter l;
     l.set_target_fps(fps);
     const std::vector<uint64_t> starts = run_frames(l, frames, fps);
@@ -118,6 +135,7 @@ NXTEST(rate_120fps) { check_rate(120.0, 1); }
 NXTEST(rate_240fps) { check_rate(240.0, 2); }
 
 NXTEST(stall_resync_no_burst) {
+    ScopedBoost boost;
     const double fps = 240.0;
     const double period_ns = 1e9 / fps;
     FrameLimiter l;
@@ -145,6 +163,7 @@ NXTEST(stall_resync_no_burst) {
 }
 
 NXTEST(target_change_honoured_within_10_frames) {
+    ScopedBoost boost;
     FrameLimiter l;
     l.set_target_fps(60.0);
     run_frames(l, 30, 60.0);
