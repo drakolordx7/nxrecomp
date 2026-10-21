@@ -46,6 +46,9 @@ void svc_register_info_group();                            // svc_info.cpp: GetI
 void svc_register_thread_group();                          // svc_thread.cpp: threads, events, sync, time, handles, break
 void svc_register_ipc_group();                             // svc_ipc.cpp: ConnectToNamedPort, SendSyncRequest*
 
+// Current size set by svcSetHeapSize (0 before the first call); implemented by the memory group, read by the info group.
+uint64_t svc_current_heap_size();
+
 // Helper for handlers.
 inline void svc_ret(::Ctx* c, uint32_t rc) { c->x[0] = rc; }
 
