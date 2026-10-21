@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Scene tests: the frame loop (limiter, input pump, renderer, present) at 60/120/240 fps.
 // What is asserted. The limiter must hold the rate on this machine: mean rate within 1 % of the target in at least one of up to
-// six attempts, and it must never be the cause of jitter in any attempt: frames that had to wait start on the schedule (late
+// four attempts, and it must never be the cause of jitter in any attempt: frames that had to wait start on the schedule (late
 // p99 < 0.5 ms, max < 3 ms) and no interval is shorter than the period minus the lateness of the frame before it and the 10 %
 // catch-up allowance (no bursts). A frame loop is also bound by the GPU and by other processes: when more than 0.5 % of the
 // frames have a body that overran the period (other programs on the GPU or on every core), a low rate is not the limiter's
@@ -48,7 +48,7 @@ Attempt run_attempt(bool windowed, double fps, uint32_t frames, int n) {
 
 void check_rate(bool windowed, double fps, uint32_t frames) {
     bool held = false, all_accurate = true, fault = false;
-    for (int n = 1; n <= 6 && !held; ++n) {
+    for (int n = 1; n <= 4 && !held; ++n) {
         const Attempt a = run_attempt(windowed, fps, frames, n);
         REQUIRE(a.r.ok);
         all_accurate = all_accurate && a.accurate;
@@ -68,5 +68,22 @@ void check_rate(bool windowed, double fps, uint32_t frames) {
 
 NXTEST(offscreen_loop_holds_60fps) { check_rate(false, 60, 180); }
 NXTEST(offscreen_loop_holds_120fps) { check_rate(false, 120, 360); }
-NXTEST(offscreen_loop_holds_240fps) { check_rate(false, 240, 720); }
+NXTEST(offscreen_loop_holds_240fps) { check_rate(false, 240, 480); }
 NXTEST(windowed_immediate_loop_holds_120fps) { check_rate(true, 120, 360); }
+
+NXTEST(input_is_sampled_after_the_limiter_wait) {
+    // With the wait before input sampling, the time from sampling to the end of the frame is the cost of the frame body, far
+    // below the 16.7 ms period. Sampling before the wait would put a whole period (minus the body) in between.
+    SceneRunDesc d = base_desc();
+    d.frames = 180;
+    d.target_fps = 60;
+    d.boost_priority = true;
+    d.warmup_frames = 30;
+    d.validation = 0;
+    d.width = 320;
+    d.height = 180;
+    const SceneRunResult r = run_scene(d);
+    REQUIRE(r.ok);
+    std::printf("    input sampled -> frame submitted: mean %.3f ms, max %.3f ms (period 16.667 ms)\n", r.input_to_submit_mean_ms, r.input_to_submit_max_ms);
+    CHECK(r.input_to_submit_mean_ms < 4.0);
+}

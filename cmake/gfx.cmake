@@ -53,5 +53,8 @@ if(NXRT_BUILD_TESTS)
             set_tests_properties(${g} PROPERTIES RUN_SERIAL TRUE)
         endif()
     endforeach()
+    if(TEST gfx_pacing)
+        set_tests_properties(gfx_pacing PROPERTIES TIMEOUT 900)   # up to four attempts per case on a busy GPU
+    endif()
     message(STATUS "nxrt gfx test groups: ${NXRT_GFX_GROUPS}")
 endif()

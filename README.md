@@ -6,7 +6,7 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 
 | Folder | Contents |
 |---|---|
-| `include/nxrt` | 15 public headers: abi, config, diag, dispatch, hipc, ipc, kernel, log, memguard, memory, module, runtime, svc, symbols, sync |
+| `include/nxrt` | 22 public headers: abi, config, diag, dispatch, hipc, ipc, kernel, log, memguard, memory, module, runtime, svc, symbols, sync, and for the graphics shell frame_limiter, gfx, input, nvn, overlay, platform, scene |
 | `src/core` | Bring-up (runtime.cpp), generated-code ABI glue (abi_glue.cpp), indirect dispatch and HLE thunks (dispatch.cpp), ABI version string (build_info.cpp) |
 | `src/diag` | Config file and environment lookup (config.cpp), leveled log (log.cpp), crash report (crash.cpp), host stack walk (stackwalk.cpp), linker-map symbols (symbols.cpp), freeze watchdog (watchdog.cpp), memory guard (memguard.cpp), thread registry and recent files (registry.cpp) |
 | `src/ipc` | HIPC wire format (hipc.cpp), service registry, sessions, domains and routing (ipc.cpp), `sm:` service manager (sm.cpp), stub services (stub.cpp) |
@@ -14,12 +14,15 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `src/loader` | ELF64 AArch64 structures (elf.h), module loader and linker (module.cpp) |
 | `src/mem` | Guest address space, heap section and alias views (memory.cpp) |
 | `src/os` | Guest-address keyed sync objects (sync.cpp) |
-| `tests` | 17 test groups (`test_*.cpp`), `test_framework.h`, `test_main.cpp` |
+| `src/gfx` | Graphics shell (stream S4b, library `nxrt_gfx`, see docs/S4b.md): SDL3 platform and input queue (platform.cpp, input.cpp), frame limiter (frame_limiter.cpp), Vulkan device and renderer (vk_device.cpp, vk_renderer.cpp, vma_impl.cpp), test scene and loop (scene.cpp, scene_runner.cpp, shaders/, scene_shaders.inc), ImGui overlay (overlay.cpp), NVN front end (nvn/nvn_loader.cpp, generated nvn/nvn_table.inc and nvn/nvn_sizes.inc) |
+| `apps` | `gfx_demo.cpp`: the test scene as an executable (`nxrt_gfx_demo`) |
+| `cmake` | `gfx.cmake`, `gfx_deps.cmake`: the graphics library, the demo, the gfx tests and the pinned third-party sources |
+| `tests` | 17 test groups for the OS layer (`test_*.cpp`), `test_framework.h`, `test_main.cpp`; `tests/gfx` holds the 8 graphics groups (`nxrt_gfx_tests`), `tests/data/gfx` the reference image |
 | `tests/data` | Loader fixtures, HIPC test vectors (generated, see Build and test) |
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py`, which generates the HIPC vectors |
-| `docs` | `S3.md` (stream log, decisions, gaps), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
-| `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH) |
+| `docs` | `S3.md` and `S4b.md` (stream logs, decisions, gaps), `nvn_struct_sizes.md` (cross-check of the NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
+| `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_scene_shaders.py` (test-scene SPIR-V) |
 
 ## Build and test
 
@@ -34,7 +37,7 @@ Output goes to `build\<config in lower case>`, so Release builds to `build\relea
 
 The ABI header `nxrecomp/ctx.h` is owned by stream S1. CMake looks for it in `..\recomp\include` relative to the checkout (`NXRT_RECOMP_INCLUDE`, see `CMakeLists.txt`). `include/nxrt/abi.h` asserts `NXRECOMP_ABI_VERSION == 1`. A git worktree does not contain `..\recomp`, so it has to be configured once by hand with `-DNXRT_RECOMP_INCLUDE=D:/AI/Active/Metroid-Prime/recomp/include`. The CMake cache keeps the value for later `build.ps1` runs.
 
-Test groups: `crash`, `hipc`, `ipc`, `kernel_sync`, `kernel_threads`, `loader`, `log_config`, `memguard`, `memory`, `runtime_e2e`, `smoke`, `svc_info`, `svc_memory`, `svc_names`, `symbols`, `sync`, `watchdog`. CMake reads the `NXTEST_GROUP` line of each test source and creates one CTest entry per group, with a 120 s timeout. To run one group directly, use `build\release\nxrt_tests.exe <group>`. `nxrt_tests.exe --list` prints the groups, `--all` runs everything and `--child <name>` runs a child-process mode (for example `crash_av`, `crash_trap`, `crash_stackoverflow`).
+Test groups: `crash`, `hipc`, `ipc`, `kernel_sync`, `kernel_threads`, `loader`, `log_config`, `memguard`, `memory`, `runtime_e2e`, `smoke`, `svc_info`, `svc_memory`, `svc_names`, `symbols`, `sync`, `watchdog`. CMake reads the `NXTEST_GROUP` line of each test source and creates one CTest entry per group, with a 120 s timeout. The graphics groups are `gfx_device`, `gfx_limiter`, `gfx_nvn`, `gfx_overlay`, `gfx_pacing`, `gfx_platform`, `gfx_present` and `gfx_scene`; they live in `nxrt_gfx_tests.exe`, run with `NXRT_GFX_HIDDEN=1` under CTest (hidden windows), and `gfx_limiter` and `gfx_pacing` run serially. To run one group directly, use `build\release\nxrt_tests.exe <group>` (OS layer) or `build\release\nxrt_gfx_tests.exe <group>` (graphics). `nxrt_tests.exe --list` prints the groups, `--all` runs everything and `--child <name>` runs a child-process mode (for example `crash_av`, `crash_trap`, `crash_stackoverflow`).
 
 Snapshot on 2026-10-21 (clean Release build): CTest reported 17 of 17 entries passed. `build\release\nxrt_tests.exe --all` printed:
 
@@ -101,6 +104,23 @@ Every source or header file that names an upstream project in its comments is li
 | `src/kernel/time.cpp` | smo-recomp `runtime/os/os_threads.c` sleep_ns (pattern); SuperMarioWonderRecomp `runtime/src/kernel.cpp` system_tick (pattern) | GPL-3.0; MIT |
 | `src/loader/module.cpp` | smo-recomp `runtime/core/hostrt.c` runtime_init (pattern); SuperMarioWonderRecomp `runtime/src/loader.cpp` (pattern) | GPL-3.0; MIT |
 | `src/mem/memory.cpp` | smo-recomp SetMemoryHeapSize behaviour (body comment at line 456, no file named) | GPL-3.0 |
+| `include/nxrt/frame_limiter.h` | Blur Busters G-SYNC 101 guidance (the VRR cap formula refresh - refresh^2 / 3600; a published rule, no code) | n/a |
+| `src/gfx/vk_device.cpp` | SuperMarioWonderRecomp `docs/nvn/DEBUG-2.md` entries 69 (NVIDIA desktop crash on an ASTC image) and 70 (integrated GPU listed first), ideas only, code written from scratch | MIT |
+| `src/gfx/nvn/nvn_loader.cpp` | smo-recomp `runtime/gfx/nvn_stub.c` (idea: log the first calls of an unimplemented entry point with the caller, count the rest); the argument decoding by signature class is new | GPL-3.0 |
+| `src/gfx/nvn/nvn_table.inc`, `src/gfx/nvn/nvn_sizes.inc`, `scripts/gen_nvn_table.py` | Generated. Function names, argument classes and object sizes read from mp1r-practice-mod `src_framework/nvn/nvn.h` and `nvn_FuncPtrBase.h` (nvn.h carries an MIT notice, Copyright (c) 2020 h1k421; the repository itself is GPL-2.0); extra names from smo-recomp and ssbu-recomp `runtime/` (GPL-3.0), SuperMarioWonderRecomp `runtime/src/nvn` (MIT) and LASRecomp `runtime/nvn` (MIT). Names, types and sizes are facts of the NVN interface; no source text is copied | MIT; GPL-2.0; GPL-3.0; MIT |
+| `src/gfx/scene.cpp` | tools/tiling (`tegra_tiling.h`, compiled in as source from the tools repository) for the block-linear round trip of the test texture | GPL-3.0-or-later |
+
+Third-party code fetched at configure time (graphics shell). Each archive is downloaded by URL and checked against a SHA256 in `cmake/gfx_deps.cmake`; notices are in THIRD_PARTY_NOTICES.md.
+
+| Component | Pin | URL / SHA256 | Licence |
+|---|---|---|---|
+| SDL3 | 3.4.18 (released 2026-10-02), built from source, static | github.com/libsdl-org/SDL release-3.4.18 `SDL3-3.4.18.tar.gz`, 9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3 | zlib |
+| Vulkan-Headers | vulkan-sdk-1.4.363.0 | github.com/KhronosGroup/Vulkan-Headers tag archive, f4be95220ff0ee0b1c620301ff4fe9ae48592d71f4c30f2d5c571351a153ae81 | Apache-2.0 OR MIT |
+| volk | vulkan-sdk-1.4.363.0 | github.com/zeux/volk tag archive, 889b90fdcbe9cee7b118339d640c6895b7be5c920d309c44b744692063275b3d | MIT |
+| VulkanMemoryAllocator | v3.4.0 | github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator tag archive, ce9a61ea5e72284ac9ccc152c214eef381ab57bfd7383f20232e5a652e3afda6 | MIT |
+| Dear ImGui | v1.92.9b | github.com/ocornut/imgui tag archive, e1c46d676c2bcb7ced847ba27f50553e33a19db97b3cadaec7f8be64449139f8 | MIT |
+
+The Vulkan SDK (validation layer, `glslc` for `scripts/gen_scene_shaders.py`) is a development tool and is not shipped.
 
 External specifications used as references:
 
@@ -114,5 +134,5 @@ External specifications used as references:
 - C++ exception catch frames (`nx_catch_call`) are a stub.
 - `host_import(c, sym)` cannot tell which module's DynSym index it receives (open question for the lifter stream).
 - No real service behaviour: services are stubs, by design.
-- NVN/graphics, audio and input are out of scope of this library.
+- Audio is out of scope of this library. Graphics, platform input and the NVN front end are the graphics shell (`nxrt_gfx`, docs/S4b.md): the NVN entry points are logging stubs until a back end fills them in; game input mapping is not part of it.
 - Kernel objects for guest-side servers (CreatePort, ReplyAndReceive) are not implemented and are logged as unknown SVCs.

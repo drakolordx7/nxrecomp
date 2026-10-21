@@ -66,6 +66,10 @@ struct SceneRunResult {
     FrameLimiter::Stats pacing;            // frame start intervals (FrameLimiter)
     RendererStats renderer;
     double wall_seconds = 0;
+    // Input latency of the loop: from the moment input was sampled (right after the limiter wait and the platform pump) to the
+    // return of end_frame. The limiter waits BEFORE input is read, so this is the cost of the frame body only (well under one
+    // period); if the order were reversed it would approach a whole period.
+    double input_to_submit_mean_ms = 0, input_to_submit_max_ms = 0;
     Device::MemoryStats memory_end;
 };
 
