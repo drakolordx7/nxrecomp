@@ -127,6 +127,7 @@ uint32_t thread_start(uint32_t handle);                    // result code
 [[noreturn]] void thread_exit();                           // svcExitThread for the calling guest thread
 // Turns the calling host thread into the main guest thread (stack allocated in the kernel region). Returns its handle.
 uint32_t main_thread_adopt(uint64_t stack_size, const char* name = "main");
+void main_thread_release();                                // the adopted main thread is done: unregisters it from diag and marks it exited
 KThread* current_thread();                                 // nullptr on a host thread that is not a guest thread
 ::Ctx* current_ctx();                                      // current_thread()->ctx or nullptr
 std::vector<std::shared_ptr<KThread>> threads();           // every thread ever created and not yet destroyed

@@ -10,7 +10,7 @@ namespace nxrt {
 struct MemGuardOptions {
     uint64_t limit_bytes = 0;   // 0: read [memory] limit_gb from the config (default 8 GB)
     uint32_t poll_ms = 0;       // 0: [memory] poll_ms (default 250)
-    // Called once from the guard thread when the footprint exceeds the limit. Null = default (terminate the process).
+    // Called once from the guard thread when the footprint exceeds the limit (it must not call memguard_stop: that joins this thread). Null = default (terminate the process).
     void (*on_exceed)(uint64_t footprint, uint64_t limit, void* user) = nullptr;
     void* user = nullptr;
 };

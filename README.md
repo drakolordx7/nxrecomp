@@ -14,10 +14,11 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `src/loader` | ELF64 AArch64 structures (elf.h), module loader and linker (module.cpp) |
 | `src/mem` | Guest address space, heap section and alias views (memory.cpp) |
 | `src/os` | Guest-address keyed sync objects (sync.cpp) |
-| `tests` | 14 test groups (`test_*.cpp`), `test_framework.h`, `test_main.cpp` |
+| `tests` | 17 test groups (`test_*.cpp`), `test_framework.h`, `test_main.cpp` |
 | `tests/data` | Loader fixtures, HIPC test vectors (generated, see Build and test) |
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py`, which generates the HIPC vectors |
+| `docs` | `S3.md` (stream log, decisions, gaps), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
 | `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH) |
 
 ## Build and test
@@ -33,11 +34,11 @@ Output goes to `build\<config in lower case>`, so Release builds to `build\relea
 
 The ABI header `nxrecomp/ctx.h` is owned by S1. CMake looks for it in `..\recomp\include` relative to the checkout (`NXRT_RECOMP_INCLUDE`, see `CMakeLists.txt`). `include/nxrt/abi.h` asserts `NXRECOMP_ABI_VERSION == 1`. A git worktree does not contain `..\recomp`, so it has to be configured once by hand with `-DNXRT_RECOMP_INCLUDE=C:/mpr/recomp/include`. The CMake cache keeps the value for later `build.ps1` runs.
 
-Test groups: `crash`, `hipc`, `ipc`, `loader`, `log_config`, `memguard`, `memory`, `smoke`, `svc_info`, `svc_memory`, `svc_names`, `symbols`, `sync`, `watchdog`. CMake reads the `NXTEST_GROUP` line of each test source and creates one CTest entry per group, with a 120 s timeout. To run one group directly, use `build\release\nxrt_tests.exe <group>`. `nxrt_tests.exe --list` prints the groups, `--all` runs everything and `--child <name>` runs a child-process mode (for example `crash_av`, `crash_trap`, `crash_stackoverflow`).
+Test groups: `crash`, `hipc`, `ipc`, `kernel_sync`, `kernel_threads`, `loader`, `log_config`, `memguard`, `memory`, `runtime_e2e`, `smoke`, `svc_info`, `svc_memory`, `svc_names`, `symbols`, `sync`, `watchdog`. CMake reads the `NXTEST_GROUP` line of each test source and creates one CTest entry per group, with a 120 s timeout. To run one group directly, use `build\release\nxrt_tests.exe <group>`. `nxrt_tests.exe --list` prints the groups, `--all` runs everything and `--child <name>` runs a child-process mode (for example `crash_av`, `crash_trap`, `crash_stackoverflow`).
 
-Snapshot on 2026-10-21: CTest reported 14 of 14 entries passed. `build\release\nxrt_tests.exe --all` printed:
+Snapshot on 2026-10-21 (clean Release build): CTest reported 17 of 17 entries passed. `build\release\nxrt_tests.exe --all` printed:
 
-    SUMMARY --all: 201 passed, 0 failed, 0 skipped (of 201)
+    SUMMARY --all: 255 passed, 0 failed, 0 skipped (of 255)
 
 Fixtures: `tests\data\fixture_aarch64.elf` is a synthetic AArch64 PIE built from `tests\fixture\fixture.c`; `fixture_nosections.elf` is the same image with the section headers removed. `tests\fixture\make_fixture.cmd` rebuilds both with the LLVM tools and `fixture_info.txt` records their facts. `tests\data\hipc_vectors.h` and `hipc_vectors.md` are generated: run `python -I tests/tools/gen_hipc_vectors.py` from the checkout root, do not edit them by hand. CMake passes `tests\data` to the test binary as `NXRT_TEST_DATA_DIR`.
 
@@ -106,7 +107,7 @@ External specifications used as references:
 - Switchbrew IPC_Marshalling page (https://switchbrew.org/wiki/IPC_Marshalling): HIPC layouts, cited in `include/nxrt/hipc.h`. No code copied.
 - Switchbrew SVC page (https://switchbrew.org/wiki/SVC): SVC numbers, names and calling convention, cited in `src/kernel/svc_names.inc` and `include/nxrt/svc.h`. No code copied.
 - Atmosphere libvapours `svc_results.hpp`: numeric result values, cited in `include/nxrt/kernel.h`. Values only.
-- libnx `sf/hipc.h` and `sf/cmif.h`: layouts. The packing functions in `tests/tools/gen_hipc_vectors.py` are re-implemented from these headers, as that script's header states, so this is not "no code copied". The libnx licence has not been checked.
+- libnx `sf/hipc.h` and `sf/cmif.h`: layouts. The packing functions in `tests/tools/gen_hipc_vectors.py` are re-implemented from these headers, as that script's header states, so this is not "no code copied". libnx is ISC licensed; its notice is in THIRD_PARTY_NOTICES.md.
 
 ## Status and gaps
 

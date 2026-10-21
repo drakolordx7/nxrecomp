@@ -99,6 +99,7 @@ void sched_reset_for_tests() {
     std::lock_guard<std::mutex> lk(g_lock);
     g_done = false;
     g_info = SchedInfo{};
+    if (g_slot_mutex) { CloseHandle(g_slot_mutex); g_slot_mutex = nullptr; }     // so the next sched_info() can take the same slot again
 }
 
 // nn::os priorities run 0 (highest) .. 31 (lowest); HOS priority = nn::os + 28. Six bands under the model:
