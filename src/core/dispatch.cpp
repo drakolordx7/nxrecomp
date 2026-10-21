@@ -213,6 +213,13 @@ size_t hle_stub_count() {
 
 uint64_t hle_calls(uint64_t addr) { return hle_is_thunk(addr) ? g_thunks[thunk_index(addr)]->calls.load() : 0; }
 
+std::vector<HleInfo> hle_list() {
+    std::lock_guard<std::mutex> lk(g_hle_lock);
+    std::vector<HleInfo> v;
+    for (auto& t : g_thunks) v.push_back({t->name, t->calls.load(), t->fn == nullptr});
+    return v;
+}
+
 void hle_clear() {
     std::lock_guard<std::mutex> lk(g_hle_lock);
     g_thunk_count.store(0);

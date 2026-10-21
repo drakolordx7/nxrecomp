@@ -5,6 +5,8 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "nxrt/abi.h"
 
@@ -31,6 +33,8 @@ const char* hle_name_at(uint64_t addr);                   // name behind a thunk
 size_t hle_count();
 size_t hle_stub_count();                                  // thunks that are logging stubs (no handler)
 uint64_t hle_calls(uint64_t addr);                        // times the thunk at addr has been called
+struct HleInfo { std::string name; uint64_t calls = 0; bool stub = false; };
+std::vector<HleInfo> hle_list();                          // every thunk, in creation order (end-of-run report)
 void hle_clear();                                         // tests only
 // Name of the HLE function the calling thread is currently inside, or nullptr.
 const char* hle_current_name();
