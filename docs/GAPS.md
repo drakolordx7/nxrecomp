@@ -1,0 +1,61 @@
+# Gaps of the lifter (measured, not hoped)
+
+Numbers come from the oracles at the commit that contains this file: `oracle/difftest/corpus.json` (11,603 in-scope shapes, 606
+mnemonics), 337,835 differential tests, 15 end-to-end programs at two optimisation levels, 94 known-answer cases.
+
+## Behaviour that differs from the console
+
+| Gap | What happens | Why it is acceptable now / what would close it |
+|---|---|---|
+| **FPCR is stored, not honoured** | `msr fpcr` keeps the Cortex-A57 bits (0x07f70000) and `mrs fpcr` reads them back; rounding mode, flush-to-zero (FZ), default-NaN (DN) and AHP do not change the arithmetic, which is x86 SSE with round-to-nearest-even, no flushing, and ARM NaN propagation (DN = 0). 5 of the 94 known-answer cases set FPCR and fail for exactly this reason (listed by `run_ka.py` as FPCR-not-honoured). | Neither smo, ssbu nor Wonder's games write FPCR; MPR is expected not to. Closing it: map RMode and FZ onto MXCSR at `msr fpcr` (x86 has no DN). Check with the first `cover` / grep for `msr fpcr` on the real binary. |
+| **FPSR cumulative flags are not tracked** | IOC, DZC, OFC, UFC, IXC, IDC and QC (saturation) are never set; `mrs fpsr` returns what `msr fpsr` stored (masked to 0xf800009f). 6 known-answer cases that read QC are reported as FPSR-not-modelled; the differential test does not compare FPSR. | Games rarely read the sticky flags. Closing it: set the flags in the exact FP helpers and the saturating NEON helpers. |
+| **Exclusive monitor is a compare-and-swap** | `ldxr` remembers (address, value); `stxr` succeeds iff the address matches and the memory still holds that value. Consequences: (1) ABA: another thread changing the value and changing it back does not make `stxr` fail; (2) the reservation granule is not modelled (a store to a neighbouring address in the granule does not clear the monitor); (3) a store of the same value by another thread does not break it; (4) `stxr` of a different size than the `ldxr` is not detected. 128-bit pairs use `cmpxchg16b` (`-mcx16`, 16-byte aligned) and have the same gaps. | This is the standard approach of all four reference projects and passes every single-thread test (88 exclusive sequences, 2 programs). ABA-sensitive lock-free code (a lock-free stack with pointer reuse) would need a version-counter monitor. |
+| **Memory ordering** | `dmb` / `dsb` are sequentially consistent fences, `ldar` / `stlr` are acquire / release atomics, LSE atomics are seq_cst. Plain loads and stores are plain `memcpy`s: the C++ compiler may reorder or merge them as it likes between fences, and x86's store-to-load reordering is not forbidden. | Correct code that synchronises through the instructions above works. Racy code that relies on the A57's actual behaviour without barriers is not reproduced. |
+| **Alignment and permission faults** | An unaligned `ldxr`, `ldar`, atomic or pair does not fault; unaligned ordinary accesses work as on the console (normal memory). Writes to read-only guest memory fault as host access violations, not as guest exceptions. | The runtime's crash report names the guest function. |
+| **System registers** | Inline: TPIDR_EL0, TPIDRRO_EL0, FPCR, FPSR, NZCV, DCZID_EL0 (0x10: DC ZVA prohibited), CTR_EL0 (0x8444c004). Every other `mrs` / `msr` calls `guest_mrs` / `guest_msr` (the runtime answers: counter, ID registers). `dc civac`, `dc cvac`, `ic` are no-ops. | DCZID / CTR are constants of the A57 and are not compared with Unicorn (it reports different values). |
+| **Pointer authentication, BTI** | The hint-space instructions (`paciasp`, `autiasp`, `xpaclri`, `bti`) are no-ops. | The Switch has no PAC. |
+| **setjmp / longjmp** | Not translated specially. A guest `longjmp` is the runtime's problem (the libc import); Wonder's per-function try/catch scheme was not ported. | The runtime stream decides how the SDK's `setjmp` is answered. |
+| **Self-modifying code** | Not supported except through site lists (`patch`, `dynimm`) at known addresses. | Switch code is not self-modifying; the SDK's JIT-free. |
+| **Direct branches out of the module** | A direct `b` / `bl` to an address outside this module's `.text` becomes `call_indirect(c, addr)`. | Such branches are not produced by a compiler between NSOs. |
+
+## Coverage of the instruction space
+
+| Class | Count | Treatment |
+|---|---|---|
+| In-scope shapes (Cortex-A57 ISA: ARMv8.0 base, FP, AdvSIMD, crypto AES / SHA-1 / SHA-256 / PMULL, CRC32; plus ARMv8.1 LSE atomics) | 11,603 | all lifted; 11,419 run in the differential test, 184 (the exclusive-access families) run as 88 sequences |
+| SVE / SME | 5,111 shapes seen | not lifted (`guest_unimpl`); not instructions of the console's CPU |
+| ARMv8.1+ extensions other than LSE (RDM, dot product, FP16 arithmetic, JSCVT, FCMA, BF16, I8MM, ...) | 661 | outside the reference model: Unicorn's Cortex-A57 faults on them. Tier 2 lifts some of them (the ported half-precision arithmetic) but they are not verified |
+| System / privileged (`mrs`, `msr`, `sys`, `dc`, `ic`, `tlbi`, `at`, `svc`, `hvc`, `smc`, `eret`) | 14 mnemonics | whitelisted forms are hand-written tests; `svc` is `guest_svc` |
+| Control transfers (`b`, `bl`, `br`, `blr`, `ret`) | 5 | exercised by the end-to-end programs, not by the differential test |
+| Unallocated or UNPREDICTABLE-only encodings that Capstone decodes | 3,628 | rejected by the reference |
+| Undefined words (op0 = 0..3) | n/a | trap (`guest_trap`), tested with 9 words |
+
+Excluded from the differential test by design: words whose index register is also the base register (115 shape names, the shapes
+are still covered by other words); exclusive loads / stores as single words (tested as sequences); LDXP/STXP as sequences too.
+Each shape is tested with at most 6 real encodings and two machine states (random, integer-edge), floating-point shapes with up
+to 35 x 35 special operand pairs sampled at every 11th pair: this is broad, not exhaustive over registers, immediates and
+operand values.
+
+## Reference corrections and oracle limits
+
+- **Unicorn 2.1.4 executes `ldsmax` / `ldsmin` / `stsmax` / `stsmin` of 8, 16 and 32 bits unsigned** (docs/debug/001.md). The
+  differential test takes the result of exactly those instructions from the architectural definition (`spec_smaxmin`), applied
+  on top of Unicorn's state. No other instruction is corrected.
+- Every test runs on Unicorn's Cortex-A57 model, except the LSE atomics which run on its `max` model (the A57 has none).
+- FPSR is not compared; FPCR is (after `msr fpcr`).
+- The known-answer oracle skips 7 of 101 cases (3 with a real branch before the stop, 1 literal load of the code, 3 whose windows
+  cannot be mapped on Windows).
+
+## Not measured yet (needs the game binary)
+
+- Coverage of `cover` on the real `main`, `sdk` and `subsdk`: any word the corpus does not contain would show there.
+- Jump tables: the resolver handles clang's compressed and `ldrsw` tables (all 12 switch tables of the end-to-end switch program
+  at -O2); a `br` it cannot resolve falls back to a dispatch over every instruction of the function (correct, large). Only the
+  game says how many fall back.
+- Compile time and size of the generated C++ for ~1.6 M instructions; `optnone_insns` (20,000) and the launcher's time limit are
+  smo's numbers.
+- C++ exceptions with catch clauses of base classes and `catch` through `dynamic_cast` hierarchies: the test unwinder matches
+  typeinfo pointers exactly; hierarchy matching belongs to the runtime's `__cxa_*` implementation.
+- Hook sites (`entryhook`, `midhook`): tested as counters only. `hook_inline_check.py` of ssbu-recomp (a check of compiled
+  objects that a hooked function is still called, not inlined) was not ported; the lifter marks hooked entries `noinline`, which
+  is what that check enforces.

@@ -333,7 +333,7 @@ class Fn:
                 else:
                     body = 'wrv(a, &c->v[%d], %d);' % (rt, nbytes)
                 return '{ %s uint64_t a = %s; %s %s }' % (pre, a, body, post)
-            if size == 3 and opc == 2 and not (bits(w, 21, 21) and bits(w, 11, 10) == 0):
+            if size == 3 and opc == 2 and (bits(w, 24, 24) or not (bits(w, 21, 21) and bits(w, 11, 10) == 0)):
                 return ';'                               # prfm (the same size/opc class holds the LSE atomics ldadda...: tier 2)
             pre, a, post = self.addr_mode(w, size)
             nb = 8 << size
@@ -633,7 +633,8 @@ class Fn:
                     return setf('fp_sqrt%d(%s)' % (nbits, a))
                 if op in (4, 5):
                     tf, tt = ('df[0]', 'double') if op == 5 else ('f[0]', 'float')
-                    return '{ %s t = (%s)%s; vzero(&c->v[%d]); c->v[%d].%s = t; }' % (tt, tt, a, rd, rd, tf)
+                    # FCVT single <-> double: a signalling NaN is quietened on the bit patterns (fp_s2d / fp_d2s, fpexact.h)
+                    return '{ %s t = %s(%s); vzero(&c->v[%d]); c->v[%d].%s = t; }' % (tt, 'fp_s2d' if op == 5 else 'fp_d2s', a, rd, rd, tf)
                 # FRINTN (8) nearest-even, FRINTP (9) ceiling, FRINTM (10) floor, FRINTZ (11) towards zero,
                 # FRINTA (12) nearest ties away, FRINTX (14) and FRINTI (15) the current mode = nearest-even
                 frmode = {8: 0, 9: 3, 10: 2, 11: 4, 12: 1, 14: 0, 15: 0}.get(op)

@@ -36,8 +36,9 @@ def sh(cmd, **kw):
 def read_x64(prefix, img):
     regs = {}
     for line in open(prefix + '.txt'):
-        k, v = line.split()
-        regs[k] = v
+        parts = line.split()
+        if len(parts) == 2:                       # ("hit <addr> <count>" lines belong to oracle/hooks)
+            regs[parts[0]] = parts[1]
     blob = open(prefix + '.bin', 'rb').read()
     mem, p = {}, 0
     for name, addr, size in unicorn_side.rw_regions(img):

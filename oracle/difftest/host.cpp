@@ -31,7 +31,7 @@ volatile int dt_event;
 
 extern "C" {
 void call_indirect(Ctx *c, uint64_t a) { (void)c; (void)a; }
-void host_import(Ctx *c, int s) { (void)c; (void)s; }
+void host_import(Ctx *c, uint32_t s) { (void)c; (void)s; }
 void guest_trap(const char *what, uint64_t addr) { (void)what; (void)addr; dt_event = 2; }
 void guest_unimpl(uint64_t pc, uint32_t insn, const char *what) { (void)pc; (void)insn; (void)what; dt_event = 9; }
 void guest_svc(Ctx *c, uint32_t n) { (void)c; (void)n; dt_event = 3; }
@@ -103,6 +103,17 @@ int main(int argc, char **argv) {
                 if (rng_next() % 4) c.x[r] = EDGES[rng_next() % EDGES_N];
             for (int r = 0; r < 32; r++)
                 if (rng_next() % 2) { uint64_t lo = EDGES[rng_next() % EDGES_N]; uint64_t hi = EDGES[rng_next() % EDGES_N]; c.v[r].d[0] = lo; c.v[r].d[1] = hi; }
+        }
+        if (t->style == 2)
+            for (int r = 0; r < 31; r++) c.x[r] = TINY[rng_next() % TINY_N];
+        if (t->style >= 3) {
+            int rd = (int)(t->word & 31), k = (t->style - 3) % 16;
+            V128 sweep;
+            for (int l = 0; l < 16; l++) sweep.b[l] = (uint8_t)(16 * k + l);
+            V128 zero; zero.d[0] = zero.d[1] = 0;
+            int src = t->style < 19 ? rd : t->rn, other = t->style < 19 ? t->rn : rd;
+            c.v[src] = sweep;
+            if (t->rn != rd) c.v[other] = zero;
         }
         if (t->mem) {
             uint64_t base = DATA + 0x100 * (rng_next() % 8);

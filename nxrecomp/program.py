@@ -50,6 +50,71 @@ def load_patches(path, img):
     return out
 
 
+# ---------------------------------------------------------------------------------------------------- sites
+SITE_KINDS = ('patch', 'inline', 'midhook', 'dynimm', 'jtable', 'noinline', 'entryhook')
+
+
+def load_sites(path, env):
+    """Site list: run-time code changes the runtime / mods make, compiled into the lifted code. One site per line, `#` starts a
+    comment, addresses are full guest addresses in hex (after ssbu-recomp tools/lifter/relift_sites.py, GPL-3.0-or-later):
+      patch    <addr> <orig word> <new word>   the instruction word is replaced before lifting (orig is checked; several
+                                               writes to one address chain: each orig = the previous new)
+      inline   <addr>   `nx_site_inline(c, addr);` before the instruction (all registers are in c)
+      midhook  <addr>   `if (nx_site_midhook(c, addr)) return;` before the instruction, and a new lifted function f_<addr>
+                        starting there: the runtime's "original" to continue with
+      entryhook <addr>  `if (nx_hook_entry(c, addr)) return;` at the start of the function (a function hook); the function is
+                        noinline so no caller in its translation unit inlines the check away
+      dynimm   <addr>   the immediate of the add/sub-immediate or movz/movn at addr is read from guest memory each time it runs
+      noinline <addr>   the function entry is compiled `noinline`
+      jtable   <addr>   a `br` whose table is patched at run time: checked to be a `br`, nothing else (the lifter reads
+                        table entries from guest memory when it dispatches)
+    Fills env.sites[kind] (sets of addresses) and env.patches."""
+    env.sites = {k: set() for k in SITE_KINDS}
+    chain = {}
+    with open(path) as f:
+        for ln, line in enumerate(f, 1):
+            t = line.split('#', 1)[0].split()
+            if not t:
+                continue
+            kind, addr = t[0], int(t[1], 16)
+            if kind not in SITE_KINDS:
+                raise ValueError('%s:%d: unknown site kind %s' % (path, ln, kind))
+            if kind == 'patch':
+                old, new = int(t[2], 16), int(t[3], 16)
+                have = chain.get(addr, env.img.word(addr))
+                if have != old:
+                    raise ValueError('%s:%d: patch %x: the code has %08x, the patch expects %08x' % (path, ln, addr, have, old))
+                chain[addr] = new
+                env.patches[addr] = new
+            else:
+                env.sites[kind].add(addr)
+                if kind == 'jtable' and (env.word(addr) & 0xfffffc1f) != 0xd61f0000:
+                    raise ValueError('%s:%d: jtable %x is not a br' % (path, ln, addr))
+
+
+def dynimm_stmt(w, pc):
+    """The instruction at pc with its immediate fetched from guest memory (add/sub immediate, movz, movn)."""
+    sf, rd, rn = bits(w, 31, 31), bits(w, 4, 0), bits(w, 9, 5)
+    T = 'uint64_t' if sf else 'uint32_t'
+    if bits(w, 28, 23) == 0x22:                              # add / sub (immediate)
+        fetch = 'uint32_t w_ = rd32(0x%xULL); uint64_t i_ = ((w_ >> 10) & 0xfff) << (((w_ >> 22) & 1) ? 12 : 0);' % pc
+        a = 'c->x[%d]' % rn
+        if bits(w, 29, 29):                                  # adds / subs: flags
+            sub = bits(w, 30, 30)
+            return ('{ %s %s r_ = adds%d(c, (%s)%s, %s, %d); %s }'
+                    % (fetch, T, 64 if sf else 32, T, a, ('~(%s)i_' % T) if sub else '(%s)i_' % T, sub,
+                       ('c->x[%d] = r_;' % rd) if rd != 31 else ''))
+        op = '-' if bits(w, 30, 30) else '+'
+        return '{ %s c->x[%d] = (%s)(%s %s i_); }' % (fetch, rd, T, a, op)
+    if bits(w, 28, 23) == 0x25 and bits(w, 30, 29) in (0, 2):  # movn / movz
+        neg = bits(w, 30, 29) == 0
+        if rd == 31:
+            return ';'
+        return ('{ uint32_t w_ = rd32(0x%xULL); uint64_t i_ = (uint64_t)((w_ >> 5) & 0xffff) << (16 * ((w_ >> 21) & 3)); c->x[%d] = (%s)(%s); }'
+                % (pc, rd, T, '~i_' if neg else 'i_'))
+    raise Unimpl('dynimm: not an add/sub immediate, movz or movn')
+
+
 # ---------------------------------------------------------------------------------------------------- Env
 class Env:
     """Per-module lifting state: the image, function extents, imports (PLT), jump tables, landing pads."""
@@ -68,6 +133,8 @@ class Env:
         self.plt_cache, self.plt_slot = {}, {}
         self.plt_syms = None
         self.patches = {}
+        self.sites = {k: set() for k in SITE_KINDS}
+        self.module_index = 0         # NxModule.index: position in the program's module list (import ids)
         self.ends = {}
         self.starts = []
         self.jt = {}                  # address of a `br` -> sorted list of target addresses (jumptables.py)
@@ -226,7 +293,7 @@ def lift_function(env, entry):
             env.wanted.setdefault(tgt, None)
             return 'void f_%x(Ctx *__restrict c) { f_%x(c); }' % (entry, tgt), 0, [], []
         env.imports.add(env.plt_symbol(entry))
-        return 'void f_%x(Ctx *__restrict c) { host_import(c, %d); }' % (entry, sym), 0, [], []
+        return 'void f_%x(Ctx *__restrict c) { host_import(c, NX_IMPORT_ID(%d, %d)); }' % (entry, env.module_index, sym), 0, [], []
     end = env.extent(entry)
     fn = Lifter(entry, end, env)
     lines, bad = [], []
@@ -234,10 +301,20 @@ def lift_function(env, entry):
     while pc < end:
         w = env.word(pc)
         try:
-            stmt = fn.lift(w, pc)
+            if pc in env.sites['dynimm']:
+                stmt = dynimm_stmt(w, pc)
+            else:
+                stmt = fn.lift(w, pc)
         except Unimpl as e:
             stmt = 'guest_unimpl(0x%xULL, 0x%08xU, "%s");' % (pc, w, str(e).replace('"', "'"))
             bad.append((pc, w, str(e)))
+        pre = ''
+        if pc in env.sites['inline']:
+            pre += 'nx_site_inline(c, 0x%xULL); ' % pc
+        if pc in env.sites['midhook'] and pc != entry:
+            pre += 'if (nx_site_midhook(c, 0x%xULL)) return; ' % pc
+        if pre:
+            stmt = '{ %s%s }' % (pre, stmt)
         lines.append((pc, stmt))
         pc += 4
     pads = env.pads[bisect.bisect_left(env.pads, entry):bisect.bisect_left(env.pads, end)]
@@ -245,8 +322,12 @@ def lift_function(env, entry):
     cold = ''
     if len(lines) > env.cfg.optnone_insns:
         cold = 'NX_OPTNONE '
+    elif entry in env.sites['noinline'] or entry in env.sites['entryhook'] or entry in env.sites['midhook']:
+        cold = '__attribute__((noinline)) '
     out = ['%svoid %s_%x(Ctx *__restrict c%s) {' % (cold, 'u' if two else 'f', entry, ', uint64_t rp' if two else ''),
            '  c->fn = 0x%xULL;' % entry]
+    if entry in env.sites['entryhook']:
+        out.append('  if (nx_hook_entry(c, 0x%xULL)) return;' % entry)
     if fn.has_br_fallback:
         out.append('  uint64_t jt = 0;')
     if pads:
@@ -285,8 +366,11 @@ def make_env(spec):
     from .config import load_game
     cfg = load_game(spec.get('game'))
     env = Env(img, cfg)
+    env.module_index = module_index_of(cfg, spec)
     if spec.get('patches'):
         env.patches = load_patches(spec['patches'], img)
+    if spec.get('sites'):
+        load_sites(spec['sites'], env)
     env.ends = dict(spec['ends'])
     env.starts = sorted(env.ends)
     env.jt = {int(k): v for k, v in spec['jt'].items()}
@@ -294,6 +378,16 @@ def make_env(spec):
     env.catchers = set(spec['catchers'])
     env.full = True
     return env
+
+
+def module_index_of(cfg, spec):
+    """NxModule.index: --index, else the position of the module in the game config's list, else 0."""
+    if spec.get('index') is not None:
+        return int(spec['index'])
+    for i, m in enumerate(cfg.modules):
+        if m.name == spec.get('name'):
+            return i
+    return 0
 
 
 def open_image(spec):
@@ -355,9 +449,16 @@ def lift_module(spec, outdir, jobs=8, shards=0, bucket=0xC000, log=print):
     img = open_image(spec)
     cfg = load_game(spec.get('game'))
     env = Env(img, cfg)
+    env.module_index = module_index_of(cfg, spec)
     if spec.get('patches'):
         env.patches = load_patches(spec['patches'], img)
+    if spec.get('sites'):
+        load_sites(spec['sites'], env)
     env.compute_starts()
+    for a in sorted(env.sites['midhook']):                 # a mid-function hook makes its address a function of its own
+        if a not in env.ends:
+            env.ends[a] = env.extent(a)
+    env.starts = sorted(env.ends)
     env.load_eh()
     from . import jumptables
     jumptables.resolve(env)
@@ -481,8 +582,8 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
     m.append('};')
     eh_name = emit_eh_tables(env, m)
     m.append('extern const NxModule nxmod_%s;' % name)
-    m.append('const NxModule nxmod_%s = { "%s", 0x%xULL, 0x%xULL, fns, %d, syms, %d, resume, %d, %s };'
-             % (name, img.name, env.base, env.text_hi, len(all_funcs) + len(env.overrides), nsym, len(resume), eh_name))
+    m.append('const NxModule nxmod_%s = { "%s", %du, 0x%xULL, 0x%xULL, fns, %d, syms, %d, resume, %d, %s };'
+             % (name, img.name, env.module_index, env.base, env.text_hi, len(all_funcs) + len(env.overrides), nsym, len(resume), eh_name))
     m.append('}')
     m.append('')
     _write_if_changed(os.path.join(outdir, 'module_%s.cpp' % name), '\n'.join(m))

@@ -9,6 +9,7 @@
 #     [SHARDS <n>]                 exactly n translation units c_000.cpp ... (default 16)
 #     [JOBS <n>]                   lifter processes (default: all cores)
 #     [PATCHES <file>]             instruction patch list
+#     [SITES <file>]               site list: patches, inline callouts, function hooks (nxrecomp/program.py load_sites)
 #     [OUTDIR <dir>])              where the generated sources go (default: <build>/gen/<target>)
 #
 # Lifts the module with `python -m nxrecomp lift` (a build step, re-run when the input or the lifter changes) and builds
@@ -30,7 +31,7 @@ file(GLOB NX_LIFTER_SOURCES CONFIGURE_DEPENDS
      "${NXRECOMP_ROOT}/include/nxrecomp/*.h")
 
 function(nxrecomp_add_module target)
-  cmake_parse_arguments(A "" "INPUT;NAME;BASE;GAME;KIND;SHARDS;JOBS;OUTDIR;PATCHES" "" ${ARGN})
+  cmake_parse_arguments(A "" "INPUT;NAME;BASE;GAME;KIND;SHARDS;JOBS;OUTDIR;PATCHES;SITES" "" ${ARGN})
   if(NOT A_NAME)
     set(A_NAME main)
   endif()
@@ -56,6 +57,9 @@ function(nxrecomp_add_module target)
   if(A_PATCHES)
     list(APPEND extra --patches ${A_PATCHES})
   endif()
+  if(A_SITES)
+    list(APPEND extra --sites ${A_SITES})
+  endif()
   set(outs "${A_OUTDIR}/funcs.h" "${A_OUTDIR}/module_${A_NAME}.cpp")
   set(shard_srcs "")
   math(EXPR last "${A_SHARDS} - 1")
@@ -76,7 +80,7 @@ function(nxrecomp_add_module target)
     COMMAND "${NX_PYTHON}" -m nxrecomp lift "${A_INPUT}" "${A_OUTDIR}" --name ${A_NAME} --base ${A_BASE}
             --shards ${A_SHARDS} --jobs ${A_JOBS} ${extra}
     WORKING_DIRECTORY "${NXRECOMP_ROOT}"
-    DEPENDS "${A_INPUT}" ${NX_LIFTER_SOURCES}
+    DEPENDS "${A_INPUT}" ${A_SITES} ${NX_LIFTER_SOURCES}
     COMMENT "nxrecomp: lifting ${A_NAME} (${A_INPUT})"
     VERBATIM)
   add_library(${target} STATIC ${shard_srcs} "${A_OUTDIR}/module_${A_NAME}.cpp")
