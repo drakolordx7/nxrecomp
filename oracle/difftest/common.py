@@ -29,17 +29,21 @@ SPECIAL = {
     32: [0x00000000, 0x80000000, 0x3f800000, 0xbf800000, 0x40200000, 0xc0200000, 0x7f800000, 0xff800000, 0x7fc00000,
          0xffc00000, 0x7fc12345, 0x7f800001, 0xffa00000, 0x00000001, 0x007fffff, 0x80000400, 0x00800000, 0x7f7fffff,
          0x477fe000, 0x477ff000, 0x477fefff, 0x33800000, 0x33000000, 0x33000001, 0x38800000, 0x387fffff, 0x3f801000,
-         0x3f803000, 0x3f801001, 0x4f000000, 0x4effffff, 0xcf000000, 0x5f000000, 0x3f000000, 0x3fc00000],
+         0x3f803000, 0x3f801001, 0x4f000000, 0x4effffff, 0xcf000000, 0x5f000000, 0x3f000000, 0x3fc00000, 0x4b800000, 0x4b7fffff, 0x5effffff],
     64: [0x0000000000000000, 0x8000000000000000, 0x3ff0000000000000, 0xbff0000000000000, 0x4004000000000000,
          0xc004000000000000, 0x7ff0000000000000, 0xfff0000000000000, 0x7ff8000000000000, 0xfff8000000000000,
          0x7ff8000000012345, 0x7ff0000000000001, 0xfff4000000000000, 0x0000000000000001, 0x000fffffffffffff,
          0x8000000000000400, 0x0010000000000000, 0x7fefffffffffffff, 0x40effc0000000000, 0x40effe0000000000,
          0x40effdffffffffff, 0x3e70000000000000, 0x3e60000000000000, 0x3e60000000000001, 0x3f10000000000000,
          0x3f0fffffffffffff, 0x3ff0020000000000, 0x3ff0060000000000, 0x3ff0020000001000, 0x41e0000000000000,
-         0x41dfffffffc00000, 0xc1e0000000000000, 0x43e0000000000000, 0x3fe0000000000000, 0x3ff8000000000000],
+         0x41dfffffffc00000, 0xc1e0000000000000, 0x43e0000000000000, 0x3fe0000000000000, 0x3ff8000000000000,
+         0x41dfffffffa00000, 0x41efffffffd00000, 0x43dfffffffffffff, 0x43efffffffffffff, 0x41dffffffff00000],
     16: [0x0000, 0x8000, 0x3c00, 0xbc00, 0x7c00, 0xfc00, 0x7e00, 0xfe00, 0x7e01, 0x7c01, 0xfd55, 0x0001, 0x03ff, 0x8200,
          0x0400, 0x7bff, 0x3555, 0xc123],
 }
+
+
+TINY = [0, 1, 0x80000000, 0xFFFFFFFF, 0x8000000000000000, M64]
 
 
 class Rng:
@@ -59,10 +63,11 @@ def pattern():
     return b''.join(struct.pack('<Q', r.next()) for _ in range(REGION_SIZE // 8))
 
 
-def initial_state(idx, mem, rn, rm, style):
+def initial_state(idx, mem, rn, rm, style, rd=-1):
     """(x[0..31] (x[31] = SP), v[0..31] as 16 bytes, NZCV, TPIDR_EL0, TPIDRRO_EL0). The host (host.cpp) makes the same draws in
-    the same order. style 0: random registers, 1: integer edge values
-    (also for the vector registers' integer lanes)."""
+    the same order. style 0: random registers, 1: integer edge values (also for the vector registers' integer lanes), 2: every
+    general register one of TINY (so INT_MIN / -1, 0 / 0 ... collide), 3..18: byte sweep k = style - 3 (v[rd] = 16k + lane, v[rn] = 0),
+    19..34: byte sweep with the source in v[rn] (v[rd] = 0): together every byte value 0..255 reaches every lane."""
     r = Rng(idx)
     x = [r.next() for _ in range(31)] + [DATA + 0x800]
     v = []
@@ -77,6 +82,20 @@ def initial_state(idx, mem, rn, rm, style):
         for i in range(32):
             if r.next() % 2:
                 v[i] = struct.pack('<QQ', EDGES[r.next() % len(EDGES)], EDGES[r.next() % len(EDGES)])
+    if style == 2:
+        for i in range(31):
+            x[i] = TINY[r.next() % len(TINY)]
+    if style >= 3 and rd >= 0:
+        k = (style - 3) % 16
+        sweep = bytes((16 * k + l) & 0xff for l in range(16))
+        if style < 19:
+            v[rd] = sweep
+            if rn != rd:
+                v[rn] = bytes(16)
+        else:
+            v[rn] = sweep
+            if rn != rd:
+                v[rd] = bytes(16)
     if mem:
         base = DATA + 0x100 * (r.next() % 8)
         index = r.next() % 0x40

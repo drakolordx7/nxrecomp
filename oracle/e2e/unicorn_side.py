@@ -178,7 +178,9 @@ def initial_memory(img):
     return mem
 
 
-def run(elf_path, model='max', entry_symbol='test_main'):
+def run(elf_path, model='max', entry_symbol='test_main', pokes=None, count_addrs=None):
+    """pokes: {address: instruction word} written before the run; count_addrs: addresses whose executions are counted
+    (res['hits'][address])."""
     img = Image.from_static_elf(elf_path)
     uc, A = make_uc(model)
     page = 0x1000
@@ -191,6 +193,16 @@ def run(elf_path, model='max', entry_symbol='test_main'):
     uc.mem_write(TLS, pattern(TLS_SIZE, 2))
     uc.mem_write(TLSRO, pattern(TLS_SIZE, 3))
     uc.mem_map(SENTINEL, 0x1000)
+    for a, w in (pokes or {}).items():
+        uc.mem_write(a, struct.pack('<I', w))
+    hits = {a: 0 for a in (count_addrs or [])}
+    if hits:
+        from unicorn import UC_HOOK_CODE
+
+        def on_count(uc_, address, size, user):
+            if address in hits:
+                hits[address] += 1
+        uc.hook_add(UC_HOOK_CODE, on_count, begin=img.base + img.text_start, end=img.base + img.text_start + img.text_size)
     entry = None
     for name, typ, bind, shndx, value, size in img.symbols():
         if name == entry_symbol:
@@ -231,6 +243,7 @@ def run(elf_path, model='max', entry_symbol='test_main'):
            'v': ['%032x' % uc.reg_read(getattr(A, 'UC_ARM64_REG_V%d' % i)) for i in range(32)],
            'nzcv': (uc.reg_read(A.UC_ARM64_REG_NZCV) >> 28) & 0xf, 'pc': uc.reg_read(A.UC_ARM64_REG_PC)}
     res['finished'] = res['pc'] == SENTINEL
+    res['hits'] = hits
     res['mem'] = {}
     for name, addr, size in rw_regions(img):
         res['mem'][name] = hashlib.sha256(bytes(uc.mem_read(addr, size))).hexdigest()

@@ -233,8 +233,8 @@ static inline double fp_sqrt64(double a) { double r = sqrt(a); return r == r ? r
 static inline double fp_neg64(double a) { return fp_from_bits64(fp_bits64(a) ^ 0x8000000000000000ull); }
 static inline double fp_abs64(double a) { return fp_from_bits64(fp_bits64(a) & 0x7fffffffffffffffull); }
 
-/* Fused n * m + a (FPMulAdd: operand order n, m, a). A quiet NaN addend with an invalid product (inf * 0) gives the
- * default NaN, not the addend. */
+/* Fused n * m + a. NaN order is addend, n, m (measured on Unicorn, not the order of the operands in the encoding). A quiet
+ * NaN addend with an invalid product (inf * 0) gives the default NaN, not the addend. */
 static inline float fp_fma32(float n, float m, float a) {
     float r = fmaf(n, m, a);
     if (r == r) return r;
@@ -242,7 +242,7 @@ static inline float fp_fma32(float n, float m, float a) {
     if (fp_nan32b(ba) && !fp_snan32b(ba) &&
         ((fp_inf32b(bn) && fp_zero32b(bm)) || (fp_zero32b(bn) && fp_inf32b(bm))))
         return fp_from_bits32(0x7fc00000u);
-    return fp_nan_result32(3, n, m, a);
+    return fp_nan_result32(3, a, n, m);       /* the addend has the first place (Unicorn, probed), then n, then m */
 }
 static inline double fp_fma64(double n, double m, double a) {
     double r = fma(n, m, a);
@@ -251,7 +251,7 @@ static inline double fp_fma64(double n, double m, double a) {
     if (fp_nan64b(ba) && !fp_snan64b(ba) &&
         ((fp_inf64b(bn) && fp_zero64b(bm)) || (fp_zero64b(bn) && fp_inf64b(bm))))
         return fp_from_bits64(0x7ff8000000000000ull);
-    return fp_nan_result64(3, n, m, a);
+    return fp_nan_result64(3, a, n, m);
 }
 
 /* FPRecipStepFused (FRECPS) and FPRecipSqrtStepFused (FRSQRTS): the inf * 0 cases are fixed values, else a fused step. */
@@ -263,7 +263,14 @@ static inline float fp_recps32(float a, float b) {
 static inline float fp_rsqrts32(float a, float b) {
     uint32_t ba = fp_bits32(a), bb = fp_bits32(b);
     if ((fp_inf32b(ba) && fp_zero32b(bb)) || (fp_zero32b(ba) && fp_inf32b(bb))) return 1.5f;
-    return fp_fma32(fp_neg32(a), b, 3.0f) * 0.5f;      /* halving is exact here */
+    /* (3 - a*b) / 2, rounded once. Halving a normal operand is exact, so fold the / 2 into it: the fused multiply-add then
+     * cannot overflow in the intermediate product (a = 1.5, b = FLT_MAX has the finite result -0.75 * FLT_MAX). */
+    float na = fp_neg32(a);
+    if (a == a && b == b) {
+        if (fabsf(a) >= 2.0f * 1.17549435e-38f) return fmaf(na * 0.5f, b, 1.5f);
+        if (fabsf(b) >= 2.0f * 1.17549435e-38f) return fmaf(na, b * 0.5f, 1.5f);
+    }
+    return fp_fma32(na, b, 3.0f) * 0.5f;
 }
 static inline double fp_recps64(double a, double b) {
     uint64_t ba = fp_bits64(a), bb = fp_bits64(b);
@@ -273,7 +280,28 @@ static inline double fp_recps64(double a, double b) {
 static inline double fp_rsqrts64(double a, double b) {
     uint64_t ba = fp_bits64(a), bb = fp_bits64(b);
     if ((fp_inf64b(ba) && fp_zero64b(bb)) || (fp_zero64b(ba) && fp_inf64b(bb))) return 1.5;
-    return fp_fma64(fp_neg64(a), b, 3.0) * 0.5;
+    double na = fp_neg64(a);
+    if (a == a && b == b) {
+        if (fabs(a) >= 2.0 * 2.2250738585072014e-308) return fma(na * 0.5, b, 1.5);
+        if (fabs(b) >= 2.0 * 2.2250738585072014e-308) return fma(na, b * 0.5, 1.5);
+    }
+    return fp_fma64(na, b, 3.0) * 0.5;
+}
+
+/* FCVT between single and double (FPConvert, FPCR.DN = 0). A signalling NaN becomes quiet with its payload kept (the
+ * top payload bits), sign kept. The host conversion does not quieten every such NaN (measured on Unicorn), so the NaN
+ * case is done on the bit patterns. */
+static inline float fp_d2s(double x) {
+    uint64_t b = fp_bits64(x);
+    if (fp_nan64b(b))
+        return fp_from_bits32(((uint32_t)(b >> 32) & 0x80000000u) | 0x7f800000u | 0x00400000u | ((uint32_t)(b >> 29) & 0x3fffffu));
+    return (float)x;
+}
+static inline double fp_s2d(float x) {
+    uint32_t b = fp_bits32(x);
+    if (fp_nan32b(b))
+        return fp_from_bits64(((uint64_t)(b & 0x80000000u) << 32) | 0x7ff0000000000000ull | FP_QBIT64 | ((uint64_t)(b & 0x3fffffu) << 29));
+    return (double)x;
 }
 
 /* FRINTx: mode 0 nearest-even (FRINTN, FRINTX, FRINTI in the default rounding mode), 1 nearest ties away (FRINTA),

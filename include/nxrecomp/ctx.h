@@ -19,7 +19,7 @@
 #ifndef NXRECOMP_CTX_H
 #define NXRECOMP_CTX_H
 
-#define NXRECOMP_ABI_VERSION 1
+#define NXRECOMP_ABI_VERSION 2   /* 2: host_import takes a globally unique import id; NxModule.index */
 
 #include <stdint.h>
 #include <stddef.h>
@@ -63,9 +63,15 @@ typedef struct Ctx {
 /* Indirect call or tail call to a guest address (BLR, BR out of a function, an unresolved jump table).
  * Looks the address up in the function tables of every loaded module. */
 void call_indirect(Ctx *c, uint64_t addr);
-/* A call to a symbol another module provides (a PLT stub whose target is undefined in this module): the runtime's
- * handler for dyn_syms[sym] of the calling module. */
-void host_import(Ctx *c, int sym);
+/* A call to a symbol another module provides (a PLT stub whose target is undefined in this module). `import_id` is globally
+ * unique: NX_IMPORT_ID(module index, symbol index). The module index is NxModule.index of the calling module (the order of
+ * the game config's module list, or --index of `nxrecomp lift`); the symbol index is the position in that module's
+ * dyn_syms (NxModule.syms), so the runtime finds the name with nx_module_by_index(NX_IMPORT_MODULE(id))->syms[NX_IMPORT_SYM(id)].
+ * (ABI 1 passed only the symbol index.) */
+#define NX_IMPORT_ID(module_index, sym) (((uint32_t)(module_index) << 20) | (uint32_t)(sym))
+#define NX_IMPORT_MODULE(id) ((uint32_t)(id) >> 20)
+#define NX_IMPORT_SYM(id) ((uint32_t)(id) & 0xfffffu)
+void host_import(Ctx *c, uint32_t import_id);
 /* Raised by the generated code for: an undefined / reserved instruction word, BRK, falling off the end of a function. */
 void guest_trap(const char *what, uint64_t addr);
 /* An instruction the lifter could not translate (a gap in coverage, listed by `cover`). */
@@ -75,6 +81,12 @@ void guest_svc(Ctx *c, uint32_t number);
  * CNTVCT/CNTFRQ). `sysreg` is bits 20:5 of the MRS/MSR word (o0:op1:CRn:CRm:op2). */
 uint64_t guest_mrs(Ctx *c, uint32_t sysreg);
 void guest_msr(Ctx *c, uint32_t sysreg, uint64_t value);
+/* Sites compiled in by the lifter from a site list (nxrecomp/program.py load_sites): a callout before an instruction, a
+ * function hook at a function's start, a hook at a mid-function address. A hook returns nonzero when it has done the
+ * function's work (the lifted function then returns at once). */
+void nx_site_inline(Ctx *c, uint64_t addr);
+int nx_site_midhook(Ctx *c, uint64_t addr);
+int nx_hook_entry(Ctx *c, uint64_t addr);
 /* Diagnostics of a failed STXR (bits < 0: the monitor was not open on that address). May be a no-op. */
 void stx_diag(Ctx *c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, int bits);
 
@@ -113,6 +125,7 @@ typedef struct {
 /* Everything the lifter writes about one module, in `nxmod_<name>` (module_<name>.cpp). */
 typedef struct NxModule {
     const char *name;
+    uint32_t index;              /* position in the program's module list (see NX_IMPORT_ID); unique per program */
     uint64_t base;               /* guest address the image is mapped at */
     uint64_t text_end;           /* base + size of .text */
     const FnEntry *fns; int nfns;            /* sorted by address */

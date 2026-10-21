@@ -145,8 +145,11 @@ inline uint64_t n1_hn(uint64_t a, uint64_t b, bool sub, bool rnd) {
 // sat_2E( [acc +/-] 2 * a * b ), with a, b signed E-bit and acc signed 2E-bit.
 template <int E>
 inline uint64_t n1_dmul(uint64_t a, uint64_t b, uint64_t acc, int mode) {
-    const __int128 p = __int128(n1_sext<E>(a)) * __int128(n1_sext<E>(b)) * 2;
-    if (mode == 0) return n1_sat_s<2 * E>(p);
+    const __int128 p0 = __int128(n1_sext<E>(a)) * __int128(n1_sext<E>(b)) * 2;
+    if (mode == 0) return n1_sat_s<2 * E>(p0);
+    // the doubled product saturates on its own FIRST (INT_MIN * INT_MIN * 2 = 2^(2E-1) becomes 2^(2E-1) - 1), then the
+    // accumulate saturates again (measured on Unicorn, matches the Arm ARM SQDMLAL / SQDMLSL pseudocode)
+    const __int128 p = n1_sext<2 * E>(n1_sat_s<2 * E>(p0));
     const __int128 s = n1_sext<2 * E>(acc);
     return n1_sat_s<2 * E>(mode == 1 ? s + p : s - p);
 }

@@ -15,7 +15,7 @@ def spec_from(a):
     if not kind:
         magic = open(a.input, 'rb').read(4)
         kind = 'nso' if magic == b'NSO0' else 'static_elf'
-    return {'kind': kind, 'path': a.input, 'base': int(a.base, 16), 'name': a.name, 'game': a.game, 'patches': a.patches}
+    return {'kind': kind, 'path': a.input, 'base': int(a.base, 16), 'name': a.name, 'game': a.game, 'patches': a.patches, 'sites': a.sites, 'index': a.index}
 
 
 def main(argv=None):
@@ -33,6 +33,8 @@ def main(argv=None):
         p.add_argument('--base', default='0x7100000000')
         p.add_argument('--name', default='main')
         p.add_argument('--patches')
+        p.add_argument('--index', type=int, help='module index (NxModule.index, import ids); default: position in the game config')
+        p.add_argument('--sites', help='site list: patches, inline callouts, hooks (see program.load_sites)')
     a = ap.parse_args(argv)
     spec = spec_from(a)
     from . import program

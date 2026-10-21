@@ -53,13 +53,23 @@ void call_indirect(Ctx *c, uint64_t addr) {
     fprintf(stderr, "call_indirect to %llx: not a lifted function\n", (unsigned long long)addr);
     exit(3);
 }
-void host_import(Ctx *c, int sym) { (void)c; fprintf(stderr, "host_import %d\n", sym); exit(3); }
+void host_import(Ctx *c, uint32_t sym) { (void)c; fprintf(stderr, "host_import %u\n", sym); exit(3); }
 void guest_trap(const char *what, uint64_t addr) { fprintf(stderr, "guest_trap: %s at %llx\n", what, (unsigned long long)addr); exit(10); }
 void guest_unimpl(uint64_t pc, uint32_t insn, const char *what) { fprintf(stderr, "guest_unimpl at %llx: %08x %s\n", (unsigned long long)pc, insn, what); exit(11); }
 void guest_svc(Ctx *c, uint32_t n) { (void)c; fprintf(stderr, "guest_svc %u\n", n); exit(12); }
 uint64_t guest_mrs(Ctx *c, uint32_t r) { (void)c; fprintf(stderr, "guest_mrs %x\n", r); exit(13); }
 void guest_msr(Ctx *c, uint32_t r, uint64_t v) { (void)c; (void)v; fprintf(stderr, "guest_msr %x\n", r); exit(13); }
 void stx_diag(Ctx *c, uint64_t a, uint64_t e, uint64_t s, uint64_t v, int b) { (void)c; (void)a; (void)e; (void)s; (void)v; (void)b; }
+}
+
+// Site callouts (nxrecomp/ctx.h): counted per address and printed, so a test can compare them with the number of times
+// Unicorn executed that address. They never take over a function (return 0).
+#include <map>
+static std::map<uint64_t, uint64_t> g_hits;
+extern "C" {
+void nx_site_inline(Ctx *c, uint64_t addr) { (void)c; g_hits[addr]++; }
+int nx_site_midhook(Ctx *c, uint64_t addr) { (void)c; g_hits[addr]++; return 0; }
+int nx_hook_entry(Ctx *c, uint64_t addr) { (void)c; g_hits[addr]++; return 0; }
 }
 
 int main(int argc, char **argv) {
@@ -96,6 +106,21 @@ int main(int argc, char **argv) {
     pattern((uint8_t *)(uintptr_t)TLS, TLS_SIZE, 2);
     pattern((uint8_t *)(uintptr_t)TLSRO, TLS_SIZE, 3);
 
+    // NX_POKE=addr:word[,addr:word...] rewrites instruction words in guest memory before the run (the dynimm site test)
+    if (const char *poke = getenv("NX_POKE")) {
+        std::string spec = poke;
+        size_t p0 = 0;
+        while (p0 < spec.size()) {
+            size_t e = spec.find(',', p0);
+            if (e == std::string::npos) e = spec.size();
+            std::string item = spec.substr(p0, e - p0);
+            size_t colon = item.find(':');
+            uint64_t a = strtoull(item.c_str(), nullptr, 16);
+            uint32_t w = (uint32_t)strtoull(item.c_str() + colon + 1, nullptr, 16);
+            memcpy((void *)(uintptr_t)a, &w, 4);
+            p0 = e + 1;
+        }
+    }
     std::vector<Region> regions;
     for (auto &h : loads) if (h.flags & 2) regions.push_back({ h.vaddr, h.memsz });
     regions.push_back({ STACK, STACK_SIZE });
@@ -122,6 +147,7 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 32; i++) fprintf(t, "v%d %016llx%016llx\n", i, (unsigned long long)c.v[i].d[1], (unsigned long long)c.v[i].d[0]);
     fprintf(t, "nzcv %x\n", (c.N << 3) | (c.Z << 2) | (c.C << 1) | c.V);
     fprintf(t, "tpidr %llx\ntpidrro %llx\n", (unsigned long long)c.tpidr, (unsigned long long)c.tpidrro);
+    for (auto &h : g_hits) fprintf(t, "hit %llx %llu\n",(unsigned long long)h.first, (unsigned long long)h.second);
     fclose(t);
     FILE *b = fopen((base + ".bin").c_str(), "wb");
     for (auto &r : regions) fwrite((void *)(uintptr_t)r.addr, 1, r.size, b);

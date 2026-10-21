@@ -208,7 +208,8 @@ inline uint64_t rev32_64(uint64_t v) {
 
 // ---- floating point -----------------------------------------------------------------------------------------
 
-inline float f16_to_f32(uint16_t h) {
+inline float f16_to_f32(uint16_t h) { return half_to_f32(h); }   // exact (quietens NaNs), fpexact.h
+inline float f16_to_f32_ported(uint16_t h) {
     uint32_t s = uint32_t(h >> 15) << 31, e = (h >> 10) & 0x1F, m = h & 0x3FF, bits;
     if (e == 0) {
         if (m == 0) {
@@ -229,7 +230,8 @@ inline float f16_to_f32(uint16_t h) {
     return std::bit_cast<float>(bits);
 }
 
-inline uint16_t f32_to_f16(float f) {
+inline uint16_t f32_to_f16(float f) { return f32_to_half(f); }   // exact (fpexact.h)
+inline uint16_t f32_to_f16_ported(float f) {
     uint32_t x = std::bit_cast<uint32_t>(f);
     uint32_t s = (x >> 16) & 0x8000;
     int32_t e = int32_t((x >> 23) & 0xFF) - 127 + 15;
