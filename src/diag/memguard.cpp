@@ -2,6 +2,9 @@
 // Adapted from SuperMarioWonderRecomp runtime/src/memguard_win.cpp (MIT, Copyright (c) 2026 BelmanteGu); see THIRD_PARTY_NOTICES.md.
 #include "nxrt/memguard.h"
 
+#include "nxrt/config.h"
+#include "nxrt/log.h"
+
 #include <windows.h>
 #include <psapi.h>
 
@@ -64,17 +67,17 @@ void guard_loop(Settings s) {
 
         if (Clock::now() >= next_log) {
             next_log = Clock::now() + std::chrono::seconds(30);
-            // TODO(lead): use NXLOG_*
-            std::fprintf(stderr, "memguard: footprint %.2f GB (peak %.2f GB, limit %.1f GB)\n", gb,
-                         static_cast<double>(g_peak.load()) / kBytesPerGb, limit_gb);
+            NXLOG_I("memory", "footprint %.2f GB (peak %.2f GB, limit %.1f GB)", gb,
+                    static_cast<double>(g_peak.load()) / kBytesPerGb, limit_gb);
         }
 
         if (f > s.limit && !g_tripped.exchange(true)) {
             if (s.on_exceed) {
                 s.on_exceed(f, s.limit, s.user);
             } else {
-                // TODO(lead): use NXLOG_*
-                std::fprintf(stderr, "memguard: %.2f GB is over the %.1f GB limit: stopping\n", gb, limit_gb);
+                NXLOG_E("memory", "%.2f GB is over the %.1f GB limit ([memory] limit_gb): stopping", gb, limit_gb);
+                log_flush();
+                std::fprintf(stderr, "memory: %.2f GB is over the %.1f GB limit: stopping\n", gb, limit_gb);
                 std::fflush(nullptr);
                 TerminateProcess(GetCurrentProcess(), 3);
             }
@@ -104,9 +107,9 @@ void memguard_start(const MemGuardOptions& opt) {
     if (g_thread.joinable()) return;  // already running: ignored
 
     Settings s{};
-    // TODO(lead): switch to config_get_double("memory","limit_gb") once config.cpp is merged
-    s.limit = opt.limit_bytes ? opt.limit_bytes : gb_to_bytes(memguard_limit_gb(std::getenv("NXRT_MEMORY_LIMIT_GB")));
-    s.poll_ms = opt.poll_ms ? opt.poll_ms : 250;  // TODO(lead): read [memory] poll_ms from config once config.cpp is merged
+    s.limit = opt.limit_bytes ? opt.limit_bytes : gb_to_bytes(memguard_limit_gb(config_get_str("memory", "limit_gb", "8").c_str()));
+    const int64_t poll = config_get_int("memory", "poll_ms", 250);
+    s.poll_ms = opt.poll_ms ? opt.poll_ms : (poll > 0 ? static_cast<uint32_t>(poll) : 250u);
     s.on_exceed = opt.on_exceed;
     s.user = opt.user;
 
