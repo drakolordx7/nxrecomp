@@ -447,6 +447,11 @@ size_t module_register_functions(Module* m, const FuncEntry* table, size_t count
     return ok;
 }
 
+size_t module_register_functions(Module* m, const ::FnEntry* table, size_t count) {
+    static_assert(sizeof(::FnEntry) == sizeof(FuncEntry), "FnEntry and FuncEntry must have the same layout");
+    return module_register_functions(m, reinterpret_cast<const FuncEntry*>(table), count);
+}
+
 namespace {
 bool run_one(Module* m, ::Ctx* ctx, uint64_t addr, const char* what) {
     if (!addr || addr == ~0ull) return true;

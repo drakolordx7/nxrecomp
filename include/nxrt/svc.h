@@ -27,7 +27,7 @@ void svc_dispatch(::Ctx* c, uint32_t number, uint64_t pc = 0);
 
 // ---- unknown SVC bookkeeping --------------------------------------------------------------------------------------------------
 // A number with no handler logs "UNKNOWN SVC 0x%02X (<name>) x0..x7 caller=..." (every call up to [svc] unknown_log_limit, default
-// 100, per number; afterwards every 1000th), counts it, and returns 0xF001 in w0.
+// 100, per number; afterwards every 1000th), counts it, and returns kernel::kNotImplemented (0x4201, ResultNotImplemented) in w0.
 struct SvcUnknownRecord {
     uint32_t number = 0;
     uint64_t count = 0;

@@ -108,6 +108,10 @@ Module* module_load_memory(const void* data, size_t size, const LoadOptions& opt
 bool module_link_all();
 // Lifted code: registers each entry in the call_indirect table. Entries outside the module's image are rejected (counted, logged).
 size_t module_register_functions(Module* m, const FuncEntry* table, size_t count);
+size_t module_register_functions(Module* m, const ::FnEntry* table, size_t count);   // the lifter's FnEntry (same layout)
+// Registers everything a lifted module's tables say (NxModule from nxrecomp/ctx.h): its functions, and its dynamic symbol table so that
+// host_import(c, sym) can name the import. `m` is the mapped image (null: the NxModule's own base/text_end range is trusted).
+size_t module_register_nxmodule(Module* m, const NxModule* nx);
 // Runs DT_INIT then every init_array entry on `ctx` through dispatch_call (entries must be registered functions or HLE thunks).
 bool module_run_init(Module* m, ::Ctx* ctx);
 bool module_run_fini(Module* m, ::Ctx* ctx);       // fini_array in reverse order, then DT_FINI

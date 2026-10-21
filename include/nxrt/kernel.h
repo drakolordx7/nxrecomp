@@ -14,18 +14,29 @@ namespace nxrt::kernel {
 
 // ---- result codes (module | description << 9; the low 9 bits are the module, kernel = 1) ----------------------------------
 constexpr uint32_t make_result(uint32_t module, uint32_t desc) { return module | (desc << 9); }
+// Values from Atmosphere libvapours svc_results.hpp (module 1): description numbers below.
 constexpr uint32_t kOk = 0;
+constexpr uint32_t kNotImplemented = 0x4201;     // 33: what a kernel answers for an SVC number it does not implement
 constexpr uint32_t kInvalidSize = 0xCA01;        // 101
 constexpr uint32_t kInvalidAddress = 0xCC01;     // 102
 constexpr uint32_t kOutOfResource = 0xCE01;      // 103
 constexpr uint32_t kOutOfMemory = 0xD001;        // 104
-constexpr uint32_t kInvalidMemoryState = 0xD401; // 106
+constexpr uint32_t kOutOfHandles = 0xD201;       // 105
+constexpr uint32_t kInvalidMemoryState = 0xD401; // 106 (InvalidCurrentMemory)
 constexpr uint32_t kInvalidPermission = 0xD801;  // 108
+constexpr uint32_t kInvalidMemoryRegion = 0xDC01;// 110
+constexpr uint32_t kInvalidPriority = 0xE001;    // 112
+constexpr uint32_t kInvalidCoreId = 0xE201;      // 113
 constexpr uint32_t kInvalidHandle = 0xE401;      // 114
+constexpr uint32_t kInvalidPointer = 0xE601;     // 115
+constexpr uint32_t kInvalidCombination = 0xE801; // 116
 constexpr uint32_t kTimedOut = 0xEA01;           // 117
 constexpr uint32_t kCancelled = 0xEC01;          // 118
+constexpr uint32_t kOutOfRange = 0xEE01;         // 119
+constexpr uint32_t kInvalidEnum = 0xF001;        // 120
+constexpr uint32_t kNotFound = 0xF201;           // 121
+constexpr uint32_t kSessionClosed = 0xF601;      // 123
 constexpr uint32_t kInvalidState = 0xFA01;       // 125
-constexpr uint32_t kNotImplemented = 0xF001;     // 120 (also what an unknown SVC returns)
 constexpr uint32_t kStubService = make_result(0x1D5, 0x5E5);   // 0x0BCBD5: "an nxrt stub service answered": never a real Horizon result
 
 constexpr uint32_t kPseudoCurrentThread = 0xFFFF8000;
@@ -95,6 +106,7 @@ struct KThread : KObject {
     uint32_t wait_tag = 0;
     void* cv_storage[1] = {nullptr};    // CONDITION_VARIABLE is pointer sized: this thread's own wake-up (kernel_sync.cpp)
     std::weak_ptr<KThread> self;
+    ~KThread() override;                // closes host_handle
     ObjType type() const override { return ObjType::Thread; }
     bool signaled() const override { return exited; }
 };
@@ -120,7 +132,9 @@ KThread* current_thread();                                 // nullptr on a host 
 std::vector<std::shared_ptr<KThread>> threads();           // every thread ever created and not yet destroyed
 bool thread_join(uint32_t handle, uint32_t timeout_ms);    // host-side wait for the thread to finish (tests, shutdown)
 void kernel_reset();                                       // tests: join/forget threads, clear handles, sync state (no thread may run guest code)
-uint64_t thread_count_running();
+uint64_t thread_count_running();                           // started and not yet exited
+bool thread_set_priority(KThread& t, int hos_prio);       // updates the object and the host thread
+bool thread_set_core_mask(KThread& t, int ideal_core, uint64_t mask);   // console cores; false when mask has no usable core
 
 // ---- scheduling model (console cores) ----------------------------------------------------------------------------------------
 // The console runs the highest-priority ready thread on each of its three application cores. The model pins every guest thread's
