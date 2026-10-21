@@ -27,6 +27,17 @@ Rules:
 | `process` | `program_id` | `0` | `NXRT_PROCESS_PROGRAM_ID` | `src/kernel/svc_info.cpp` | Value returned by GetInfo ProgramId. |
 | `process` | `pid` | `0x51` | `NXRT_PROCESS_PID` | `src/kernel/svc_info.cpp` | Process id returned by GetProcessId. The InitialProcessIdRange query uses the built-in `0x51` and ignores this key. |
 | `threads` | `host_stack_mb` | `64` | `NXRT_THREADS_HOST_STACK_MB` | `src/kernel/thread.cpp` | Host stack reservation per guest thread, in MiB. Values below 1: 64. |
+| `gfx` | `gpu` | empty | `NXRT_GFX_GPU` | `src/gfx/vk_device.cpp` | Vulkan device override: `discrete`, `integrated`, an index from the logged GPU list, or part of the device name. Empty: the discrete GPU with the most video memory, else integrated. A value that matches nothing is logged and the default is used. |
+| `gfx` | `validation` | `true` in debug builds, `false` otherwise | `NXRT_GFX_VALIDATION` | `src/gfx/vk_device.cpp` | Load VK_LAYER_KHRONOS_validation (with synchronization validation) and count what it reports. Needs the Vulkan SDK; without the layer a warning is logged and the run goes on. |
+| `gfx` | `headless` | `false` | `NXRT_GFX_HEADLESS` | `src/gfx/vk_device.cpp`, `src/gfx/scene_runner.cpp` | No window and no surface: rendering goes to offscreen images (screenshots and automated tests). |
+| `gfx` | `hidden` | `false` | `NXRT_GFX_HIDDEN` | `src/gfx/platform.cpp` | Create the window hidden. CTest sets it to 1. |
+| `gfx` | `present_mode` | `fifo` | `NXRT_GFX_PRESENT_MODE` | `src/gfx/vk_renderer.cpp` | `fifo`, `fifo_relaxed`, `mailbox` or `immediate`. A mode the surface does not offer falls back (mailbox to immediate to fifo). |
+| `gfx` | `frames_in_flight` | `2` | `NXRT_GFX_FRAMES_IN_FLIGHT` | `src/gfx/vk_renderer.cpp` | Frames the CPU may record ahead of the GPU, 1 to 3. |
+| `gfx` | `overlay_key` | `F1` | `NXRT_GFX_OVERLAY_KEY` | `src/gfx/overlay.cpp` | SDL scancode name of the key that shows and hides the ImGui overlay. |
+| `gfx` | `screenshot` | empty | `NXRT_GFX_SCREENSHOT` | `src/gfx/scene_runner.cpp` | PNG path: the frame loop writes the presented image of `screenshot_frame` there. |
+| `gfx` | `screenshot_frame` | `60` | `NXRT_GFX_SCREENSHOT_FRAME` | `src/gfx/scene_runner.cpp` | Frame number captured when `screenshot` is set. |
+| `nvn` | `log_first_calls` | `3` | `NXRT_NVN_LOG_FIRST_CALLS` | `src/gfx/nvn/nvn_loader.cpp` | Calls of each unimplemented NVN entry point logged at Info; later calls are counted and logged at Trace. |
+| `nvn` | `unknown` | `stub` | `NXRT_NVN_UNKNOWN` | `src/gfx/nvn/nvn_loader.cpp` | Answer to an NVN name that is not in the table: `stub` hands out a logging stub (logged as UNKNOWN NVN PROC), `null` returns null. |
 
 ## Environment variables read directly
 

@@ -130,6 +130,7 @@ std::unique_ptr<TestScene> TestScene::create(Device& dev, VkFormat color_format,
     s.tiled = lay.tiled_size;
     s.round_trip = back == linear;
     if (!s.round_trip) return fail("tiling round trip changed the texture");
+    if (std::memcmp(tiled.data(), linear.data(), std::min(tiled.size(), linear.size())) == 0) return fail("tile() left the texture in linear order");
     NXLOG_I(kTag, "test texture %ux%u, %u levels: %llu linear bytes, %llu tiled bytes (block height %u GOBs), round trip ok", kTexSize, kTexSize,
             levels, static_cast<unsigned long long>(lay.linear_size), static_cast<unsigned long long>(lay.tiled_size), td.gob_blocks_y);
 

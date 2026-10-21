@@ -3,6 +3,8 @@
 // frame's scheduled start (FrameLimiter), THEN pump the platform and read input, then record and present.
 #include <windows.h>
 
+#include <algorithm>
+
 #include "nxrt/config.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/input.h"
@@ -101,11 +103,13 @@ SceneRunResult run_scene(const SceneRunDesc& desc) {
         input::queue_clear();
         dev->validation_reset();
         const uint64_t t0 = FrameLimiter::now_ns();
-        uint64_t rendered = 0, attempts = 0;
+        uint64_t rendered = 0, attempts = 0, lat_n = 0;
+        double lat_sum = 0, lat_max = 0;
         bool overlay_shown = false;
         while (d.frames == 0 || rendered < d.frames) {
             limiter.begin_frame();                      // 1. wait for the frame start, before touching input
             if (window) platform::pump_events();        // 2. sample input as late as possible
+            const uint64_t t_input = FrameLimiter::now_ns();
             if (overlay && d.overlay_visible_from_frame >= 0 && !overlay_shown && static_cast<int64_t>(rendered) >= d.overlay_visible_from_frame) {
                 input::Event ev;                        // the real path: a key event through the queue
                 ev.type = input::EventType::KeyDown;
@@ -133,6 +137,12 @@ SceneRunResult run_scene(const SceneRunDesc& desc) {
             scene->record(fi);
             rend->end_frame();
             ++rendered;
+            if (!d.warmup_frames || rendered > d.warmup_frames) {
+                const double ms = static_cast<double>(FrameLimiter::now_ns() - t_input) * 1e-6;
+                lat_sum += ms;
+                lat_max = std::max(lat_max, ms);
+                ++lat_n;
+            }
             if (d.warmup_frames && rendered == d.warmup_frames) limiter.reset_stats();
         }
         const uint64_t t1 = FrameLimiter::now_ns();
@@ -143,6 +153,8 @@ SceneRunResult run_scene(const SceneRunDesc& desc) {
             SetPriorityClass(GetCurrentProcess(), old_class);
         }
         res.frames = rendered;
+        res.input_to_submit_mean_ms = lat_n ? lat_sum / static_cast<double>(lat_n) : 0;
+        res.input_to_submit_max_ms = lat_max;
         res.pacing = limiter.stats();
         res.renderer = rend->stats();
         res.validation = dev->validation_stats();
