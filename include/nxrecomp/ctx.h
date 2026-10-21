@@ -89,18 +89,25 @@ typedef struct { uint64_t pad; void (*fn)(Ctx *, uint64_t); } NxResume;
  * that this function catches, calls body(c, landing pad) there instead. (ssbu-recomp's nro_catch_call.) */
 void nx_catch_call(Ctx *c, void (*body)(Ctx *, uint64_t));
 
-/* One row of the unwind table: from `pc` (inclusive) to the next row, the CFA is x[cfa_reg] + cfa_off and callee-saved
- * register `reg` is at CFA + off (see nxrecomp/eh.py; same shape as .eh_frame after CFA program interpretation). */
-typedef struct { uint64_t pc; uint8_t cfa_reg; uint8_t nsaved; int16_t cfa_off; uint32_t saved_first; } NxCfiRow;
-typedef struct { uint8_t reg; int16_t off; } NxCfiSaved;         /* reg 0..30 = x0..x30, 64..95 = v0..v31 (low 64 bits) */
-/* One FDE: the function [start, end), its CFI rows, its LSDA call sites (landing pads, actions). */
-typedef struct { uint64_t start, end; uint32_t row_first, row_count; uint32_t site_first, site_count; } NxFde;
-typedef struct { uint64_t start, len, pad; int32_t action; } NxCallSite;      /* action: index+1 into actions, 0 = cleanup only */
-typedef struct { int32_t filter; int32_t next; } NxAction;                    /* filter > 0: type table index, 0 cleanup; next: relative index, 0 end */
+/* Unwind tables (from .eh_frame and the C++ LSDAs, see nxrecomp/eh.py and ehtables.py). All arrays are sorted by address.
+ * Row: from `pc` (inclusive) to the next row of the same FDE, the CFA is x[cfa_reg] + cfa_off (cfa_reg 29 = FP, 31 = SP)
+ * and each NxCfiSaved of the row says where a callee-saved register was stored: at CFA + off. reg 0..30 = x0..x30,
+ * 64..95 = v0..v31 (low 64 bits). The return address is the x30 entry. */
+typedef struct { uint64_t pc; uint8_t cfa_reg; uint8_t nsaved; int32_t cfa_off; uint32_t saved_first; } NxCfiRow;
+typedef struct { uint8_t reg; int32_t off; } NxCfiSaved;
+/* One FDE: the function [start, end), its CFI rows, its LSDA call sites, and where its type table starts. */
+typedef struct { uint64_t start, end; uint32_t row_first, row_count; uint32_t site_first, site_count; uint32_t type_first; } NxFde;
+/* Call site: [start, start + len) may throw; `pad` is the landing pad (0 = none: the exception continues to the caller);
+ * `action` is 1 + an index into NxEh.actions, 0 = cleanup only (run the pad, then _Unwind_Resume). */
+typedef struct { uint64_t start, len, pad; uint32_t action; } NxCallSite;
+/* Action record: filter > 0 catches the type types[fde.type_first + filter - 1] (typeinfo address; 0 = catch(...)),
+ * filter == 0 is a cleanup, filter < 0 an exception specification (unsupported, listed for completeness).
+ * next: 1 + the index of the next record of the chain, 0 = end. */
+typedef struct { int32_t filter; uint32_t next; } NxAction;
 typedef struct {
     const NxFde *fdes; int nfdes;
     const NxCfiRow *rows; const NxCfiSaved *saved;
-    const NxCallSite *sites; const NxAction *actions; const uint64_t *types;   /* types: typeinfo addresses, 1-based by filter */
+    const NxCallSite *sites; const NxAction *actions; const uint64_t *types;
 } NxEh;
 
 /* Everything the lifter writes about one module, in `nxmod_<name>` (module_<name>.cpp). */
@@ -135,6 +142,21 @@ NX_DEF_MEM(8) NX_DEF_MEM(16) NX_DEF_MEM(32) NX_DEF_MEM(64)
         return 1; \
     }
 NX_DEF_STX(8) NX_DEF_STX(16) NX_DEF_STX(32) NX_DEF_STX(64)
+
+/* Exclusive pairs. 32-bit pair: one 64-bit access through ex_addr / ex_val and stx64. 64-bit pair: a 128-bit access,
+ * compared and swapped as a whole (the monitor keeps the high half in ex_val_hi). Needs -mcx16 on x64 (cmpxchg16b). */
+static inline void ldxp128(Ctx *c, uint64_t a, uint64_t *lo, uint64_t *hi) {
+    unsigned __int128 v = __atomic_load_n((unsigned __int128 *)(uintptr_t)a, __ATOMIC_ACQUIRE);
+    c->ex_addr = a; c->ex_val = (uint64_t)v; c->ex_val_hi = (uint64_t)(v >> 64);
+    *lo = (uint64_t)v; *hi = (uint64_t)(v >> 64);
+}
+static inline uint32_t stxp32(Ctx *c, uint64_t a, uint32_t lo, uint32_t hi) { return stx64(c, a, (uint64_t)lo | ((uint64_t)hi << 32)); }
+static inline uint32_t stxp64(Ctx *c, uint64_t a, uint64_t lo, uint64_t hi) {
+    if (c->ex_addr != a) { stx_diag(c, a, 0, 0, lo, -128); return 1; }
+    c->ex_addr = ~0ull;
+    unsigned __int128 e = ((unsigned __int128)c->ex_val_hi << 64) | c->ex_val, n = ((unsigned __int128)hi << 64) | lo;
+    return __atomic_compare_exchange_n((unsigned __int128 *)(uintptr_t)a, &e, n, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ? 0 : 1;
+}
 
 static inline V128 rdv(uint64_t a, int n) { V128 v; v.d[0] = 0; v.d[1] = 0; memcpy(&v, (void *)(uintptr_t)a, (size_t)n); return v; }
 static inline void wrv(uint64_t a, const V128 *v, int n) { memcpy((void *)(uintptr_t)a, v, (size_t)n); }
