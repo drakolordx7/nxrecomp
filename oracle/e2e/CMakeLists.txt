@@ -3,7 +3,7 @@
 # E2E_CASE_NAMES and E2E_ELF_<case>) is lifted by nxrecomp and linked with the x64 runner into run_<case>.exe.
 cmake_minimum_required(VERSION 3.25)
 project(nx_e2e C CXX)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NxRecomp.cmake")
 include("${E2E_CASES}")
 foreach(case ${E2E_CASE_NAMES})
