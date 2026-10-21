@@ -325,6 +325,35 @@ def cmd_build(a, gen=None, bdir=None):
     print('built %s (%d generated tests did not compile)' % (os.path.join(bdir, 'difftest.exe'), len(broken)))
 
 
+
+# Unicorn 2.1.4 (QEMU) executes LDSMAX / LDSMIN / STSMAX / STSMIN of the byte, halfword and word sizes with an UNSIGNED
+# comparison (reproduced: LDSMAX w, memory 1, operand 0xffffffff stores 0xffffffff; the 64-bit forms are right). The Arm ARM
+# defines them as signed. For exactly these instructions the reference result is therefore taken from the architectural
+# definition, applied by `spec_smaxmin` to Unicorn's final state (memory word and Rt); everything else is Unicorn's.
+def smaxmin_fields(w):
+    """(is_max, size in bytes, rt, rs, rn) when w is a sub-64-bit LDSMAX/LDSMIN/STSMAX/STSMIN (any ordering), else None."""
+    if bits(w, 29, 27) != 7 or bits(w, 26, 26) or not bits(w, 21, 21) or bits(w, 11, 10) != 0 or bits(w, 15, 15):
+        return None
+    opc = bits(w, 14, 12)
+    size = bits(w, 31, 30)
+    if opc not in (4, 5) or size == 3:
+        return None
+    return opc == 4, 1 << size, bits(w, 4, 0), bits(w, 20, 16), bits(w, 9, 5)
+
+
+def spec_smaxmin(uc, A, xr, window, x, fields):
+    is_max, nbytes, rt, rs, rn = fields
+    base = x[rn] if rn != 31 else x[31]
+    mask = (1 << (8 * nbytes)) - 1
+    old = int.from_bytes(bytes(window[base - WIN_LO:base - WIN_LO + nbytes]), 'little')
+    opnd = (x[rs] if rs != 31 else 0) & mask
+    sx = lambda v: v - (1 << (8 * nbytes)) if v >> (8 * nbytes - 1) else v     # noqa: E731
+    new = max(sx(old), sx(opnd)) if is_max else min(sx(old), sx(opnd))
+    uc.mem_write(base, (new & mask).to_bytes(nbytes, 'little'))
+    if rt != 31:
+        uc.reg_write(xr[rt], old)
+
+
 def reference(models, t, i, window):
     """-> ((regs crc, memory crc), event, error). models: {'a57': make_uc('a57'), 'max': make_uc('max')}; every test runs on
     the Cortex-A57 model (the console's CPU) except the LSE atomics, which only the max model has."""
@@ -355,6 +384,13 @@ def reference(models, t, i, window):
     regs += b''.join(uc.reg_read(r).to_bytes(16, 'little') for r in vr)
     regs += struct.pack('<I', (uc.reg_read(A.UC_ARM64_REG_NZCV) >> 28) & 0xf)
     regs += struct.pack('<QQQ', uc.reg_read(A.UC_ARM64_REG_TPIDR_EL0), uc.reg_read(A.UC_ARM64_REG_TPIDRRO_EL0), uc.reg_read(A.UC_ARM64_REG_FPCR))
+    fields = smaxmin_fields(t['word']) if t['kind'] == 'straight' else None
+    if fields:
+        spec_smaxmin(uc, A, xr, window, x, fields)
+        regs = b''.join(struct.pack('<Q', uc.reg_read(r)) for r in xr) + struct.pack('<Q', uc.reg_read(A.UC_ARM64_REG_SP))
+        regs += b''.join(uc.reg_read(r).to_bytes(16, 'little') for r in vr)
+        regs += struct.pack('<I', (uc.reg_read(A.UC_ARM64_REG_NZCV) >> 28) & 0xf)
+        regs += struct.pack('<QQQ', uc.reg_read(A.UC_ARM64_REG_TPIDR_EL0), uc.reg_read(A.UC_ARM64_REG_TPIDRRO_EL0), uc.reg_read(A.UC_ARM64_REG_FPCR))
     pc = uc.reg_read(A.UC_ARM64_REG_PC)
     event = 0
     if t['kind'] == 'branch':

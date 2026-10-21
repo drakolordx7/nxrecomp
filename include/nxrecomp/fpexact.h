@@ -176,4 +176,130 @@ static inline double fp_maxmin64(double x, double y, int is_min, int num) {
     return x;
 }
 
+/* ---- Exact NaN rules of the arithmetic (FPCR.DN = 0). The host result is used whenever it is not a NaN: x86 SSE /
+ * the C library already give the IEEE value for every non-NaN case. When the host result is a NaN, the result is
+ * recomputed from the operand bit patterns, in Arm operand order: the first signalling NaN operand, quietened (quiet
+ * bit set, payload and sign kept); else the first quiet NaN operand, unchanged; else (invalid operation, no NaN
+ * operand) the positive default NaN. Operands that the Arm pseudocode negates (FPNeg) are passed already negated, so a
+ * NaN taken from them keeps the flipped sign. Pure sign operations (fneg, fabs, fcsel, fmov) never go through here. */
+#define FP_QBIT32 0x00400000u
+#define FP_QBIT64 0x0008000000000000ull
+
+static inline uint32_t fp_bits32(float x) { uint32_t b; memcpy(&b, &x, 4); return b; }
+static inline float fp_from_bits32(uint32_t b) { float x; memcpy(&x, &b, 4); return x; }
+static inline uint64_t fp_bits64(double x) { uint64_t b; memcpy(&b, &x, 8); return b; }
+static inline double fp_from_bits64(uint64_t b) { double x; memcpy(&x, &b, 8); return x; }
+
+static inline int fp_nan32b(uint32_t b) { return (b & 0x7fffffffu) > 0x7f800000u; }
+static inline int fp_snan32b(uint32_t b) { return fp_nan32b(b) && !(b & FP_QBIT32); }
+static inline int fp_inf32b(uint32_t b) { return (b & 0x7fffffffu) == 0x7f800000u; }
+static inline int fp_zero32b(uint32_t b) { return (b & 0x7fffffffu) == 0; }
+static inline int fp_nan64b(uint64_t b) { return (b & 0x7fffffffffffffffull) > 0x7ff0000000000000ull; }
+static inline int fp_snan64b(uint64_t b) { return fp_nan64b(b) && !(b & FP_QBIT64); }
+static inline int fp_inf64b(uint64_t b) { return (b & 0x7fffffffffffffffull) == 0x7ff0000000000000ull; }
+static inline int fp_zero64b(uint64_t b) { return (b & 0x7fffffffffffffffull) == 0; }
+
+/* The NaN result for n operands (ARM order; unused operands are ignored). */
+static inline float fp_nan_result32(int n, float x0, float x1, float x2) {
+    uint32_t op[3] = { fp_bits32(x0), fp_bits32(x1), fp_bits32(x2) };
+    uint32_t res = 0x7fc00000u;
+    int i, found = 0;
+    for (i = 0; i < n && !found; i++) if (fp_snan32b(op[i])) { res = op[i] | FP_QBIT32; found = 1; }
+    for (i = 0; i < n && !found; i++) if (fp_nan32b(op[i])) { res = op[i]; found = 1; }
+    return fp_from_bits32(res);
+}
+static inline double fp_nan_result64(int n, double x0, double x1, double x2) {
+    uint64_t op[3] = { fp_bits64(x0), fp_bits64(x1), fp_bits64(x2) };
+    uint64_t res = 0x7ff8000000000000ull;
+    int i, found = 0;
+    for (i = 0; i < n && !found; i++) if (fp_snan64b(op[i])) { res = op[i] | FP_QBIT64; found = 1; }
+    for (i = 0; i < n && !found; i++) if (fp_nan64b(op[i])) { res = op[i]; found = 1; }
+    return fp_from_bits64(res);
+}
+
+static inline float fp_add32(float a, float b) { float r = a + b; return r == r ? r : fp_nan_result32(2, a, b, 0); }
+static inline float fp_sub32(float a, float b) { float r = a - b; return r == r ? r : fp_nan_result32(2, a, b, 0); }
+static inline float fp_mul32(float a, float b) { float r = a * b; return r == r ? r : fp_nan_result32(2, a, b, 0); }
+static inline float fp_div32(float a, float b) { float r = a / b; return r == r ? r : fp_nan_result32(2, a, b, 0); }
+static inline float fp_sqrt32(float a) { float r = sqrtf(a); return r == r ? r : fp_nan_result32(1, a, 0, 0); }
+static inline float fp_neg32(float a) { return fp_from_bits32(fp_bits32(a) ^ 0x80000000u); }
+static inline float fp_abs32(float a) { return fp_from_bits32(fp_bits32(a) & 0x7fffffffu); }
+
+static inline double fp_add64(double a, double b) { double r = a + b; return r == r ? r : fp_nan_result64(2, a, b, 0); }
+static inline double fp_sub64(double a, double b) { double r = a - b; return r == r ? r : fp_nan_result64(2, a, b, 0); }
+static inline double fp_mul64(double a, double b) { double r = a * b; return r == r ? r : fp_nan_result64(2, a, b, 0); }
+static inline double fp_div64(double a, double b) { double r = a / b; return r == r ? r : fp_nan_result64(2, a, b, 0); }
+static inline double fp_sqrt64(double a) { double r = sqrt(a); return r == r ? r : fp_nan_result64(1, a, 0, 0); }
+static inline double fp_neg64(double a) { return fp_from_bits64(fp_bits64(a) ^ 0x8000000000000000ull); }
+static inline double fp_abs64(double a) { return fp_from_bits64(fp_bits64(a) & 0x7fffffffffffffffull); }
+
+/* Fused n * m + a (FPMulAdd: operand order n, m, a). A quiet NaN addend with an invalid product (inf * 0) gives the
+ * default NaN, not the addend. */
+static inline float fp_fma32(float n, float m, float a) {
+    float r = fmaf(n, m, a);
+    if (r == r) return r;
+    uint32_t bn = fp_bits32(n), bm = fp_bits32(m), ba = fp_bits32(a);
+    if (fp_nan32b(ba) && !fp_snan32b(ba) &&
+        ((fp_inf32b(bn) && fp_zero32b(bm)) || (fp_zero32b(bn) && fp_inf32b(bm))))
+        return fp_from_bits32(0x7fc00000u);
+    return fp_nan_result32(3, n, m, a);
+}
+static inline double fp_fma64(double n, double m, double a) {
+    double r = fma(n, m, a);
+    if (r == r) return r;
+    uint64_t bn = fp_bits64(n), bm = fp_bits64(m), ba = fp_bits64(a);
+    if (fp_nan64b(ba) && !fp_snan64b(ba) &&
+        ((fp_inf64b(bn) && fp_zero64b(bm)) || (fp_zero64b(bn) && fp_inf64b(bm))))
+        return fp_from_bits64(0x7ff8000000000000ull);
+    return fp_nan_result64(3, n, m, a);
+}
+
+/* FPRecipStepFused (FRECPS) and FPRecipSqrtStepFused (FRSQRTS): the inf * 0 cases are fixed values, else a fused step. */
+static inline float fp_recps32(float a, float b) {
+    uint32_t ba = fp_bits32(a), bb = fp_bits32(b);
+    if ((fp_inf32b(ba) && fp_zero32b(bb)) || (fp_zero32b(ba) && fp_inf32b(bb))) return 2.0f;
+    return fp_fma32(fp_neg32(a), b, 2.0f);
+}
+static inline float fp_rsqrts32(float a, float b) {
+    uint32_t ba = fp_bits32(a), bb = fp_bits32(b);
+    if ((fp_inf32b(ba) && fp_zero32b(bb)) || (fp_zero32b(ba) && fp_inf32b(bb))) return 1.5f;
+    return fp_fma32(fp_neg32(a), b, 3.0f) * 0.5f;      /* halving is exact here */
+}
+static inline double fp_recps64(double a, double b) {
+    uint64_t ba = fp_bits64(a), bb = fp_bits64(b);
+    if ((fp_inf64b(ba) && fp_zero64b(bb)) || (fp_zero64b(ba) && fp_inf64b(bb))) return 2.0;
+    return fp_fma64(fp_neg64(a), b, 2.0);
+}
+static inline double fp_rsqrts64(double a, double b) {
+    uint64_t ba = fp_bits64(a), bb = fp_bits64(b);
+    if ((fp_inf64b(ba) && fp_zero64b(bb)) || (fp_zero64b(ba) && fp_inf64b(bb))) return 1.5;
+    return fp_fma64(fp_neg64(a), b, 3.0) * 0.5;
+}
+
+/* FRINTx: mode 0 nearest-even (FRINTN, FRINTX, FRINTI in the default rounding mode), 1 nearest ties away (FRINTA),
+ * 2 floor (FRINTM), 3 ceiling (FRINTP), 4 towards zero (FRINTZ). A quiet NaN stays; a signalling NaN is quietened
+ * (payload and sign kept); the sign of a zero result is that of the operand. */
+static inline float fp_frint32(float x, int mode) {
+    uint32_t b = fp_bits32(x);
+    if (fp_nan32b(b)) return fp_from_bits32(b | FP_QBIT32);
+    switch (mode) {
+    case 1: return roundf(x);
+    case 2: return floorf(x);
+    case 3: return ceilf(x);
+    case 4: return truncf(x);
+    default: return rintf(x);
+    }
+}
+static inline double fp_frint64(double x, int mode) {
+    uint64_t b = fp_bits64(x);
+    if (fp_nan64b(b)) return fp_from_bits64(b | FP_QBIT64);
+    switch (mode) {
+    case 1: return round(x);
+    case 2: return floor(x);
+    case 3: return ceil(x);
+    case 4: return trunc(x);
+    default: return rint(x);
+    }
+}
+
 #endif
