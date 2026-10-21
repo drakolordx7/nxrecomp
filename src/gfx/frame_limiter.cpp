@@ -3,8 +3,6 @@
 // stretch. The behaviour and the thread rules are the contract in include/nxrt/frame_limiter.h.
 #include "nxrt/frame_limiter.h"
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
 #include <emmintrin.h>  // _mm_pause
 
@@ -24,6 +22,7 @@ namespace nxrt {
 namespace {
 constexpr double kMinMarginNs = 300000.0;   // 0.3 ms: the spin always covers at least this much
 constexpr double kMaxMarginNs = 3000000.0;  // 3 ms: the spin never covers more than this
+constexpr double kMaxCarryPeriods = 0.1;    // a late frame is made up for by at most this fraction of a period (no bursts)
 constexpr double kResyncPeriods = 4.0;      // a schedule more than this many periods behind restarts from now
 constexpr std::size_t kRing = 8192;         // frame intervals kept for stats()
 }  // namespace
@@ -134,6 +133,7 @@ uint64_t FrameLimiter::begin_frame() {
         } else {
             next = s.sched_ns + period;
             if (now > next + kResyncPeriods * period) next = now;  // stall: restart from now, no catch-up burst
+            else if (now > next + kMaxCarryPeriods * period) next = now - kMaxCarryPeriods * period;  // late: carry only a little
         }
         s.sched_ns = next;
         s.has_sched = true;
