@@ -1,0 +1,331 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Idea adapted from SuperMarioWonderRecomp runtime/src/kernel_watch.cpp (MIT, Copyright (c) 2026 BelmanteGu); see THIRD_PARTY_NOTICES.md.
+// Freeze watchdog (declared in nxrt/diag.h): a thread that notices when diag_frame_tick() stops advancing and then dumps
+// every registered thread's host stack and guest registers to the log and a report file. It also honours a
+// "dump_threads" request file next to the exe.
+#include <windows.h>
+
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdarg>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include "nxrt/config.h"
+#include "nxrt/diag.h"
+#include "nxrt/dispatch.h"
+#include "nxrt/log.h"
+#include "nxrt/symbols.h"
+#include "stackwalk.h"
+
+namespace nxrt {
+namespace {
+
+constexpr size_t kMaxFrames = 48;
+using Clock = std::chrono::steady_clock;
+
+std::atomic<uint64_t> g_frames{0};
+std::atomic<uint32_t> g_fires{0};
+std::atomic<bool> g_running{false};
+
+enum class Status : uint8_t { NoSuspend, NoContext, Ok };
+
+// One registered thread as read by the dump. Phase one (suspend, read, resume) only writes into storage that was sized
+// before the first SuspendThread; formatting happens after every thread is running again.
+struct ThreadDump {
+    ThreadRecord rec;                    // copied from the registry before any suspension
+    Status status = Status::NoSuspend;
+    bool have_guest = false;
+    uint64_t guest_lr = 0, guest_sp = 0, guest_fp = 0;
+    size_t nframes = 0;
+    uint64_t frames[kMaxFrames] = {};
+};
+
+// Appends a formatted number (never a string argument: the buffer is fixed size).
+void appendf(std::string& out, const char* fmt, ...) {
+    char b[256];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = std::vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    if (n > 0) out.append(b, static_cast<size_t>(n) < sizeof b ? static_cast<size_t>(n) : sizeof b - 1);
+}
+
+// Phase one. The registry snapshot and every allocation happen before the first thread is suspended. While a thread is
+// suspended nothing allocates and nothing logs, because the suspended thread may hold the heap or the log lock.
+void collect_threads(std::vector<ThreadDump>& out) {
+    std::vector<ThreadRecord> recs = diag_threads();
+    const DWORD self = GetCurrentThreadId();
+    out.clear();
+    out.reserve(recs.size());
+    for (ThreadRecord& r : recs) {
+        if (r.host_tid == self) continue;  // the calling thread is not dumped
+        out.emplace_back();
+        out.back().rec = std::move(r);
+    }
+    for (ThreadDump& d : out) {
+        HANDLE h = static_cast<HANDLE>(d.rec.host_handle);
+        if (h == nullptr || SuspendThread(h) == static_cast<DWORD>(-1)) {
+            d.status = Status::NoSuspend;
+            continue;  // not suspended, nothing to resume
+        }
+        CONTEXT tc{};
+        tc.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+        uint64_t frames[kMaxFrames];
+        size_t n = 0;
+        const bool got = GetThreadContext(h, &tc) != 0;
+        if (got) n = detail::capture_stack(&tc, frames, kMaxFrames);
+        bool have_guest = false;
+        uint64_t glr = 0, gsp = 0, gfp = 0;
+        if (got && d.rec.ctx) {
+            ::Ctx* c = d.rec.ctx;
+            glr = lr(c);
+            gsp = sp(c);
+            gfp = fp(c);
+            have_guest = true;
+        }
+        ResumeThread(h);  // resumed before anything else touches the thread's data
+        if (!got) {
+            d.status = Status::NoContext;
+            continue;
+        }
+        d.status = Status::Ok;
+        d.nframes = n;
+        std::memcpy(d.frames, frames, n * sizeof(uint64_t));
+        d.have_guest = have_guest;
+        d.guest_lr = glr;
+        d.guest_sp = gsp;
+        d.guest_fp = gfp;
+    }
+}
+
+// Phase two: text for the collected threads. Runs with every thread resumed.
+std::string format_threads(const std::vector<ThreadDump>& threads) {
+    std::string out;
+    for (const ThreadDump& d : threads) {
+        out += "thread ";
+        out += d.rec.name;
+        out += " tid=";
+        appendf(out, "%lu", static_cast<unsigned long>(d.rec.host_tid));
+        out += " guest_tid=";
+        appendf(out, "%llu", static_cast<unsigned long long>(d.rec.guest_tid));
+        out += '\n';
+        if (d.status == Status::NoSuspend) {
+            out += "  (could not suspend)\n";
+            continue;
+        }
+        if (d.status == Status::NoContext) {
+            out += "  (could not read thread context)\n";
+            continue;
+        }
+        if (d.have_guest) {
+            appendf(out, "  guest: lr=%016llx sp=%016llx fp=%016llx\n", static_cast<unsigned long long>(d.guest_lr),
+                    static_cast<unsigned long long>(d.guest_sp), static_cast<unsigned long long>(d.guest_fp));
+        } else {
+            out += "  guest: (no guest context)\n";
+        }
+        std::string chain;
+        uint64_t last = 0;
+        for (size_t i = 0; i < d.nframes; i++) {
+            const uint64_t g = guest_function_of(d.frames[i]);
+            if (!g || g == last) continue;
+            if (!chain.empty()) chain += " <- ";
+            appendf(chain, "f_%llx", static_cast<unsigned long long>(g));
+            last = g;
+        }
+        if (!chain.empty()) {
+            out += "  guest call stack: ";
+            out += chain;
+            out += '\n';
+        }
+        for (size_t i = 0; i < d.nframes; i++) {
+            out += "  #";
+            appendf(out, "%zu ", i);
+            out += symbols_describe(d.frames[i]);
+            out += '\n';
+        }
+    }
+    return out;
+}
+
+std::string dump_text() {
+    std::vector<ThreadDump> threads;
+    collect_threads(threads);
+    std::string out = format_threads(threads);
+    out += "last files opened (oldest first):\n";
+    const std::vector<std::string> files = diag_recent_files();
+    if (files.empty()) out += "  (none)\n";
+    for (const std::string& f : files) {
+        out += "  ";
+        out += f;
+        out += '\n';
+    }
+    return out;
+}
+
+// Writes each line of the text to the log at Error level (tag "watchdog").
+void log_lines(const std::string& text) {
+    size_t s = 0;
+    while (s < text.size()) {
+        size_t e = text.find('\n', s);
+        if (e == std::string::npos) e = text.size();
+        const std::string line = text.substr(s, e - s);
+        NXLOG_E("watchdog", "%s", line.c_str());
+        s = e + 1;
+    }
+}
+
+void write_report(const std::string& path, const std::string& text) {
+    if (path.empty()) return;
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        NXLOG_W("watchdog", "cannot write report file %s", path.c_str());
+        return;
+    }
+    std::fwrite(text.data(), 1, text.size(), f);
+    std::fclose(f);
+}
+
+// Header line, then the thread dump. Goes to the log and the report file; returns the full text for on_fire.
+std::string emit_dump(const std::string& report_path, const std::string& header) {
+    std::string text = header;
+    text += '\n';
+    text += dump_text();
+    log_lines(text);
+    write_report(report_path, text);
+    return text;
+}
+
+std::string exe_path() {
+    char b[4096];
+    const DWORD n = GetModuleFileNameA(nullptr, b, sizeof b);
+    return std::string(b, n);
+}
+
+std::string exe_dir(const std::string& path) {
+    const size_t s = path.find_last_of("\\/");
+    return s == std::string::npos ? std::string() : path.substr(0, s);
+}
+
+// The exe path with its extension replaced by _freeze.txt.
+std::string default_report_path(const std::string& path) {
+    std::string base = path;
+    const size_t dot = path.find_last_of('.');
+    const size_t sl = path.find_last_of("\\/");
+    if (dot != std::string::npos && (sl == std::string::npos || dot > sl)) base.erase(dot);
+    return base + "_freeze.txt";
+}
+
+struct Control {
+    std::mutex ctl;  // serialises watchdog_start / watchdog_stop
+    std::mutex m;    // guards `stop`; the thread sleeps on `cv`
+    std::condition_variable cv;
+    bool stop = false;
+    std::thread th;
+    // Parameters, written by watchdog_start before the thread is created.
+    double threshold_s = 0;
+    uint32_t poll_ms = 250;
+    std::string report_path;   // "" = no file
+    std::string request_path;  // <exe dir>\dump_threads
+    void (*on_fire)(const char* dump, void* user) = nullptr;
+    void* user = nullptr;
+};
+
+// Intentionally never destroyed: a joinable std::thread must not die during static destruction.
+Control& control() {
+    static Control* c = new Control;
+    return *c;
+}
+
+void run_loop(Control* c) {
+    log_set_thread_name("watchdog");
+    Clock::time_point last_change = Clock::now();  // idle time counts from the start, then from the last tick
+    uint64_t last_seen = g_frames.load(std::memory_order_relaxed);
+    bool fired = false;
+    for (;;) {
+        {
+            std::unique_lock<std::mutex> lk(c->m);
+            if (c->cv.wait_for(lk, std::chrono::milliseconds(c->poll_ms), [c] { return c->stop; })) break;
+        }
+        const Clock::time_point now = Clock::now();
+        const uint64_t frames = g_frames.load(std::memory_order_relaxed);
+        if (frames != last_seen) {
+            last_seen = frames;
+            last_change = now;
+            fired = false;  // a tick re-arms the watchdog
+        }
+        if (GetFileAttributesA(c->request_path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileA(c->request_path.c_str());
+            std::string header;
+            appendf(header, "THREAD DUMP REQUESTED (frame count %llu)", static_cast<unsigned long long>(frames));
+            emit_dump(c->report_path, header);
+        }
+        const double idle_s = std::chrono::duration<double>(now - last_change).count();
+        if (!fired && idle_s >= c->threshold_s) {
+            fired = true;
+            std::string header;
+            appendf(header, "FREEZE: no frame tick for %.1f s (frame count %llu)", idle_s,
+                    static_cast<unsigned long long>(frames));
+            const std::string text = emit_dump(c->report_path, header);
+            if (c->on_fire) c->on_fire(text.c_str(), c->user);
+            g_fires.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+}
+
+}  // namespace
+
+void watchdog_start(const WatchdogOptions& opt) {
+    Control& c = control();
+    std::lock_guard<std::mutex> g(c.ctl);
+    if (c.th.joinable()) return;  // already running: ignored
+    if (opt.seconds < 0) return;  // disabled
+    const double secs = opt.seconds > 0 ? opt.seconds : config_get_double("diag", "watchdog_seconds", 10.0);
+    if (!(secs > 0)) return;      // disabled (also for a NaN value)
+    const std::string exe = exe_path();
+    c.threshold_s = secs;
+    c.poll_ms = opt.poll_ms ? opt.poll_ms : 1;
+    c.report_path = opt.report_path ? std::string(opt.report_path) : default_report_path(exe);
+    c.request_path = exe_dir(exe) + "\\dump_threads";
+    c.on_fire = opt.on_fire;
+    c.user = opt.user;
+    {
+        std::lock_guard<std::mutex> lk(c.m);
+        c.stop = false;
+    }
+    c.th = std::thread(run_loop, &c);
+    g_running.store(true);
+    NXLOG_I("watchdog", "started: threshold %.1f s, poll %u ms, report file %s", secs, c.poll_ms,
+            c.report_path.empty() ? "(none)" : c.report_path.c_str());
+}
+
+void watchdog_stop() {
+    Control& c = control();
+    std::lock_guard<std::mutex> g(c.ctl);
+    if (!c.th.joinable()) return;
+    {
+        std::lock_guard<std::mutex> lk(c.m);
+        c.stop = true;
+    }
+    c.cv.notify_all();
+    c.th.join();
+    g_running.store(false);
+}
+
+bool watchdog_running() { return g_running.load(); }
+
+void diag_frame_tick() { g_frames.fetch_add(1, std::memory_order_relaxed); }
+
+uint64_t diag_frame_count() { return g_frames.load(std::memory_order_relaxed); }
+
+uint32_t watchdog_fire_count() { return g_fires.load(std::memory_order_relaxed); }
+
+std::string diag_thread_dump() { return dump_text(); }
+
+}  // namespace nxrt

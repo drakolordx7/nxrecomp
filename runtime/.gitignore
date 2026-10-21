@@ -1,0 +1,6 @@
+build/
+out/
+*.log
+*.log.prev
+*_crash.txt
+*_freeze.txt
