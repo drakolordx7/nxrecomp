@@ -17,13 +17,19 @@ from .base import Unhandled
 from .ext import ExtOps
 from .fp import FpOps
 from .int import IntOps
+from .lse import LseOps
 from .misc import MiscOps
 from .neon import NeonOps
 from .neon_wide import NeonWideOps
 from .vldst import VecLdSt
+from .x_fp import XFp
+from .x_ldst import XLdst
+from .x_lse import XLse
+from .x_neon1 import XNeon1
+from .x_neon2 import XNeon2
 
 
-class Tier2(ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps, MiscOps):
+class Tier2(XFp, XLdst, XLse, XNeon1, XNeon2, LseOps, ExtOps, VecLdSt, IntOps, FpOps, NeonOps, NeonWideOps, MiscOps):
     _shared = None
 
     @classmethod

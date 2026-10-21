@@ -239,17 +239,19 @@ class Fn:
         if (w & 0xffffffe0) == 0xd53b4420:               # mrs xt, fpsr
             return SET(rt, 1, 'c->fpsr')
         if (w & 0xffffffe0) == 0xd51b4400:               # msr fpcr, xt   (stored, not honoured: docs/GAPS.md)
-            return 'c->fpcr = %s;' % X(rt)
+            return 'c->fpcr = %s & 0x07f70000ULL;' % X(rt)      # the bits a Cortex-A57 implements
         if (w & 0xffffffe0) == 0xd51b4420:               # msr fpsr, xt
-            return 'c->fpsr = %s;' % X(rt)
+            return 'c->fpsr = %s & 0xf800009fULL;' % X(rt)
         if (w & 0xffffffe0) == 0xd53b4200:               # mrs xt, nzcv
             return SET(rt, 1, 'get_nzcv(c)')
         if (w & 0xffffffe0) == 0xd51b4200:               # msr nzcv, xt
             return 'set_nzcv(c, (int)(%s >> 28));' % X(rt)
         if (w & 0xfffff0ff) in (0xd50330bf, 0xd503309f):  # dmb / dsb: x86 is stronger than AArch64 except store->load
             return '__atomic_thread_fence(__ATOMIC_SEQ_CST);'
-        if (w & 0xfffff0ff) in (0xd503305f, 0xd50330df):
-            return ';'                                   # clrex (the monitor is the compare-and-swap in stx*) / isb
+        if (w & 0xfffff0ff) == 0xd503305f:               # clrex: the monitor is closed
+            return 'c->ex_addr = ~0ULL;'
+        if (w & 0xfffff0ff) == 0xd50330df:
+            return ';'                                   # isb
         # SMO additions (SDK code: a data-cache maintenance loop in the audio server)
         if (w & 0xffffffe0) == 0xd53b0020:               # mrs ctr_el0: the console's Cortex-A57 reset value 0x8444C004
             return SET(bits(w, 4, 0), 1, '0x8444c004ULL')  # [doc] ARM Cortex-A57 TRM, CTR_EL0: 64-byte I and D lines

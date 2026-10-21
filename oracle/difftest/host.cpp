@@ -113,6 +113,7 @@ int main(int argc, char **argv) {
         c.tpidr = rng_next();
         c.tpidrro = rng_next();
         c.fpcr = 0;
+        c.fpsr = 0;
         if (t->fpmode) special_state(&c, t);
         memcpy((void *)WIN_LO, pristine, win);
         memcpy((void *)CODE, &t->word, 4);
