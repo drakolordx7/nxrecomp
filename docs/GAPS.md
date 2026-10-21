@@ -1,13 +1,13 @@
 # Gaps of the lifter (measured, not hoped)
 
 Numbers come from the oracles at the commit that contains this file: `oracle/difftest/corpus.json` (11,603 in-scope shapes, 606
-mnemonics), 337,835 differential tests, 15 end-to-end programs at two optimisation levels, 94 known-answer cases.
+mnemonics), 565,061 differential tests, 15 end-to-end programs at two optimisation levels (30 runs), 108 known-answer cases.
 
 ## Behaviour that differs from the console
 
 | Gap | What happens | Why it is acceptable now / what would close it |
 |---|---|---|
-| **FPCR is stored, not honoured** | `msr fpcr` keeps the Cortex-A57 bits (0x07f70000) and `mrs fpcr` reads them back; rounding mode, flush-to-zero (FZ), default-NaN (DN) and AHP do not change the arithmetic, which is x86 SSE with round-to-nearest-even, no flushing, and ARM NaN propagation (DN = 0). 5 of the 94 known-answer cases set FPCR and fail for exactly this reason (listed by `run_ka.py` as FPCR-not-honoured). | Neither smo, ssbu nor Wonder's games write FPCR; MPR is expected not to. Closing it: map RMode and FZ onto MXCSR at `msr fpcr` (x86 has no DN). Check with the first `cover` / grep for `msr fpcr` on the real binary. |
+| **FPCR is stored, not honoured** | `msr fpcr` keeps the Cortex-A57 bits (0x07f70000) and `mrs fpcr` reads them back; rounding mode, flush-to-zero (FZ), default-NaN (DN) and AHP do not change the arithmetic, which is x86 SSE with round-to-nearest-even, no flushing, and ARM NaN propagation (DN = 0). 5 of the 108 known-answer cases set FPCR and fail for exactly this reason (listed by `run_ka.py` as FPCR-not-honoured). | Neither smo, ssbu nor Wonder's games write FPCR; MPR is expected not to. Closing it: map RMode and FZ onto MXCSR at `msr fpcr` (x86 has no DN). Check with the first `cover` / grep for `msr fpcr` on the real binary. |
 | **FPSR cumulative flags are not tracked** | IOC, DZC, OFC, UFC, IXC, IDC and QC (saturation) are never set; `mrs fpsr` returns what `msr fpsr` stored (masked to 0xf800009f). 6 known-answer cases that read QC are reported as FPSR-not-modelled; the differential test does not compare FPSR. | Games rarely read the sticky flags. Closing it: set the flags in the exact FP helpers and the saturating NEON helpers. |
 | **Exclusive monitor is a compare-and-swap** | `ldxr` remembers (address, value); `stxr` succeeds iff the address matches and the memory still holds that value. Consequences: (1) ABA: another thread changing the value and changing it back does not make `stxr` fail; (2) the reservation granule is not modelled (a store to a neighbouring address in the granule does not clear the monitor); (3) a store of the same value by another thread does not break it; (4) `stxr` of a different size than the `ldxr` is not detected. 128-bit pairs use `cmpxchg16b` (`-mcx16`, 16-byte aligned) and have the same gaps. | This is the standard approach of all four reference projects and passes every single-thread test (88 exclusive sequences, 2 programs). ABA-sensitive lock-free code (a lock-free stack with pointer reuse) would need a version-counter monitor. |
 | **Memory ordering** | `dmb` / `dsb` are sequentially consistent fences, `ldar` / `stlr` are acquire / release atomics, LSE atomics are seq_cst. Plain loads and stores are plain `memcpy`s: the C++ compiler may reorder or merge them as it likes between fences, and x86's store-to-load reordering is not forbidden. | Correct code that synchronises through the instructions above works. Racy code that relies on the A57's actual behaviour without barriers is not reproduced. |
@@ -43,8 +43,9 @@ operand values.
   on top of Unicorn's state. No other instruction is corrected.
 - Every test runs on Unicorn's Cortex-A57 model, except the LSE atomics which run on its `max` model (the A57 has none).
 - FPSR is not compared; FPCR is (after `msr fpcr`).
-- The known-answer oracle skips 7 of 101 cases (3 with a real branch before the stop, 1 literal load of the code, 3 whose windows
-  cannot be mapped on Windows).
+- The known-answer oracle (`oracle/ka`) skips 7 of 108 cases: 3 with a real branch before the stop, 1 literal load of the code,
+  1 window below 0x10000 and 2 windows that cannot be mapped on Windows. 6 more expectations read FPSR flags (QC) and 5 cases
+  need FPCR (both gaps above); they are counted apart, not as passes.
 
 ## Not measured yet (needs the game binary)
 

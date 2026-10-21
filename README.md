@@ -49,11 +49,11 @@ lifts as a build step and builds the result as a static library (flags: C++20, `
 
 | Oracle | Command (from `recomp/`) | What it proves |
 |---|---|---|
-| Differential test | `python oracle/difftest/difftest.py all` | every instruction shape of `corpus.json` (11,603 shapes of Cortex-A57 + LSE) gives identical registers, flags, TPIDR/FPCR and memory in Unicorn and in the lifted code, from random, integer-edge and special-FP states |
+| Differential test | `python oracle/difftest/difftest.py all` | every instruction shape of `corpus.json` (11,603 shapes of Cortex-A57 + LSE) gives identical registers, flags, TPIDR/FPCR and memory in Unicorn and in the lifted code, from random, integer-edge, colliding-operand and special-FP states: 565,061 of 565,061 tests |
 | Mutation test | `python oracle/difftest/mutation.py` | 22 planted lifter bugs are all reported different, and the unmutated copy is green |
 | End to end | `python oracle/e2e/run_e2e.py` | 15 clang-built AArch64 programs (integers, switches, FP, NEON, crypto, LSE, exclusives incl. 128-bit, TLS, virtual calls, tail calls, C++ exceptions) lifted, built for x64 and run: every register and every writable byte equals Unicorn's |
 | Site lists | `python oracle/hooks/test_hooks.py` | patches, inline callouts, function hooks and dynamic immediates behave and count correctly |
-| Known answers | `python oracle/ka/run_ka.py` | cases of the rEden / dynarmic A64 tests (through ScarletNX), no emulator involved |
+| Known answers | `python oracle/ka/run_ka.py` | 108 cases of the rEden / dynarmic A64 tests (through ScarletNX), no emulator involved: 89 pass, 0 fail, 7 skipped, 6 need FPSR flags and 5 need FPCR (both documented gaps) |
 | Corpus | `python oracle/difftest/gen_corpus.py` | regenerates `corpus.json` (deterministic) |
 
 Gaps that remain are listed with numbers in `docs/GAPS.md`. The stream log is `docs/S1.md`, numbered bug notes are in
