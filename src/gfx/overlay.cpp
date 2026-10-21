@@ -258,24 +258,29 @@ int Overlay::toggle_scancode() const { return impl_->toggle_sc; }
 void Overlay::set_toggle_scancode(int sc) { impl_->toggle_sc = sc; }
 uint64_t Overlay::frames_drawn() const { return impl_->drawn; }
 
-bool Overlay::wants_input() const {
-    if (!impl_->visible) return false;
+namespace {
+bool imgui_wants(ImGuiContext* ctx, bool mouse, bool keyboard) {
     ImGuiContext* prev = ImGui::GetCurrentContext();
-    ImGui::SetCurrentContext(impl_->imgui);
+    ImGui::SetCurrentContext(ctx);
     const ImGuiIO& io = ImGui::GetIO();
-    const bool w = io.WantCaptureMouse || io.WantCaptureKeyboard;
+    const bool w = (mouse && io.WantCaptureMouse) || (keyboard && io.WantCaptureKeyboard);
     ImGui::SetCurrentContext(prev);
     return w;
 }
+}  // namespace
+
+bool Overlay::wants_input() const { return impl_->visible && imgui_wants(impl_->imgui, true, true); }
+bool Overlay::wants_mouse() const { return impl_->visible && imgui_wants(impl_->imgui, true, false); }
+bool Overlay::wants_keyboard() const { return impl_->visible && imgui_wants(impl_->imgui, false, true); }
 
 void Overlay::add_panel(const std::string& title, std::function<void()> fn) { impl_->panels.push_back({title, std::move(fn)}); }
 
 bool Overlay::handle_event(const input::Event& e) {
     Impl& s = *impl_;
     using input::EventType;
-    if (e.type == EventType::KeyDown && e.u.key.scancode == s.toggle_sc && !(e.flags & input::kFlagRepeat)) {
-        toggle();
-        return true;
+    if ((e.type == EventType::KeyDown || e.type == EventType::KeyUp) && e.u.key.scancode == s.toggle_sc) {
+        if (e.type == EventType::KeyDown && !(e.flags & input::kFlagRepeat)) toggle();
+        return true;   // the toggle key never reaches the game (press, repeat and release)
     }
     if (!s.visible) return false;
     ImGuiContext* prev = ImGui::GetCurrentContext();

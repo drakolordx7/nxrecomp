@@ -143,6 +143,11 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
     auto* impl = static_cast<Device::Impl*>(user);
     const char* id = data && data->pMessageIdName ? data->pMessageIdName : "";
     const char* msg = data && data->pMessage ? data->pMessage : "";
+    if (std::strncmp(id, "Loader Message", 14) == 0) {   // the loader's own chatter (duplicate layer manifests of overlay tools, ...)
+        impl->infos.fetch_add(1);
+        NXLOG_D("vulkan", "%s: %s", id, msg);
+        return VK_FALSE;
+    }
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         if (impl->errors.fetch_add(1) == 0) {
             std::lock_guard<std::mutex> lk(impl->first_error_mu);

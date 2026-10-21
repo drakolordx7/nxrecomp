@@ -52,6 +52,7 @@ struct SceneRunDesc {
     int overlay_visible_from_frame = -1;   // show the overlay from this frame on (synthetic toggle), -1: leave it hidden
     bool window_hidden = false;            // create the window hidden
     bool boost_priority = false;           // run the loop at high priority (timing tests)
+    uint32_t warmup_frames = 0;            // frames before the pacing statistics start (pipeline and driver warm-up)
     std::function<void(uint64_t frame, Renderer&)> per_frame;   // called before begin_frame (tests change modes / sizes here)
 };
 
