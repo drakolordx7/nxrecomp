@@ -61,6 +61,13 @@ struct Mutex : Object {
     bool recursive = false;
 };
 
+// A condition variable keeps a FIFO of waiter nodes. signal marks the first unmarked node, broadcast marks all of them, so
+// a waiter that registers after a broadcast can never steal the wakeup of one that registered before it.
+struct CondWaiter {
+    CondWaiter* next = nullptr;
+    bool woken = false;
+};
+
 struct Cond : Object {
     static constexpr Kind kKind = Kind::Cond;
     explicit Cond(uint64_t a) : Object(a, kKind) {
@@ -68,9 +75,9 @@ struct Cond : Object {
         InitializeConditionVariable(&cv);
     }
     SRWLOCK lk;
-    CONDITION_VARIABLE cv;
-    uint32_t waiting = 0;  // waiters that have not yet decided (woken, signalled or timed out)
-    uint32_t tokens = 0;   // wakeups issued and not yet consumed; always <= waiting
+    CONDITION_VARIABLE cv;  // shared by all waiters; every wakeup is a WakeAll and each waiter checks its own node
+    CondWaiter* head = nullptr;
+    CondWaiter* tail = nullptr;
 };
 
 struct Event : Object {
@@ -234,9 +241,9 @@ void mutex_take_blocking(Mutex* m, uint32_t rec) {
 
 // ---- condition wait -----------------------------------------------------------------------------------------------------
 
-// Implements cond_wait (d.forever) and cond_timed_wait. Returns true when a signal/broadcast token was consumed, false on
-// timeout. The guest mutex is released (fully, whatever its depth) once the waiter is registered, so a signal issued
-// after that point cannot be missed, and it is re-acquired at the same depth before returning.
+// Implements cond_wait (d.forever) and cond_timed_wait. Returns true when a signal/broadcast reached this waiter, false on
+// timeout. The guest mutex is released (fully, whatever its depth) once the waiter is queued, so a signal issued after that
+// point cannot be missed, and it is re-acquired at the same depth before returning.
 bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) {
     Cond* c = get<Cond>(cond_addr);
     Mutex* m = get<Mutex>(mutex_addr);
@@ -251,18 +258,24 @@ bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) 
         return false;
     }
 
+    CondWaiter node;
     AcquireSRWLockExclusive(&c->lk);
-    c->waiting++;
+    if (c->tail) c->tail->next = &node; else c->head = &node;
+    c->tail = &node;
     const uint32_t held = mutex_release_all(m);  // order: cond lock, then mutex lock
-    bool signalled = true;
-    while (c->tokens == 0) {
-        if (!wait_step(&c->cv, &c->lk, d)) {
-            signalled = false;  // tokens was 0 under the lock at this point, so nothing is lost
-            break;
+    while (!node.woken) {
+        if (!wait_step(&c->cv, &c->lk, d)) break;
+    }
+    const bool signalled = node.woken;
+    if (!signalled) {  // timed out: leave the queue
+        CondWaiter** pp = &c->head;
+        CondWaiter* prev = nullptr;
+        while (*pp && *pp != &node) { prev = *pp; pp = &(*pp)->next; }
+        if (*pp) {
+            *pp = node.next;
+            if (c->tail == &node) c->tail = prev;
         }
     }
-    if (signalled) c->tokens--;
-    c->waiting--;
     ReleaseSRWLockExclusive(&c->lk);
 
     mutex_take_blocking(m, held);
@@ -399,12 +412,18 @@ bool cond_timed_wait(uint64_t cond, uint64_t mutex, int64_t timeout_ns) {
     return cond_wait_impl(cond, mutex, deadline_for(timeout_ns));
 }
 
+// Woken nodes are unlinked here, by the signaller, so the queue only ever holds waiters that have not been woken yet.
+// A node's memory belongs to its waiter (it lives on the waiter's stack): the signaller touches it only under the cond lock,
+// and the waiter reads `woken` only under the same lock, so the node is never used after its owner has returned.
 void cond_signal(uint64_t addr) {
     Cond* c = get<Cond>(addr);
     AcquireSRWLockExclusive(&c->lk);
-    if (c->waiting > c->tokens) {
-        c->tokens++;
-        WakeConditionVariable(&c->cv);
+    if (CondWaiter* w = c->head) {
+        c->head = w->next;
+        if (!c->head) c->tail = nullptr;
+        w->next = nullptr;
+        w->woken = true;
+        WakeAllConditionVariable(&c->cv);
     }
     ReleaseSRWLockExclusive(&c->lk);
 }
@@ -412,7 +431,14 @@ void cond_signal(uint64_t addr) {
 void cond_broadcast(uint64_t addr) {
     Cond* c = get<Cond>(addr);
     AcquireSRWLockExclusive(&c->lk);
-    c->tokens = c->waiting;
+    CondWaiter* w = c->head;
+    c->head = c->tail = nullptr;
+    while (w) {
+        CondWaiter* n = w->next;
+        w->next = nullptr;
+        w->woken = true;
+        w = n;
+    }
     WakeAllConditionVariable(&c->cv);
     ReleaseSRWLockExclusive(&c->lk);
 }
