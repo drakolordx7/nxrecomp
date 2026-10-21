@@ -50,8 +50,8 @@ private:
 };
 
 // For a VRR (G-Sync / FreeSync) display with vsync on: a cap a little under the refresh rate keeps the frame rate inside the
-// VRR window so that the display never falls back to the plain vsync queue. refresh - refresh^2 / 3600 (Blur Busters), at
-// least refresh - 3, never below 1.
+// VRR window so that the display never falls back to the plain vsync queue. refresh - max(3, refresh^2 / 3600) (Blur
+// Busters formula, at least 3 under), never below 1. 60 -> 57, 120 -> 116, 144 -> 138.24, 240 -> 224.
 double suggest_vrr_cap(double refresh_hz);
 
 }  // namespace nxrt
