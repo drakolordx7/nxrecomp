@@ -36,19 +36,19 @@ enum { F_ADD, F_SUB, F_MUL, F_DIV, F_MLA, F_MLS, F_MAX, F_MIN, F_MAXNM, F_MINNM,
 
 static inline float f3s(int op, float acc, float a, float b, uint32_t *mask, int *is_mask) {
     switch (op) {
-    case F_ADD: return a + b;
-    case F_SUB: return a - b;
-    case F_MUL: return a * b;
-    case F_DIV: return a / b;
-    case F_MLA: return fmaf(a, b, acc);
-    case F_MLS: return fmaf(-a, b, acc);
+    case F_ADD: return fp_add32(a, b);
+    case F_SUB: return fp_sub32(a, b);
+    case F_MUL: return fp_mul32(a, b);
+    case F_DIV: return fp_div32(a, b);
+    case F_MLA: return fp_fma32(a, b, acc);
+    case F_MLS: return fp_fma32(fp_neg32(a), b, acc);
     case F_MAX: return fp_maxmin32(a, b, 0, 0);
     case F_MIN: return fp_maxmin32(a, b, 1, 0);
     case F_MAXNM: return fp_maxmin32(a, b, 0, 1);
     case F_MINNM: return fp_maxmin32(a, b, 1, 1);
-    case F_ABD: return fabsf(a - b);
-    case F_RECPS: return fmaf(-a, b, 2.0f);
-    case F_RSQRTS: return fmaf(-a, b, 3.0f) / 2.0f;
+    case F_ABD: return fp_abs32(fp_sub32(a, b));
+    case F_RECPS: return fp_recps32(a, b);
+    case F_RSQRTS: return fp_rsqrts32(a, b);
     case F_CMEQ: *is_mask = 1; *mask = a == b ? ~0u : 0; return 0;
     case F_CMGE: *is_mask = 1; *mask = a >= b ? ~0u : 0; return 0;
     case F_CMGT: *is_mask = 1; *mask = a > b ? ~0u : 0; return 0;
@@ -57,19 +57,19 @@ static inline float f3s(int op, float acc, float a, float b, uint32_t *mask, int
 }
 static inline double f3d(int op, double acc, double a, double b, uint64_t *mask, int *is_mask) {
     switch (op) {
-    case F_ADD: return a + b;
-    case F_SUB: return a - b;
-    case F_MUL: return a * b;
-    case F_DIV: return a / b;
-    case F_MLA: return fma(a, b, acc);
-    case F_MLS: return fma(-a, b, acc);
+    case F_ADD: return fp_add64(a, b);
+    case F_SUB: return fp_sub64(a, b);
+    case F_MUL: return fp_mul64(a, b);
+    case F_DIV: return fp_div64(a, b);
+    case F_MLA: return fp_fma64(a, b, acc);
+    case F_MLS: return fp_fma64(fp_neg64(a), b, acc);
     case F_MAX: return fp_maxmin64(a, b, 0, 0);
     case F_MIN: return fp_maxmin64(a, b, 1, 0);
     case F_MAXNM: return fp_maxmin64(a, b, 0, 1);
     case F_MINNM: return fp_maxmin64(a, b, 1, 1);
-    case F_ABD: return fabs(a - b);
-    case F_RECPS: return fma(-a, b, 2.0);
-    case F_RSQRTS: return fma(-a, b, 3.0) / 2.0;
+    case F_ABD: return fp_abs64(fp_sub64(a, b));
+    case F_RECPS: return fp_recps64(a, b);
+    case F_RSQRTS: return fp_rsqrts64(a, b);
     case F_CMEQ: *is_mask = 1; *mask = a == b ? ~0ull : 0; return 0;
     case F_CMGE: *is_mask = 1; *mask = a >= b ? ~0ull : 0; return 0;
     case F_CMGT: *is_mask = 1; *mask = a > b ? ~0ull : 0; return 0;
@@ -82,10 +82,10 @@ static inline void v_f3v(V128 *d, const V128 *pn, const V128 *pm, int op, int db
     V128 a = *pn, b = *pm, acc = *d, r;
     r.d[0] = 0; r.d[1] = 0;
     if (op == F_ADDP) {
-        if (dbl) { r.df[0] = a.df[0] + a.df[1]; if (n == 2) r.df[1] = b.df[0] + b.df[1]; }
+        if (dbl) { r.df[0] = fp_add64(a.df[0], a.df[1]); if (n == 2) r.df[1] = fp_add64(b.df[0], b.df[1]); }
         else {
-            for (int i = 0; i < n / 2; i++) r.f[i] = a.f[2 * i] + a.f[2 * i + 1];
-            for (int i = 0; i < n / 2; i++) r.f[n / 2 + i] = b.f[2 * i] + b.f[2 * i + 1];
+            for (int i = 0; i < n / 2; i++) r.f[i] = fp_add32(a.f[2 * i], a.f[2 * i + 1]);
+            for (int i = 0; i < n / 2; i++) r.f[n / 2 + i] = fp_add32(b.f[2 * i], b.f[2 * i + 1]);
         }
         *d = r;
         return;
@@ -95,11 +95,11 @@ static inline void v_f3v(V128 *d, const V128 *pn, const V128 *pm, int op, int db
         if (dbl) {
             uint64_t m = 0;
             double v = f3d(op, acc.df[i], a.df[i], b.df[i], &m, &is_mask);
-            if (is_mask) r.d[i] = m; else r.df[i] = op >= F_MAX && op <= F_MINNM ? v : fnan64(v);      /* max / min return an operand: no generated NaN to fix */
+            if (is_mask) r.d[i] = m; else r.df[i] = v;      /* every arithmetic result is already exact (fpexact.h) */
         } else {
             uint32_t m = 0;
             float v = f3s(op, acc.f[i], a.f[i], b.f[i], &m, &is_mask);
-            if (is_mask) r.w[i] = m; else r.f[i] = op >= F_MAX && op <= F_MINNM ? v : fnan32(v);
+            if (is_mask) r.w[i] = m; else r.f[i] = v;
         }
     }
     *d = r;
@@ -121,9 +121,9 @@ static inline void v_f1v(V128 *d, const V128 *pn, int op, int dbl, int n) {
         if (dbl) {
             double x = a.df[i];
             switch (op) {
-            case F1_ABS: r.df[i] = fabs(x); break;
-            case F1_NEG: r.df[i] = -x; break;
-            case F1_SQRT: r.df[i] = fnan64(sqrt(x)); break;
+            case F1_ABS: r.df[i] = fp_abs64(x); break;
+            case F1_NEG: r.df[i] = fp_neg64(x); break;
+            case F1_SQRT: r.df[i] = fp_sqrt64(x); break;
             case F1_RSQRTE: r.df[i] = rsqrte_d(x); break;
             case F1_RECPE: r.df[i] = recpe_d(x); break;
             case F1_SCVTF: r.df[i] = (double)(int64_t)a.d[i]; break;
@@ -139,9 +139,9 @@ static inline void v_f1v(V128 *d, const V128 *pn, int op, int dbl, int n) {
         } else {
             float x = a.f[i];
             switch (op) {
-            case F1_ABS: r.f[i] = fabsf(x); break;
-            case F1_NEG: r.f[i] = -x; break;
-            case F1_SQRT: r.f[i] = fnan32(sqrtf(x)); break;
+            case F1_ABS: r.f[i] = fp_abs32(x); break;
+            case F1_NEG: r.f[i] = fp_neg32(x); break;
+            case F1_SQRT: r.f[i] = fp_sqrt32(x); break;
             case F1_RSQRTE: r.f[i] = rsqrte_f(x); break;
             case F1_RECPE: r.f[i] = recpe_f(x); break;
             case F1_SCVTF: r.f[i] = (float)(int32_t)a.w[i]; break;
@@ -157,6 +157,27 @@ static inline void v_f1v(V128 *d, const V128 *pn, int op, int dbl, int n) {
         }
     }
     *d = r;
+}
+
+/* FRINTA / FRINTM / FRINTP / FRINTZ / FRINTN / FRINTX / FRINTI on n elements; modes as in fp_frint32 (fpexact.h). */
+static inline void v_frint(V128 *d, const V128 *pn, int mode, int dbl, int n) {
+    V128 a = *pn, r;
+    r.d[0] = 0; r.d[1] = 0;
+    for (int i = 0; i < n; i++) {
+        if (dbl) r.df[i] = fp_frint64(a.df[i], mode);
+        else r.f[i] = fp_frint32(a.f[i], mode);
+    }
+    *d = r;
+}
+
+/* FMAXV / FMINV / FMAXNMV / FMINNMV across the four single lanes. Arm's Reduce is a tree, (lane0 op lane1) op
+ * (lane2 op lane3), with the operand order of fpexact.h. The result goes to element 0; the rest is cleared. */
+static inline void v_fred32(V128 *d, const V128 *pn, int is_min, int num) {
+    uint32_t lo = fp_maxmin32_bits(pn->w[0], pn->w[1], is_min, num);
+    uint32_t hi = fp_maxmin32_bits(pn->w[2], pn->w[3], is_min, num);
+    uint32_t r = fp_maxmin32_bits(lo, hi, is_min, num);
+    d->d[0] = 0; d->d[1] = 0;
+    d->w[0] = r;
 }
 
 enum { I_ADD, I_SUB, I_MUL, I_CMEQ, I_CMGT, I_CMHI, I_CMGE, I_CMHS, I_CMTST, I_SQADD, I_UQADD, I_SQSUB, I_UQSUB, I_MLA };
@@ -296,11 +317,12 @@ static inline void v_i1v(V128 *d, const V128 *pn, int op, int sz, int n) {
     *d = r;
 }
 
-/* Narrow each element of vn to half size (XTN), low half of the destination. */
-static inline void v_xtn(V128 *d, const V128 *pn, int sz) {
+/* Narrow each element of vn to half size: XTN writes the low half of the destination and zeroes the upper half; XTN2
+ * (upper = 1) writes the upper half and keeps the lower. */
+static inline void v_xtn(V128 *d, const V128 *pn, int sz, int upper) {
     V128 a = *pn, r;
-    r.d[0] = 0; r.d[1] = 0;
-    for (int i = 0; i < (8 >> sz); i++) vset(&r, sz, i, vget(&a, sz + 1, i));
+    if (upper) r = *d; else { r.d[0] = 0; r.d[1] = 0; }
+    for (int i = 0; i < (8 >> sz); i++) vset(&r, sz, (upper ? (8 >> sz) : 0) + i, vget(&a, sz + 1, i));
     *d = r;
 }
 

@@ -333,8 +333,8 @@ class Fn:
                 else:
                     body = 'wrv(a, &c->v[%d], %d);' % (rt, nbytes)
                 return '{ %s uint64_t a = %s; %s %s }' % (pre, a, body, post)
-            if size == 3 and opc == 2:
-                return ';'                               # prfm
+            if size == 3 and opc == 2 and not (bits(w, 21, 21) and bits(w, 11, 10) == 0):
+                return ';'                               # prfm (the same size/opc class holds the LSE atomics ldadda...: tier 2)
             pre, a, post = self.addr_mode(w, size)
             nb = 8 << size
             if opc == 0:
@@ -608,34 +608,37 @@ class Fn:
             ft = 'double' if ty else 'float'
             sfx = '' if ty else 'f'
 
+            nbits = 64 if ty else 32                 # the arithmetic is exact in fpexact.h (fp_<op><bits>); setf adds no NaN fix
             def setf(expr):
-                return '{ %s t = fnan%d(%s); vzero(&c->v[%d]); c->v[%d].%s = t; }' % (ft, 64 if ty else 32, expr, rd, rd, f)
+                return '{ %s t = %s; vzero(&c->v[%d]); c->v[%d].%s = t; }' % (ft, expr, rd, rd, f)
             a, b = 'c->v[%d].%s' % (rn, f), 'c->v[%d].%s' % (rm, f)
             if bits(w, 11, 10) == 2:
                 op = bits(w, 15, 12)
-                if op < 4:
-                    return setf('%s %s %s' % (a, '*/+-'[op], b))
+                if op < 4:                           # FMUL, FDIV, FADD, FSUB
+                    return setf('fp_%s%d(%s, %s)' % (('mul', 'div', 'add', 'sub')[op], nbits, a, b))
                 if op in (4, 5, 6, 7):               # FMAX, FMIN, FMAXNM, FMINNM: exact NaN and signed-zero rules (fpexact.h); the result is an operand, no fnan
                     return '{ %s t = fp_maxmin%d(%s, %s, %d, %d); vzero(&c->v[%d]); c->v[%d].%s = t; }' % (ft, 64 if ty else 32, a, b, op & 1, op >> 1 & 1, rd, rd, f)
-                if op == 8:
-                    return setf('-(%s * %s)' % (a, b))
+                if op == 8:                          # FNMUL = FPNeg(FPMul(n, m)): the sign is flipped after the product
+                    return setf('fp_neg%d(fp_mul%d(%s, %s))' % (nbits, nbits, a, b))
                 raise Unimpl('fp2')
             if bits(w, 14, 10) == 0x10:
                 op = bits(w, 20, 15)
-                if op == 0:
+                if op == 0:                          # FMOV (register): a bit copy
                     return setf(a)
-                if op == 1:
-                    return setf('fabs%s(%s)' % (sfx, a))
-                if op == 2:
-                    return setf('-%s' % a)
+                if op == 1:                          # FABS: clears the sign bit, no quieting
+                    return setf('fp_abs%d(%s)' % (nbits, a))
+                if op == 2:                          # FNEG: flips the sign bit, no quieting
+                    return setf('fp_neg%d(%s)' % (nbits, a))
                 if op == 3:
-                    return setf('sqrt%s(%s)' % (sfx, a))
+                    return setf('fp_sqrt%d(%s)' % (nbits, a))
                 if op in (4, 5):
                     tf, tt = ('df[0]', 'double') if op == 5 else ('f[0]', 'float')
                     return '{ %s t = (%s)%s; vzero(&c->v[%d]); c->v[%d].%s = t; }' % (tt, tt, a, rd, rd, tf)
-                rnd = {8: 'rint', 9: 'ceil', 10: 'floor', 11: 'trunc', 12: 'round', 14: 'rint', 15: 'rint'}.get(op)
-                if rnd:
-                    return setf('%s%s(%s)' % (rnd, sfx, a))
+                # FRINTN (8) nearest-even, FRINTP (9) ceiling, FRINTM (10) floor, FRINTZ (11) towards zero,
+                # FRINTA (12) nearest ties away, FRINTX (14) and FRINTI (15) the current mode = nearest-even
+                frmode = {8: 0, 9: 3, 10: 2, 11: 4, 12: 1, 14: 0, 15: 0}.get(op)
+                if frmode is not None:
+                    return setf('fp_frint%d(%s, %d)' % (nbits, a, frmode))
                 raise Unimpl('fp1')
             if bits(w, 13, 10) == 8:
                 b2 = '0' if bits(w, 3, 3) else b
@@ -660,9 +663,14 @@ class Fn:
             ft = 'double' if ty else 'float'
             a, b, r = 'c->v[%d].%s' % (rn, f), 'c->v[%d].%s' % (rm, f), 'c->v[%d].%s' % (bits(w, 14, 10), f)
             o1, o0 = bits(w, 21, 21), bits(w, 15, 15)
-            fma = 'fma' if ty else 'fmaf'
-            expr = ['%s(%s, %s, %s)', '%s(-%s, %s, %s)', '%s(-%s, %s, -%s)', '%s(%s, %s, -%s)'][o1 * 2 + o0] % (fma, a, b, r)
-            return '{ %s t = fnan%d(%s); vzero(&c->v[%d]); c->v[%d].%s = t; }' % (ft, 64 if ty else 32, expr, rd, rd, f)
+            nbits = 64 if ty else 32
+            # fp_fma(op1, op2, addend) = FPMulAdd of fpexact.h. The Arm pseudocode negates operands with FPNeg, so the
+            # sign of a NaN taken from them is flipped too: FMADD a + n*m, FMSUB a - n*m, FNMADD -a - n*m, FNMSUB n*m - a.
+            na, nr = 'fp_neg%d(%s)' % (nbits, a), 'fp_neg%d(%s)' % (nbits, r)
+            fma = 'fp_fma%d' % nbits
+            expr = ['%s(%s, %s, %s)' % (fma, a, b, r), '%s(%s, %s, %s)' % (fma, na, b, r),
+                    '%s(%s, %s, %s)' % (fma, na, b, nr), '%s(%s, %s, %s)' % (fma, a, b, nr)][o1 * 2 + o0]
+            return '{ %s t = %s; vzero(&c->v[%d]); c->v[%d].%s = t; }' % (ft, expr, rd, rd, f)
         return self.simd(w, pc)
 
     def simd(self, w, pc):
@@ -750,10 +758,16 @@ class Fn:
                       (0, 1, 0x1d): 'F1_RECPE', (0, 0, 0x1d): 'F1_SCVTF', (1, 0, 0x1d): 'F1_UCVTF', (0, 1, 0x1b): 'F1_CVTZS',
                       (1, 1, 0x1b): 'F1_CVTZU', (0, 1, 0x0d): 'F1_CMEQ0', (0, 1, 0x0c): 'F1_CMGT0', (1, 1, 0x0c): 'F1_CMGE0',
                       (0, 1, 0x0e): 'F1_CMLT0', (1, 1, 0x0d): 'F1_CMLE0'}.get((u, a, opc))
+                # FRINTN (u0 a0 18), FRINTM (u0 a0 19), FRINTP (u0 a1 18), FRINTZ (u0 a1 19), FRINTA (u1 a0 18),
+                # FRINTX (u1 a0 19), FRINTI (u1 a1 19); modes as in fp_frint32 (fpexact.h)
+                frint = {(0, 0, 0x18): 0, (0, 0, 0x19): 2, (0, 1, 0x18): 3, (0, 1, 0x19): 4, (1, 0, 0x18): 1,
+                         (1, 0, 0x19): 0, (1, 1, 0x19): 0}.get((u, a, opc))
+                if frint is not None and not scalar:
+                    return 'v_frint(%s, %s, %d, %d, %d);' % (V(rd), V(rn), frint, sz, fcount())
                 if op:
                     return 'v_f1v(%s, %s, %s, %d, %d);' % (V(rd), V(rn), op, sz, fcount())
                 if (u, opc) == (0, 0x12) and not scalar and size < 3:
-                    return 'v_xtn(%s, %s, %d);' % (V(rd), V(rn), size)
+                    return 'v_xtn(%s, %s, %d, %d);' % (V(rd), V(rn), size, q)
                 op = {(1, 0x05): 'I1_NOT', (0, 0x05): 'I1_CNT', (1, 0x0b): 'I1_NEG', (0, 0x0b): 'I1_ABS',
                       (0, 0x09): 'I1_CMEQ0', (0, 0x00): 'I1_REV64'}.get((u, opc))
                 if op is None or (op in ('I1_NOT', 'I1_CNT') and size):
@@ -766,6 +780,12 @@ class Fn:
                 acc = {0xc: 0, 0x8: 1, 0xa: 2}.get(bits(w, 15, 12))  # SMULL/UMULL, SMLAL/UMLAL, SMLSL/UMLSL (and the "2" forms)
                 if acc is not None:
                     return 'v_mull(%s, %s, %s, %d, %d, %d, %d, -1);' % (V(rd), V(rn), V(rm), size, q, u, acc)
+            # FMAXV (U1 sz0 0f), FMINV (U1 sz1 0f), FMAXNMV (U1 sz0 0c), FMINNMV (U1 sz1 0c): across the 4 single lanes
+            if u and not bits(w, 23, 23) and not scalar and bits(w, 20, 17) == 8 and bits(w, 11, 10) == 2 \
+                    and bits(w, 16, 12) in (0x0c, 0x0f):
+                if not q:
+                    raise Unimpl('simd-across')
+                return 'v_fred32(%s, %s, %d, %d);' % (V(rd), V(rn), bits(w, 22, 22), int(bits(w, 16, 12) == 0x0c))
             # SMO addition (audio DSP of the 7.3.2 SDK): ADDV, across lanes
             if not scalar and not u and bits(w, 20, 17) == 8 and bits(w, 16, 12) == 0x1b and bits(w, 11, 10) == 2:
                 if size == 3 or (size == 2 and not q):

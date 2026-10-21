@@ -25,6 +25,7 @@ TLS, TLSRO, TLS_SIZE = 0x7109000000, 0x7109100000, 0x10000
 SENTINEL = 0x7107ff0000
 MAX_STEPS = int(os.environ.get('E2E_MAX_STEPS', '60000000'))
 M64 = (1 << 64) - 1
+HOST_BASE = 0x7110000000      # host services of progs/rt.h (raise / resume), intercepted below
 
 
 def pattern(n, seed):
@@ -34,6 +35,116 @@ def pattern(n, seed):
         s = (s * 6364136223846793005 + 1442695040888963407) & M64
         out += struct.pack('<Q', s ^ (s >> 29))
     return bytes(out[:n])
+
+
+class Unwinder:
+    """Unwinds the guest stack from the .eh_frame of the ELF (parsed by nxrecomp/eh.py, independently of the tables the lifter
+    emits for the x64 side) and resumes at the landing pad, like rt/eh_rt.cpp does for the lifted code."""
+
+    def __init__(self, img):
+        from nxrecomp import eh
+        self.eh, self.img = eh, img
+        self.rd = eh.Reader(img)
+        self.fdes, self.cies = eh.all_fdes(img)
+        self.rows, self.lsda = {}, {}
+        self.cur_type = 0
+
+    def fde(self, pc):
+        for f in self.fdes:
+            if self.img.base + f.start <= pc < self.img.base + f.end:
+                return f
+        return None
+
+    def rows_of(self, f):
+        r = self.rows.get(f.start)
+        if r is None:
+            r = self.rows[f.start] = self.eh.cfi_rows(self.rd, f, self.eh.parse_cie(self.rd, f.cie))
+        return r
+
+    def sites_of(self, f):
+        r = self.lsda.get(f.start)
+        if r is None:
+            r = self.lsda[f.start] = self.eh.parse_lsda(self.rd, self.img, f) if f.lsda else ([], {}, [])
+        return r
+
+    def step(self, uc, f, st):
+        """(cfa, caller state). st: dict pc, sp, x[31], d[8]."""
+        pcm1 = st['pc'] - 1 - self.img.base
+        row = None
+        for r in self.rows_of(f):
+            if r[0] <= pcm1:
+                row = r
+        if row is None:
+            raise RuntimeError('no CFI row at %x' % st['pc'])
+        cfa = (st['sp'] if row[1] == 31 else st['x'][row[1]]) + row[2]
+        n = {'pc': 0, 'sp': cfa, 'x': list(st['x']), 'd': list(st['d'])}
+        for reg, off in row[3].items():
+            if off is None:
+                continue
+            v = struct.unpack('<Q', bytes(uc.mem_read(cfa + off, 8)))[0]
+            if reg <= 30:
+                n['x'][reg] = v
+            elif 72 <= reg < 80:
+                n['d'][reg - 72] = v
+        n['pc'] = n['x'][30]
+        return cfa, n
+
+    def pick(self, f, pc, typ):
+        sites, actions, types = self.sites_of(f)
+        pcm1 = pc - 1 - self.img.base
+        for s in sites:
+            if not (s.start <= pcm1 < s.start + s.len):
+                continue
+            if not s.pad:
+                return None
+            a = s.action
+            if not a:
+                return self.img.base + s.pad, 0
+            while a:
+                filt, nxt = actions[a]
+                if filt == 0:
+                    return self.img.base + s.pad, 0
+                if filt > 0:
+                    t = types[filt - 1] if filt - 1 < len(types) else None
+                    if t == 0 or t == typ:
+                        return self.img.base + s.pad, filt
+                a = nxt
+            return None
+        return None
+
+    def host_call(self, uc, A, xr, svc):
+        x = [uc.reg_read(r) for r in xr]
+        obj, typ = x[0], x[1]
+        if svc == 0:
+            self.cur_type = typ
+        else:
+            typ = self.cur_type
+        st = {'pc': x[30], 'sp': uc.reg_read(A.UC_ARM64_REG_SP), 'x': x,
+              'd': [uc.reg_read(getattr(A, 'UC_ARM64_REG_V%d' % (8 + i))) & M64 for i in range(8)]}
+        f = self.fde(st['pc'] - 1)
+        if f is None:
+            raise RuntimeError('no FDE for the stub')
+        _, st = self.step(uc, f, st)
+        for _ in range(10000):
+            if st['pc'] == 0:
+                raise RuntimeError('unwound off the stack')
+            f = self.fde(st['pc'] - 1)
+            if f is None:
+                raise RuntimeError('no FDE at %x' % st['pc'])
+            got = self.pick(f, st['pc'], typ)
+            cfa, nxt = self.step(uc, f, st)
+            if got:
+                pad, sel = got
+                for i in range(19, 31):
+                    uc.reg_write(xr[i], st['x'][i])
+                uc.reg_write(A.UC_ARM64_REG_SP, st['sp'])
+                for i in range(8):
+                    uc.reg_write(getattr(A, 'UC_ARM64_REG_V%d' % (8 + i)), st['d'][i])
+                uc.reg_write(xr[0], obj)
+                uc.reg_write(xr[1], sel)
+                return pad
+            st = nxt
+        raise RuntimeError('unwind depth exceeded')
 
 
 def make_uc(model='max'):
@@ -92,8 +203,29 @@ def run(elf_path, model='max', entry_symbol='test_main'):
     uc.reg_write(A.UC_ARM64_REG_X30, SENTINEL)
     uc.reg_write(A.UC_ARM64_REG_TPIDR_EL0, TLS)
     uc.reg_write(A.UC_ARM64_REG_TPIDRRO_EL0, TLSRO)
-    steps = [0]
-    uc.emu_start(entry, SENTINEL, count=MAX_STEPS)
+    uc.mem_map(HOST_BASE, 0x1000)
+    unw = Unwinder(img) if ('.eh_frame' in img.sections or img.eh_hdr) else None
+    state = {'restart': None, 'error': None}
+
+    def on_host(uc_, address, size, user):
+        try:
+            state['restart'] = unw.host_call(uc_, A, xr_all, (address - HOST_BASE) // 16)
+        except Exception as e:               # noqa: BLE001
+            state['error'] = str(e)
+        uc_.emu_stop()
+    xr_all = [getattr(A, 'UC_ARM64_REG_X%d' % i) for i in range(31)]
+    if unw:
+        from unicorn import UC_HOOK_CODE
+        uc.hook_add(UC_HOOK_CODE, on_host, begin=HOST_BASE, end=HOST_BASE + 0xfff)
+    pc0 = entry
+    for _ in range(100000):
+        uc.emu_start(pc0, SENTINEL, count=MAX_STEPS)
+        if state['restart'] is not None:
+            pc0, state['restart'] = state['restart'], None
+            continue
+        break
+    if state['error']:
+        raise RuntimeError('unwinder: ' + state['error'])
     xr = [getattr(A, 'UC_ARM64_REG_X%d' % i) for i in range(31)]
     res = {'x': [uc.reg_read(r) for r in xr], 'sp': uc.reg_read(A.UC_ARM64_REG_SP),
            'v': ['%032x' % uc.reg_read(getattr(A, 'UC_ARM64_REG_V%d' % i)) for i in range(32)],
