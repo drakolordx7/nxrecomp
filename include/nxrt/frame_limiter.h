@@ -35,6 +35,12 @@ public:
         double p99_ms = 0;              // 99th percentile of the intervals
         double stddev_ms = 0;
         double fps = 0;                 // 1000 / mean_ms
+        // Limiter accuracy, separate from what the frame body costs: frames whose body finished before the scheduled start had to
+        // wait ("waited"); for those, how late the start came against the schedule. A frame whose body overran the period
+        // ("overran") starts at once and is not the limiter's doing.
+        uint64_t waited = 0, overran = 0;
+        double overran_fraction = 0;    // overran / (waited + overran)
+        double late_p99_ms = 0, late_max_ms = 0;   // lateness of waited frames
     };
     Stats stats() const;                // over the intervals since reset_stats() (at most the last 8192)
     void reset_stats();

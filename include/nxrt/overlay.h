@@ -39,6 +39,9 @@ public:
     int toggle_scancode() const;             // SDL scancode of the toggle key
     void set_toggle_scancode(int sc);
     bool wants_input() const;                // visible and ImGui wants the mouse or keyboard
+    bool wants_mouse() const;                // visible and the pointer is over the menu or a widget is being dragged
+    bool wants_keyboard() const;             // visible and a text field or navigation has the keyboard
+    // (both reflect the last drawn frame: ImGui decides hover while it builds the frame)
 
     // Extra panels for later streams (settings, dev menu): fn runs inside an ImGui window titled `title` while visible.
     void add_panel(const std::string& title, std::function<void()> fn);

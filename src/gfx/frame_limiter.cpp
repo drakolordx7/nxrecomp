@@ -39,6 +39,9 @@ struct FrameLimiter::Impl {
     uint64_t prev_start = 0;  // actual start of the last frame
     uint64_t ring[kRing] = {};
     std::size_t ring_n = 0, ring_pos = 0;
+    uint64_t late_ring[kRing] = {};          // lateness (ns) of the frames that waited
+    std::size_t late_n = 0, late_pos = 0;
+    uint64_t overran_frames = 0;             // frames that did not have to wait
     uint64_t last_wait = 0, last_late = 0;
 
     // Used only by begin_frame, which is called from one thread per limiter.
@@ -140,12 +143,22 @@ uint64_t FrameLimiter::begin_frame() {
     }
 
     const uint64_t target = static_cast<uint64_t>(std::ceil(next));
+    const bool had_to_wait = target > entry;
     s.wait_until(target);
     const uint64_t start = now_ns();
     {
         std::lock_guard<std::mutex> lk(s.mu);
         s.last_wait = start - entry;
         s.last_late = start > target ? start - target : 0;
+        if (s.has_prev) {
+            if (had_to_wait) {
+                s.late_ring[s.late_pos] = s.last_late;
+                s.late_pos = (s.late_pos + 1) % kRing;
+                if (s.late_n < kRing) ++s.late_n;
+            } else {
+                ++s.overran_frames;
+            }
+        }
         s.record_locked(start);
     }
     return start;
@@ -159,11 +172,22 @@ void FrameLimiter::reset_schedule() {
 
 FrameLimiter::Stats FrameLimiter::stats() const {
     Stats st;
-    std::vector<double> ms;
+    std::vector<double> ms, late;
+    uint64_t overran = 0;
     {
         std::lock_guard<std::mutex> lk(impl_->mu);
         ms.reserve(impl_->ring_n);
         for (std::size_t i = 0; i < impl_->ring_n; ++i) ms.push_back(static_cast<double>(impl_->ring[i]) * 1e-6);
+        for (std::size_t i = 0; i < impl_->late_n; ++i) late.push_back(static_cast<double>(impl_->late_ring[i]) * 1e-6);
+        overran = impl_->overran_frames;
+    }
+    st.waited = late.size();
+    st.overran = overran;
+    st.overran_fraction = (late.size() + overran) ? static_cast<double>(overran) / static_cast<double>(late.size() + overran) : 0.0;
+    if (!late.empty()) {
+        std::sort(late.begin(), late.end());
+        st.late_max_ms = late.back();
+        st.late_p99_ms = late[std::min(late.size() - 1, static_cast<std::size_t>(0.99 * static_cast<double>(late.size())))];
     }
     const std::size_t n = ms.size();
     if (n == 0) return st;
@@ -195,6 +219,9 @@ void FrameLimiter::reset_stats() {
     std::lock_guard<std::mutex> lk(impl_->mu);
     impl_->ring_n = 0;
     impl_->ring_pos = 0;
+    impl_->late_n = 0;
+    impl_->late_pos = 0;
+    impl_->overran_frames = 0;
     impl_->has_prev = false;  // the interval spanning the reset is not measured
 }
 

@@ -3,6 +3,7 @@
 // frame's scheduled start (FrameLimiter), THEN pump the platform and read input, then record and present.
 #include <windows.h>
 
+#include "nxrt/config.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/input.h"
 #include "nxrt/log.h"
@@ -12,7 +13,15 @@
 
 namespace nxrt::gfx {
 
-SceneRunResult run_scene(const SceneRunDesc& d) {
+SceneRunResult run_scene(const SceneRunDesc& desc) {
+    // Environment switches for automated runs (also ini keys): [gfx] headless / NXRT_GFX_HEADLESS=1 runs offscreen without a
+    // window; [gfx] screenshot / NXRT_GFX_SCREENSHOT=<file.png> captures [gfx] screenshot_frame (default 60).
+    SceneRunDesc d = desc;
+    if (!d.headless && config_get_bool("gfx", "headless", false)) d.headless = true;
+    if (d.screenshot_path.empty()) {
+        d.screenshot_path = config_get_str("gfx", "screenshot", "");
+        if (!d.screenshot_path.empty() && d.screenshot_frame < 0) d.screenshot_frame = static_cast<int>(config_get_int("gfx", "screenshot_frame", 60));
+    }
     SceneRunResult res;
     auto fail = [&](const std::string& m) {
         res.error = m;
@@ -124,6 +133,7 @@ SceneRunResult run_scene(const SceneRunDesc& d) {
             scene->record(fi);
             rend->end_frame();
             ++rendered;
+            if (d.warmup_frames && rendered == d.warmup_frames) limiter.reset_stats();
         }
         const uint64_t t1 = FrameLimiter::now_ns();
         rend->wait_idle();

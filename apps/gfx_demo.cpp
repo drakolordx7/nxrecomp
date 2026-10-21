@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // nxrt_gfx_demo: runs the graphics shell's test scene (clear colour + tiled-texture quads), windowed or headless.
-//   nxrt_gfx_demo [--headless] [--frames N] [--fps X] [--present-mode fifo|fifo_relaxed|mailbox|immediate] [--size WxH]
+//   nxrt_gfx_demo [--headless] [--frames N] [--fps X|vrr] [--present-mode fifo|fifo_relaxed|mailbox|immediate] [--size WxH]
 //                 [--screenshot file.png] [--shot-frame N] [--overlay] [--gpu discrete|integrated|N|name] [--validation 0|1]
 // Windowed with --overlay: F1 shows the settings menu. Prints a one-line result.
 #include <cstdio>
@@ -9,6 +9,7 @@
 
 #include "nxrt/log.h"
 #include "nxrt/nvn.h"
+#include "nxrt/platform.h"
 #include "nxrt/scene.h"
 
 int main(int argc, char** argv) {
@@ -17,11 +18,12 @@ int main(int argc, char** argv) {
     d.frames = 0;
     d.width = 1280;
     d.height = 720;
+    bool want_vrr_cap = false;   // --fps vrr: a cap just under the display refresh rate (VRR friendly)
     for (int i = 1; i < argc; ++i) {
         auto arg = [&](const char* name) { return !std::strcmp(argv[i], name) && i + 1 < argc; };
         if (!std::strcmp(argv[i], "--headless")) d.headless = true;
         else if (arg("--frames")) d.frames = static_cast<uint32_t>(std::atoi(argv[++i]));
-        else if (arg("--fps")) d.target_fps = std::atof(argv[++i]);
+        else if (arg("--fps")) { ++i; if (!std::strcmp(argv[i], "vrr")) want_vrr_cap = true; else d.target_fps = std::atof(argv[i]); }
         else if (arg("--present-mode")) { if (!nxrt::gfx::parse_present_mode(argv[++i], &d.present_mode)) { std::fprintf(stderr, "bad present mode\n"); return 2; } }
         else if (arg("--size")) { unsigned w = 0, h = 0; if (std::sscanf(argv[++i], "%ux%u", &w, &h) == 2) { d.width = w; d.height = h; } }
         else if (arg("--screenshot")) d.screenshot_path = argv[++i];
@@ -37,6 +39,18 @@ int main(int argc, char** argv) {
     nxrt::LogOptions lo;
     lo.path = "nxrt_gfx_demo.log";
     nxrt::log_init(lo);
+    if (want_vrr_cap) {
+        // the refresh rate of the primary display, read through the platform layer
+        nxrt::platform::init();
+        nxrt::platform::WindowDesc wd;
+        wd.hidden = true;
+        nxrt::platform::create_window(wd);
+        const float hz = nxrt::platform::display_refresh_hz();
+        nxrt::platform::destroy_window();
+        nxrt::platform::shutdown();
+        d.target_fps = hz > 0 ? nxrt::suggest_vrr_cap(hz) : 0;
+        std::printf("display %.2f Hz -> frame cap %.2f fps\n", hz, d.target_fps);
+    }
     nxrt::nvn::install();
     const nxrt::gfx::SceneRunResult r = nxrt::gfx::run_scene(d);
     if (!r.ok) { std::fprintf(stderr, "FAILED: %s\n", r.error.c_str()); return 1; }
