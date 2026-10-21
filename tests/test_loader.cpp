@@ -258,7 +258,7 @@ NXTEST(explicit_base_and_two_modules) {
     CHECK_EQ(module_at(mem::kSdkBase + 0x2000), b);
     // a third module overlapping the first is refused
     LoadOptions o3;
-    o3.base = mem::kMainBase + 0x10000;
+    o3.base = mem::kMainBase;
     CHECK(module_load_file(kFull, o3, &err) == nullptr);
     CHECK(err.find("overlaps") != std::string::npos || err.find("range in use") != std::string::npos);
     reset();

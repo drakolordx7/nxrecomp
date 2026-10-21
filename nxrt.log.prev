@@ -1,3 +1,0 @@
-[  0.000447 E t21444 -] sync: mutex 0x71000004a0: lock by its owner (thread 21444) on a non-recursive mutex; ignored
-[  0.000742 E t35824 -] sync: mutex 0x71000005a0: unlock by thread 35824, owner is thread 31028; ignored
-[  0.001144 E t31028 -] sync: mutex 0x71000005a0: unlock by thread 31028, owner is thread 0; ignored
