@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Frame limiter for the low-latency design: begin_frame() waits for the frame's scheduled start BEFORE the caller samples input,
+// so input is read as late as possible and the display queue stays short. The wait is a high-resolution waitable timer for
+// the bulk and a spin on the performance counter for the last stretch. Schedules are absolute (next = previous + period), so
+// the average rate does not drift; a frame that runs long does not make the next ones run short (no catch-up bursts): after a
+// stall of more than 4 periods the schedule restarts from now.
+#pragma once
+#include <cstdint>
+
+namespace nxrt {
+
+class FrameLimiter {
+public:
+    FrameLimiter();
+    ~FrameLimiter();
+    FrameLimiter(const FrameLimiter&) = delete;
+    FrameLimiter& operator=(const FrameLimiter&) = delete;
+
+    // 0 = unlimited (begin_frame never waits; it still records frame times). Safe to call from any thread.
+    void set_target_fps(double fps);
+    double target_fps() const;
+
+    // Call at the top of every frame, before polling input. Blocks until the scheduled start, returns the frame start time
+    // in nanoseconds of the monotonic clock now_ns().
+    uint64_t begin_frame();
+
+    // Restart the schedule (after a pause, a minimise, a mode change).
+    void reset_schedule();
+
+    struct Stats {
+        uint64_t frames = 0;            // frame intervals measured (begin_frame calls minus one)
+        double mean_ms = 0;             // mean interval between frame starts
+        double min_ms = 0, max_ms = 0;
+        double p99_ms = 0;              // 99th percentile of the intervals
+        double stddev_ms = 0;
+        double fps = 0;                 // 1000 / mean_ms
+    };
+    Stats stats() const;                // over the intervals since reset_stats() (at most the last 8192)
+    void reset_stats();
+
+    // Last wait: how long begin_frame() slept/spun (ns), and how late the frame started against its schedule (ns, >= 0).
+    uint64_t last_wait_ns() const;
+    uint64_t last_late_ns() const;
+
+    static uint64_t now_ns();           // QueryPerformanceCounter in nanoseconds
+
+private:
+    struct Impl;
+    Impl* impl_;
+};
+
+// For a VRR (G-Sync / FreeSync) display with vsync on: a cap a little under the refresh rate keeps the frame rate inside the
+// VRR window so that the display never falls back to the plain vsync queue. refresh - refresh^2 / 3600 (Blur Busters), at
+// least refresh - 3, never below 1.
+double suggest_vrr_cap(double refresh_hz);
+
+}  // namespace nxrt
