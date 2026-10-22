@@ -1,0 +1,48 @@
+name: Feature request
+description: Suggest a new feature or a change to how something works.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - recomp
+        - runtime
+        - tools
+        - other
+    validations:
+      required: false
+
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want
+      description: Describe the feature or change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What problem does this solve, or who does it help.
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other ways to solve this that you considered.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I checked that this is not already open as an issue.
+          required: true
