@@ -1,103 +1,93 @@
-"""S11 physics and timing probe: the same scripted run at 60, 120, 144 and 240 steps per second, compared in game time.
+"""S11 physics and timing probe: walk, jump and turn at 60, 120, 144 and 240 steps per second, in game time.
 
-Every run is deterministic (virtual clock, [test] deterministic=1) with clock_step_ticks = 19.2e6 / rate, so one frame is exactly 1/rate seconds
-of game time and a run is as slow as the machine but never wrong. The runtime's timestep module then gives the game dt = 1/rate. A scenario is a
-script template in seconds (the generator turns seconds into frames for each rate) plus a check that compares the runs.
+ONE mpr.exe process runs everything. The script is the prologue (title -> New Game, real time), then for each rate R and scenario S:
 
-  tools\\.venv\\Scripts\\python tools\\test\\hifps_probe.py [--rates 60,120,144,240] [--scenarios menu,walk,jump,turn] [--exe DIR] [--keep]
+  gameplay.warp('tallon', 'tallon_canyon_cavern')      real time, includes the settle
+  @rate R                                             the game step is exactly 1/R s per frame (the clock itself stays real)
+  @hash <S>_<R>_start
+  the scenario actions (below)
+  @hash <S>_<R>_end
+  @rate 0
 
-Scenarios
-  menu   title screen, A pressed, front-end movies: screenshots at the same game times, informational only. The front end is movies; loading
-         takes real time, so at a higher virtual rate the movie starts at another game time and the shots differ in phase (ssim 0.3 to 0.9) with
-         no timing error. The timing check for the front end is hifps_timing.py (movie consumption per game second: 1.000 at 60/120/144/240).
-  walk   Frigate start room: walk forward 3 s, stop.   steady speed, distance in 3 s, time to 95 % speed, slide distance after release
-  jump   Frigate start room: standing jump (B held 0.4 s).   peak height, airtime
-  turn   mouse turn of 1000 counts spread over 0.2 s.     total yaw (must be counts * sensitivity at every rate)
-  Needs gameplay (S4e): the state probes read the player's position, velocity, yaw and movement state each frame (docs/S5.md).
-  Not scripted yet because the probes do not read them: morph-ball roll and friction (needs the ball item and its velocity), projectile range
-  (needs a projectile probe), the HUD memo timer (needs the HUD state); docs/S11.md lists what each needs.
+Scenario actions (times in game seconds with @run; pad and mouse steps count frames, one frame = 1/R s under @rate)
+  walk   stick left 0 1.0, @run 3, stick left 0 0, @run 1.5
+  jump   press B for round(0.4 R) frames, @run 2
+  turn   mouse 1000/n 0 for n frames with n = round(0.2 R), @run 0.5
 
-Output: work/hifps_probe/<scenario>_<rate>/ (script, mpr.log, trace.jsonl, shots) and a table. Exit code 0 all checks pass, 1 a check fails,
-3 gameplay was not reachable for a gameplay scenario (the run did not get past the warp), 2 usage.
+Analysis: for each (scenario, rate) the trace rows between the start and end checkpoint frames (result.json "checkpoints") are the window.
+All time is igt (game play time). Horizontal motion is x and z, height is y. Walk speed is the trace spd (the game's physics speed, 3D
+magnitude; where a row has no spd, the x/z position difference over igt is used and counted). Tolerances are relative to the 60 Hz run.
+
+  tools\\.venv\\Scripts\\python tools\\test\\hifps_probe.py [--rates 60,120,144,240] [--scenarios walk,jump,turn] [--exe DIR] [--max-seconds 1500] [--no-run]
+
+Output: work/hifps_probe/all/ (script.nxs, mpr.log, out/trace.jsonl, out/result.json, cwd/) and one deviation table per scenario.
+Exit code: 0 all checks pass, 1 a check fails or a run did not end with @pass, 3 a window has no player samples (gameplay not reached), 2 usage.
+The run is retried once when it fails at the prologue's mash step (exit 1, no player samples).
 """
-import argparse, json, math, os, subprocess, sys, time
+import argparse, json, math, os, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import gameplay as gp  # noqa: E402
+
 OUT = os.path.join(ROOT, 'work', 'hifps_probe')
-TICK_HZ = 19200000
+RUN_DIR = os.path.join(OUT, 'all')
+DEFAULT_EXE = os.environ.get('NXRT_VERIFY_EXE') or os.path.join(ROOT, 'game-build-verify', 'build', 'snap4')
+
+RATES = (60, 120, 144, 240)
+SCENARIOS = ('walk', 'jump', 'turn')
+PROLOGUE_TIMEOUT_MS = 600000
+MAX_SECONDS = 1500
+
+WALK_HOLD_S = 3.0
+WALK_TAIL_S = 1.5
+JUMP_BUTTON = 'B'
+JUMP_PRESS_S = 0.4
+JUMP_RUN_S = 2.0
+TURN_COUNTS = 1000
+TURN_SPREAD_S = 0.2
+TURN_RUN_S = 0.5
+RAD_PER_COUNT = 0.000767945          # mouse right lowers yaw
+TURN_EXPECT = -TURN_COUNTS * RAD_PER_COUNT
+
+TOL = {'walk': {'steady': 0.01, 'dist': 0.02, 't95': 0.06, 'slide': 0.06},
+       'jump': {'peak': 0.02, 'air': 0.03},
+       'turn': {'yaw': 0.01}}
+EXPECT = {'turn': {'yaw': TURN_EXPECT}}
 
 
 def frames(sec, rate):
     return max(1, int(round(sec * rate)))
 
 
-# ---- script templates (seconds -> frames) ------------------------------------------------------------------------------------------------
-def script_menu(rate):
-    F = lambda s: frames(s, rate)
-    return '\n'.join([
-        '# S11 menu timing: the same game times at every rate',
-        '@timeout 0',
-        '@frame %d' % F(22.0), '@shot t0',
-        'press A for %d' % F(0.1),
-        '@frame %d' % F(22.4), '@shot t1',
-        '@frame %d' % F(22.8), '@shot t2',
-        '@frame %d' % F(23.6), '@shot t3',
-        '@frame %d' % F(26.0), '@shot t4',
-        '@pass', ''])
+# ---- script ---------------------------------------------------------------------------------------------------------------------------------
+def actions(scen, rate):
+    if scen == 'walk':
+        return ['stick left 0 1.0', '@run %g' % WALK_HOLD_S, 'stick left 0 0', '@run %g' % WALK_TAIL_S]
+    if scen == 'jump':
+        return ['press %s for %d' % (JUMP_BUTTON, frames(JUMP_PRESS_S, rate)), '@run %g' % JUMP_RUN_S]
+    if scen == 'turn':
+        n = frames(TURN_SPREAD_S, rate)
+        return ['mouse %.6f 0 for %d' % (TURN_COUNTS / float(n), n), '@run %g' % TURN_RUN_S]
+    raise ValueError(scen)
 
 
-def gameplay_head(rate):
-    F = lambda s: frames(s, rate)
-    return ['@timeout 0', '@warp frigate frigate_start', 'wait %d' % F(3.0), '@assert health > 0']
+def script_all(rates=RATES, scenarios=SCENARIOS):
+    lines = ['# S11 physics probe: one process, @rate per block'] + gp.prologue(timeout_ms=PROLOGUE_TIMEOUT_MS)
+    for rate in rates:
+        for scen in scenarios:
+            lines += gp.warp('tallon', 'tallon_canyon_cavern')
+            lines += ['@rate %d' % rate, '@hash %s_%d_start' % (scen, rate)]
+            lines += actions(scen, rate)
+            lines += ['@hash %s_%d_end' % (scen, rate), '@rate 0']
+    lines.append('@pass')
+    return lines + ['']
 
 
-def script_walk(rate):
-    F = lambda s: frames(s, rate)
-    return '\n'.join(['# S11 walk probe'] + gameplay_head(rate) + [
-        '@hash walk_start', 'stick left 0 1.0', 'wait %d' % F(3.0), 'stick left 0 0.0', 'wait %d' % F(1.5), '@pass', ''])
-
-
-def script_jump(rate):
-    F = lambda s: frames(s, rate)
-    return '\n'.join(['# S11 jump probe'] + gameplay_head(rate) + [
-        '@hash jump_start', 'press B for %d' % F(0.4), 'wait %d' % F(2.0), '@pass', ''])
-
-
-def script_turn(rate):
-    F = lambda s: frames(s, rate)
-    n = F(0.2)
-    return '\n'.join(['# S11 turn probe: 1000 counts over 0.2 s'] + gameplay_head(rate) + [
-        'mouse %.6f 0 for %d' % (1000.0 / n, n), 'wait %d' % F(0.5), '@pass', ''])
-
-
-SCENARIOS = {'menu': script_menu, 'walk': script_walk, 'jump': script_jump, 'turn': script_turn}
-GAMEPLAY = {'walk', 'jump', 'turn'}
-
-
-# ---- run ----------------------------------------------------------------------------------------------------------------------------------
-def run_one(scenario, rate, exe_dir, max_seconds, regions):
-    d = os.path.join(OUT, '%s_%d' % (scenario, rate))
-    os.makedirs(d, exist_ok=True)
-    spath = os.path.join(d, 'script.nxs')
-    with open(spath, 'w') as f:
-        f.write(SCENARIOS[scenario](rate))
-    env = dict(os.environ)
-    env.update(NXRT_TEST_SCRIPT=spath, NXRT_TEST_OUT=os.path.join(d, 'out'), NXRT_TEST_DETERMINISTIC='1', NXRT_TEST_CLOCK_STEP_TICKS=str(int(round(TICK_HZ / rate))),
-               NXRT_TEST_REGIONS=regions, NXRT_BOOT_GFX='headless', NXRT_FS_ROMFS=os.path.join(ROOT, 'game', 'romfs'), NXRT_FS_SAVE_DIR=os.path.join(ROOT, 'work', 'run', 'save'),
-               NXRT_TEST_WALL_TIMEOUT_S=str(max_seconds), NXRT_TIME_MODE='real')
-    cmd = [os.path.join(exe_dir, 'mpr.exe'), '--log', os.path.join(d, 'mpr.log'), '--max-seconds', str(max_seconds)]
-    t = time.time()
-    try:
-        p = subprocess.run(cmd, cwd=os.path.join(ROOT, 'work', 'run'), env=env, capture_output=True, text=True, timeout=max_seconds + 60)
-        code = p.returncode
-    except subprocess.TimeoutExpired:
-        code = 124
-    return d, code, time.time() - t
-
-
+# ---- trace and windows ----------------------------------------------------------------------------------------------------------------------
 def load_trace(d):
+    """All trace lines (player samples and '@hash' label lines)."""
     path = os.path.join(d, 'out', 'trace.jsonl')
     rows = []
     if os.path.exists(path):
@@ -111,43 +101,90 @@ def load_trace(d):
     return rows
 
 
-# ---- metrics --------------------------------------------------------------------------------------------------------------------------------
-def walk_metrics(rows, rate):
-    """rows after the 'walk_start' frame: speed per frame from positions (units / s of game time)."""
-    pts = [(r['f'], r['pos']) for r in rows if 'pos' in r]
-    if len(pts) < 10:
-        return None
-    sp = []
-    for (f0, p0), (f1, p1) in zip(pts, pts[1:]):
-        sp.append((f1, math.hypot(p1[0] - p0[0], p1[1] - p0[1]) * rate / max(1, f1 - f0)))
-    start = next((f for f, s in sp if s > 0.05), None)
-    if start is None:
-        return None
-    walk_frames = int(3.0 * rate)
-    seg = [s for f, s in sp if start <= f < start + walk_frames]
-    steady = sum(seg[-int(1.5 * rate):]) / max(1, len(seg[-int(1.5 * rate):]))
-    t95 = next((i / rate for i, s in enumerate(seg) if s >= 0.95 * steady), None)
-    dist = sum(s / rate for s in seg)
-    tail = [s for f, s in sp if f >= start + walk_frames]
-    slide = sum(s / rate for s in tail)
-    return dict(steady=steady, dist=dist, t95=t95, slide=slide)
+def checkpoints(d, rows):
+    """label -> frame from result.json; the '@hash' lines of the trace fill in anything missing."""
+    cps = {}
+    rp = os.path.join(d, 'out', 'result.json')
+    if os.path.exists(rp):
+        try:
+            for c in json.load(open(rp)).get('checkpoints', []):
+                cps[c['label']] = c['frame']
+        except ValueError:
+            pass
+    for r in rows:
+        if 'label' in r:
+            cps.setdefault(r['label'], r['f'])
+    return cps
 
 
-def jump_metrics(rows, rate):
-    pts = [(r['f'], r['pos'][2]) for r in rows if 'pos' in r]
-    if len(pts) < 10:
-        return None
-    z0 = pts[0][1]
-    peak = max(z for _, z in pts) - z0
-    air = [f for f, z in pts if z > z0 + 0.02]
-    return dict(peak=peak, air=(len(air) / rate) if air else 0.0)
+def window(rows, cps, scen, rate):
+    """player samples from the start checkpoint frame to the end checkpoint frame (inclusive)."""
+    fs = cps.get('%s_%d_start' % (scen, rate))
+    fe = cps.get('%s_%d_end' % (scen, rate))
+    if fs is None or fe is None:
+        return []
+    return [r for r in rows if 'pos' in r and 'igt' in r and fs <= r['f'] <= fe]
 
 
-def turn_metrics(rows, rate):
-    ys = [r['yaw'] for r in rows if 'yaw' in r]
-    if len(ys) < 10:
+# ---- metrics (game time = igt) --------------------------------------------------------------------------------------------------------------
+def _split(series, ts):
+    """trapezoid integral of (igt, value) pairs, split at igt = ts (value at ts interpolated). Returns (before, after)."""
+    before = after = 0.0
+    for (t0, s0), (t1, s1) in zip(series, series[1:]):
+        if t1 <= ts:
+            before += 0.5 * (s0 + s1) * (t1 - t0)
+        elif t0 >= ts:
+            after += 0.5 * (s0 + s1) * (t1 - t0)
+        else:
+            sm = s0 + (s1 - s0) * (ts - t0) / (t1 - t0)
+            before += 0.5 * (s0 + sm) * (ts - t0)
+            after += 0.5 * (sm + s1) * (t1 - ts)
+    return before, after
+
+
+def _speeds(pl):
+    """(igt, speed) per sample from spd; samples without spd use the x/z position difference over igt. Returns (series, fallback count)."""
+    out, fb = [], 0
+    for i, r in enumerate(pl):
+        if 'spd' in r:
+            out.append((r['igt'], r['spd']))
+        elif i > 0 and r['igt'] > pl[i - 1]['igt']:
+            p0 = pl[i - 1]
+            dt = r['igt'] - p0['igt']
+            out.append((r['igt'], math.hypot(r['pos'][0] - p0['pos'][0], r['pos'][2] - p0['pos'][2]) / dt))
+            fb += 1
+    return out, fb
+
+
+def walk_metrics(pl, rate):
+    if len(pl) < 10:
         return None
-    d = ys[-1] - ys[0]
+    t0 = pl[0]['igt']
+    end = t0 + WALK_HOLD_S                       # stick released here
+    series, fb = _speeds(pl)
+    hold = [(t, s) for t, s in series if t <= end + 1e-9]
+    steady_pts = [s for t, s in hold if t >= end - WALK_TAIL_S - 1e-9]
+    if len(hold) < 10 or not steady_pts:
+        return None
+    steady = sum(steady_pts) / len(steady_pts)
+    t95 = next((t - t0 for t, s in hold if s >= 0.95 * steady), None)
+    dist, slide = _split(series, end)
+    return dict(steady=steady, dist=dist, t95=t95, slide=slide, fallback=fb)
+
+
+def jump_metrics(pl, rate):
+    if len(pl) < 10:
+        return None
+    y0 = pl[0]['pos'][1]
+    peak = max(r['pos'][1] for r in pl) - y0
+    air = sum(b['igt'] - a['igt'] for a, b in zip(pl, pl[1:]) if a.get('state') in (1, 2, 3))
+    return dict(peak=peak, air=air)
+
+
+def turn_metrics(pl, rate):
+    if len(pl) < 10:
+        return None
+    d = pl[-1]['yaw'] - pl[0]['yaw']
     while d > math.pi:
         d -= 2 * math.pi
     while d < -math.pi:
@@ -155,90 +192,94 @@ def turn_metrics(rows, rate):
     return dict(yaw=d)
 
 
-METRICS = {'walk': (walk_metrics, {'steady': 0.01, 'dist': 0.02, 't95': 0.06, 'slide': 0.06}),
-           'jump': (jump_metrics, {'peak': 0.02, 'air': 0.03}),
-           'turn': (turn_metrics, {'yaw': 0.01})}
+FUNCS = {'walk': walk_metrics, 'jump': jump_metrics, 'turn': turn_metrics}
 
 
-def check_menu(dirs, a):
-    import imgdiff
-    base = 60 if 60 in dirs else min(dirs)
-    ok = True
-    print('%-6s %s' % ('shot', ' '.join('%8s' % ('%d Hz' % r) for r in sorted(dirs))))
-    for shot in ('t0', 't1', 't2', 't3', 't4'):
-        cells = []
-        for r in sorted(dirs):
-            pa = os.path.join(dirs[base], 'out', 'shots', shot + '.png')
-            pb = os.path.join(dirs[r], 'out', 'shots', shot + '.png')
-            if not (os.path.exists(pa) and os.path.exists(pb)):
-                cells.append('missing')
-                continue
-            s = 1.0 if r == base else imgdiff.compare(pa, pb).ssim
-            cells.append('%8.4f' % s)
-        print('%-6s %s' % (shot, ' '.join('%8s' % c for c in cells)))
-    print('(informational: not a pass/fail check, see the scenario text)')
-    return True
-
-
-def check_gameplay(scenario, dirs, a):
-    fn, tol = METRICS[scenario]
-    res = {}
-    for r, d in dirs.items():
-        rows = load_trace(d)
-        res[r] = fn(rows, r) if rows else None
-    if any(v is None for v in res.values()):
-        print('%s: no player samples at rates %s (gameplay not reachable: the run did not get past the warp)' % (scenario, [r for r, v in res.items() if v is None]))
-        return None
+# ---- checks ---------------------------------------------------------------------------------------------------------------------------------
+def print_table(scen, res, rates):
+    """res: rate -> metric dict or None. Prints the table, returns True when every cell is within tolerance of the 60 Hz run."""
+    keys = list(TOL[scen])
     base = 60 if 60 in res else min(res)
     ok = True
-    keys = list(tol)
+    print('== %s  (deviation from %d Hz; tolerance %s; ! = over tolerance)' % (scen, base, ', '.join('%s %.0f%%' % (k, 100 * TOL[scen][k]) for k in keys)))
     print('%-6s %s' % ('Hz', ' '.join('%10s' % k for k in keys)))
-    for r in sorted(res):
+    for r in rates:
         cells = []
         for k in keys:
-            v, b = res[r][k], res[base][k]
-            dev = abs(v - b) / abs(b) if b else (0 if v == b else 1)
-            bad = dev > tol[k]
+            v = (res.get(r) or {}).get(k)
+            b = (res.get(base) or {}).get(k)
+            if v is None or b is None:
+                bad, cell = True, 'n/a!'
+            else:
+                dev = abs(v - b) / abs(b) if b else (0 if v == b else 1)
+                bad = dev > TOL[scen][k]
+                cell = '%8.4f%s' % (v, '!' if bad else ' ')
             ok = ok and not bad
-            cells.append('%8.4f%s' % (v, '!' if bad else ' '))
+            cells.append(cell)
         print('%-6d %s' % (r, ' '.join('%10s' % c for c in cells)))
+    for k, ref in EXPECT.get(scen, {}).items():
+        for r in rates:
+            v = (res.get(r) or {}).get(k)
+            if v is not None:
+                print('   expected %s %.6f: %d Hz %.6f (%+.2f%%)' % (k, ref, r, v, 100.0 * (v - ref) / abs(ref)))
+    for r in rates:
+        fb = (res.get(r) or {}).get('fallback')
+        if fb:
+            print('   note: %d Hz used the x/z position difference on %d samples (no spd on those rows)' % (r, fb))
     return ok
+
+
+def analyse(d, rates, scenarios):
+    """Returns ({scen: {rate: metrics or None}}, {scen: {rate: number of window samples}})."""
+    rows = load_trace(d)
+    cps = checkpoints(d, rows)
+    res, counts = {}, {}
+    for scen in scenarios:
+        res[scen], counts[scen] = {}, {}
+        for rate in rates:
+            pl = window(rows, cps, scen, rate)
+            counts[scen][rate] = len(pl)
+            res[scen][rate] = FUNCS[scen](pl, rate) if pl else None
+    return res, counts
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--rates', default='60,120,144,240')
-    ap.add_argument('--scenarios', default='menu,walk,jump,turn')
-    ap.add_argument('--exe', default=os.path.join(ROOT, 'game-build', 'build', 'hifps'))
-    ap.add_argument('--max-seconds', type=int, default=300)
-    ap.add_argument('--ssim', type=float, default=0.97)
-    ap.add_argument('--regions', default=os.path.join(HERE, 'regions.tsv'))
-    ap.add_argument('--no-run', action='store_true', help='only analyse the runs already in work/hifps_probe')
-    ap.add_argument('--keep', action='store_true')
+    ap.add_argument('--rates', default=','.join(str(r) for r in RATES))
+    ap.add_argument('--scenarios', default=','.join(SCENARIOS))
+    ap.add_argument('--exe', default=DEFAULT_EXE, help='directory holding mpr.exe')
+    ap.add_argument('--max-seconds', type=int, default=MAX_SECONDS)
+    ap.add_argument('--no-run', action='store_true', help='only analyse the run already in work/hifps_probe/all')
     a = ap.parse_args()
     rates = [int(x) for x in a.rates.split(',')]
-    status = 0
-    for sc in a.scenarios.split(','):
-        if sc not in SCENARIOS:
-            print('unknown scenario', sc)
+    scenarios = a.scenarios.split(',')
+    for s in scenarios:
+        if s not in FUNCS:
+            print('unknown scenario', s)
             return 2
-        print('== %s' % sc)
-        dirs = {}
-        for r in rates:
-            if a.no_run:
-                d = os.path.join(OUT, '%s_%d' % (sc, r))
-            else:
-                d, code, took = run_one(sc, r, a.exe, a.max_seconds, a.regions)
-                print('   %d Hz: exit %d in %.0f s' % (r, code, took))
-            dirs[r] = d
-        ok = check_menu(dirs, a) if sc == 'menu' else check_gameplay(sc, dirs, a)
-        if ok is None:
-            status = max(status, 3)
-        elif not ok:
-            print('%s: FAIL' % sc)
+    status = 0
+    if not a.no_run:
+        lines = script_all(rates, scenarios)
+        res = gp.run(lines, RUN_DIR, rate=None, exe_dir=a.exe, seconds=a.max_seconds)
+        has_player = any('igt' in r for r in load_trace(RUN_DIR))
+        if res['exit'] == 1 and not has_player and 'timeout waiting for area' in res.get('message', ''):
+            print('run failed at the prologue (no player samples); retrying once')
+            res = gp.run(lines, RUN_DIR, rate=None, exe_dir=a.exe, seconds=a.max_seconds)
+        print('run: exit %s, verdict %s, wall %.0f s, message: %s' % (res['exit'], res.get('verdict', '-'), res['wall'], res.get('message', '-')))
+        if res['exit'] != 0:
             status = max(status, 1)
-        else:
-            print('%s: PASS' % sc)
+    results, counts = analyse(RUN_DIR, rates, scenarios)
+    for scen in scenarios:
+        empty = [r for r in rates if counts[scen][r] == 0]
+        if len(empty) == len(rates):
+            print('== %s: no player samples in any window (gameplay not reached)' % scen)
+            status = max(status, 3)
+            continue
+        if empty:
+            print('== %s: no player samples at %s' % (scen, empty))
+            status = max(status, 3)
+        if not print_table(scen, results[scen], rates):
+            status = max(status, 1)
     return status
 
 
