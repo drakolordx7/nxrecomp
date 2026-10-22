@@ -16,7 +16,12 @@ endif()
 option(NXRT_BUILD_TESTS "Build the nxrt_tests executable and register its CTest entries" ON)
 
 # The generated-code ABI header (Ctx, call_indirect, ...) is owned by stream S1 (recomp/include/nxrecomp/).
+# Found next to the checkout (../recomp) or, for a git worktree under runtime-wt/<name>, two levels up (../../recomp).
 set(NXRT_RECOMP_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../recomp/include" CACHE PATH "Directory that holds nxrecomp/")
+if(NOT EXISTS "${NXRT_RECOMP_INCLUDE}/nxrecomp/ctx.h" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/include/nxrecomp/ctx.h")
+    get_filename_component(_nxrt_ri "${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/include" ABSOLUTE)
+    set(NXRT_RECOMP_INCLUDE "${_nxrt_ri}" CACHE PATH "Directory that holds nxrecomp/" FORCE)
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(/W3 -Wno-unused-parameter -Wno-missing-field-initializers -Wno-cast-function-type-mismatch
@@ -24,7 +29,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0A00)
 
+option(NXRT_BUILD_GFX "Build the graphics shell (SDL3 + Vulkan + NVN front end, src/gfx, cmake/gfx.cmake)" ON)
+
 file(GLOB_RECURSE NXRT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+list(FILTER NXRT_SOURCES EXCLUDE REGEX "/src/gfx/")   # the graphics shell is its own library (cmake/gfx.cmake)
 add_library(nxrt STATIC ${NXRT_SOURCES})
 target_include_directories(nxrt PUBLIC include)
 if(EXISTS "${NXRT_RECOMP_INCLUDE}")
@@ -66,4 +74,8 @@ if(NXRT_BUILD_TESTS)
     else()
         message(STATUS "nxrt: lifted-code integration tests (tests/lift) are off: ../recomp or ../tools/.venv not found")
     endif()
+endif()
+
+if(NXRT_BUILD_GFX)
+    include(cmake/gfx.cmake)
 endif()
