@@ -33,6 +33,17 @@ struct SpvOutputSlot {
 // Returns false (out untouched) when the module cannot be rewritten (malformed, no entry point, a slot that already has an output).
 bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOutputSlot>& slots, std::vector<uint32_t>& out);
 
+// Vertex inputs that carry integers. The console hands a vertex shader the raw bits of an integer vertex attribute (RGBA8UI bone
+// indices, say) in the float registers the translation reads, and the translated shader declares every input as a float and
+// bitcasts it where it wants an integer. A Vulkan integer format needs an integer input. For each slot the Input variable becomes a
+// Private variable and a new Input variable of uvec4 (ivec4) takes its Location; the entry point copies it over with an OpBitcast, so
+// the shader reads the same bits as on the console. The slot's input has to be a vec4 of floats. False (out untouched) otherwise.
+struct SpvIntSlot {
+    uint32_t location = 0;
+    bool is_signed = false;
+};
+bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<SpvIntSlot>& slots, std::vector<uint32_t>& out);
+
 // A geometry shader the translator made for a console "passthrough" geometry shader (the hardware copies every attribute of the input
 // vertices to the output vertices; the shader code only sets the position and gl_Layer, so its translation writes no Location output at
 // all). Adds the outputs for `slots` like spirv_add_outputs and makes the k-th OpEmitVertex copy the input at the same Location of vertex k.
