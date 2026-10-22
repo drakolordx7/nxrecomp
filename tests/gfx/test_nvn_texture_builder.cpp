@@ -403,9 +403,9 @@ NXTEST(view_set_get_round_trip) {
     CHECK(get_levels(&v, &lo, &ln));
     CHECK_EQ(lo, 2);
     CHECK_EQ(ln, 5);
-    set_levels(&v, 0x7FFFFFFF, -1);
+    set_levels(&v, 0x7FFF, -1);        // 16 bits per field: the game's view is 16 bytes wide (boot note 122)
     CHECK(get_levels(&v, &lo, &ln));
-    CHECK_EQ(lo, 0x7FFFFFFF);
+    CHECK_EQ(lo, 0x7FFF);
     CHECK_EQ(ln, -1);
 
     set_layers(&v, 0, 6);
@@ -444,7 +444,7 @@ NXTEST(view_set_get_round_trip) {
 
     const TextureViewInfo d = decode(&v);
     CHECK(d.has_levels && d.has_layers && d.has_format && d.has_swizzle && d.has_depth_stencil_mode && d.has_target);
-    CHECK_EQ(d.min_level, 0x7FFFFFFF);
+    CHECK_EQ(d.min_level, 0x7FFF);
     CHECK_EQ(d.num_levels, -1);
     CHECK_EQ(d.min_layer, 0);
     CHECK_EQ(d.num_layers, 6);

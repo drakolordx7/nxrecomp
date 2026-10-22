@@ -205,6 +205,11 @@ bool thread_set_core_mask(KThread& t, int ideal, uint64_t mask) {
     if (mask & 8) usable |= 4;            // the system core maps onto core 2
     if (!usable) return false;
     if (ideal == -2) ideal = 0;
+    if (ideal == -1) {                                 // IdealCoreDontCare: the first core of the mask
+        ideal = 0;
+        for (int k = 0; k < 3; k++)
+            if (usable >> k & 1) { ideal = k; break; }
+    }
     if (ideal >= 0) {
         if (ideal > 2) ideal = 2;
         if (!(usable >> ideal & 1)) {                 // ideal core outside the mask: take the first core of the mask
