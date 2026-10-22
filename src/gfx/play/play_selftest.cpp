@@ -66,7 +66,7 @@ bool SelfTest::parse(const std::string& script, std::string* err) {
         s.verb = p[0];
         if (p.size() > 1) s.a = p[1];
         if (p.size() > 2) s.b = p[2];
-        static const char* kVerbs[] = {"wait", "size", "mode", "altenter", "key", "close", "cap", "measure", "expect_mode", "expect_size", "expect_fps", "set", "expect_present", "expect_cap", "expect_ini", "pass"};
+        static const char* kVerbs[] = {"wait", "size", "mode", "altenter", "key", "close", "cap", "measure", "expect_mode", "expect_size", "expect_fps", "expect_late", "set", "expect_present", "expect_cap", "expect_ini", "pass"};
         bool known = false;
         for (const char* v : kVerbs) known |= s.verb == v;
         if (!known) {
@@ -157,6 +157,12 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
     } else if (s.verb == "expect_fps") {
         const double want = std::atof(s.a.c_str()), tol = std::atof(s.b.c_str());
         if (std::fabs(last_fps_ - want) > want * tol) fail("fps " + std::to_string(last_fps_) + " is not within " + s.b + " of " + s.a);
+    } else if (s.verb == "expect_late") {
+        // the limiter's own accuracy on the last measure: frames that had to wait must have started within MS of their schedule
+        if (!limiter) fail("no limiter");
+        const FrameLimiter::Stats ls = limiter->stats();
+        if (ls.waited < 50) fail("only " + std::to_string(ls.waited) + " frames waited: the game was slower than the cap, nothing to judge");
+        if (ls.late_p99_ms > std::atof(s.a.c_str())) fail("late p99 " + std::to_string(ls.late_p99_ms) + " ms exceeds " + s.a);
     } else if (s.verb == "set") {
         // "set:vsync=1": the value may itself contain ':' (not used today), so re-join the parts
         const std::string kv = s.a + (s.b.empty() ? "" : ":" + s.b);
