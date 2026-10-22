@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -611,6 +612,24 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         p.invert_y = m.invert_y;
         p.pitch_limit_rad = st.pitch_limit_deg * kPi / 180.0;
     }
+    const bool dbg = std::getenv("NXRT_AIM_DEBUG") != nullptr;
+    auto dump_phys = [&](const char* tag) {
+        if (!dbg) return;
+        ::Ctx saved = *c;
+        c->x[0] = player; c->x[1] = mgr;
+        dispatch_call(c, st.base + 0xc556c4);        // CPhysicsActorMP1::GetPhysicsObject
+        const uint64_t obj = c->x[0];
+        *c = saved;
+        FILE* df = std::fopen("aim_debug.txt", "a");
+        if (!df) return;
+        std::fprintf(df, "%s obj=%llx:", tag, static_cast<unsigned long long>(obj));
+        float f[64];
+        if (obj && guest_read(obj + 0x10, f, sizeof f))
+            for (int i = 0; i < 64; i++) std::fprintf(df, " %g", f[i]);
+        std::fputc(10, df);
+        std::fclose(df);
+    };
+    dump_phys("PRE ");
     XfCall xc{c};
     st.aim->set_transform_fn(&guest_set_transform, &xc);
     const bool applied = st.aim->apply(player, mgr, dx, dy, p, [&] {
@@ -620,6 +639,9 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         t_in_process_input = false;
         *c = saved;
     });
+    dump_phys("POST");
+    if (st.log_status && (dx != 0 || dy != 0))
+        NXLOG_I(kTag, "aim: dx=%.1f dy=%.1f block=%s applied=%d pitch=%.4f", dx, dy, aim_block_name(st.aim->last_block()), applied ? 1 : 0, st.aim->pitch());
     if (applied) {
         st.aim_frames++;
         st.counts += static_cast<uint64_t>(std::fabs(dx) + std::fabs(dy));

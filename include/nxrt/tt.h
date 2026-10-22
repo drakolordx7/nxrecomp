@@ -57,6 +57,18 @@ struct GameState {
     float hp = 0;
     double igt = 0;                // CGameState play time, seconds
     uint32_t move_state = 0;       // EPlayerMovementState
+    // read from the game's own state (S13), valid with have_phys / have_aim / have_ps:
+    bool have_phys = false;        // vel[] is the physics object's world velocity (CPhysicsActorMP1::GetVelocityWR), not a position difference
+    float speed = 0;               // |vel|
+    bool have_aim = false;
+    float pitch = 0;               // free-look pitch angle, radians, + = up (CPlayerMP1 + 0x5cc)
+    int32_t cam_state = -1;        // EPlayerCameraState (0 first person)
+    int32_t morph_state = -1;      // morph transition state word (0 = unmorphed)
+    int32_t orbit_state = -1;      // EPlayerOrbitState (0 = not locked on)
+    bool have_ps = false;
+    int32_t beam = -1;             // current beam, game numbering 0 power 1 ice 2 wave 3 plasma
+    int32_t visor = -1;            // 0 combat 1 x-ray 2 scan 3 thermal
+    int32_t missiles = -1;         // item 4 amount
 };
 
 struct Checkpoint { std::string label; uint64_t frame = 0; uint64_t hash = 0; };
@@ -80,6 +92,8 @@ void reset_for_tests();
 void install_game_hooks();
 // The state-pointer capture, called from the ProcessInput hook (x0 = CPlayerMP1*, x2 = CStateManager&); tests call it directly.
 void set_player_pointers(uint64_t player, uint64_t state_manager);
+// The context of the hook that is running the frame boundary: lets read_state call guest functions (the physics velocity). Null outside a hook.
+void set_call_context(::Ctx* c);
 
 // ---- state ---------------------------------------------------------------------------------------------------------------------------
 bool read_state(GameState* out);           // the probes, now (guest memory); false when nothing could be read
