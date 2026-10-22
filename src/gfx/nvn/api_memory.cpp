@@ -186,13 +186,42 @@ static_assert(sizeof(MappingRequest) == 40, "NVNmappingRequest is 40 bytes");
 // Sparse (virtual) textures are backed by ordinary images that exist completely (the console fills tiles through copy commands, which
 // the images take as they are); the mapping of tiles to physical memory therefore needs no action. The call succeeds.
 NVNboolean nvnMemoryPoolMapVirtual(NVNmemoryPool* pool, int count, const NVNmappingRequest* requests) {
-    if (!pool_of_guest(pool) || count < 0 || (count > 0 && !requests)) return 0;
+    MemoryPool* vp = pool_of_guest(pool);
+    if (!vp || count < 0 || (count > 0 && !requests)) return 0;
     static std::atomic<int> logged{0};
     const MappingRequest* r = reinterpret_cast<const MappingRequest*>(requests);
-    for (int i = 0; i < count && logged.load() < 8; ++i, logged.fetch_add(1))
-        NXLOG_I("nvn", "nvnMemoryPoolMapVirtual: virtual 0x%llx + 0x%llx <- physical pool %p + 0x%llx (storage class %d): no action, sparse textures are resident",
-                static_cast<unsigned long long>(r[i].virtual_offset), static_cast<unsigned long long>(r[i].size),
-                reinterpret_cast<void*>(static_cast<uintptr_t>(r[i].physical_pool)), static_cast<unsigned long long>(r[i].physical_offset), r[i].storage_class);
+    for (int i = 0; i < count; ++i) {
+        if (r[i].virtual_offset < 0 || r[i].size == 0) continue;
+        const uint64_t v0 = static_cast<uint64_t>(r[i].virtual_offset), v1 = v0 + r[i].size;
+        MemoryPool* phys = host_of<MemoryPool>(reinterpret_cast<const void*>(static_cast<uintptr_t>(r[i].physical_pool)));
+        if (logged.load() < 8) {
+            logged.fetch_add(1);
+            NXLOG_I("nvn", "nvnMemoryPoolMapVirtual: virtual 0x%llx + 0x%llx <- physical pool %p + 0x%llx (storage class %d)%s", static_cast<unsigned long long>(v0),
+                    static_cast<unsigned long long>(r[i].size), reinterpret_cast<void*>(static_cast<uintptr_t>(r[i].physical_pool)),
+                    static_cast<unsigned long long>(r[i].physical_offset), r[i].storage_class, phys ? "" : " (unmaps the range)");
+        }
+        {
+            std::lock_guard<std::mutex> lk(vp->vmu);
+            // the new mapping replaces whatever covered its range
+            std::vector<MemoryPool::VirtualMap> kept;
+            for (MemoryPool::VirtualMap& m : vp->vmaps) {
+                const uint64_t m0 = m.voff, m1 = m.voff + m.size;
+                if (m1 <= v0 || m0 >= v1) { kept.push_back(std::move(m)); continue; }
+                if (m0 < v0) { MemoryPool::VirtualMap left = m; left.size = v0 - m0; kept.push_back(std::move(left)); }
+                if (m1 > v1) { MemoryPool::VirtualMap right = m; right.poff += static_cast<int64_t>(v1 - m0); right.voff = v1; right.size = m1 - v1; kept.push_back(std::move(right)); }
+            }
+            if (phys) {
+                MemoryPool::VirtualMap nm;
+                nm.voff = v0;
+                nm.size = r[i].size;
+                nm.phys = Ref<MemoryPool>::share(phys);
+                nm.poff = r[i].physical_offset;
+                kept.push_back(std::move(nm));
+            }
+            vp->vmaps = std::move(kept);
+        }
+        virtual_textures_remapped(vp, v0, r[i].size);
+    }
     return 1;
 }
 

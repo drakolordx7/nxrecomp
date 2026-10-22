@@ -11,6 +11,8 @@
 // from the harness's results.tsv (apply_harness).
 #include "nvn_shaders.h"
 
+#include <windows.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -915,6 +917,14 @@ bool ShaderCache::is_open() const {
 
 const std::string& ShaderCache::dir() const { return dir_; }
 
+// The folder of the running executable, or "" when it cannot be read.
+static std::string exe_folder() {
+    char buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    return std::filesystem::path(buf).parent_path().string();
+}
+
 ShaderCache& shader_cache() {
     static ShaderCache cache;
     static std::once_flag once;
@@ -924,10 +934,12 @@ ShaderCache& shader_cache() {
             cache.open(configured);  // logs its own failure
             return;
         }
-        static const char* kCandidates[] = {"./shader_cache/spirv", "C:/mpr/work/shader_cache/spirv"};
-        for (const char* dir : kCandidates) {
+        // The working directory first, then the folder of the executable.
+        std::vector<std::string> candidates = {"./shader_cache/spirv"};
+        if (std::string exe = exe_folder(); !exe.empty()) candidates.push_back(exe + "/shader_cache/spirv");
+        for (const std::string& dir : candidates) {
             std::error_code ec;
-            if (!std::filesystem::exists(std::string(dir) + "/results.tsv", ec)) continue;
+            if (!std::filesystem::exists(dir + "/results.tsv", ec)) continue;
             if (cache.open(dir)) return;
         }
         NXLOG_W("nvn", "no shader cache: set [nvn] shader_cache (NXRT_NVN_SHADER_CACHE) to a folder with results.tsv");

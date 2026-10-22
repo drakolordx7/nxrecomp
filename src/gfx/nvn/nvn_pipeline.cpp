@@ -253,19 +253,38 @@ static std::vector<SpvOutputSlot> missing_outputs(const ShaderInfo* producer, co
 
 // The module of `producer` to use in a pipeline whose next stage is `consumer`: the translated one, or a copy with the outputs the
 // consumer reads and the producer lacks. Null on a Vulkan error.
-static VkShaderModule producer_module(const ShaderInfo* producer, const ShaderInfo* consumer) {
+static VkShaderModule producer_module(const ShaderInfo* producer, const ShaderInfo* consumer, const std::vector<SpvIntSlot>& ints = {}) {
     const std::vector<SpvOutputSlot> missing = missing_outputs(producer, consumer);
-    if (missing.empty()) return shader_module(producer);
+    if (missing.empty() && ints.empty()) return shader_module(producer);
     std::vector<uint32_t> id;
     for (const SpvOutputSlot& m : missing) id.push_back(m.location * 4 + static_cast<uint32_t>(m.type));
+    for (const SpvIntSlot& n : ints) id.push_back(0x80000000u | (n.location * 2 + (n.is_signed ? 1u : 0u)));
     std::lock_guard<std::recursive_mutex> lk(g_module_mu);
     auto it = g_variants.find({producer, id});
     if (it != g_variants.end()) return it->second;
     VkShaderModule m = VK_NULL_HANDLE;
+    std::vector<uint32_t> base_words;
+    const std::vector<uint32_t>* words = &producer->spirv;
+    if (!ints.empty()) {
+        // integer vertex attributes: the shader gets the raw bits the console delivers (nvn_spirv_patch.h)
+        if (!spirv_int_attributes(producer->spirv, ints, base_words)) {
+            NXLOG_E(kTag, "%s: the integer vertex attributes could not be patched in; draws with this shader are skipped", producer->hash.c_str());
+            g_variants[{producer, id}] = VK_NULL_HANDLE;
+            return VK_NULL_HANDLE;
+        }
+        words = &base_words;
+        if (missing.empty()) {
+            m = create_module(base_words, producer->hash.c_str());
+            g_variants[{producer, id}] = m;
+            return m;
+        }
+    }
     std::vector<uint32_t> patched;
-    if (spirv_add_outputs(producer->spirv, missing, patched)) {
+    // a passthrough geometry shader: the hardware forwards the attributes of the input vertices, the translation has no code for it
+    const bool pass = producer->stage == ShaderStage::Geometry && spirv_gs_passthrough(*words, missing, patched);
+    if (pass || spirv_add_outputs(*words, missing, patched)) {
         m = create_module(patched, producer->hash.c_str());
-        NXLOG_D(kTag, "%s: %zu outputs added for the next stage", producer->hash.c_str(), missing.size());
+        NXLOG_D(kTag, "%s: %zu outputs added for the next stage%s", producer->hash.c_str(), missing.size(), pass ? " (copied from the input vertices)" : "");
     } else {
         NXLOG_W(kTag, "%s: the %zu varyings the next stage reads could not be added; the unpatched module is used", producer->hash.c_str(), missing.size());
         m = shader_module(producer);
@@ -346,6 +365,21 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     const VkShaderStageFlagBits bits[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
     // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
     const int feeder = key.stage[2] ? 2 : 0;
+    // vertex inputs the shader declares as floats but the game feeds with integer attributes (key formats UINT / SINT)
+    std::vector<SpvIntSlot> int_slots;
+    if (key.stage[0] && !key.xfb)
+        for (uint32_t k = 0; k < key.attr_count && k < 16; ++k) {
+            const VkFormat f = static_cast<VkFormat>(key.attr[k].format);
+            if (!vk_format_is_integer(f)) continue;
+            for (const ShaderIo& in : key.stage[0]->refl.inputs)
+                if (in.type == ScalarType::Float && key.attr[k].location >= in.location && key.attr[k].location < in.location + (in.array ? in.array : 1)) {
+                    SpvIntSlot sl;
+                    sl.location = key.attr[k].location;
+                    sl.is_signed = vk_format_is_signed_int(f);
+                    int_slots.push_back(sl);
+                    break;
+                }
+        }
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
         if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
@@ -359,7 +393,8 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
             ++ns;
             continue;
         }
-        VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1])
+        VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1], i == 0 ? int_slots : std::vector<SpvIntSlot>())
+                           : (i == 0 && !int_slots.empty()) ? producer_module(key.stage[i], nullptr, int_slots)
                            : (i == 1 && key.no_out)      ? no_output_module(key.stage[i])
                            : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
                            : (i == 1)                    ? hdr_fragment_module(key.stage[i])

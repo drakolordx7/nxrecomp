@@ -9,6 +9,8 @@
 //   * BCn (BC1..BC7, BC6H, BC4/5) blocks are passed through unchanged.
 //   * ASTC is kept when caps.astc, otherwise transcoded to BC7 once (caps.bc7_transcode; the result is cached on disk, keyed
 //     by a hash of the source bytes), otherwise decoded to RGBA8.
+//   * The disk cache entry decides the output format: BC7 as the runtime writes it, or RGBA8 / BC5 entries made by the setup tool
+//     (cache_entry_format; docs/S4f.md "Texture cache entries").
 //   * Output sizes: BC7 levels are rounded up to whole 4x4 blocks, i.e. (w+3)/4 * (h+3)/4 * 16 bytes per layer and slice.
 #pragma once
 #include <cstddef>
@@ -26,6 +28,7 @@ struct TexCaps {
     bool bc = true;              // the GPU samples BCn; BCn data is passed through
     bool astc = false;           // the GPU samples ASTC; ASTC data is kept
     bool bc7_transcode = true;   // when astc is false: transcode ASTC to BC7 (else decode it to RGBA8)
+    VkFormat image_format = VK_FORMAT_UNDEFINED;   // the format of the image the data goes into, when it exists already: the data comes out in it
 };
 
 struct PreparedLevel {
@@ -49,6 +52,10 @@ struct PreparedTexture {
 // Prepares the data of t for the GPU described by caps. Returns false with out.error set on failure (no storage, bad layout,
 // no Vulkan format, a codec error, ...). Never crashes on a bad texture.
 bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out);
+
+// The format the disk cache entry of an ASTC texture holds when that is not BC7: R8G8B8A8 (UNORM or SRGB as the texture) or BC5_UNORM (a
+// two-channel normal map). VK_FORMAT_UNDEFINED: no entry, or a BC7 entry. The GPU layer makes the image in this format (docs/S4f.md).
+VkFormat cache_entry_format(const Texture& t);
 
 // Fast 64-bit hash of a byte range (xxHash64-style mix). Used for the cache key.
 uint64_t hash_bytes(const void* data, size_t size);

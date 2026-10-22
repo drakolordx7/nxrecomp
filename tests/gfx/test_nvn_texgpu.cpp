@@ -4,9 +4,12 @@
 // layout transitions, samplers and border colours, CPU and GPU write rules, the download of a render target, the failure path and
 // the dummy views. Each case builds its own device and textures and checks that validation reports nothing and that no VMA
 // allocation is left after shutdown.
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <random>
 #include <set>
@@ -897,4 +900,230 @@ NXTEST(has_storage_for_colour_images) {
         });
     }
     teardown(r);
+}
+
+// ---- 18: ASTC with a disk cache entry of RGBA8 or BC5: the image is made in the entry's format ----------------------------------
+
+namespace fs = std::filesystem;
+
+namespace {
+
+namespace be = nxrt::nvn::be;
+
+void put32(std::vector<uint8_t>& v, uint32_t x) {
+    for (int i = 0; i < 4; ++i) v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+}
+void put64(std::vector<uint8_t>& v, uint64_t x) {
+    for (int i = 0; i < 8; ++i) v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+}
+uint64_t get64(const uint8_t* p) {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+}
+
+// A new cache folder for one case, set as the cache folder (the env var wins over the config; no_cache() undoes it).
+fs::path new_cache_dir(const char* tag) {
+    const fs::path dir = fs::temp_directory_path() /
+                         (std::string("nxrt_texgpu_") + tag + "_" +
+                          std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+#ifdef _WIN32
+    _putenv_s("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+#else
+    setenv("NXRT_NVN_BC7_CACHE", dir.string().c_str(), 1);
+#endif
+    return dir;
+}
+
+// Level table of a tight cache entry: RGBA8 texels (4 bytes each) or 4x4 blocks (16 bytes each); all layers of a level back to back.
+std::vector<be::PreparedLevel> tight_table(const TexLayout& L, bool rgba8) {
+    std::vector<be::PreparedLevel> v;
+    uint64_t off = 0;
+    for (const tegra::LevelLayout& lv : L.layout.levels) {
+        be::PreparedLevel p{};
+        p.width = lv.width;
+        p.height = lv.height;
+        p.depth = lv.depth;
+        const uint64_t per_slice = rgba8 ? static_cast<uint64_t>(lv.width) * lv.height * 4
+                                         : static_cast<uint64_t>((lv.width + 3) / 4) * ((lv.height + 3) / 4) * 16;
+        p.offset = off;
+        p.size = per_slice * lv.depth * L.layers;
+        off += p.size;
+        v.push_back(p);
+    }
+    return v;
+}
+
+// The RGBA8 image of a 2D texture (one layer, one slice): texel (x, y) of level i is (x, y, i, 255).
+std::vector<uint8_t> rgba8_pattern(const TexLayout& L) {
+    const std::vector<be::PreparedLevel> t = tight_table(L, true);
+    std::vector<uint8_t> v(static_cast<size_t>(t.back().offset + t.back().size));
+    for (size_t i = 0; i < t.size(); ++i)
+        for (uint32_t y = 0; y < t[i].height; ++y)
+            for (uint32_t x = 0; x < t[i].width; ++x) {
+                uint8_t* px = v.data() + t[i].offset + (static_cast<uint64_t>(y) * t[i].width + x) * 4;
+                px[0] = static_cast<uint8_t>(x);
+                px[1] = static_cast<uint8_t>(y);
+                px[2] = static_cast<uint8_t>(i);
+                px[3] = 255;
+            }
+    return v;
+}
+
+// Overwrites a cache file with an entry in the layout cache_write uses: magic, version 1, key, VkFormat, level and layer counts,
+// the level table, then the data.
+void write_entry(const fs::path& file, uint64_t key, VkFormat format, const std::vector<be::PreparedLevel>& level, uint32_t layers,
+                 const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> head;
+    const uint8_t magic[4] = {'N', 'X', 'B', '7'};
+    head.insert(head.end(), magic, magic + 4);
+    put32(head, 1);
+    put64(head, key);
+    put32(head, static_cast<uint32_t>(format));
+    put32(head, static_cast<uint32_t>(level.size()));
+    put32(head, layers);
+    for (const be::PreparedLevel& l : level) {
+        put32(head, l.width);
+        put32(head, l.height);
+        put32(head, l.depth);
+        put64(head, l.offset);
+        put64(head, l.size);
+    }
+    std::ofstream f(file, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char*>(head.data()), static_cast<std::streamsize>(head.size()));
+    f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+}
+
+// The one .bc7 file of a folder and its key (read from the header). False when the folder does not hold exactly one file.
+bool single_entry(const fs::path& dir, fs::path& file, uint64_t& key) {
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (const auto& e : fs::recursive_directory_iterator(dir, ec))
+        if (e.is_regular_file(ec) && e.path().extension() == ".bc7") files.push_back(e.path());
+    if (files.size() != 1) return false;
+    file = files[0];
+    std::ifstream f(file, std::ios::binary);
+    uint8_t head[16];
+    if (!f.read(reinterpret_cast<char*>(head), sizeof head)) return false;
+    key = get64(head + 8);
+    return true;
+}
+
+// Copies every level of the image into a host buffer at the offsets of `table` (tight texel rows). As read_back, the image is moved
+// to TRANSFER_SRC and back to the layout it had.
+bool read_back_tight(Device& dev, Texture* t, const std::vector<be::PreparedLevel>& table, uint32_t layers, std::vector<uint8_t>& out) {
+    const uint64_t size = table.back().offset + table.back().size;
+    out.assign(static_cast<size_t>(size), 0);
+    gfx::Buffer rb;
+    gpu::finish();
+    gpu::run_frame_sync([&](Frame& f) {
+        if (dev.create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUse::Readback, &rb, "test readback") != VK_SUCCESS) return;
+        const VkImageLayout prev = gpu::tex_layout(t);
+        gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        std::vector<VkBufferImageCopy> regions;
+        for (uint32_t l = 0; l < table.size(); ++l) {
+            VkBufferImageCopy r = {};
+            r.bufferOffset = table[l].offset;
+            r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, layers};
+            r.imageExtent = {table[l].width, table[l].height, table[l].depth};
+            regions.push_back(r);
+        }
+        vkCmdCopyImageToBuffer(f.cb, gpu::tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.buffer, static_cast<uint32_t>(regions.size()),
+                               regions.data());
+        if (prev != VK_IMAGE_LAYOUT_UNDEFINED) gpu::tex_transition(t, f, prev);
+    });
+    if (!rb) return false;
+    dev.invalidate_buffer(rb);
+    std::memcpy(out.data(), rb.mapped, static_cast<size_t>(size));
+    dev.destroy_buffer(rb);
+    return true;
+}
+
+// One ASTC 4x4 UNORM texture (40x32, 3 levels, constant-colour void-extent blocks) whose cache folder holds an entry of `entry` format
+// (RGBA8 or BC5). prepare_texture writes the BC7 entry first; the hand-made entry replaces it; the upload must make the image in the
+// entry's format. For RGBA8 the image is read back and must equal the entry's pattern. For BC5 the format and the upload are checked
+// (validation is checked at teardown).
+void cache_entry_case(const char* what, VkFormat entry) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    if (r.dev->features().astc_ldr) {
+        nxtest::skip("this GPU has ASTC: the cache entries are not used");
+    } else if (!r.dev->features().bc) {
+        nxtest::skip("textureCompressionBC is not available on this GPU");
+    } else {
+        std::printf("    %s\n", what);
+        const bool rgba8 = entry == VK_FORMAT_R8G8B8A8_UNORM;
+        const fs::path dir = new_cache_dir(rgba8 ? "rgba8" : "bc5");
+        Tex x;
+        if (make_tex(x, info(NVN_TEXTURE_TARGET_2D, 40, 32, 1, 3, NVN_FORMAT_RGBA_ASTC_4x4))) {
+            for (size_t l = 0; l < x.L.layout.levels.size(); ++l) {
+                const tegra::LevelLayout& lv = x.L.layout.levels[l];
+                std::mt19937 rng(static_cast<uint32_t>(7 + l));
+                for (uint32_t y = 0; y < lv.blocks_y; ++y)
+                    for (uint32_t bx = 0; bx < lv.blocks_x; ++bx) {
+                        uint8_t* blk = x.lin.data() + lv.linear_offset + y * lv.linear_row_stride + bx * 16;
+                        blk[0] = 0xFC;
+                        blk[1] = 0xFD;
+                        std::memset(blk + 2, 0xFF, 6);
+                        uint16_t c[4];
+                        for (uint16_t& v : c) v = static_cast<uint16_t>(rng());
+                        std::memcpy(blk + 8, c, 8);
+                    }
+            }
+            tile_into_storage(x);
+            Texture* t = x.t.get();
+
+            be::PreparedTexture prep;
+            CHECK_MSG(be::prepare_texture(*t, be::TexCaps(), prep), prep.error);
+            fs::path file;
+            uint64_t key = 0;
+            if (!single_entry(dir, file, key)) {
+                CHECK_MSG(false, "expected one BC7 cache file after the first prepare");
+            } else {
+                const std::vector<be::PreparedLevel> table = tight_table(x.L, rgba8);
+                std::vector<uint8_t> data;
+                if (rgba8) {
+                    data = rgba8_pattern(x.L);
+                } else {
+                    data.assign(static_cast<size_t>(table.back().offset + table.back().size), 0);
+                    fill_random(data, 901);
+                }
+                write_entry(file, key, entry, table, x.L.layers, data);
+                CHECK_EQ(be::cache_entry_format(*t), entry);
+
+                uint64_t uploads0 = 0, uploads1 = 0;
+                VkFormat vk = VK_FORMAT_UNDEFINED;
+                gpu::run_on_render_thread([&] { uploads0 = gpu::tex_stats().uploads; });
+                gpu::run_frame_sync([&](Frame& f) {
+                    gpu::tex_ensure_current(t, f);
+                    vk = gpu::tex_vk_format(t);
+                });
+                gpu::run_on_render_thread([&] { uploads1 = gpu::tex_stats().uploads; });
+                CHECK_EQ(uploads1 - uploads0, 1ull);
+                CHECK_EQ(vk, entry);
+                std::printf("    image format %d (entry %d)\n", static_cast<int>(vk), static_cast<int>(entry));
+                if (rgba8) {
+                    std::vector<uint8_t> got;
+                    CHECK_MSG(read_back_tight(*r.dev, t, table, x.L.layers, got), "RGBA8 readback failed");
+                    CHECK_MSG(got == data, "RGBA8 image differs from the entry");
+                }
+            }
+            std::error_code ec;
+            fs::remove_all(dir, ec);
+        }
+        no_cache();
+    }
+    teardown(r);
+}
+
+}  // namespace
+
+NXTEST(astc_with_rgba8_and_bc5_cache_entries) {
+    cache_entry_case("RGBA8 cache entry: the image is R8G8B8A8_UNORM and reads back as the entry", VK_FORMAT_R8G8B8A8_UNORM);
+    cache_entry_case("BC5 cache entry: the image is BC5_UNORM and the upload completes", VK_FORMAT_BC5_UNORM_BLOCK);
 }

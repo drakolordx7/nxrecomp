@@ -251,13 +251,46 @@ std::vector<LevelGeom> level_geometry(const TextureBuilderInfo& b, const TexLayo
     return g;
 }
 
-enum class Mode { Passthrough, Bc7, Rgba8 };
+enum class Mode { Passthrough, Bc7, Rgba8, Bc5 };
 
 }  // namespace
 
 uint64_t hash_bytes(const void* data, size_t size) {
     return hash_seeded(static_cast<const uint8_t*>(data), size, 0);
 }
+
+namespace {
+
+// The cache key of a texture: the hash of the source bytes, seeded with what else decides the output (format, size, layout, quality).
+uint64_t cache_key_of(const Texture& t, const uint8_t* mem, const TexLayout& L, const std::vector<LevelGeom>& geo, const FormatInfo& fmt, int quality) {
+    const LevelGeom& g0 = geo[0];
+    const uint64_t block_height = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;
+    const std::vector<uint64_t> meta = {kCacheVersion,
+                                        static_cast<uint64_t>(fmt.nvn),
+                                        g0.w,
+                                        g0.h,
+                                        g0.d,
+                                        L.levels,
+                                        L.layers,
+                                        block_height,
+                                        L.pitch,
+                                        static_cast<uint64_t>(quality)};
+    const uint64_t meta_hash = hash_bytes(meta.data(), meta.size() * sizeof(uint64_t));
+    return hash_seeded(mem, static_cast<size_t>(t.storage_size), meta_hash);
+}
+
+// The VkFormat a cache file declares (magic, version and key checked), VK_FORMAT_UNDEFINED when there is no valid file.
+VkFormat cache_peek_format(const std::string& path, uint64_t key) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) return VK_FORMAT_UNDEFINED;
+    std::ifstream f(path, std::ios::binary);
+    uint8_t head[kCacheHeadBytes];
+    if (!f || !f.read(reinterpret_cast<char*>(head), sizeof head)) return VK_FORMAT_UNDEFINED;
+    if (std::memcmp(head, kCacheMagic, 4) != 0 || get32(head + 4) != kCacheVersion || get64(head + 8) != key) return VK_FORMAT_UNDEFINED;
+    return static_cast<VkFormat>(get32(head + 16));
+}
+
+}  // namespace
 
 std::string bc7_cache_path(const Texture& t, uint64_t hash) {
     (void)t;
@@ -269,6 +302,18 @@ std::string bc7_cache_path(const Texture& t, uint64_t hash) {
     return p.string();
 }
 
+VkFormat cache_entry_format(const Texture& t) {
+    if (!t.mem || cache_dir().empty()) return VK_FORMAT_UNDEFINED;
+    const TexLayout L = compute_texture_layout(t.b);
+    if (!L.valid || !L.fmt || !L.fmt->astc || t.b.samples > 1 || t.storage_size < L.storage_size) return VK_FORMAT_UNDEFINED;
+    const std::vector<LevelGeom> geo = level_geometry(t.b, L);
+    if (geo.size() != L.levels) return VK_FORMAT_UNDEFINED;
+    const uint64_t key = cache_key_of(t, t.mem, L, geo, *L.fmt, bc7_quality());
+    const VkFormat f = cache_peek_format(bc7_cache_path(t, key), key);
+    const VkFormat rgba = L.fmt->srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    return (f == rgba || (f == VK_FORMAT_BC5_UNORM_BLOCK && !L.fmt->srgb)) ? f : VK_FORMAT_UNDEFINED;
+}
+
 bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out) {
     out = PreparedTexture();
     const auto fail = [&out, &t](std::string msg) {
@@ -277,19 +322,50 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         return false;
     };
 
-    if (!t.mem) return fail("no storage (mem is null)");
+    // The source bytes: the texture's storage in the game's memory, or for a sparse texture the tiles mapped into its virtual pool.
+    const uint8_t* src_mem = t.mem;
+    std::vector<uint8_t> gathered;
+    if (!src_mem && t.vpool) {
+        if (texture_gather_virtual(t, gathered)) src_mem = gathered.data();
+    }
+    if (!src_mem) return fail("no storage (mem is null)");
     const TexLayout L = compute_texture_layout(t.b);
     if (!L.valid || !L.fmt) return fail("layout is invalid (format, size, target or layout)");
     if (t.b.samples > 1) return fail("multisample textures are not supported");
     if (t.storage_size < L.storage_size) return fail("storage_size is smaller than the layout needs");
     const FormatInfo& fmt = *L.fmt;
 
+    const std::vector<LevelGeom> geo = level_geometry(t.b, L);
+    if (geo.size() != L.levels) return fail("internal: level count mismatch");
+
     // ---- what the GPU gets ------------------------------------------------------------------------------------------------
     Mode mode = Mode::Passthrough;
+    std::string cache_file;   // empty: cache off (or not a BC7 output)
+    uint64_t key = 0;
+    const VkFormat rgba8_format = fmt.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+    bool entry_applies = false;   // the cache file of the key holds the output format the mode needs
+    VkFormat entry_format = VK_FORMAT_UNDEFINED;   // the format a valid cache file of the key declares
     if (fmt.astc) {
         if (caps.astc) mode = Mode::Passthrough;
         else if (caps.bc7_transcode) mode = Mode::Bc7;
         else mode = Mode::Rgba8;
+        if (!caps.astc && !cache_dir().empty()) {
+            // A cache entry may hold the texture as BC7 (the default), as RGBA8 (a texture BC7 cannot reproduce well) or as BC5 (a two-channel
+            // normal map: blue 0 and alpha 1 on sampling). The image the data goes into is made in the entry's format (caps.image_format).
+            key = cache_key_of(t, src_mem, L, geo, fmt, bc7_quality());
+            cache_file = bc7_cache_path(t, key);
+            const VkFormat ef = cache_peek_format(cache_file, key);
+            entry_format = ef;
+            const VkFormat bc7_format = fmt.srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+            const VkFormat bc5_format = VK_FORMAT_BC5_UNORM_BLOCK;
+            const VkFormat want = caps.image_format;   // UNDEFINED: whatever the entry has
+            if (ef == rgba8_format && (want == VK_FORMAT_UNDEFINED || want == rgba8_format)) { mode = Mode::Rgba8; entry_applies = true; }
+            else if (ef == bc5_format && !fmt.srgb && (want == VK_FORMAT_UNDEFINED || want == bc5_format)) { mode = Mode::Bc5; entry_applies = true; }
+            else if (ef == bc7_format && (want == VK_FORMAT_UNDEFINED || want == bc7_format)) { mode = Mode::Bc7; entry_applies = true; }
+            else if (want == rgba8_format) mode = Mode::Rgba8;     // an RGBA8 image and no entry for it: decode the ASTC
+            else if (want == bc5_format) return fail("the image is BC5 but its cache entry is gone");
+            else mode = Mode::Bc7;
+        }
     } else if (fmt.bc) {
         if (!caps.bc) return fail(std::string("BCn format ") + fmt.name + ", and the GPU does not sample BCn");
     } else if (fmt.compressed) {
@@ -311,6 +387,12 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
             out.block_h = 4;
             out.block_bytes = 16;
             break;
+        case Mode::Bc5:
+            out.format = VK_FORMAT_BC5_UNORM_BLOCK;
+            out.block_w = 4;
+            out.block_h = 4;
+            out.block_bytes = 16;
+            break;
         case Mode::Rgba8:
             out.format = fmt.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
             out.block_w = 1;
@@ -323,8 +405,6 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     out.layers = L.layers;
 
     // ---- output level table ---------------------------------------------------------------------------------------------
-    const std::vector<LevelGeom> geo = level_geometry(t.b, L);
-    if (geo.size() != L.levels) return fail("internal: level count mismatch");
     out.level.reserve(geo.size());
     for (const LevelGeom& g : geo) {
         PreparedLevel pl{};
@@ -339,6 +419,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
                 layer_bytes = g.slice;
                 break;
             case Mode::Bc7:
+            case Mode::Bc5:
                 pl.row_blocks = static_cast<uint32_t>(div_up(g.w, 4));
                 layer_bytes = static_cast<uint64_t>(pl.row_blocks) * div_up(g.h, 4) * 16 * g.d;
                 pl.offset = out.level.empty() ? 0 : out.level.back().offset + out.level.back().size;
@@ -354,41 +435,27 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     }
     const uint64_t out_total = out.level.back().offset + out.level.back().size;
 
-    // ---- disk cache (BC7 only) -------------------------------------------------------------------------------------------
+    // ---- disk cache ---------------------------------------------------------------------------------------------------------
     const bool bc7 = mode == Mode::Bc7;
     const int quality = bc7 ? bc7_quality() : 0;
-    std::string cache_file;   // empty: cache off (or not a BC7 output)
-    uint64_t key = 0;
-    if (bc7 && !cache_dir().empty()) {
-        // key = hash of the source bytes, seeded with what else decides the output: format, size, layout and quality
-        const LevelGeom& g0 = geo[0];
-        const uint64_t block_height = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;
-        const std::vector<uint64_t> meta = {kCacheVersion,
-                                            static_cast<uint64_t>(fmt.nvn),
-                                            g0.w,
-                                            g0.h,
-                                            g0.d,
-                                            L.levels,
-                                            L.layers,
-                                            block_height,
-                                            L.pitch,
-                                            static_cast<uint64_t>(quality)};
-        const uint64_t meta_hash = hash_bytes(meta.data(), meta.size() * sizeof(uint64_t));
-        key = hash_seeded(t.mem, static_cast<size_t>(t.storage_size), meta_hash);
-        cache_file = bc7_cache_path(t, key);
+    (void)quality;
+    if (entry_applies) {
         if (cache_read(cache_file, key, out)) {
             out.from_cache = true;
-            NXLOG_I(kTag, "texture %u: BC7 data from cache %s", t.id, cache_file.c_str());
+            NXLOG_I(kTag, "texture %u: %s data from cache %s", t.id, mode == Mode::Bc5 ? "BC5" : mode == Mode::Rgba8 ? "RGBA8" : "BC7", cache_file.c_str());
             return true;
         }
+        if (mode == Mode::Bc5) return fail("the BC5 cache entry could not be read");
     }
+    // only BC7 results are written to the cache, and never over a valid entry of another format (RGBA8 / BC5 entries come from the setup tool)
+    if (!bc7 || (entry_format != VK_FORMAT_UNDEFINED && entry_format != out.format)) cache_file.clear();
 
     // ---- the source image: tight linear buffer --------------------------------------------------------------------------
     const LevelGeom& last = geo.back();
     const uint64_t lin_total = last.lin_off + last.slice * L.layers;
     std::vector<uint8_t> lin(static_cast<size_t>(lin_total));
     if (L.block_linear) {
-        if (!tegra::untile(L.desc, L.layout, t.mem, lin.data())) return fail("untile failed");
+        if (!tegra::untile(L.desc, L.layout, src_mem, lin.data())) return fail("untile failed");
     } else {
         const LevelGeom& g = geo[0];
         const uint64_t row = static_cast<uint64_t>(g.bx) * fmt.bytes;
@@ -396,7 +463,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
             for (uint32_t z = 0; z < g.d; ++z)
                 for (uint32_t y = 0; y < g.by; ++y) {
                     const uint64_t r = static_cast<uint64_t>(z) * g.by + y;   // row index in the level
-                    const uint8_t* src = t.mem + static_cast<uint64_t>(layer) * (L.pitch * g.by * g.d) + r * L.pitch;
+                    const uint8_t* src = src_mem + static_cast<uint64_t>(layer) * (L.pitch * g.by * g.d) + r * L.pitch;
                     std::memcpy(lin.data() + static_cast<uint64_t>(layer) * g.slice + r * row, src, static_cast<size_t>(row));
                 }
     }
