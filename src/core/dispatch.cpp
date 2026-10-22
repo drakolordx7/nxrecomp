@@ -228,6 +228,7 @@ void hle_clear() {
 }
 
 const char* hle_current_name() { return t_hle_name; }
+void hle_restore_current(const char* name) { t_hle_name = name; }
 
 // ---- dispatch ---------------------------------------------------------------------------------------------------------
 

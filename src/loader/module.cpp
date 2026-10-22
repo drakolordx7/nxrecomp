@@ -19,6 +19,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/nxmodule.h"
 
 namespace nxrt {
 
@@ -50,6 +51,7 @@ bool fail(std::string* err, const char* fmt, ...) {
 struct LoaderAccess {
     static Module* create_and_map(const uint8_t* d, size_t n, const LoadOptions& opt, std::string* err);
     static bool parse_dynamic(Module& m, const uint8_t* d, size_t n, std::string* err);
+    static void load_static_symtab(Module& m, const uint8_t* d, size_t n, const elf::Ehdr& eh);
     static bool link(Module& m);
     static void protect(Module& m);
     static uint64_t resolve(Module& m, const std::vector<elf::Sym>& raw, uint32_t symidx, bool* is_weak_null);
@@ -156,6 +158,38 @@ Module* LoaderAccess::create_and_map(const uint8_t* d, size_t n, const LoadOptio
     return g_modules.back().get();
 }
 
+// A static ET_EXEC image has no dynamic section but usually keeps .symtab: take the defined symbols from it (names for backtraces,
+// module_find_symbol for tests and for the C++ typeinfo vtables, eh.h). Reads the file bytes, not the mapped image.
+void LoaderAccess::load_static_symtab(Module& m, const uint8_t* d, size_t n, const elf::Ehdr& eh) {
+    using namespace elf;
+    if (!eh.shoff || !eh.shnum || eh.shentsize != sizeof(Shdr) || eh.shoff > n || uint64_t(eh.shnum) * sizeof(Shdr) > n - eh.shoff) return;
+    std::vector<Shdr> sh(eh.shnum);
+    memcpy(sh.data(), d + eh.shoff, sh.size() * sizeof(Shdr));
+    for (const Shdr& s : sh) {
+        if (s.type != SHT_SYMTAB || s.entsize != sizeof(Sym) || s.offset > n || s.size > n - s.offset || s.link >= sh.size()) continue;
+        const Shdr& str = sh[s.link];
+        if (str.offset > n || str.size > n - str.offset) continue;
+        size_t count = static_cast<size_t>(s.size / sizeof(Sym));
+        m.symbols_.reserve(count);
+        for (size_t i = 0; i < count; i++) {
+            Sym sym;
+            memcpy(&sym, d + s.offset + i * sizeof(Sym), sizeof sym);
+            if (sym.shndx == 0 || (sym.info & 0xf) > 6 || sym.name >= str.size) continue;     // skip undefined and section/file symbols
+            if ((sym.info & 0xf) == 3 || (sym.info & 0xf) == 4) continue;
+            const char* p = reinterpret_cast<const char*>(d + str.offset) + sym.name;
+            ModuleSymbol ms;
+            ms.name.assign(p, strnlen(p, static_cast<size_t>(str.size - sym.name)));
+            ms.value = sym.value;
+            ms.size = sym.size;
+            ms.type = sym.info & 0xf;
+            ms.bind = sym.info >> 4;
+            ms.shndx = sym.shndx;
+            m.symbols_.push_back(std::move(ms));
+        }
+        return;
+    }
+}
+
 bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::string* err) {
     using namespace elf;
     const uint64_t lo = m.base_ - m.bias_;    // lowest mapped ELF vaddr (page aligned)
@@ -170,7 +204,10 @@ bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::str
     uint64_t dyn_vaddr = 0, dyn_size = 0;
     for (auto& p : ph)
         if (p.type == PT_DYNAMIC) { dyn_vaddr = p.vaddr; dyn_size = p.memsz; }
-    if (!dyn_vaddr) return true;       // a static image: nothing to relocate
+    if (!dyn_vaddr) {                  // a static image: nothing to relocate; its .symtab (when the section headers are there) names the code
+        load_static_symtab(m, d, n, eh);
+        return true;
+    }
     if (!in_image(dyn_vaddr, dyn_size)) return fail(err, "PT_DYNAMIC is outside the image");
 
     uint64_t symtab = 0, strtab = 0, strsz = 0, hash = 0, gnu_hash = 0, syment = sizeof(Sym);
@@ -522,14 +559,22 @@ std::string module_describe(uint64_t addr) {
     return buf;
 }
 
+bool module_symbol_overridden(const char* sym) {
+    std::lock_guard<std::recursive_mutex> lk(g_lock);
+    return g_overrides.count(sym) != 0;
+}
+
 void module_provide_data(const char* sym, uint64_t addr) {
     std::lock_guard<std::recursive_mutex> lk(g_lock);
     g_data[sym] = addr;
 }
 
 void module_override_symbol(const char* sym) {
-    std::lock_guard<std::recursive_mutex> lk(g_lock);
-    g_overrides.insert(sym);
+    {
+        std::lock_guard<std::recursive_mutex> lk(g_lock);
+        g_overrides.insert(sym);
+    }
+    import_cache_invalidate();       // an import resolved before the override must be resolved again
 }
 
 const TlsInfo& module_tls_template() { return g_tls; }
@@ -543,6 +588,7 @@ void modules_unload_all() {
     g_next_base = 0;
     g_tls = {};
     fn_clear();
+    nxmodules_clear();
 }
 
 }  // namespace nxrt
