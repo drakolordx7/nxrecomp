@@ -116,6 +116,46 @@ void release_all() {
     set_axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
 }
 
+bool listed(uint32_t id) {
+    nxrt::input::GamepadInfo info[8];
+    const size_t n = nxrt::input::gamepad_list(info, 8);
+    for (size_t k = 0; k < n; ++k) {
+        if (info[k].id == id) return true;
+    }
+    return false;
+}
+
+// Attaches a throwaway virtual pad with the given USB ids, waits until the platform lists it and reads the kind it reports.
+// SDL's virtual descriptor has no controller-type field: SDL derives the type from the vendor and product ids.
+// The pad is closed and detached again before returning, so the other tests still see only the main pad.
+bool probe_kind(uint16_t vendor, uint16_t product, nxrt::input::PadKind* out) {
+    SDL_VirtualJoystickDesc d;
+    SDL_INIT_INTERFACE(&d);
+    d.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+    d.naxes = SDL_GAMEPAD_AXIS_COUNT;
+    d.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+    d.vendor_id = vendor;
+    d.product_id = product;
+    d.name = "nxrt virtual probe pad";
+    const SDL_JoystickID id = SDL_AttachVirtualJoystick(&d);
+    if (!id) return false;
+    SDL_Joystick* joy = SDL_OpenJoystick(id);
+    bool found = false;
+    for (int i = 0; i < 50 && !found; ++i) {      // SDL announces the pad on the next pump
+        platform::pump_events();
+        found = listed(id);
+        if (!found) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (found) *out = nxrt::input::gamepad_kind_of(id);
+    if (joy) SDL_CloseJoystick(joy);
+    SDL_DetachVirtualJoystick(id);
+    for (int i = 0; i < 50 && listed(id); ++i) {  // and the platform drops it on the removal event
+        platform::pump_events();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return found && !listed(id);
+}
+
 }  // namespace
 
 NXTEST(virtual_pad_is_seen_and_player_one_is_connected) {
@@ -229,4 +269,18 @@ NXTEST(unplugging_the_pad_clears_the_state) {
     CHECK(nxrt::input::gamepad_count() == 0);
     CHECK((s.npad[0].buttons & hid::btn(hid::kBtnA)) == 0);      // nothing stays latched
     CHECK(s.npad[0].connected);                                  // the keyboard still plays as player one
+}
+
+NXTEST(a_dualsense_reports_the_playstation_kind) {
+    CHECK(setup());
+    nxrt::input::PadKind kind = nxrt::input::PadKind::Other;
+    CHECK(probe_kind(0x054C, 0x0CE6, &kind));                    // Sony DualSense: SDL types it PS5
+    CHECK(kind == nxrt::input::PadKind::PlayStation);
+}
+
+NXTEST(an_xbox_one_pad_reports_the_xbox_kind) {
+    CHECK(setup());
+    nxrt::input::PadKind kind = nxrt::input::PadKind::Other;
+    CHECK(probe_kind(0x045E, 0x02EA, &kind));                    // Xbox One S pad: SDL types it XBOXONE
+    CHECK(kind == nxrt::input::PadKind::Xbox);
 }

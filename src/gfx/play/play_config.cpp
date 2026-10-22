@@ -118,7 +118,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Switch, Bindings };
+enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Prompts, Switch, Bindings };
 
 const char* sec_label(Sec s) {
     switch (s) {
@@ -126,6 +126,7 @@ const char* sec_label(Sec s) {
         case Sec::Pad: return "[pad]";
         case Sec::Timing: return "[timing]";
         case Sec::Display: return "[display]";
+        case Sec::Prompts: return "[prompts]";
         case Sec::Switch: return "[switch]";
         default: return "";
     }
@@ -235,6 +236,15 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "hold_ms") return set_int(1, 5000, &s->timing.hold_ms);
             if (k == "double_ms") return set_int(1, 5000, &s->timing.double_ms);
             if (k == "pulse_ms") return set_int(1, 5000, &s->timing.pulse_ms);
+            break;
+        case Sec::Prompts:
+            if (k == "style") {
+                if (!parse_prompt_style(v, &s->prompts.style)) {
+                    *msg = "style must be switch, xbox, playstation, keyboard or auto, got '" + v + "'";
+                    return false;
+                }
+                return true;
+            }
             break;
         case Sec::Display:
             if (k == "window_mode") {
@@ -355,6 +365,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             else if (key == "pad") sec = Sec::Pad;
             else if (key == "timing") sec = Sec::Timing;
             else if (key == "display") sec = Sec::Display;
+            else if (key == "prompts") sec = Sec::Prompts;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -494,6 +505,9 @@ std::string format_settings(const Settings& s) {
     kv("lod_bias", num_exact(s.display.lod_bias));
     kv("bloom", flag(s.display.bloom));
     kv("chromatic_aberration", flag(s.display.chromatic_aberration));
+
+    o += "\n[prompts]\n";
+    kv("style", prompt_style_name(s.prompts.style));
 
     o += "\n[switch]\n";
     for (int a = 1; a < kActCount; ++a) {   // every action except none

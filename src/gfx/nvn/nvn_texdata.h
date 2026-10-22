@@ -50,6 +50,11 @@ struct PreparedTexture {
 // no Vulkan format, a codec error, ...). Never crashes on a bad texture.
 bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out);
 
+// Texture content override (nxrt/tex_override.h). apply: when a hook is set and it answers for the texture, replaces bc7 (the tight
+// linear BC7 blocks of the w x h texture) with the encoded answer.
+bool texture_override_active();
+bool texture_override_apply(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& bc7);
+
 // Fast 64-bit hash of a byte range (xxHash64-style mix). Used for the cache key.
 uint64_t hash_bytes(const void* data, size_t size);
 

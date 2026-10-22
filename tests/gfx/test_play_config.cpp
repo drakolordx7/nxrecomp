@@ -106,6 +106,7 @@ bool same_settings(const Settings& a, const Settings& b) {
           da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.bloom == db.bloom &&
           da.chromatic_aberration == db.chromatic_aberration))
         return false;
+    if (a.prompts.style != b.prompts.style) return false;
     for (int i = 0; i < kActCount; ++i) {
         if (!(a.out[i] == b.out[i])) return false;
     }
@@ -500,7 +501,7 @@ NXTEST(unknown_keys_and_sections_warn) {
 
 NXTEST(format_has_sections_in_order) {
     const std::string text = format_settings(default_settings());
-    const char* order[] = {"[mouse]", "[pad]", "[timing]", "[display]", "[switch]", "[bindings.all]", "[bindings.gameplay]",
+    const char* order[] = {"[mouse]", "[pad]", "[timing]", "[display]", "[prompts]", "[switch]", "[bindings.all]", "[bindings.gameplay]",
                            "[bindings.morph]", "[bindings.map]", "[bindings.menu]", "[bindings.scan]"};
     size_t at = 0;
     for (const char* h : order) {
@@ -803,4 +804,80 @@ NXTEST(display_render_keys_round_trip) {
         REQUIRE_MSG(parse_settings(format_settings(s), &r, &err), err);
         CHECK(r.display.aspect == a);
     }
+}
+
+// ---- button prompts ----------------------------------------------------------------------------------------------------------------
+
+NXTEST(prompt_style_default_is_switch) {
+    Settings s;
+    CHECK(s.prompts.style == PromptStyle::Switch);
+    CHECK(default_settings().prompts.style == PromptStyle::Switch);
+}
+
+NXTEST(prompt_style_names) {
+    const char* names[] = {"switch", "xbox", "playstation", "keyboard", "auto"};
+    for (int i = 0; i < kPromptStyleCount; ++i) {
+        const PromptStyle st = static_cast<PromptStyle>(i);
+        CHECK(std::string(prompt_style_name(st)) == names[i]);
+        PromptStyle back = PromptStyle::Auto;
+        REQUIRE_MSG(parse_prompt_style(names[i], &back), names[i]);
+        CHECK(back == st);
+    }
+}
+
+NXTEST(prompt_style_parses_aliases_and_case) {
+    struct Case {
+        const char* text;
+        PromptStyle want;
+    };
+    const Case cases[] = {
+        {"Switch", PromptStyle::Switch},        {"XBOX", PromptStyle::Xbox},        {"PlayStation", PromptStyle::PlayStation},
+        {"ps", PromptStyle::PlayStation},       {"PS4", PromptStyle::PlayStation},  {"ps5", PromptStyle::PlayStation},
+        {"DualSense", PromptStyle::PlayStation}, {"keyboard", PromptStyle::Keyboard}, {"kbm", PromptStyle::Keyboard},
+        {"keyboard_mouse", PromptStyle::Keyboard}, {"keyboard-mouse", PromptStyle::Keyboard}, {"mouse", PromptStyle::Keyboard},
+        {"Auto", PromptStyle::Auto},
+    };
+    for (const Case& c : cases) {
+        PromptStyle st = PromptStyle::Switch;
+        REQUIRE_MSG(parse_prompt_style(c.text, &st), c.text);
+        CHECK(st == c.want);
+    }
+    PromptStyle st = PromptStyle::Auto;
+    CHECK(!parse_prompt_style("banana", &st));
+    CHECK(!parse_prompt_style("", &st));
+}
+
+NXTEST(prompt_style_settings_key_parses) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[prompts]\nstyle = PS5\n", &s, &err), err);
+    CHECK(s.prompts.style == PromptStyle::PlayStation);
+}
+
+NXTEST(prompt_style_bad_value_names_the_key) {
+    Settings s;
+    std::string err;
+    CHECK(!parse_settings("[prompts]\nstyle = banana\n", &s, &err));
+    CHECK(err.find("style") != std::string::npos);
+    CHECK(err.find("line 2") != std::string::npos);
+}
+
+NXTEST(prompt_style_round_trip_every_style) {
+    for (int i = 0; i < kPromptStyleCount; ++i) {
+        Settings s = default_settings();
+        s.prompts.style = static_cast<PromptStyle>(i);
+        const std::string text = format_settings(s);
+        Settings r;
+        std::string err;
+        REQUIRE_MSG(parse_settings(text, &r, &err), err);
+        CHECK(r.prompts.style == s.prompts.style);
+        CHECK(same_settings(s, r));
+        CHECK_EQ(format_settings(r), text);
+    }
+}
+
+NXTEST(default_settings_text_has_prompts_section) {
+    const std::string text = default_settings_text();
+    CHECK(text.find("[prompts]") != std::string::npos);
+    CHECK(text.find("[prompts]\nstyle = switch\n") != std::string::npos);
 }

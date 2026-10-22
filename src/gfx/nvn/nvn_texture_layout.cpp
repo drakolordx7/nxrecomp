@@ -4,8 +4,9 @@
 //     faces, cube array = 6 * depth); 3D has depth slices and one layer; 2D, rectangle and multisample have depth 1.
 //   * levels = min(builder levels, floor(log2(largest dimension)) + 1), at least 1; multisample textures have one level.
 //   * block-linear: tegra::compute_layout with GOB block height from the packaged layout (byte 0 as a log2, as smo-recomp
-//     nvn_gl.c texb_layout / tex_layout does, only when it is 0..4) or else tegra::default_gob_blocks_y of the level-0 block
-//     rows. 3D textures use block height 1 GOB and block depth 16 GOBs (the rule that matches the game's 3D textures, see
+//     nvn_gl.c texb_layout / tex_layout does, only when it is 0..4) or else the console's rule for the level-0 block rows
+//     (console_block_height: 1.5 times the rows, thresholds 16/32/64/128; the layout of the game's own TXTR data).
+//     3D textures use block height 1 GOB and block depth 16 GOBs (the rule that matches the game's 3D textures, see
 //     SURVEY section 3).
 //   * storage = layer stride * layers * samples. The layer stride is the untrimmed size of a layer: tegra trims the last
 //     level of a 3D texture, but the game's buffers are the untrimmed size (47 of 47 3D textures checked, SURVEY section 3).
@@ -28,7 +29,19 @@ namespace {
 uint64_t div_up(uint64_t a, uint64_t b) { return (a + b - 1) / b; }
 uint64_t align_up(uint64_t a, uint64_t b) { return div_up(a, b) * b; }
 
+
 }  // namespace
+
+// Block height in GOBs of a 2D/array texture's level 0 when the game gives no packaged layout. The game copies TXTR data that was tiled
+// for the console, so the rule has to be the console's (tegra_swizzle block_height_mip0, the rule retrotool tiles with): 1.5 times the
+// block rows picks 1, 2, 4, 8 or 16 GOBs at 16, 32, 64 and 128. The smaller "smallest height that covers the rows" rule of
+// tegra::default_gob_blocks_y gives the same storage size for every game texture but scrambles the texels of 263 of them (a
+// 36x36 BC7 button icon has 9 block rows: 1 GOB here, 2 there, and the icon comes out as a broken half circle).
+uint32_t console_block_height(uint32_t block_rows) {
+    const uint32_t hh = block_rows + block_rows / 2;
+    return hh >= 128 ? 16 : hh >= 64 ? 8 : hh >= 32 ? 4 : hh >= 16 ? 2 : 1;
+}
+
 
 bool sparse_tile_shape(int nvn_target, const FormatInfo* fmt, int out[3]) {
     if (!fmt || fmt->aspect != kAspectColor || fmt->bytes == 0) return false;
@@ -149,7 +162,7 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
         ds.gob_blocks_y = 1;
         ds.gob_blocks_z = 16;
     } else {
-        uint32_t gy = tegra::default_gob_blocks_y(static_cast<uint32_t>(blocks_y));
+        uint32_t gy = console_block_height(static_cast<uint32_t>(blocks_y));
         if (b.has_packaged_layout && b.packaged_layout[0] <= 4) gy = 1u << b.packaged_layout[0];
         ds.gob_blocks_y = gy;
         ds.gob_blocks_z = 1;

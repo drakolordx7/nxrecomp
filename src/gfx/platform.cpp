@@ -104,6 +104,35 @@ void read_face_labels(SDL_Gamepad* pad, uint8_t out[4]) {
     }
 }
 
+// Maps SDL's controller type to the families the prompt feature knows; anything else (standard, unknown, virtual...) is Other.
+input::PadKind pad_kind(SDL_Gamepad* pad) {
+    switch (SDL_GetGamepadType(pad)) {
+        case SDL_GAMEPAD_TYPE_XBOX360:
+        case SDL_GAMEPAD_TYPE_XBOXONE:
+            return input::PadKind::Xbox;
+        case SDL_GAMEPAD_TYPE_PS3:
+        case SDL_GAMEPAD_TYPE_PS4:
+        case SDL_GAMEPAD_TYPE_PS5:
+            return input::PadKind::PlayStation;
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT:
+        case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+            return input::PadKind::Switch;
+        default:
+            return input::PadKind::Other;
+    }
+}
+
+const char* pad_kind_name(input::PadKind k) {
+    switch (k) {
+        case input::PadKind::Xbox: return "Xbox";
+        case input::PadKind::PlayStation: return "PlayStation";
+        case input::PadKind::Switch: return "Switch";
+        default: return "other";
+    }
+}
+
 // Opens a gamepad that SDL reports as added and fills its info entry.
 void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
     for (const OpenPad& p : g_pads) {
@@ -125,10 +154,11 @@ void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
     const SDL_PropertiesID props = SDL_GetGamepadProperties(pad);
     info.rumble = props != 0 && SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false);
     info.gyro = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO);
+    info.kind = pad_kind(pad);
     input::gamepad_set_info(info);
 
-    NXLOG_I(kTag, "gamepad %u added: \"%s\" rumble=%d gyro=%d", static_cast<unsigned>(id), info.name, info.rumble ? 1 : 0,
-            info.gyro ? 1 : 0);
+    NXLOG_I(kTag, "gamepad %u added: \"%s\" kind=%s rumble=%d gyro=%d", static_cast<unsigned>(id), info.name,
+            pad_kind_name(info.kind), info.rumble ? 1 : 0, info.gyro ? 1 : 0);
     // Motion sensors: enabled when the pad has them, skipped silently when it does not.
     const bool accel_on =
         SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);

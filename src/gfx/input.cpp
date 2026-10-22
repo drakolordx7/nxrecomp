@@ -128,6 +128,14 @@ size_t gamepad_list(GamepadInfo* out, size_t max) {
     return n;
 }
 
+PadKind gamepad_kind_of(uint32_t id) {
+    std::lock_guard<std::mutex> lk(g_pads.mu);
+    for (const GamepadInfo& p : g_pads.pads) {
+        if (p.id == id) return p.kind;
+    }
+    return PadKind::Other;
+}
+
 void gamepad_set_info(const GamepadInfo& info) {
     std::lock_guard<std::mutex> lk(g_pads.mu);
     for (GamepadInfo& p : g_pads.pads) {
