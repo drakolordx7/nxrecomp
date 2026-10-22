@@ -22,6 +22,7 @@
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
 #include "nvn_present_pass.h"
+#include "extras/output_pass.h"
 
 namespace nxrt::nvn::be::gpu {
 namespace {
@@ -79,6 +80,8 @@ struct Gpu {
 
     PresentPass present;
     bool present_ok = false;
+    extras::OutputPass output;                 // HDR encode and FSR 1 (stream S14); used instead of `present` when the extras are on
+    bool output_ok = false;
     std::mutex unsupported_mu;
     std::map<std::string, uint64_t> unsupported;
 };
@@ -498,6 +501,7 @@ int depth_mode() { return g_depth_mode.load(); }
 gfx::Renderer* renderer() { return g ? g->rend : nullptr; }
 FrameLimiter* limiter() { return g ? g->limiter : nullptr; }
 PresentPass* present_pass() { return g && g->present_ok ? &g->present : nullptr; }
+extras::OutputPass* output_pass() { return g && g->output_ok ? &g->output : nullptr; }
 bool keep_aspect() { return g && g->keep_aspect; }
 
 uint64_t timestamp_ns() {
@@ -558,6 +562,8 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
     if (rend) {
         run_on_render_thread([&] { gp->present_ok = gp->present.init(dev, rend->format()); });
         if (!gp->present_ok) NXLOG_E(kTag, "present pass failed to initialise: frames will not be shown");
+        run_on_render_thread([&] { gp->output_ok = gp->output.init(dev); });
+        if (!gp->output_ok) NXLOG_W(kTag, "output pass (HDR, FSR 1) failed to initialise: those extras are off");
     }
     NXLOG_I(kTag, "NVN back end up on %s (%u submission slots, timeline semaphore, host-memory import %s)", dev.properties().deviceName, kSlots,
             dev.features().external_memory_host ? "available" : "NOT available");
@@ -583,6 +589,7 @@ void tear_down() {
         for (auto& d : gp->deferred) d.fn();
         gp->deferred.clear();
         gp->present.shutdown();
+        gp->output.shutdown();
     });
     {
         std::lock_guard<std::mutex> ql(gp->qmu);
