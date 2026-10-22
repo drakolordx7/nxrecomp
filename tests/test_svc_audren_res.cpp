@@ -83,7 +83,7 @@ NXTEST(low_quality_dc_stays_exact) {
 //   ratio 1.0 (lut1, phase 0 always):  row sum 32635 -> 1000 * 32635 / 32768 = 995.94 -> 996
 //   ratio 0.5 (lut1, phases 0 and 64 alternate): row 64 sum 32984 -> 1006.59 -> 1007; row 0 gives 996 again.
 //   ratio 1.5 (lut0, phases 0 and 64 alternate): row sums 32751 -> 999.42 and 32736 -> 999.02, both 999.
-// Default lut1 has a per-phase DC gain of 0.995 to 1.007, so the 1e-3 tolerance of the plan cannot hold for ratios <= 1.
+// Default lut1 has a per-phase DC gain of 0.995 to 1.007, so the 1e-3 tolerance cannot hold for ratios <= 1.
 NXTEST(default_quality_dc_follows_table_row_sums) {
     std::vector<int16_t> dc(64, 1000);
     std::vector<float> out(8, kSentinel);

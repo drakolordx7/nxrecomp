@@ -46,7 +46,7 @@ SRC_B_DIRS = [
     os.path.join("ssbu-recomp", "runtime"),
 ]
 
-# Source C: names seen elsewhere (explicit list from the plan, plus a grep of these dirs).
+# Source C: names seen elsewhere (an explicit list, plus a grep of these dirs).
 SRC_C_DIRS = [
     os.path.join("SuperMarioWonderRecomp", "runtime"),
     os.path.join("SuperMarioWonderRecomp", "docs"),

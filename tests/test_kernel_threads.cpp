@@ -176,7 +176,7 @@ bool has_line(const std::vector<LogLine>& v, const std::string& needle, int leve
 // Console-model helpers.
 int bit_of(uint64_t m) { return m ? __builtin_ctzll(m) : -1; }
 
-// Expected band table, written from the plan (six bands under the model).
+// Expected band table, written from the scheduling model (six bands).
 int band_active(int nn) {
     if (nn <= 4) return THREAD_PRIORITY_TIME_CRITICAL;
     if (nn <= 8) return THREAD_PRIORITY_HIGHEST;
