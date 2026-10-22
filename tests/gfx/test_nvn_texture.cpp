@@ -453,6 +453,29 @@ NXTEST(sparse_tile_shapes) {
     }
 }
 
+// The storage of a sparse volume is tile-shaped: a 3D texture of 8 or 16 byte blocks takes the 64 KiB tile's block shape (2 GOBs high, 16 deep for
+// the 512 x 256 x 368 BC1 volume) and its storage is whole tiles. An R8 volume's tile is 32 deep, which is outside that shape, so its layout is
+// the ordinary one; without the sparse flag the volume keeps the ordinary layout.
+NXTEST(sparse_volume_layout_is_tile_shaped) {
+    const int sparse = NVN_TEXTURE_FLAGS_SPARSE;
+    const TexLayout s = be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_3D, 512, 256, 368, 1, NVN_FORMAT_RGBA_DXT1, sparse));
+    CHECK(s.valid);
+    CHECK_EQ(s.desc.gob_blocks_y, 2u);
+    CHECK_EQ(s.desc.gob_blocks_z, 16u);
+    CHECK_EQ(s.storage_size % 0x10000, uint64_t(0));
+    CHECK(s.alignment >= 0x10000);
+
+    const TexLayout plain = be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_3D, 512, 256, 368, 1, NVN_FORMAT_RGBA_DXT1, 0));
+    CHECK(plain.valid);
+    CHECK_EQ(plain.desc.gob_blocks_y, 1u);
+    CHECK_EQ(plain.desc.gob_blocks_z, 16u);
+
+    const TexLayout r8 = be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_3D, 512, 256, 368, 1, NVN_FORMAT_R8, sparse));
+    CHECK(r8.valid);
+    CHECK_EQ(r8.desc.gob_blocks_y, 1u);
+    CHECK_EQ(r8.desc.gob_blocks_z, 16u);
+}
+
 // ================================================================================================================================
 // Entry points: creation, getters, storage, teardown
 // ================================================================================================================================
