@@ -160,6 +160,10 @@ VkSampler sampler_for(const SamplerInfo& s);
 // Debug: the content of level 0 / layer 0 of a texture the GPU has written, as a PNG (HDR values squashed with x / (1 + x), integer
 // formats show their low bytes as colour) and its per-channel statistics. Render thread; waits for the GPU. False: not dumpable.
 bool dump_texture(Texture* t, const std::string& png_path, std::string* stats);
+// Debug: records, into the frame being replayed, a copy of level 0 / layer 0 of the texture (no pass may be open) and keeps it until
+// snapshot_write(): returns an index (-1: not copyable). snapshot_write writes it as dump_texture does and frees the buffer.
+int snapshot_record(Texture* t, Frame& f);
+bool snapshot_write(int index, const std::string& png_path, std::string* stats);
 void tex_destroy(TexGpu* g);      // render thread
 void tex_shutdown();              // frees samplers and dummy resources (device idle)
 // Image formats chosen: bool descriptor for tests and logs
@@ -184,10 +188,6 @@ bool keep_aspect();
 
 // After a traced frame ([nvn] trace_frame): dumps the targets it drew to (PNG next to the log: trace_<texture id>_<format>.png) and logs their statistics.
 void trace_dump_targets();
-
-// ---- RenderDoc frame capture (nvn_renderdoc.cpp) ----
-void renderdoc_start_if_due(uint64_t presents);   // replay_begin_submit: starts the capture when [nvn] renderdoc_frame is the current frame
-void renderdoc_end_if_capturing();                // after the frame's present
 
 // ---- present -----------------------------------------------------------------------------------------------------------
 void present_on_render_thread(Window* w, int index);

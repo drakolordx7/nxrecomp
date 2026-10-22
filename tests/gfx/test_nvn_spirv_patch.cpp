@@ -308,3 +308,47 @@ NXTEST(dual_source_without_second_output) {
         CHECK(out == keep);
     }
 }
+
+NXTEST(xfb_variant_of_real_stream_out_shader) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    // the stream-out vertex shader of the game's shadow decals: one Location 0 output of which xyz are written
+    std::vector<uint32_t> in;
+    REQUIRE(load_hash("51242c6ad2a045f2", in));
+    const std::vector<uint32_t> before = in;
+    std::vector<uint32_t> out;
+    std::vector<gpu::SpvXfbOutput> lay;
+    uint32_t stride = 0;
+    REQUIRE(gpu::spirv_add_xfb(in, out, &lay, &stride));
+    CHECK(in == before);
+    CHECK_EQ(stride, 12u);
+    REQUIRE(lay.size() == 1);
+    CHECK_EQ(lay[0].location, 0u);
+    CHECK_EQ(lay[0].components, 3u);
+    CHECK_EQ(lay[0].offset, 0u);
+
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_xfb", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+
+    // the decorations the pipeline needs: XfbBuffer 0, XfbStride 12 and Offset 0 on the output variable
+    bool buffer = false, stride_deco = false, offset = false;
+    for (const Deco& dc : decorations(out)) {
+        buffer |= dc.kind == 36 && dc.value == 0;
+        stride_deco |= dc.kind == 37 && dc.value == 12;
+        offset |= dc.kind == 35 && dc.value == 0;
+    }
+    CHECK(buffer);
+    CHECK(stride_deco);
+    CHECK(offset);
+}
+
+NXTEST(xfb_variant_without_outputs_is_refused) {
+    // a module with no Location outputs: the vertex shader of an old test in this group has only a position builtin
+    std::vector<uint32_t> out = {0xdeadbeefu};
+    std::vector<uint32_t> bad = {0x07230203u, 0x10300u, 0, 1, 0};
+    CHECK(!gpu::spirv_add_xfb(bad, out, nullptr, nullptr));
+    CHECK_EQ(out.size(), size_t(1));
+}

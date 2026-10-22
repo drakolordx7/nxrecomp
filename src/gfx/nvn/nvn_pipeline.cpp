@@ -30,7 +30,8 @@ std::map<LayoutKey, ProgLayout> g_layouts;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
 // Producer modules with extra outputs (nvn_spirv_patch.h): (shader, slots as location * 4 + scalar type).
 std::map<std::pair<const ShaderInfo*, std::vector<uint32_t>>, VkShaderModule> g_variants;
-std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;       // fragment shaders with the second blend source at Location 0, Index 1
+std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;
+std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, uint32_t>> g_xfb_mod;   // vertex shaders with the captured outputs, their stride       // fragment shaders with the second blend source at Location 0, Index 1
 std::unordered_map<uint64_t, std::vector<std::pair<GraphicsKey, VkPipeline>>> g_gfx;
 std::map<std::pair<const ShaderInfo*, VkPipelineLayout>, VkPipeline> g_compute;
 VkPipelineCache g_cache = VK_NULL_HANDLE;
@@ -131,6 +132,26 @@ VkShaderModule shader_module(const ShaderInfo* s) {
     g_modules[s] = m;
     return m;
 }
+
+static const std::pair<VkShaderModule, uint32_t>& xfb_variant(const ShaderInfo* vs) {
+    auto it = g_xfb_mod.find(vs);
+    if (it != g_xfb_mod.end()) return it->second;
+    std::vector<uint32_t> patched;
+    std::vector<SpvXfbOutput> lay;
+    uint32_t stride = 0;
+    VkShaderModule m = VK_NULL_HANDLE;
+    if (spirv_add_xfb(vs->spirv, patched, &lay, &stride)) {
+        m = create_module(patched, vs->hash.c_str());
+        std::string desc;
+        for (const SpvXfbOutput& o : lay) desc += " loc" + std::to_string(o.location) + "x" + std::to_string(o.components) + "@" + std::to_string(o.offset);
+        NXLOG_I(kTag, "%s: transform feedback variant, %u bytes per vertex:%s", vs->hash.c_str(), stride, desc.c_str());
+    } else {
+        NXLOG_W(kTag, "%s: no transform feedback variant could be made (no Location outputs?)", vs->hash.c_str());
+    }
+    return g_xfb_mod.emplace(vs, std::make_pair(m, stride)).first->second;
+}
+
+uint32_t xfb_stride(const ShaderInfo* vs) { return vs ? xfb_variant(vs).second : 0; }
 
 static VkShaderModule dual_source_module(const ShaderInfo* fs) {
     auto it = g_dual_src.find(fs);
@@ -271,6 +292,17 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     const int feeder = key.stage[2] ? 2 : 0;
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
+        if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
+        if (key.xfb) {
+            VkShaderModule m = xfb_variant(key.stage[0]).first;
+            if (!m) { bucket.emplace_back(key, VK_NULL_HANDLE); return VK_NULL_HANDLE; }
+            stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+            stages[ns].stage = bits[0];
+            stages[ns].module = m;
+            stages[ns].pName = "main";
+            ++ns;
+            continue;
+        }
         VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1])
                            : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
                                                          : shader_module(key.stage[i]);
@@ -477,6 +509,9 @@ void pipeline_shutdown() {
     for (auto& [k, m] : g_dual_src)
         if (m) vkDestroyShaderModule(d, m, nullptr);
     g_dual_src.clear();
+    for (auto& [k, v] : g_xfb_mod)
+        if (v.first) vkDestroyShaderModule(d, v.first, nullptr);
+    g_xfb_mod.clear();
     for (auto& [k, b] : g_const_bufs) device().destroy_buffer(b.first);
     g_const_bufs.clear();
     if (g_driver_const_made) device().destroy_buffer(g_driver_const);
