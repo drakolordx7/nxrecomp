@@ -106,7 +106,7 @@ Scenes also write reference images to `work\nvn_refs\` when `NXRT_NVN_UPDATE_REF
 | Shader cache size | 1,008 MB raw for 13,016 modules; see the size options above. |
 | Pipeline creation | Synchronous on the render thread; a disk `VkPipelineCache` (`[nvn] pipeline_cache`) softens it. Prewarming from recorded keys is not done. |
 | Dynamic resolution crop | `nvnWindowSetCrop` is honoured by the present pass (scaled to the frame). Aspect-correct letterboxing is `BackendDesc::keep_aspect`; a window-size policy is the integration's job. |
-| ABI 3 build | This branch was built and tested against the ABI 2 header of recomp commit 5e0fa38 (`-DNXRT_RECOMP_INCLUDE=D:/AI/Active/Metroid-Prime/work/recomp_abi2/include -DNXRT_BUILD_LIFT_TESTS=OFF`); main has since moved to ABI 3. The branch touches no OS-layer file and merges without conflicts; rebuild after the merge. |
+| ABI 3 build | The branch was developed against the ABI 2 header of recomp commit 5e0fa38, then merged with main (ABI 3, services). The merged tree configures with the default include and passes all 93 ctest cases that do not depend on timing (`build/abi3`). The branch touches no ABI-dependent code. |
 
 ## Second GPU (Intel UHD 770)
 
