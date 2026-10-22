@@ -232,6 +232,11 @@ uint64_t hash_state(State& s, uint64_t frame, const GameState& g, bool valid) {
     h = mix64(h, fbits(g.hp));
     h = mix64(h, dbits(g.igt));
     h = mix64(h, g.move_state);
+    h = mix64(h, (g.have_phys ? 1u : 0u) | (g.have_aim ? 2u : 0u) | (g.have_ps ? 4u : 0u));
+    h = mix64(h, fbits(g.pitch));
+    h = mix64(h, static_cast<uint64_t>(static_cast<uint32_t>(g.cam_state)) | static_cast<uint64_t>(static_cast<uint32_t>(g.morph_state)) << 32);
+    h = mix64(h, static_cast<uint64_t>(static_cast<uint32_t>(g.orbit_state)) | static_cast<uint64_t>(static_cast<uint32_t>(g.beam)) << 32);
+    h = mix64(h, static_cast<uint64_t>(static_cast<uint32_t>(g.visor)) | static_cast<uint64_t>(static_cast<uint32_t>(g.missiles)) << 32);
     h = hash_region_memory(s, h);
     return h;
 }
@@ -244,12 +249,15 @@ double now_ms(State& s) {
 
 void write_trace_line(State& s, uint64_t k, uint64_t h, const GameState& g, bool valid, double ms, double mem) {
     if (!s.trace) return;
-    char b[768];
+    char b[1024];
     int n = std::snprintf(b, sizeof b, "{\"f\":%llu,\"h\":\"%016llx\"", static_cast<unsigned long long>(k), static_cast<unsigned long long>(h));
     auto add = [&](const char* fmt, auto... a) { n += std::snprintf(b + n, sizeof b - n, fmt, a...); };
     if (valid) {
         if (g.have_world) add(",\"world\":\"%s\",\"area\":\"%s\"", tt_guid_hex(g.world).c_str(), tt_guid_hex(g.area).c_str());
         if (g.have_player) add(",\"pos\":[%.9g,%.9g,%.9g],\"vel\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"state\":%u", g.pos[0], g.pos[1], g.pos[2], g.vel[0], g.vel[1], g.vel[2], g.yaw, g.move_state);
+        if (g.have_player && g.have_phys) add(",\"phys\":1,\"spd\":%.9g", g.speed);
+        if (g.have_aim) add(",\"pitch\":%.9g,\"cam\":%d,\"morph\":%d,\"orbit\":%d", g.pitch, g.cam_state, g.morph_state, g.orbit_state);
+        if (g.have_ps) add(",\"beam\":%d,\"visor\":%d,\"msl\":%d", g.beam, g.visor, g.missiles);
         if (g.have_hp) add(",\"hp\":%.9g", g.hp);
         if (g.have_igt) add(",\"igt\":%.9g", g.igt);
     }
@@ -631,8 +639,10 @@ void frame_boundary(::Ctx* c) {
     // 2. state, hash, trace
     detail::install_input();
     GameState g;
+    set_call_context(c);
     const bool valid = read_state(&g);
-    if (valid && s.have_prev && s.prev.have_player && g.have_player)
+    set_call_context(nullptr);
+    if (valid && !g.have_phys && s.have_prev && s.prev.have_player && g.have_player)      // no physics read (the game is not ticking the player): position difference
         for (int i = 0; i < 3; i++) g.vel[i] = (g.pos[i] - s.prev.pos[i]) * 60.0f;
     s.gs = g;
     s.gs_valid = valid;

@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace nxrt::play {
@@ -142,6 +144,25 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
             rotate_transform_yaw(xf, dyaw, nx);
             if (set_xf_) set_xf_(set_xf_user_, player, nx);
             else guest_write(xfp, nx, sizeof nx);
+            if (std::getenv("NXRT_AIM_DEBUG")) {
+                float chk[12], after[12];
+                uint8_t flag0 = 0, flag1 = 0, flag2 = 0;
+                guest_read(player + 644, &flag0, 1);
+                guest_read(xfp, chk, sizeof chk);
+                guest_read(player + 644, &flag1, 1);
+                if (original) original();
+                guest_read(rd64(rd64(rd64(player + l_.player_goc) + l_.goc_inner) + l_.inner_xf), after, sizeof after);
+                if (FILE* df = std::fopen("aim_debug.txt", "a")) {
+                    guest_read(player + 644, &flag2, 1);
+                    std::fprintf(df, "aim: flag %d/%d/%d yaw before %.4f want %.4f right after set %.4f after original %.4f\n", flag0, flag1, flag2, yaw_of_transform(xf), yaw_of_transform(nx),
+                                 yaw_of_transform(chk), yaw_of_transform(after));
+                    std::fclose(df);
+                }
+                const float outp = static_cast<float>(pitch_);
+                guest_write(player + l_.free_look_pitch, &outp, sizeof outp);
+                ++applied_;
+                return true;
+            }
         }
     }
     if (original) original();
