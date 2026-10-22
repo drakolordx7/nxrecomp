@@ -198,6 +198,7 @@ void PresentPass::record(VkCommandBuffer cb, VkImageView dst_view, VkExtent2D ds
     pc.crop[3] = static_cast<float>(ch);
     pc.src[0] = static_cast<float>(sw);
     pc.src[1] = static_cast<float>(sh);
+    pc.src[2] = flip_y_ ? 1.0f : 0.0f;
 
     // descriptor: the next set of the ring, written with this view and sampler
     VkDescriptorSet set = sets_[next_set_];

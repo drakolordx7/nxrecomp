@@ -24,7 +24,7 @@ layout(set = 0, binding = 0) uniform sampler2D u_src;
 layout(push_constant) uniform PushConstants {
     vec4 pic;    // the picture rectangle in destination UV: origin xy, size zw (0,0,1,1 when the picture fills the target)
     vec4 crop;   // the source crop in texels: origin xy, size zw
-    vec4 src;    // xy: the whole source size in texels
+    vec4 src;    // xy: the whole source size in texels, z: 1 = flip the picture vertically
 } pc;
 void main() {
     vec2 local = (v_dst - pc.pic.xy) / pc.pic.zw;
@@ -32,6 +32,7 @@ void main() {
         o_color = vec4(0.0, 0.0, 0.0, 1.0);   // letterbox bar
         return;
     }
+    if (pc.src.z > 0.5) local.y = 1.0 - local.y;   // flip: a window with the lower-left origin mode is presented upside down otherwise
     // texel-space position inside the crop; clamped to the crop's texel centres so a linear filter never reads outside it
     vec2 texel = pc.crop.xy + local * pc.crop.zw;
     texel = clamp(texel, pc.crop.xy + 0.5, pc.crop.xy + pc.crop.zw - 0.5);

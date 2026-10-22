@@ -282,8 +282,8 @@ uint32_t open_renderer(Request& req, Response& rsp, bool manual) {
         if (!req.in_copy.empty())
             if (auto tm = kernel::handle_as<kernel::KTransferMemory>(req.in_copy[0])) work_addr = tm->addr;
     }
-    // The handles sent along belong to the service now. The renderer allocates its own work memory (as Ryujinx does), so they are closed.
-    for (uint32_t h : req.in_copy) kernel::handle_close(h);
+    // The copy handles stay the client's: HIPC copies them, only move handles change owner (debug note 122). The renderer allocates its own
+    // work memory (as Ryujinx does), so the transfer memory is not kept.
 
     std::unique_ptr<audren::AudioRenderSystem> sys;
     audren::ResultCode rc;

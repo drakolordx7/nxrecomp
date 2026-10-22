@@ -121,11 +121,8 @@ Handler ignored(const char* name, size_t zero_bytes = 0) {
     };
 }
 
-// The copy handles a request carried belong to the service now: close them (the ones this service keeps are never copies).
-void close_copies(const Request& req) {
-    for (uint32_t h : req.in_copy)
-        if (h) kernel::handle_close(h);
-}
+// Copy handles belong to the client (HIPC copies them, the guest closes its own afterwards): nothing to close here (debug note 122).
+void close_copies(const Request&) {}
 
 // Byte range [off, off + n) lies inside a storage of `size` bytes.
 bool span_ok(uint64_t size, int64_t off, uint64_t n) {
