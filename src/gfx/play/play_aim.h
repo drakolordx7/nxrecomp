@@ -6,7 +6,7 @@
 //
 // How it hooks in (play.cpp): an entry hook on CPlayerMP1::ProcessInput (x0 player, x2 CStateManager). AimDriver::apply() does, in order:
 //   1. read the gate (first person, not morphed, not locked on, not in a cinematic, alive); if closed, forget the pitch and just run the game;
-//   2. yaw: rotate the player's transform about Z by dx * yaw_rad and hand it to CActorMP1::SetTransform (the game's own function, so the
+//   2. yaw: rotate the player's transform about Y (the world is Y up) by dx * yaw_rad and hand it to CActorMP1::SetTransform (the game's own function, so the
 //      entity's change notification runs);
 //   3. pitch: our own accumulated angle (adopted from the game's value when aim becomes allowed), clamped to the tweak's free-look limit;
 //   4. run the game's ProcessInput (it reads the new transform; its free-look code may pull the pitch back toward level);
@@ -97,8 +97,8 @@ private:
 };
 
 // The transform maths (row-major 3x4: three rows of {r0, r1, r2, translation}); public for the tests.
-double yaw_of_transform(const float xf[12]);                               // atan2(-xf[1], xf[5])
-void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Rz(dyaw) * rotation, translation kept
+double yaw_of_transform(const float xf[12]);                               // atan2(xf[2], xf[0]): heading about Y (the world is Y up, forward is -Z at 0, + = turn left)
+void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Ry(dyaw) * rotation, translation kept
 
 // Guest memory access used by the driver and the probes (ReadProcessMemory on this process: a bad pointer gives false, never a fault).
 bool guest_read(uint64_t addr, void* out, size_t n);

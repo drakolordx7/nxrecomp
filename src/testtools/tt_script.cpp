@@ -443,6 +443,23 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    if (kw == "@give") {
+        if (n != 3) return usage(msg, "@give <item> <amount>");
+        static const char* const names[] = {"powerbeam", "icebeam", "wavebeam", "plasmabeam", "missiles", "scanvisor", "morphballbombs", "powerbombs", "flamethrower",
+            "thermalvisor", "chargebeam", "supermissile", "grapplebeam", "xrayvisor", "icespreader", "spacejumpboots", "morphball", "combatvisor", "boostball", "spiderball",
+            "powersuit", "gravitysuit", "variasuit", "phazonsuit", "energytanks"};
+        std::string nm;
+        for (char ch : t[1]) if (ch != '_' && ch != ' ') nm += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        Step s = make(StepKind::Give);
+        s.x = -1;
+        for (int i = 0; i < 25; i++) if (nm == names[i]) s.x = i;
+        if (s.x < 0 && !real_arg(t[1], &s.x, msg)) return false;
+        if (s.x < 0 || s.x > 40) return fail_with(msg, "@give: unknown item '" + t[1] + "'");
+        if (!real_arg(t[2], &s.y, msg)) return false;
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "@sleep") {
         if (n != 2) return usage(msg, "@sleep <ms>");
         Step s = make(StepKind::WaitMs);
