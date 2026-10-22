@@ -33,7 +33,7 @@ NXTEST(replayed_pad_reaches_the_hid_source) {
     tt::reset_for_tests();
     nxrt::config_set("test", "replay", "tt_hid_test.nxin");
     nxrt::config_set("test", "frame_source", "manual");
-    nxrt::config_set("test", "out", "tt_test_out\hid");
+    nxrt::config_set("test", "out", "tt_test_out/hid");
     REQUIRE(tt::init());
     for (int i = 0; i < 5; i++) {
         tt::frame_boundary(nullptr);
@@ -55,7 +55,7 @@ NXTEST(replayed_pad_reaches_the_hid_source) {
     nxrt::config_clear();
     nxrt::config_set("test", "record", "tt_hid_rec.nxin");
     nxrt::config_set("test", "frame_source", "manual");
-    nxrt::config_set("test", "out", "tt_test_out\hid2");
+    nxrt::config_set("test", "out", "tt_test_out/hid2");
     REQUIRE(tt::init());
     for (int i = 0; i < 3; i++) tt::frame_boundary(nullptr);
     tt::shutdown();

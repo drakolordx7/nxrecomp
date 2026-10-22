@@ -4,3 +4,4 @@ out/
 *.log.prev
 *_crash.txt
 *_freeze.txt
+tt_test_out/

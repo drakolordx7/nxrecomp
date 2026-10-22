@@ -581,6 +581,11 @@ bool tt_guid_to_bytes(const std::string& text, uint8_t out[16]) {
             high = -1;
         }
     }
+    // The game's CObjectId is a Windows-style GUID struct in memory: the first three groups are little-endian integers (verified against the
+    // real game under Eden: the Frigate world 4b5e8635-0f43-4ffb-9427-2e62186e517d reads as 35865e4b 430f fb4f 9427 2e62186e517d).
+    std::swap(tmp[0], tmp[3]); std::swap(tmp[1], tmp[2]);
+    std::swap(tmp[4], tmp[5]);
+    std::swap(tmp[6], tmp[7]);
     std::memcpy(out, tmp, 16);
     return true;
 }
@@ -597,7 +602,12 @@ std::string tt_guid_hex(const uint8_t in[16]) {
 }
 
 std::string tt_guid_to_text(const uint8_t in[16]) {
-    std::string h = tt_guid_hex(in);
+    uint8_t t[16];
+    std::memcpy(t, in, 16);
+    std::swap(t[0], t[3]); std::swap(t[1], t[2]);
+    std::swap(t[4], t[5]);
+    std::swap(t[6], t[7]);
+    std::string h = tt_guid_hex(t);
     return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" + h.substr(16, 4) + "-" + h.substr(20, 12);
 }
 
