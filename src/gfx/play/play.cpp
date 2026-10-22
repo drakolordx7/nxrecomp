@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "nxrt/ftrace.h"
+#include "play_display.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -497,6 +498,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             lk.unlock();
             st.engine->set_settings(s, now);
             apply_frame_cap(s);
+            display_apply(s.display);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) set_window_mode(s.display.window_mode);
             std::string err;
@@ -827,6 +829,12 @@ bool start(const StartOptions& opt) {
     }
     if (st.window && st.settings.display.window_mode != "windowed") set_window_mode(st.settings.display.window_mode);
 
+    {   // display options: the internal resolution comes from the window as it is now (after the window mode change above)
+        int ww = 1600, wh = 900;
+        if (st.window) platform::pixel_size(&ww, &wh);
+        if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
+        display_install(st.base, st.settings.display, ww, wh);
+    }
     st.hook_update = hook_add_entry(st.base + kFnUpdate, &update_hook);
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
     st.started = true;
@@ -841,6 +849,7 @@ void stop() {
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     st.hook_update = st.hook_input = 0;
+    display_remove();
     hid::set_vibration_sink(nullptr, nullptr);
     if (hid::input_source() == st.source) hid::set_input_source(nullptr);
     if (st.dirty) {
