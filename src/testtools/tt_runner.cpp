@@ -182,8 +182,9 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 if (met) { pressing_ = 0; advance(); continue; }
                 const int64_t to_ms = st.timeout < 0 ? 600000 : st.timeout;
                 if (to_ms > 0 && static_cast<int64_t>(now_ms - start_ms_) >= to_ms) { pressing_ = 0; fail(st, "timeout waiting for " + st.text + " " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1)); return; }
-                if (remaining_ > 0) { remaining_--; if (remaining_ == 0) pressing_ = 0; }
-                else if (now_ms >= next_mash_ms_) { pressing_ = st.buttons; remaining_ = 40; next_mash_ms_ = now_ms + static_cast<uint64_t>(st.x); }
+                // The press lasts 250 ms of host time: in deterministic mode a frame is a tiny slice of host time and the front end runs on the host clock.
+                if (remaining_ > 0) { if (now_ms >= mash_release_ms_) { remaining_ = 0; pressing_ = 0; } }
+                else if (now_ms >= next_mash_ms_) { pressing_ = st.buttons; remaining_ = 1; mash_release_ms_ = now_ms + 250; next_mash_ms_ = now_ms + static_cast<uint64_t>(st.x); }
                 return;
             }
             case StepKind::Give:

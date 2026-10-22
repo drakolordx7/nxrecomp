@@ -27,7 +27,7 @@
 //   @run <seconds> [timeout=<n>]      wait until the in-game play time has advanced by <seconds> since this step began (the game clock stands
 //                                     still while an area loads, so this is "the game ran for that long")
 //   @mash <keys> <period_ms> area|world <id> [timeout=<ms>]
-//                                     press the buttons for 40 frames every <period_ms> of host time until the area (or world) becomes current: gets
+//                                     press the buttons for 250 ms of host time every <period_ms> until the area (or world) becomes current: gets
 //                                     through the front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
 //   @give <item> <amount>             set an item of the player state (CPlayerStateMP1 item table): amount and capacity. <item> is a number or the game's
 //                                     name without case or underscores (MorphBall, ChargeBeam, Missiles, XRayVisor, WaveBeam ...)
