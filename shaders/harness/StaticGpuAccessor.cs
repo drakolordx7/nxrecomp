@@ -192,7 +192,7 @@ namespace SpirvHarness
         public bool QueryHostSupportsViewportMask() => false;
         public bool QueryHostSupportsNonConstantTextureOffset() => false;
         public bool QueryHostSupportsTextureShadowLod() => false;
-        public bool QueryHostSupportsFragmentShaderInterlock() => true;
+        public bool QueryHostSupportsFragmentShaderInterlock() => false;   // S4d: no SPV_EXT_fragment_shader_interlock dependency (only the rare ordered-fragment shaders lose their ordering)
         public bool QueryHostSupportsShaderNonUniformIndexing() => true;
         public int QueryHostSubgroupSize() => 32;
     }
