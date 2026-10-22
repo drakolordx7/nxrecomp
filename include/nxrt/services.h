@@ -105,7 +105,7 @@ struct TitleProfile {
     int main_thread_priority = 44, main_thread_core = 0;   // main.npdm
     // console
     Language language = Language::AmericanEnglish;         // [system] language (name, e.g. AmericanEnglish)
-    int region = 1;                                        // [system] region: Japan 0, USA 1, Europe 2, Australia 3, China 4, Korea 5, Taiwan 6 (name or number)
+    int region = 1;                                        // [system] region: Japan 0, USA 1, Europe 2, Australia 3, HongKongTaiwanKorea 4, China 5 (name or number; Switchbrew RegionCode)
     std::string firmware = "12.1.0";                       // [system] firmware  (set:sys GetFirmwareVersion)
     std::string device_nickname = "nxrt";                  // [system] nickname
     bool docked = true;                                    // [am] operation_mode = docked|handheld

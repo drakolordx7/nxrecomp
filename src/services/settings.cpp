@@ -67,19 +67,11 @@ uint32_t put_codes(ipc::Request& req, ipc::Response& rsp, uint32_t max) {
     return 0;
 }
 
-// nn::settings::system::RegionCode: 0 Japan, 1 Usa, 2 Europe, 3 Australia, 4 HongKongTaiwanKorea, 5 China (Switchbrew, ScarletNX).
-// The profile numbers its regions China 4, Korea 5, Taiwan 6 (services.h), so those map to 5, 4, 4. Out-of-range answers Usa (Ryujinx).
+// nn::settings::system::RegionCode: 0 Japan, 1 Usa, 2 Europe, 3 Australia, 4 HongKongTaiwanKorea, 5 China (Switchbrew, ScarletNX); the profile
+// uses the same numbering (services.h). Out-of-range answers Usa (Ryujinx).
 int32_t region_code() {
-    switch (profile().region) {
-        case 0:
-        case 1:
-        case 2:
-        case 3: return profile().region;
-        case 4: return 5;
-        case 5:
-        case 6: return 4;
-        default: return 1;
-    }
+    const int r = profile().region;
+    return r >= 0 && r <= 5 ? r : 1;
 }
 
 // "major.minor.micro" into out[0..2]; missing trailing parts stay 0. False when even the major part is not a number.

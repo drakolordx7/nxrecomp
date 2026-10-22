@@ -168,9 +168,10 @@ int parse_region(const std::string& s, int def) {
     const std::string l = lower(trim(s));
     if (l.empty()) return def;
     if (std::isdigit(static_cast<unsigned char>(l[0]))) return static_cast<int>(std::strtol(l.c_str(), nullptr, 0));
-    static const char* kNames[] = {"japan", "usa", "europe", "australia", "china", "korea", "taiwan"};
-    for (int i = 0; i < 7; ++i)
+    static const char* kNames[] = {"japan", "usa", "europe", "australia", "hongkongtaiwankorea", "china"};
+    for (int i = 0; i < 6; ++i)
         if (l == kNames[i]) return i;
+    if (l == "korea" || l == "taiwan" || l == "hongkong") return 4;
     if (l == "us") return 1;
     return def;
 }

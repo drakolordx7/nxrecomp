@@ -555,8 +555,8 @@ ServicePtr preselected_user_storage() {
     const uint32_t magic = kLaunchParamsMagic, flag = 1;
     std::memcpy(d->data() + 0, &magic, 4);
     std::memcpy(d->data() + 4, &flag, 4);
-    std::memcpy(d->data() + 8, &lo, 8);
-    std::memcpy(d->data() + 16, &hi, 8);
+    std::memcpy(d->data() + 8, &hi, 8);    // the Uid in memory order, as acc:u0 carries it (first u64 = profile uid_hi)
+    std::memcpy(d->data() + 16, &lo, 8);
     return new_storage(d);
 }
 
@@ -604,8 +604,8 @@ ServicePtr make_application_functions() {
         });
         // EnsureSaveData(Uid) -> u64 required size: the account save data of the title, created when it is missing.
         s.add_cmd(20, "EnsureSaveData", [](Request& req, Response& rsp) -> uint32_t {
-            const uint64_t lo = req.arg<uint64_t>(0);
-            const uint64_t hi = req.arg<uint64_t>(8);
+            const uint64_t hi = req.arg<uint64_t>(0);   // Uid in memory order: first u64 = hi
+            const uint64_t lo = req.arg<uint64_t>(8);
             bool created = false;
             const uint32_t rc = fsapi::ensure_account_save(hi, lo, &created);
             rsp.push<uint64_t>(0);   // nothing is missing: the space and the save are there
@@ -638,8 +638,8 @@ ServicePtr make_application_functions() {
         // GetSaveDataSize(type, Uid) -> (i64 normal, i64 journal): the stored extension, else the fs account save data.
         s.add_cmd(26, "GetSaveDataSize", [](Request& req, Response& rsp) -> uint32_t {
             const uint8_t type = req.arg<uint8_t>(0);
-            const uint64_t lo = req.arg<uint64_t>(8);
-            const uint64_t hi = req.arg<uint64_t>(16);
+            const uint64_t hi = req.arg<uint64_t>(8);
+            const uint64_t lo = req.arg<uint64_t>(16);
             int64_t normal = 0, journal = 0;
             uint32_t rc = 0;
             if (type == kSaveDataTypeAccount) {

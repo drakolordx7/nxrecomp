@@ -23,7 +23,7 @@ namespace nxrt::services {
 namespace {
 
 // nn::apm::PerformanceMode (Switchbrew): 0 Normal, 1 Boost.
-constexpr uint32_t kModeNormal = 0, kModeBoost = 1;
+constexpr uint32_t kModeNormal = 0, kModeBoost = 1, kModeUnset = 0xFFFFFFFEu;
 // nn::apm::PerformanceConfiguration defaults: Normal 0x00020003 (Switchbrew, GetCurrentPerformanceConfiguration), Boost 0x00020004
 // (ryubing default; Switchbrew does not state the Boost default).
 constexpr uint32_t kConfigNormal = 0x00020003u, kConfigBoost = 0x00020004u;
@@ -38,7 +38,7 @@ constexpr uint32_t kChargerUnconnected = 0, kChargerEnoughPower = 1;
 uint32_t apm_invalid_parameters() { return res(148, 1); }
 
 struct PowerState {
-    uint32_t performance_mode = kModeNormal;
+    uint32_t performance_mode = kModeUnset;   // set by apm:sys RequestPerformanceMode; until then it follows the operation mode
     uint32_t config[2] = {kConfigNormal, kConfigBoost};   // indexed by PerformanceMode (Normal, Boost)
     bool cpu_overclock = false;
     uint32_t cpu_boost_mode = 0;
@@ -51,8 +51,15 @@ PowerState& st() {
     return s;
 }
 
+// The mode in effect: the console is in Boost while docked and Normal in handheld mode (the applet manager tells apm so on a real
+// console through RequestPerformanceMode; nxrt follows amctl::docked() until something requests a mode explicitly).
+uint32_t mode_now() {
+    const uint32_t m = st().performance_mode;
+    return m != kModeUnset ? m : (amctl::docked() ? kModeBoost : kModeNormal);
+}
+
 uint32_t current_config() {
-    const uint32_t mode = st().performance_mode;
+    const uint32_t mode = mode_now();
     if (mode == kModeNormal) return st().config[0];
     if (mode == kModeBoost) return st().config[1];
     return kConfigNormal;   // ryubing: any other mode reads as the Normal default
@@ -106,7 +113,7 @@ std::shared_ptr<ipc::Service> make_apm_manager(const char* name, bool full) {
         if (!full) return;   // apm:p has OpenSession only
         // 1 GetPerformanceMode() -> u32 PerformanceMode
         s.add_cmd(1, "GetPerformanceMode", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
-            rsp.push<uint32_t>(st().performance_mode);
+            rsp.push<uint32_t>(mode_now());
             return 0;
         });
         // 6 [7.0.0+] IsCpuOverclockEnabled() -> bool
@@ -236,7 +243,7 @@ void register_power() {
 
 void power_reset() {
     PowerState& s = st();
-    s.performance_mode = kModeNormal;
+    s.performance_mode = kModeUnset;
     s.config[0] = kConfigNormal;
     s.config[1] = kConfigBoost;
     s.cpu_overclock = false;

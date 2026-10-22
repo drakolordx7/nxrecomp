@@ -12,6 +12,7 @@
 // Values: PerformanceMode Normal 0, Boost 1; PerformanceConfiguration 0x00020003 is the Normal default (Switchbrew); ChargerType
 // EnoughPower 1 (Switchbrew). The apm module is 148 (Switchbrew Error_codes); InvalidParameters = module | (1 << 9) = 0x294
 // (description 1 from ryubing: Switchbrew lists no apm error rows, so that one value is not confirmed against Switchbrew).
+#include "nxrt/services_api.h"
 #include "svc_test_util.h"
 
 NXTEST_GROUP(svc_power)
@@ -27,7 +28,7 @@ NXTEST(svc_power_apm_defaults) {
     nxsvc::Reply mode = apm.call(1);                    // GetPerformanceMode
     CHECK_EQ(mode.result, 0u);
     CHECK(mode.out.size() >= 4u);
-    CHECK_EQ(mode.get<uint32_t>(0), 0u);                // Normal
+    CHECK_EQ(mode.get<uint32_t>(0), 1u);                // docked by default: Boost
     nxsvc::Reply oc = apm.call(6);                      // IsCpuOverclockEnabled
     CHECK_EQ(oc.result, 0u);
     CHECK(oc.out.size() >= 1u);
@@ -85,6 +86,7 @@ NXTEST(svc_power_cpu_overclock_flag) {
 
 NXTEST(svc_power_apm_am_and_privileged) {
     nxsvc::Env env;
+    services::amctl::set_docked(false);   // handheld: apm starts in Normal
     // apm:am is the same IManager as apm (8.0+): the same mode and overclock state.
     nxsvc::Session am = nxsvc::connect("apm:am");
     REQUIRE(am.valid());
@@ -106,6 +108,7 @@ NXTEST(svc_power_apm_am_and_privileged) {
 
 NXTEST(svc_power_sys_performance_mode_and_config) {
     nxsvc::Env env;
+    services::amctl::set_docked(false);   // handheld: apm starts in Normal
     nxsvc::Session apm = nxsvc::connect("apm");
     nxsvc::Session sys = nxsvc::connect("apm:sys");
     REQUIRE(apm.valid());
@@ -260,6 +263,7 @@ NXTEST(svc_power_reset_state) {
     }
     // A new Env resets every service (power_reset runs inside reset_all).
     nxsvc::Env env;
+    services::amctl::set_docked(false);
     nxsvc::Session apm = nxsvc::connect("apm");
     nxsvc::Session sys = nxsvc::connect("apm:sys");
     nxsvc::Session psm = nxsvc::connect("psm");

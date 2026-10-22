@@ -475,7 +475,7 @@ NXTEST(tipc_get_service_handle_and_tipc_invoke) {
     CHECK_EQ(b2.p[3], 7u);
 }
 
-NXTEST(release_closes_the_session) {
+NXTEST(release_keeps_the_handle_until_closed) {
     fresh();
     const uint32_t h = get_service(connect("sm:"), "test:svc");
     REQUIRE(h != 0);
@@ -483,6 +483,9 @@ NXTEST(release_closes_the_session) {
     Message m;
     m.type = nxrt::hipc::kRelease;
     CHECK_EQ(send_msg(b, h, m), 0u);
+    // The client closes the handle itself afterwards (svcCloseHandle): it must still be there.
+    CHECK(nxrt::kernel::handle_as<nxrt::ipc::KSession>(h) != nullptr);
+    nxrt::kernel::handle_close(h);
     Buf b2;
     CHECK_EQ(send_msg(b2, h, cmif(5, pack(uint32_t{1}, uint32_t{2}))), nxrt::kernel::kInvalidHandle);
 }
@@ -615,7 +618,7 @@ NXTEST(hipc_vectors_route_to_stubs) {
         if (v.type == 0) {   // a response sent as a request
             CHECK_MSG(rc == 0xE801u, name + ": response vector not rejected");
         } else if (v.type == nxrt::hipc::kRelease) {
-            CHECK_MSG(rc == 0 && nxrt::kernel::handle_as<nxrt::ipc::KSession>(h) == nullptr, name + ": not closed");
+            CHECK_MSG(rc == 0 && nxrt::kernel::handle_as<nxrt::ipc::KSession>(h) != nullptr, name + ": handle must stay open until svcCloseHandle");
         } else {
             CHECK_MSG(rc == 0, name + ": svc result " + std::to_string(rc));
             if (v.type == nxrt::hipc::kTipcBase + 1) {
