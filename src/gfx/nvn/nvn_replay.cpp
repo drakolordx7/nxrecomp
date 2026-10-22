@@ -157,6 +157,11 @@ bool g_trace_snap_sampled = false;           // [nvn] trace_snap_sampled = 1: a 
 std::vector<Texture*> g_trace_sampled;       // textures sampled by the last traced draw
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
+// [nvn] trace_after_fs = "67d504": the frame after the first one that draws with a fragment shader of this hash prefix is traced
+// (a frame number is not stable from run to run: the load times differ).
+std::string g_trigger_fs;
+bool g_trigger_read = false, g_trigger_seen = false, g_trigger_done = false;
+int64_t g_trigger_present = -1;
 int g_trace_n = 0;
 #define TRACE(...) do { if (g_trace) NXLOG_I("nvn.trace", __VA_ARGS__); } while (0)
 
@@ -717,6 +722,8 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                 ii.imageView = tex_sampled_view(r.tex, q);
             }
             if (!ii.imageView) {
+                if (r.tex) NXLOG_W(kTag, "storage image: texture %u (%s %dx%dx%d) has no storage view (gpu %d, storage usage %d)", r.tex->id, r.tex->fmt ? r.tex->fmt->name : "?",
+                                   r.tex->b.width, r.tex->b.height, r.tex->b.depth, tex_gpu(r.tex) ? 1 : 0, tex_has_storage(r.tex) ? 1 : 0);
                 log_once("storage-image-dummy", "a storage image binding has no usable texture: a dummy storage image is bound");
                 ii.imageView = dummy_storage_view(view_type_for(b), shader_fmt);
             }
@@ -918,6 +925,10 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         const ShaderInfo* stages[6] = {vs, S.stage[kFragment], S.stage[kGeometry], nullptr, nullptr, nullptr};
         g_pl = prog_layout(stages);
     }
+    if (!g_trigger_fs.empty() && !g_trigger_done && S.stage[kFragment] && S.stage[kFragment]->hash.compare(0, g_trigger_fs.size(), g_trigger_fs) == 0) {
+        g_trigger_seen = true;
+        g_trigger_present = static_cast<int64_t>(counters().presents.load());
+    }
     const ProgLayout* pl = g_pl;
     if (!pl) return false;
     if (g_dirty & (kDesc | kPipe)) {
@@ -952,6 +963,17 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
               S.stage[kGeometry] ? S.stage[kGeometry]->hash.c_str() : "-", mode, indexed ? 1 : 0, line.c_str(), tex_desc(S.depth_tex.get(), b, sizeof b),
               P.depth_ro ? " (ro)" : "", S.color.blend_enable_mask, S.chmask.mask[0], S.ds.depth_test ? 1 : 0, S.ds.depth_write ? 1 : 0, S.ds.depth_func,
               S.poly.cull_face, static_cast<unsigned long long>(S.ubo[kVertex][0].addr), static_cast<unsigned long long>(S.ubo[kVertex][0].size));
+        for (uint32_t slot = 0; slot < 16; ++slot) {    // the first words of every uniform block bound to the vertex stage
+            const GState::Bind& ub = S.ubo[kVertex][slot];
+            if (!ub.addr) continue;
+            BufRef ur = resolve_buffer(ub.addr, std::min<uint64_t>(ub.size, 256));
+            std::string words;
+            if (ur.ok) {
+                const uint32_t* w = reinterpret_cast<const uint32_t*>(ub.addr);
+                for (uint32_t i = 0; i < 64 && i * 4 < ub.size; ++i) { char t[16]; std::snprintf(t, sizeof t, " %08x", w[i]); words += t; }
+            }
+            TRACE("    vs ubo%u %llx/%llu%s:%s", slot, static_cast<unsigned long long>(ub.addr), static_cast<unsigned long long>(ub.size), ur.ok ? "" : " (outside every pool)", words.c_str());
+        }
         g_trace_sampled.clear();
         for (const BindingDesc& d : pl->bindings) {
             if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
@@ -1079,6 +1101,7 @@ void do_draw_arrays(const P_DrawArrays& p) {
     if (!begin_draw(static_cast<int>(p.mode), false, 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
     if (conv == PrimConversion::None) {
+        TRACE("    vertices %u instances %u first %u", p.count, p.instance_count, p.first);
         vkCmdDraw(F->cb, p.count, std::max<uint32_t>(1, p.instance_count), p.first, p.base_instance);
     } else {
         // QUADS / QUAD_STRIP / POLYGON / LINE_LOOP: generate an index buffer
@@ -1737,6 +1760,14 @@ void run_list(const CmdList& list, int depth) {
 void replay_begin_submit(Frame& f) {
     F = &f;
     if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
+    if (!g_trigger_read) {
+        g_trigger_read = true;
+        g_trigger_fs = nxrt::config_get_str("nvn", "trace_after_fs", "");
+    }
+    if (!g_trigger_fs.empty() && g_trigger_seen && !g_trigger_done && static_cast<int64_t>(counters().presents.load()) > g_trigger_present) {
+        g_trigger_done = true;
+        g_trace_frame = static_cast<int64_t>(counters().presents.load());
+    }
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }
     S.window_origin = window_origin_mode();
