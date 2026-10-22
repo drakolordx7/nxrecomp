@@ -2,7 +2,7 @@
 
 Offline harness that turns Maxwell (SM 5.3) shader machine code into SPIR-V with two independent translators, validates
 every output with `spirv-val`, and compares them. Written to run on the game's shader blobs once the dump exists; until
-then it is proven on a stand-in corpus of real Maxwell binaries.
+then it is tested on a stand-in corpus of real Maxwell binaries.
 
 | Translator | Source | Output | Role |
 |---|---|---|---|
@@ -62,14 +62,14 @@ Stand-in corpus to translator input: `scripts\dksh_to_corpus.py <dksh dir> --out
 
 ## Stand-in corpus
 
-Real Maxwell binaries, legally: Sascha Willems' Vulkan GLSL samples (MIT, commit `1cbc8d87`) rewritten by
+Real Maxwell binaries, made from freely licensed sources: Sascha Willems' Vulkan GLSL samples (MIT, commit `1cbc8d87`) rewritten by
 `scripts\build_corpus.py` into the GLSL dialect of devkitPro's `uam` (set numbers removed, push constants to a uniform
 block, `gl_VertexIndex` to `gl_VertexID`, and so on) and compiled by `uam` 1.0.0 (built from the official release
 tarball in WSL) to `.dksh` modules. 289 of 300 shaders compile (138 vertex, 138 fragment, 10 compute, 3 geometry); the
 222 distinct code blocks are what the oracle counts. Caveat: deko3d's driver constant buffer layout differs from NVN's
 (`uam` README: "Internal deko3d constbuf layout"), so texture handles sit at different words than in an NVN shader. That
 is why smo's translator, which hard-codes NVN's `c[2]` handle table, fails 72 of 222 blocks on this corpus
-("texture handle"); Ryujinx resolves them. The corpus proves the plumbing and instruction coverage; the pass-rate
+("texture handle"); Ryujinx resolves them. The corpus shows that the plumbing and instruction coverage work; the pass-rate
 comparison that decides the translator must be redone on the real game shaders.
 
 ## Oracle
