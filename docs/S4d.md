@@ -27,13 +27,13 @@ Part S4d of the Metroid Prime Remastered recompilation. Scope: real implementati
 
 ## Design decisions
 
-- **Pool memory is imported, not copied.** smo and Wonder copy buffer ranges into an upload ring at replay time and copy compute results back. Importing the game's pages removes the ring, the write-back tracking and the stale-copy bugs those projects document (Wonder DEBUG #11, #30, #32, #53, #56). Uniform and vertex data are read by the GPU from system memory over PCIe; no frame-time cost showed up in the 120-frame scene (0.6 ms of CPU per frame), but no real-game frame has been measured.
-- **The back end is Wonder's design in new code, with smo's recording model.** The plan named smo's backend as the base. smo's front end (`nvn_gl.c`, 400 KB) is entangled with an OpenGL path and write-watch texture tracking; Wonder's is Vulkan only, MIT, C++ and close to this game's SDK. Both were used as references and neither was copied; provenance is in the README table.
-- **Synchronous replay.** `nvnQueueSubmitCommands` returns when the lists are recorded into Vulkan, not when the GPU has run them. State is therefore always the state at submit time, which is what the console reads. No incarnation or snapshot machinery of the asynchronous designs is needed. Fences are timeline values.
-- **The shader cache is keyed by the code block only** (SHA-1, first 16 hex digits, over the `code_size` bytes at control +0x704). The survey keyed by code plus control section (67,506 blocks); the translated SPIR-V depends on the code alone: 9,750 of the 13,016 distinct code blocks occur with several control sections, and for all 9,750 the SPIR-V, status and resource list are byte-identical (checked on the unpatched run of all 67,506 blocks, `tools/shaders/scripts/make_code_corpus.py --verify`). The runtime has no control length to hash anyway.
-- **Binding contract.** Ryujinx's Vulkan scheme: set 0 uniform buffers (binding 0 is the support buffer, then `stageSlot * 18 + 1 + k` for `c[k]`), set 1 storage buffers (`stageSlot * 16 + k`), set 2 textures (`stageSlot * 128 + i`), set 3 images. `c[0]` is a 64 KiB zero buffer with the maximum point size at 0x610; `c[1]` is the block's constant data; `c[3 + n]` is uniform buffer `n` of the stage; texture handles come from `c[2]` (the `BindTexture` slots) or from a word of a bound uniform buffer. Storage buffer descriptors in `c[0]`: byte offset 0x110 + 0x100 * hardware stage + 0x10 * binding (hardware stage: vertex 0, geometry 3, fragment 4; compute 0x310), confirmed by the offsets the translator reports (0x110, 0x410, 0x510, 0x310).
-- **Window origin.** Upper-left: window y is the image row from the top and NDC +y is the top edge of the viewport rectangle, so the viewport has a negative height and the front face is kept. Lower-left (the GL convention): window y 0 is memory row 0 and NDC -y is the first row, so the viewport is not flipped, the front face is inverted, and the picture is mirrored relative to upper-left. The game uses upper-left.
-- **API version.** The game's own check (`NVNManaged::CDevice::Init`) refuses to start unless `nvnDeviceGetInteger(API_MAJOR_VERSION)` is 55 and `API_MINOR_VERSION` is at least 8 ("NVN API version does not match driver version"). The practice mod's header says 53.105 and smo says 53.312: both would fail. The back end reports 55.15, as Wonder does.
+- Pool memory is imported, not copied. smo and Wonder copy buffer ranges into an upload ring at replay time and copy compute results back. Importing the game's pages removes the ring, the write-back tracking and the stale-copy bugs those projects document (Wonder DEBUG #11, #30, #32, #53, #56). Uniform and vertex data are read by the GPU from system memory over PCIe; no frame-time cost showed up in the 120-frame scene (0.6 ms of CPU per frame), but no real-game frame has been measured.
+- The back end is Wonder's design in new code, with smo's recording model. The plan named smo's backend as the base. smo's front end (`nvn_gl.c`, 400 KB) is entangled with an OpenGL path and write-watch texture tracking; Wonder's is Vulkan only, MIT, C++ and close to this game's SDK. Both were used as references and neither was copied; provenance is in the README table.
+- Synchronous replay. `nvnQueueSubmitCommands` returns when the lists are recorded into Vulkan, not when the GPU has run them. State is therefore always the state at submit time, which is what the console reads. No incarnation or snapshot machinery of the asynchronous designs is needed. Fences are timeline values.
+- The shader cache is keyed by the code block only (SHA-1, first 16 hex digits, over the `code_size` bytes at control +0x704). The survey keyed by code plus control section (67,506 blocks); the translated SPIR-V depends on the code alone: 9,750 of the 13,016 distinct code blocks occur with several control sections, and for all 9,750 the SPIR-V, status and resource list are byte-identical (checked on the unpatched run of all 67,506 blocks, `tools/shaders/scripts/make_code_corpus.py --verify`). The runtime has no control length to hash anyway.
+- Binding contract. Ryujinx's Vulkan scheme: set 0 uniform buffers (binding 0 is the support buffer, then `stageSlot * 18 + 1 + k` for `c[k]`), set 1 storage buffers (`stageSlot * 16 + k`), set 2 textures (`stageSlot * 128 + i`), set 3 images. `c[0]` is a 64 KiB zero buffer with the maximum point size at 0x610; `c[1]` is the block's constant data; `c[3 + n]` is uniform buffer `n` of the stage; texture handles come from `c[2]` (the `BindTexture` slots) or from a word of a bound uniform buffer. Storage buffer descriptors in `c[0]`: byte offset 0x110 + 0x100 * hardware stage + 0x10 * binding (hardware stage: vertex 0, geometry 3, fragment 4; compute 0x310), confirmed by the offsets the translator reports (0x110, 0x410, 0x510, 0x310).
+- Window origin. Upper-left: window y is the image row from the top and NDC +y is the top edge of the viewport rectangle, so the viewport has a negative height and the front face is kept. Lower-left (the GL convention): window y 0 is memory row 0 and NDC -y is the first row, so the viewport is not flipped, the front face is inverted, and the picture is mirrored relative to upper-left. The game uses upper-left.
+- API version. The game's own check (`NVNManaged::CDevice::Init`) refuses to start unless `nvnDeviceGetInteger(API_MAJOR_VERSION)` is 55 and `API_MINOR_VERSION` is at least 8 ("NVN API version does not match driver version"). The practice mod's header says 53.105 and smo says 53.312: both would fail. The back end reports 55.15, as Wonder does.
 
 ## Shader cache
 
@@ -44,7 +44,7 @@ Part S4d of the Metroid Prime Remastered recompilation. Scope: real implementati
 | Distinct blocks (code + control) | 67,506 (33,744 vertex, 33,744 pixel, 12 geometry, 6 compute) |
 | Distinct code blocks | 13,016 |
 | Translation of all 67,506, unpatched Ryujinx | 67,506 valid, 0 invalid, 0 exceptions, 0 timeouts: 39,082 first try, 28,424 after the DebugMode retry; 900 s with 12 jobs |
-| Translation of all 67,506, patched (final) | see below |
+| Translation of all 67,506, patched (final) | 67,506 valid, 0 invalid, 0 exceptions, 0 timeouts (39,082 first try, 28,424 after the retry; 980 s with 12 jobs); no block reports the Pixld message; the SPIR-V of all 67,506 blocks is byte-identical to the code-keyed cache, and the 9,750 multi-control groups all agree (`make_code_corpus.py --verify`) |
 | Cache the runtime reads | `work/shader_cache/spirv`: 13,016 `.spv` (1,008 MB) and `results.tsv`; 13,016 of 13,016 valid |
 | Size options (268-module sample, extrapolated) | raw 1,008 MB; `spirv-opt --strip-debug -O` removes 43 % and still validates (0 failures), 0.09 s per module; with zstd -19 the whole cache would be about 80 MB (the study's 0.37 GB figure is for the 67,506 keyed blocks). The maintainer decides the packaging. |
 
@@ -107,3 +107,114 @@ Scenes also write reference images to `work\nvn_refs\` when `NXRT_NVN_UPDATE_REF
 | Pipeline creation | Synchronous on the render thread; a disk `VkPipelineCache` (`[nvn] pipeline_cache`) softens it. Prewarming from recorded keys is not done. |
 | Dynamic resolution crop | `nvnWindowSetCrop` is honoured by the present pass (scaled to the frame). Aspect-correct letterboxing is `BackendDesc::keep_aspect`; a window-size policy is the integration's job. |
 | ABI 3 build | This branch was built and tested against the ABI 2 header of recomp commit 5e0fa38 (`-DNXRT_RECOMP_INCLUDE=C:/mpr/work/recomp_abi2/include -DNXRT_BUILD_LIFT_TESTS=OFF`); main has since moved to ABI 3. The branch touches no OS-layer file and merges without conflicts; rebuild after the merge. |
+
+## Second GPU (Intel UHD 770)
+
+`NXRT_GFX_GPU=integrated` runs every scene group on the iGPU. Validation is clean once the Float64 capability that the translator declares in every module is dropped before module creation (no module uses a 64-bit float; the UHD 770 has no `shaderFloat64`). Four cases still differ from the reference images by more than the tolerances, as expected between two rasterizers: `polygon_mode_line_and_point`, `blend_funcs_equations_and_constant` (blend rounding), `bc1_blocks_built_by_hand` and `real_astc_8x5_texture_transcoded` (BC1/BC7 decode). They are tolerance differences, not backend errors, and the RTX 3080 passes all of them.
+
+## Entry-point coverage
+
+513 of 523 NVN entry points have an implementation; 10 are still logging stubs. 204 entry points are called by the game (all implemented).
+
+Status: `real` = implemented as specified; `partial` = implemented but approximated or ignored (note says how); `stub` = still the logging stub. `game` = the game binary calls it.
+
+| Family | Functions | real | partial | stub | Not real or not implemented |
+|---|---:|---:|---:|---:|---|
+| BlendState | 15 | 15 | 0 | 0 |  |
+| Bootstrap | 1 | 1 | 0 | 0 |  |
+| Buffer | 11 | 11 | 0 | 0 |  |
+| BufferBuilder | 7 | 7 | 0 | 0 |  |
+| ChannelMaskState | 3 | 3 | 0 | 0 |  |
+| ColorState | 7 | 7 | 0 | 0 |  |
+| CommandBuffer | 146 | 108 | 38 | 0 | 38 (listed below) |
+| CommandBufferMulti | 2 | 2 | 0 | 0 |  |
+| DepthStencilState | 13 | 13 | 0 | 0 |  |
+| Device | 27 | 22 | 5 | 0 | DeviceInstallDebugCallback, DeviceRegisterFastClearColor, DeviceRegisterFastClearDepth, DeviceSetIntermediateShaderCache, DeviceWalkDebugDatabase |
+| DeviceBuilder | 3 | 3 | 0 | 0 |  |
+| Event | 6 | 5 | 0 | 1 | EventGetMemoryPool |
+| EventBuilder | 5 | 4 | 0 | 1 | EventBuilderGetStorage |
+| LoadCProcs | 1 | 1 | 0 | 0 |  |
+| MemoryPool | 10 | 9 | 1 | 0 | MemoryPoolMapVirtual |
+| MemoryPoolBuilder | 8 | 8 | 0 | 0 |  |
+| MultisampleState | 23 | 23 | 0 | 0 |  |
+| PolygonState | 9 | 9 | 0 | 0 |  |
+| Program | 7 | 4 | 2 | 1 | ProgramSetSampleShading, ProgramSetShadersExt, ProgramSetSubroutineLinkage |
+| Queue | 15 | 14 | 1 | 0 | QueueWaitSync |
+| QueueBuilder | 19 | 19 | 0 | 0 |  |
+| Sampler | 15 | 15 | 0 | 0 |  |
+| SamplerBuilder | 25 | 25 | 0 | 0 |  |
+| SamplerPool | 8 | 8 | 0 | 0 |  |
+| SetExternalDebuggerEnabledNVX | 1 | 1 | 0 | 0 |  |
+| Sync | 6 | 4 | 0 | 2 | SyncCreateGLSync, SyncInitializeFromFencedGLSync |
+| Texture | 31 | 29 | 1 | 1 | TextureGetRawStorageClass, TextureGetSparseTileLayout |
+| TextureBuilder | 43 | 39 | 1 | 3 | TextureBuilderGetDevice, TextureBuilderGetPackagedTextureLayout, TextureBuilderGetRawStorageClass, TextureBuilderGetSparseTileLayout |
+| TexturePool | 8 | 8 | 0 | 0 |  |
+| TextureView | 14 | 14 | 0 | 0 |  |
+| VertexAttribState | 5 | 5 | 0 | 0 |  |
+| VertexStreamState | 5 | 5 | 0 | 0 |  |
+| Window | 12 | 12 | 0 | 0 |  |
+| WindowBuilder | 12 | 11 | 0 | 1 | WindowBuilderGetNumActiveTextures |
+
+### Partial and stub functions
+
+| Function | Status | Game | What it does |
+|---|---|---|---|
+| nvnCommandBufferBeginTransformFeedback | partial | game | recorded, not executed (no transform feedback yet) |
+| nvnCommandBufferBindSeparateSampler | partial |  | no-op |
+| nvnCommandBufferBindSeparateSamplers | partial |  | no-op |
+| nvnCommandBufferBindSeparateTexture | partial |  | no-op |
+| nvnCommandBufferBindSeparateTextures | partial |  | no-op |
+| nvnCommandBufferBindTransformFeedbackBuffer | partial | game | recorded, ignored |
+| nvnCommandBufferBindTransformFeedbackBuffers | partial |  | recorded, ignored |
+| nvnCommandBufferDownsample | partial | game | colour only (vkCmdResolveImage); depth resolve is not implemented |
+| nvnCommandBufferDownsampleTextureView | partial |  | colour only |
+| nvnCommandBufferDrawTexture | partial |  | recorded, skipped at replay (counted as unsupported) |
+| nvnCommandBufferDrawTransformFeedback | partial |  | no-op |
+| nvnCommandBufferEndTransformFeedback | partial | game | recorded, not executed (no transform feedback yet) |
+| nvnCommandBufferInsertDebugMarker | partial |  | no-op |
+| nvnCommandBufferPauseTransformFeedback | partial |  | no-op |
+| nvnCommandBufferPopDebugGroup | partial |  | no-op |
+| nvnCommandBufferPushDebugGroup | partial |  | no-op |
+| nvnCommandBufferReportCounter | partial | game | timestamp counters are real; occlusion/statistics counters report a non-zero count (everything visible) |
+| nvnCommandBufferResetCounter | partial | game | ignored |
+| nvnCommandBufferResolveDepthBuffer | partial |  | recorded, skipped |
+| nvnCommandBufferRestoreZCullData | partial | game | no-op |
+| nvnCommandBufferResumeTransformFeedback | partial |  | no-op |
+| nvnCommandBufferSaveZCullData | partial | game | no-op |
+| nvnCommandBufferSetAlphaRef | partial |  | stored; the alpha test itself is not applied (the game does not enable it) |
+| nvnCommandBufferSetConservativeRasterDilate | partial |  | no-op |
+| nvnCommandBufferSetConservativeRasterEnable | partial | game | recorded, ignored |
+| nvnCommandBufferSetInnerTessellationLevels | partial |  | recorded, ignored (no tessellation) |
+| nvnCommandBufferSetOuterTessellationLevels | partial |  | recorded, ignored (no tessellation) |
+| nvnCommandBufferSetPatchSize | partial |  | recorded, ignored (no tessellation) |
+| nvnCommandBufferSetPointSize | partial |  | stored; the vertex shader writes the size |
+| nvnCommandBufferSetShaderScratchMemory | partial | game | ignored (the GPU manages scratch) |
+| nvnCommandBufferSetSubpixelPrecisionBias | partial |  | no-op |
+| nvnCommandBufferSetTiledCacheAction | partial | game | no-op |
+| nvnCommandBufferSetTiledCacheTileSize | partial |  | no-op |
+| nvnCommandBufferSetViewportSwizzles | partial |  | no-op |
+| nvnCommandBufferSignalEvent | partial |  | SET and ADD are written into event memory in GPU order; the location argument is ignored |
+| nvnCommandBufferTiledDownsample | partial |  | colour only |
+| nvnCommandBufferTiledDownsampleTextureView | partial |  | colour only |
+| nvnCommandBufferWaitEvent | partial |  | not executed on the GPU (single in-order queue); counted as unsupported |
+| nvnDeviceInstallDebugCallback | partial |  | no-op |
+| nvnDeviceRegisterFastClearColor | partial | game | accepted, clears are exact anyway |
+| nvnDeviceRegisterFastClearDepth | partial | game | accepted |
+| nvnDeviceSetIntermediateShaderCache | partial |  | ignored |
+| nvnDeviceWalkDebugDatabase | partial |  | no-op |
+| nvnEventBuilderGetStorage | stub |  | logging stub |
+| nvnEventGetMemoryPool | stub |  | logging stub |
+| nvnMemoryPoolMapVirtual | partial | game | returns 0: sparse virtual pools are not implemented (the game calls it for virtual textures) |
+| nvnProgramSetSampleShading | partial | game | accepted (SampleId in a shader already forces sample shading) |
+| nvnProgramSetShadersExt | stub |  | logging stub |
+| nvnProgramSetSubroutineLinkage | partial |  | accepted |
+| nvnQueueWaitSync | partial | game | no-op: one in-order GPU queue |
+| nvnSyncCreateGLSync | stub |  | logging stub |
+| nvnSyncInitializeFromFencedGLSync | stub |  | logging stub |
+| nvnTextureBuilderGetDevice | stub |  | logging stub |
+| nvnTextureBuilderGetPackagedTextureLayout | stub |  | logging stub |
+| nvnTextureBuilderGetRawStorageClass | stub |  | logging stub |
+| nvnTextureBuilderGetSparseTileLayout | partial | game | zeros |
+| nvnTextureGetRawStorageClass | stub |  | logging stub |
+| nvnTextureGetSparseTileLayout | partial |  | zeros |
+| nvnWindowBuilderGetNumActiveTextures | stub |  | logging stub |

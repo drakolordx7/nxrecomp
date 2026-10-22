@@ -92,9 +92,30 @@ VkShaderModule shader_module(const ShaderInfo* s) {
     if (!s) return VK_NULL_HANDLE;
     auto it = g_modules.find(s);
     if (it != g_modules.end()) return it->second;
+    // The translator declares OpCapability Float64 in every module although no module uses a 64-bit float; devices without
+    // shaderFloat64 (Intel iGPUs) reject that. Drop the capability when no OpTypeFloat 64 exists.
+    std::vector<uint32_t> fixed;
+    const std::vector<uint32_t>* code = &s->spirv;
+    {
+        const auto& w = s->spirv;
+        size_t cap_at = 0;
+        bool uses64 = false;
+        for (size_t i = 5; i < w.size();) {
+            const uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+            if (len == 0) break;
+            if (op == 17 && w[i + 1] == 10) cap_at = i;                       // OpCapability Float64
+            if (op == 22 && i + 2 < w.size() && w[i + 2] == 64) uses64 = true;  // OpTypeFloat 64
+            i += len;
+        }
+        if (cap_at && !uses64) {
+            fixed = w;
+            fixed.erase(fixed.begin() + static_cast<std::ptrdiff_t>(cap_at), fixed.begin() + static_cast<std::ptrdiff_t>(cap_at) + 2);
+            code = &fixed;
+        }
+    }
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    ci.codeSize = s->spirv.size() * 4;
-    ci.pCode = s->spirv.data();
+    ci.codeSize = code->size() * 4;
+    ci.pCode = code->data();
     VkShaderModule m = VK_NULL_HANDLE;
     const VkResult r = vkCreateShaderModule(vkdev(), &ci, nullptr, &m);
     if (r != VK_SUCCESS) NXLOG_E(kTag, "vkCreateShaderModule failed (%d) for %s", static_cast<int>(r), s->hash.c_str());
