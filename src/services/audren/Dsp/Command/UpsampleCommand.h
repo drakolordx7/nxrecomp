@@ -1,31 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Port of Ryujinx.Audio/Renderer/Dsp/Command/UpsampleCommand.cs (Ryubing fork, MIT).
 //
-// UpsamplerInfo (C# Renderer/Server/Upsampler/UpsamplerInfo.cs) is ported here, because the command must hold the persistent server
-// object (its BufferStates survive from frame to frame) and the server Upsampler port is not in the tree yet. Only the fields the
-// command and the device sink use are kept; the manager/index release handle is not. The server port should reuse this definition.
+// UpsamplerInfo is the server class (Server/Upsampler/UpsamplerInfo.h); the command holds a pointer to the persistent object.
 #pragma once
 #include <algorithm>
 #include <vector>
 
 #include "../../audren_common.h"
 #include "../../Constants.h"
+#include "../../Server/Upsampler/UpsamplerInfo.h"
 #include "../UpsamplerHelper.h"
 #include "CommandList.h"
 #include "ICommand.h"
 
 namespace nxrt::audren {
-
-class UpsamplerInfo {
-  public:
-    Span<float> OutputBuffer;
-    uint32_t SampleCount = 0;
-    uint32_t SourceSampleCount = 0;
-    std::vector<uint16_t> InputBufferIndices;
-    std::vector<UpsamplerBufferState> BufferStates;
-
-    UpsamplerInfo(Span<float> outputBuffer, uint32_t sampleCount) : OutputBuffer(outputBuffer), SampleCount(sampleCount) {}
-};
 
 class UpsampleCommand : public ICommand {
   public:
