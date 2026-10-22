@@ -205,6 +205,29 @@ PrimConversion prim_conversion(int nvn_draw_primitive) {
     }
 }
 
+uint64_t primitives_for(int nvn_draw_primitive, uint32_t count) {
+    const int64_t n = count;
+    auto pos = [](int64_t v) -> uint64_t { return v > 0 ? static_cast<uint64_t>(v) : 0; };
+    switch (nvn_draw_primitive) {
+        case NVN_DRAW_PRIMITIVE_POINTS: return count;
+        case NVN_DRAW_PRIMITIVE_LINES: return count / 2;
+        case NVN_DRAW_PRIMITIVE_LINE_LOOP: return count >= 2 ? count : 0;
+        case NVN_DRAW_PRIMITIVE_LINE_STRIP: return pos(n - 1);
+        case NVN_DRAW_PRIMITIVE_TRIANGLES: return count / 3;
+        case NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP: return pos(n - 2);
+        case NVN_DRAW_PRIMITIVE_TRIANGLE_FAN: return pos(n - 2);
+        case NVN_DRAW_PRIMITIVE_QUADS: return count / 4;
+        case NVN_DRAW_PRIMITIVE_QUAD_STRIP: return pos((n - 2) / 2);
+        case NVN_DRAW_PRIMITIVE_POLYGON: return pos(n - 2);
+        case NVN_DRAW_PRIMITIVE_LINES_ADJACENCY: return count / 4;
+        case NVN_DRAW_PRIMITIVE_LINE_STRIP_ADJACENCY: return pos(n - 3);
+        case NVN_DRAW_PRIMITIVE_TRIANGLES_ADJACENCY: return count / 6;
+        case NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP_ADJACENCY: return pos((n - 4) / 2);
+        case NVN_DRAW_PRIMITIVE_PATCHES: return count / 3;   // patch size is not known to the replay: 3
+        default: note_unknown(); return 0;
+    }
+}
+
 VkFilter vk_mag_filter(int nvn_mag_filter) {
     switch (nvn_mag_filter) {
         case NVN_MAG_FILTER_NEAREST: return VK_FILTER_NEAREST;
