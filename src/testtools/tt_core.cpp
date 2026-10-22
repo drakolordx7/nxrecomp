@@ -5,6 +5,7 @@
 #include <psapi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -32,7 +33,10 @@ struct Region { uint64_t addr = 0, size = 0; std::string module; };
 
 struct State {
     std::recursive_mutex mu;                 // the boundary may be entered from a hook while a test calls in; also end_run from other threads
-    bool inited = false, on = false, det = false, script_mode = false, finished = false;
+    std::atomic<bool> det{false};
+    bool inited = false, on = false, script_mode = false, finished = false;
+    uint64_t rate_k0 = 0;                    // frame at which the current clock rate began
+    std::atomic<int64_t> real_offset{0};
     int exit_code = -1;
     std::string out, script, regions_file, trace_path, record_path, replay_path;
     uint64_t seed = 0x5EED5EEDull;
@@ -416,7 +420,7 @@ bool init() {
         s.runner_on = true;
     }
     NXLOG_I("tt", "test tooling on: script='%s' replay='%s' record='%s' deterministic=%d seed=0x%llx source=%s out='%s' regions=%zu", s.script.c_str(),
-            s.replay_path.c_str(), s.record_path.c_str(), s.det, static_cast<unsigned long long>(s.seed), src.c_str(), s.out.c_str(), s.hash_regions.size());
+            s.replay_path.c_str(), s.record_path.c_str(), static_cast<int>(s.det.load()), static_cast<unsigned long long>(s.seed), src.c_str(), s.out.c_str(), s.hash_regions.size());
 
     // plumbing: crash report -> result.json (exit code 4 by the crash handler), watchdog -> exit code 5, wall-clock deadline -> 124
     if (s.script_mode) {
@@ -496,6 +500,43 @@ void reset_for_tests() {
     s.shot_user = su;
     detail::set_game_base(detail::kDefaultGameBase);
     set_probe_layout(ProbeLayout{});
+}
+
+namespace {
+uint64_t raw_real_tick() {
+    static const uint64_t freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return static_cast<uint64_t>(f.QuadPart); }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    const uint64_t v = static_cast<uint64_t>(c.QuadPart);
+    return (v / freq) * 19200000ull + (v % freq) * 19200000ull / freq;
+}
+}  // namespace
+
+int64_t tick_offset() { return S().real_offset.load(std::memory_order_relaxed); }
+
+void set_clock_rate(double hz) {
+    State& s = S();
+    if (!s.on) return;
+    std::lock_guard<std::recursive_mutex> lk(s.mu);
+    const uint64_t k = s.frames.load();
+    if (hz > 0) {
+        const uint64_t step = static_cast<uint64_t>(std::max(1.0, std::round(19200000.0 / hz)));
+        if (!s.det) {
+            const uint64_t now = static_cast<uint64_t>(static_cast<int64_t>(raw_real_tick()) + s.real_offset.load());
+            s.vticks.store(now);
+            s.vbase = now;
+        } else {
+            s.vbase = s.vticks.load();
+        }
+        s.rate_k0 = k;
+        s.step_ticks = step;
+        s.det = true;
+        NXLOG_I("tt", "clock: virtual time, %.1f frames per game second (frame %llu)", hz, static_cast<unsigned long long>(k));
+    } else if (s.det) {
+        s.real_offset.store(static_cast<int64_t>(s.vticks.load()) - static_cast<int64_t>(raw_real_tick()));
+        s.det = false;
+        NXLOG_I("tt", "clock: real time again (frame %llu)", static_cast<unsigned long long>(k));
+    }
 }
 
 bool virtual_tick(uint64_t* ticks) {
@@ -633,7 +674,7 @@ void frame_boundary(::Ctx* c) {
     diag_frame_tick_nolisten();
     // 1. virtual clock
     if (s.det) {
-        const uint64_t target = s.vbase + k * s.step_ticks;
+        const uint64_t target = s.vbase + (k - s.rate_k0) * s.step_ticks;
         uint64_t cur = s.vticks.load();
         while (cur < target && !s.vticks.compare_exchange_weak(cur, target)) {}
     }

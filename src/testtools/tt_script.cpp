@@ -443,6 +443,15 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    if (kw == "@rate") {
+        if (n != 2) return usage(msg, "@rate <hz>");
+        Step s = make(StepKind::Rate);
+        if (!real_arg(t[1], &s.x, msg)) return false;
+        if (s.x < 0.0 || s.x > 10000.0) return fail_with(msg, "@rate hz must be 0 (real clock) or 1..10000, got '" + t[1] + "'");
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "@give") {
         if (n != 3) return usage(msg, "@give <item> <amount>");
         static const char* const names[] = {"powerbeam", "icebeam", "wavebeam", "plasmabeam", "missiles", "scanvisor", "morphballbombs", "powerbombs", "flamethrower",
@@ -453,7 +462,7 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         Step s = make(StepKind::Give);
         s.x = -1;
         for (int i = 0; i < 25; i++) if (nm == names[i]) s.x = i;
-        if (s.x < 0 && !real_arg(t[1], &s.x, msg)) return false;
+        if (s.x < 0 && std::isdigit(static_cast<unsigned char>(t[1][0])) && !real_arg(t[1], &s.x, msg)) return false;
         if (s.x < 0 || s.x > 40) return fail_with(msg, "@give: unknown item '" + t[1] + "'");
         if (!real_arg(t[2], &s.y, msg)) return false;
         out.push_back(s);
