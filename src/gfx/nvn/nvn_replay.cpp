@@ -163,6 +163,7 @@ bool g_trace_snap_sampled = false;           // [nvn] trace_snap_sampled = 1: a 
 std::vector<Texture*> g_trace_sampled;       // textures sampled by the last traced draw
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
+std::vector<int64_t> g_trace_extra;   // more frames to trace
 // [nvn] trace_after_fs = "67d504": the frame after the first one that draws with a fragment shader of this hash prefix is traced
 // (a frame number is not stable from run to run: the load times differ).
 std::string g_trigger_fs;
@@ -1866,7 +1867,19 @@ void run_list(const CmdList& list, int depth) {
 
 void replay_begin_submit(Frame& f) {
     F = &f;
-    if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
+    if (g_trace_frame == -2) {
+        // [nvn] trace_frame = "6050" or "6050,9300": every listed presented frame is traced (the first one is the main one)
+        const std::string list = nxrt::config_get_str("nvn", "trace_frame", "");
+        g_trace_frame = -1;
+        size_t i = 0;
+        while (i < list.size()) {
+            size_t j = list.find(',', i);
+            if (j == std::string::npos) j = list.size();
+            const long long v = std::atoll(list.substr(i, j - i).c_str());
+            if (g_trace_frame < 0) g_trace_frame = v; else g_trace_extra.push_back(v);
+            i = j + 1;
+        }
+    }
     if (!g_trigger_read) {
         g_trigger_read = true;
         g_trigger_fs = nxrt::config_get_str("nvn", "trace_after_fs", "");
@@ -1876,7 +1889,8 @@ void replay_begin_submit(Frame& f) {
         g_trace_frame = static_cast<int64_t>(counters().presents.load());
     }
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
-    if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }
+    for (int64_t e : g_trace_extra) g_trace |= static_cast<int64_t>(counters().presents.load()) == e;
+    if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }
     S.window_origin = window_origin_mode();
     S.depth_mode = depth_mode();
     P = Pass();

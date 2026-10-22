@@ -101,6 +101,15 @@ struct MemoryPool : Obj {
     bool is_virtual = false;
     bool is_shader_code = false;
     std::atomic<bool> dead{false};
+    // Virtual (sparse) pools: which 64 KiB tiles of the range are backed by which physical memory (nvnMemoryPoolMapVirtual). The textures
+    // living in the pool read their texels from there.
+    struct VirtualMap {
+        uint64_t voff = 0, size = 0;    // the mapped range of this pool
+        Ref<MemoryPool> phys;           // the physical pool
+        int64_t poff = 0;               // offset in the physical pool of byte 0 of the range
+    };
+    std::mutex vmu;
+    std::vector<VirtualMap> vmaps;
     PoolGpu* gpu = nullptr;         // render thread only
     // Background import (gpu::prefetch_pool): 0 not started, 1 queued, 3 running on the importer, 2 finished (result in `prefetched`, taken by
     // the render thread), 4 taken over by the render thread while it was still queued (the importer skips it).
@@ -137,6 +146,8 @@ struct Texture : Obj {
     TextureBuilderInfo b;                   // as built
     const FormatInfo* fmt = nullptr;
     uint8_t* mem = nullptr;                 // storage in the game's memory (null: no storage, e.g. a render target the game never reads)
+    Ref<MemoryPool> vpool;                  // a sparse texture: the virtual pool it lives in (mem is null; the texels are in the mapped tiles)
+    uint64_t voffset = 0;                   // ... and its offset there
     uint64_t storage_size = 0;
     uint32_t block_height_gobs = 0;         // level-0 block height in GOBs (block-linear layouts)
     bool block_linear = true;               // false: pitch-linear (NVN_TEXTURE_FLAGS_LINEAR)
@@ -181,6 +192,13 @@ void texture_registry_add(Texture* t);
 void texture_registry_remove(Texture* t);
 void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
 size_t texture_registry_size();
+// Sparse textures: registered by the virtual pool they live in. A remap of tiles (nvnMemoryPoolMapVirtual) or a write to the physical
+// memory behind a tile marks the textures over it CPU-written; texture_gather_virtual builds the bytes of the storage out of the mapped
+// tiles (unmapped tiles are zeros).
+void texture_registry_add_virtual(Texture* t);
+void texture_registry_remove_virtual(Texture* t);
+void virtual_textures_remapped(const MemoryPool* vpool, uint64_t voff, uint64_t size);
+bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out);
 // Another initialized texture whose storage starts at the same address and has the same shape (target, size, levels, format, layout),
 // that already has a GPU image: the game makes several texture objects over one piece of memory (one per mip level of a cube map it
 // renders, and the one the materials sample), and on the console they are the same bytes. Null when there is none.

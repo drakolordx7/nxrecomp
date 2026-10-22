@@ -262,7 +262,7 @@ uint64_t hash_bytes(const void* data, size_t size) {
 namespace {
 
 // The cache key of a texture: the hash of the source bytes, seeded with what else decides the output (format, size, layout, quality).
-uint64_t cache_key_of(const Texture& t, const TexLayout& L, const std::vector<LevelGeom>& geo, const FormatInfo& fmt, int quality) {
+uint64_t cache_key_of(const Texture& t, const uint8_t* mem, const TexLayout& L, const std::vector<LevelGeom>& geo, const FormatInfo& fmt, int quality) {
     const LevelGeom& g0 = geo[0];
     const uint64_t block_height = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;
     const std::vector<uint64_t> meta = {kCacheVersion,
@@ -276,7 +276,7 @@ uint64_t cache_key_of(const Texture& t, const TexLayout& L, const std::vector<Le
                                         L.pitch,
                                         static_cast<uint64_t>(quality)};
     const uint64_t meta_hash = hash_bytes(meta.data(), meta.size() * sizeof(uint64_t));
-    return hash_seeded(t.mem, static_cast<size_t>(t.storage_size), meta_hash);
+    return hash_seeded(mem, static_cast<size_t>(t.storage_size), meta_hash);
 }
 
 // The VkFormat a cache file declares (magic, version and key checked), VK_FORMAT_UNDEFINED when there is no valid file.
@@ -308,7 +308,7 @@ VkFormat cache_entry_format(const Texture& t) {
     if (!L.valid || !L.fmt || !L.fmt->astc || t.b.samples > 1 || t.storage_size < L.storage_size) return VK_FORMAT_UNDEFINED;
     const std::vector<LevelGeom> geo = level_geometry(t.b, L);
     if (geo.size() != L.levels) return VK_FORMAT_UNDEFINED;
-    const uint64_t key = cache_key_of(t, L, geo, *L.fmt, bc7_quality());
+    const uint64_t key = cache_key_of(t, t.mem, L, geo, *L.fmt, bc7_quality());
     const VkFormat f = cache_peek_format(bc7_cache_path(t, key), key);
     const VkFormat rgba = L.fmt->srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     return (f == rgba || (f == VK_FORMAT_BC5_UNORM_BLOCK && !L.fmt->srgb)) ? f : VK_FORMAT_UNDEFINED;
@@ -322,7 +322,13 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         return false;
     };
 
-    if (!t.mem) return fail("no storage (mem is null)");
+    // The source bytes: the texture's storage in the game's memory, or for a sparse texture the tiles mapped into its virtual pool.
+    const uint8_t* src_mem = t.mem;
+    std::vector<uint8_t> gathered;
+    if (!src_mem && t.vpool) {
+        if (texture_gather_virtual(t, gathered)) src_mem = gathered.data();
+    }
+    if (!src_mem) return fail("no storage (mem is null)");
     const TexLayout L = compute_texture_layout(t.b);
     if (!L.valid || !L.fmt) return fail("layout is invalid (format, size, target or layout)");
     if (t.b.samples > 1) return fail("multisample textures are not supported");
@@ -346,7 +352,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         if (!caps.astc && !cache_dir().empty()) {
             // A cache entry may hold the texture as BC7 (the default), as RGBA8 (a texture BC7 cannot reproduce well) or as BC5 (a two-channel
             // normal map: blue 0 and alpha 1 on sampling). The image the data goes into is made in the entry's format (caps.image_format).
-            key = cache_key_of(t, L, geo, fmt, bc7_quality());
+            key = cache_key_of(t, src_mem, L, geo, fmt, bc7_quality());
             cache_file = bc7_cache_path(t, key);
             const VkFormat ef = cache_peek_format(cache_file, key);
             entry_format = ef;
@@ -449,7 +455,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     const uint64_t lin_total = last.lin_off + last.slice * L.layers;
     std::vector<uint8_t> lin(static_cast<size_t>(lin_total));
     if (L.block_linear) {
-        if (!tegra::untile(L.desc, L.layout, t.mem, lin.data())) return fail("untile failed");
+        if (!tegra::untile(L.desc, L.layout, src_mem, lin.data())) return fail("untile failed");
     } else {
         const LevelGeom& g = geo[0];
         const uint64_t row = static_cast<uint64_t>(g.bx) * fmt.bytes;
@@ -457,7 +463,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
             for (uint32_t z = 0; z < g.d; ++z)
                 for (uint32_t y = 0; y < g.by; ++y) {
                     const uint64_t r = static_cast<uint64_t>(z) * g.by + y;   // row index in the level
-                    const uint8_t* src = t.mem + static_cast<uint64_t>(layer) * (L.pitch * g.by * g.d) + r * L.pitch;
+                    const uint8_t* src = src_mem + static_cast<uint64_t>(layer) * (L.pitch * g.by * g.d) + r * L.pitch;
                     std::memcpy(lin.data() + static_cast<uint64_t>(layer) * g.slice + r * row, src, static_cast<size_t>(row));
                 }
     }
