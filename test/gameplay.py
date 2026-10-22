@@ -36,7 +36,8 @@ def run(lines, out, rate=None, env=None, seconds=600, gfx='headless', exe_dir=No
     os.makedirs(cwd, exist_ok=True)
     cache = os.path.join(cwd, 'bc7_cache')
     if not os.path.exists(cache):
-        subprocess.run('mklink /J "%s" "%s"' % (cache, os.path.join(ROOT, 'work', 'run', 'bc7_cache').replace('/', '\')), shell=True, capture_output=True)
+        src = os.path.normpath(os.path.join(ROOT, 'work', 'run', 'bc7_cache'))
+        subprocess.run('mklink /J "%s" "%s"' % (os.path.normpath(cache), src), shell=True, capture_output=True)
     script = os.path.join(out, 'script.nxs')
     open(script, 'w').write('\n'.join(lines) + '\n')
     e = dict(os.environ)
