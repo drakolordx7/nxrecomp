@@ -160,6 +160,26 @@ void nvnCommandBufferBindImages(NVNcommandBuffer* c, NVNshaderStage stage, int f
     emit_handles(c, Op::BindImages, stage, first, count, handles);
 }
 
+// The *Deferred binds take the same arguments; the console reads the array when the commands run. Games reuse the array after the
+// call (SuperMarioWonderRecomp docs/nvn/DEBUG.md #41), so it is read here, at record time. Signatures assumed (the header has none).
+void nvnCommandBufferBindUniformBuffersDeferred(NVNcommandBuffer* c, NVNshaderStage stage, int first, int count, const NVNbufferRange* ranges) {
+    nvnCommandBufferBindUniformBuffers(c, stage, first, count, ranges);
+}
+void nvnCommandBufferBindStorageBuffersDeferred(NVNcommandBuffer* c, NVNshaderStage stage, int first, int count, const NVNbufferRange* ranges) {
+    nvnCommandBufferBindStorageBuffers(c, stage, first, count, ranges);
+}
+void nvnCommandBufferBindTexturesDeferred(NVNcommandBuffer* c, NVNshaderStage stage, int first, int count, const NVNtextureHandle* handles) {
+    nvnCommandBufferBindTextures(c, stage, first, count, handles);
+}
+void nvnCommandBufferBindImagesDeferred(NVNcommandBuffer* c, NVNshaderStage stage, int first, int count, const NVNimageHandle* handles) {
+    nvnCommandBufferBindImages(c, stage, first, count, handles);
+}
+// Accepted and ignored: colour reduction, stencil cull criteria and the command memory callback switch are not used by the game.
+void nvnCommandBufferSetColorReductionEnable(NVNcommandBuffer*, NVNboolean) {}
+void nvnCommandBufferSetColorReductionThresholds(NVNcommandBuffer*, int, int) {}
+void nvnCommandBufferSetStencilCullCriteria(NVNcommandBuffer*, int, int, int) {}
+void nvnCommandBufferSetCommandMemoryCallbackEnabled(NVNcommandBuffer*, NVNboolean) {}
+
 void nvnCommandBufferSetTexturePool(NVNcommandBuffer* c, const NVNtexturePool* pool) {
     TexturePool* tp = host_of<TexturePool>(pool);
     const P_Pool p{tp};
@@ -336,6 +356,14 @@ void register_api_cmd_state() {
     NVN_REG(nvnCommandBufferBindTransformFeedbackBuffers);
     NVN_REG(nvnCommandBufferBindTexture);
     NVN_REG(nvnCommandBufferBindTextures);
+    NVN_REG(nvnCommandBufferBindUniformBuffersDeferred);
+    NVN_REG(nvnCommandBufferBindStorageBuffersDeferred);
+    NVN_REG(nvnCommandBufferBindTexturesDeferred);
+    NVN_REG(nvnCommandBufferBindImagesDeferred);
+    NVN_REG(nvnCommandBufferSetColorReductionEnable);
+    NVN_REG(nvnCommandBufferSetColorReductionThresholds);
+    NVN_REG(nvnCommandBufferSetStencilCullCriteria);
+    NVN_REG(nvnCommandBufferSetCommandMemoryCallbackEnabled);
     NVN_REG(nvnCommandBufferBindImage);
     NVN_REG(nvnCommandBufferBindImages);
     NVN_REG(nvnCommandBufferSetTexturePool);

@@ -100,6 +100,21 @@ UploadAlloc g_support;
 MaskClear g_mask;
 bool g_mask_ready = false, g_mask_ok = false;
 
+// What changed since the last draw. Ops set bits (mark_dirty); a draw handles and clears the groups it needs. A new submission, a
+// new pass and anything that binds other pipelines sets them all (a new command buffer has no dynamic state, a new pass has other
+// formats and extents).
+enum : uint32_t {
+    kPipe = 1, kDesc = 2, kVb = 4, kDynVp = 8, kDynRaster = 16, kDynDepth = 32, kDynStencil = 64, kDynBias = 128, kDynBlend = 256, kAllDirty = 0x1ff
+};
+uint32_t g_dirty = kAllDirty;
+const ProgLayout* g_pl = nullptr;
+VkPipeline g_pipe = VK_NULL_HANDLE;
+VkPrimitiveTopology g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+VkPrimitiveTopology g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+bool g_restart = false, g_restart_valid = false;
+uint32_t g_key_attr_count = 0;
+uint8_t g_key_binding[16] = {};
+
 void log_once(const char* key, const char* msg) {
     static std::unordered_map<std::string, bool> seen;
     if (seen.emplace(key, true).second) NXLOG_W(kTag, "%s", msg);
@@ -150,6 +165,7 @@ void end_pass() {
     P.open = false;
     memory_barrier(F->cb);
     g_bound_pipeline = VK_NULL_HANDLE;
+    g_dirty = kAllDirty;
 }
 
 Target make_target(Texture* t, const TextureViewInfo& v, bool has_view) {
@@ -563,44 +579,57 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
     return true;
 }
 
-void set_dynamic_state(VkPrimitiveTopology topo, bool indexed, int index_type) {
+void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, int index_type) {
     VkCommandBuffer cb = F->cb;
-    set_viewports_and_scissors();
-    vkCmdSetCullMode(cb, vk_cull_mode(S.poly.cull_face));
-    {
+    if (dirty & kDynVp) set_viewports_and_scissors();
+    if (dirty & kDynRaster) {
+        vkCmdSetCullMode(cb, vk_cull_mode(S.poly.cull_face));
         VkFrontFace ff = vk_front_face(S.poly.front_face);
         if (S.window_origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT) ff = ff == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;   // unflipped viewport
         vkCmdSetFrontFace(cb, ff);
+        vkCmdSetRasterizerDiscardEnable(cb, S.rasterizer_discard);
+        vkCmdSetLineWidth(cb, device().features().wide_lines ? std::max(1.0f, S.line_width) : 1.0f);
     }
-    vkCmdSetPrimitiveTopology(cb, topo);
-    const bool have_depth = P.depth_fmt != VK_FORMAT_UNDEFINED;
-    vkCmdSetDepthTestEnable(cb, have_depth && S.ds.depth_test);
-    vkCmdSetDepthWriteEnable(cb, have_depth && S.ds.depth_test && S.ds.depth_write);
-    vkCmdSetDepthCompareOp(cb, vk_compare_op(S.ds.depth_func ? S.ds.depth_func : NVN_DEPTH_FUNC_LESS));
-    vkCmdSetDepthBoundsTestEnable(cb, have_depth && S.depth_bounds && device().features().depth_bounds);
-    if (S.depth_bounds && device().features().depth_bounds) vkCmdSetDepthBounds(cb, S.db_near, S.db_far);
-    vkCmdSetStencilTestEnable(cb, P.has_stencil && S.ds.stencil_test);
-    for (int f = 0; f < 2; ++f) {
-        const VkStencilFaceFlags face = f == 0 ? VK_STENCIL_FACE_FRONT_BIT : VK_STENCIL_FACE_BACK_BIT;
-        vkCmdSetStencilOp(cb, face, vk_stencil_op(S.ds.stencil_fail[f]), vk_stencil_op(S.ds.depth_pass[f]), vk_stencil_op(S.ds.depth_fail[f]),
-                          vk_compare_op(S.ds.stencil_func[f] ? S.ds.stencil_func[f] : NVN_STENCIL_FUNC_ALWAYS));
-        vkCmdSetStencilReference(cb, face, S.stencil_ref[f]);
-        vkCmdSetStencilCompareMask(cb, face, S.stencil_vmask[f]);
-        vkCmdSetStencilWriteMask(cb, face, S.stencil_wmask[f]);
+    if (topo != g_topo) {
+        vkCmdSetPrimitiveTopology(cb, topo);
+        g_topo = topo;
     }
-    const int off = S.poly.offset_enables;
-    const int mode = S.poly.polygon_mode;
-    const bool bias = (mode == NVN_POLYGON_MODE_FILL && (off & NVN_POLYGON_OFFSET_ENABLE_FILL)) ||
-                      (mode == NVN_POLYGON_MODE_LINE && (off & NVN_POLYGON_OFFSET_ENABLE_LINE)) ||
-                      (mode == NVN_POLYGON_MODE_POINT && (off & NVN_POLYGON_OFFSET_ENABLE_POINT));
-    vkCmdSetDepthBiasEnable(cb, bias);
-    vkCmdSetDepthBias(cb, S.bias_units, device().features().depth_bias_clamp ? S.bias_clamp : 0.0f, S.bias_factor);
-    vkCmdSetRasterizerDiscardEnable(cb, S.rasterizer_discard);
     const bool restart = S.prim_restart && indexed &&
                          ((index_type == NVN_INDEX_TYPE_UNSIGNED_INT && S.restart_index == 0xffffffffu) || (index_type == NVN_INDEX_TYPE_UNSIGNED_SHORT && S.restart_index == 0xffffu));
-    vkCmdSetPrimitiveRestartEnable(cb, restart);
-    vkCmdSetBlendConstants(cb, S.blend_color);
-    vkCmdSetLineWidth(cb, device().features().wide_lines ? std::max(1.0f, S.line_width) : 1.0f);
+    if (!g_restart_valid || restart != g_restart || (dirty & kDynRaster)) {
+        vkCmdSetPrimitiveRestartEnable(cb, restart);
+        g_restart = restart;
+        g_restart_valid = true;
+    }
+    const bool have_depth = P.depth_fmt != VK_FORMAT_UNDEFINED;
+    if (dirty & kDynDepth) {
+        vkCmdSetDepthTestEnable(cb, have_depth && S.ds.depth_test);
+        vkCmdSetDepthWriteEnable(cb, have_depth && S.ds.depth_test && S.ds.depth_write);
+        vkCmdSetDepthCompareOp(cb, vk_compare_op(S.ds.depth_func ? S.ds.depth_func : NVN_DEPTH_FUNC_LESS));
+        vkCmdSetDepthBoundsTestEnable(cb, have_depth && S.depth_bounds && device().features().depth_bounds);
+        if (S.depth_bounds && device().features().depth_bounds) vkCmdSetDepthBounds(cb, S.db_near, S.db_far);
+    }
+    if (dirty & kDynStencil) {
+        vkCmdSetStencilTestEnable(cb, P.has_stencil && S.ds.stencil_test);
+        for (int f = 0; f < 2; ++f) {
+            const VkStencilFaceFlags face = f == 0 ? VK_STENCIL_FACE_FRONT_BIT : VK_STENCIL_FACE_BACK_BIT;
+            vkCmdSetStencilOp(cb, face, vk_stencil_op(S.ds.stencil_fail[f]), vk_stencil_op(S.ds.depth_pass[f]), vk_stencil_op(S.ds.depth_fail[f]),
+                              vk_compare_op(S.ds.stencil_func[f] ? S.ds.stencil_func[f] : NVN_STENCIL_FUNC_ALWAYS));
+            vkCmdSetStencilReference(cb, face, S.stencil_ref[f]);
+            vkCmdSetStencilCompareMask(cb, face, S.stencil_vmask[f]);
+            vkCmdSetStencilWriteMask(cb, face, S.stencil_wmask[f]);
+        }
+    }
+    if (dirty & kDynBias) {
+        const int off = S.poly.offset_enables;
+        const int mode = S.poly.polygon_mode;
+        const bool bias = (mode == NVN_POLYGON_MODE_FILL && (off & NVN_POLYGON_OFFSET_ENABLE_FILL)) ||
+                          (mode == NVN_POLYGON_MODE_LINE && (off & NVN_POLYGON_OFFSET_ENABLE_LINE)) ||
+                          (mode == NVN_POLYGON_MODE_POINT && (off & NVN_POLYGON_OFFSET_ENABLE_POINT));
+        vkCmdSetDepthBiasEnable(cb, bias);
+        vkCmdSetDepthBias(cb, S.bias_units, device().features().depth_bias_clamp ? S.bias_clamp : 0.0f, S.bias_factor);
+    }
+    if (dirty & kDynBlend) vkCmdSetBlendConstants(cb, S.blend_color);
 }
 
 // Prepares everything a draw needs and binds it. False: skip the draw.
@@ -608,34 +637,44 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     const ShaderInfo* vs = S.stage[kVertex];
     if (!vs) { log_once("draw-no-vs", "draw without a vertex shader skipped"); return false; }
     if (!S.render_enable) return false;
-    const ShaderInfo* stages[6] = {vs, S.stage[kFragment], S.stage[kGeometry], nullptr, nullptr, nullptr};
-    const ProgLayout* pl = prog_layout(stages);
+    if (g_dirty & (kPipe | kDesc)) {
+        const ShaderInfo* stages[6] = {vs, S.stage[kFragment], S.stage[kGeometry], nullptr, nullptr, nullptr};
+        g_pl = prog_layout(stages);
+    }
+    const ProgLayout* pl = g_pl;
     if (!pl) return false;
-    prepare_textures(*pl);
+    if (g_dirty & kDesc) prepare_textures(*pl);
     if (!ensure_pass()) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
-    VkPrimitiveTopology topo = vk_topology(mode);
-    GraphicsKey key;
-    build_key(key, topo);
-    VkPipeline pipe = graphics_pipeline(key, *pl);
-    if (!pipe) return false;
-    if (pipe != g_bound_pipeline) {
-        vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-        g_bound_pipeline = pipe;
+    const VkPrimitiveTopology topo = vk_topology(mode);
+    if ((g_dirty & kPipe) || topo != g_pipe_topo || !g_pipe) {
+        GraphicsKey key;
+        build_key(key, topo);
+        g_pipe = graphics_pipeline(key, *pl);
+        g_pipe_topo = topo;
+        g_key_attr_count = key.attr_count;
+        for (uint32_t i = 0; i < key.attr_count; ++i) g_key_binding[i] = key.attr[i].binding;
     }
-    set_dynamic_state(topo, indexed, index_type);
-    bind_sets(*pl, VK_PIPELINE_BIND_POINT_GRAPHICS);
-    // vertex buffers, with the strides of the bound streams
-    for (uint32_t i = 0; i < key.attr_count; ++i) {
-        const uint32_t binding = key.attr[i].binding;
-        bool done = false;
-        for (uint32_t j = 0; j < i; ++j) if (key.attr[j].binding == binding) done = true;
-        if (done) continue;
-        const GState::Bind& vb = S.vtx[binding];
-        BufRef br = vb.addr ? resolve_buffer(vb.addr, vb.size) : BufRef{dummy_buffer(), 0, 65536, false};
-        VkDeviceSize size = vb.size ? std::min<VkDeviceSize>(vb.size, br.avail) : br.avail;
-        VkDeviceSize stride = static_cast<VkDeviceSize>(S.stream[binding].stride);
-        vkCmdBindVertexBuffers2(F->cb, binding, 1, &br.buffer, &br.offset, &size, &stride);
+    if (!g_pipe) return false;
+    if (g_pipe != g_bound_pipeline) {
+        vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
+        g_bound_pipeline = g_pipe;
     }
+    set_dynamic_state(g_dirty, topo, indexed, index_type);
+    if (g_dirty & kDesc) bind_sets(*pl, VK_PIPELINE_BIND_POINT_GRAPHICS);
+    if (g_dirty & (kVb | kPipe)) {
+        for (uint32_t i = 0; i < g_key_attr_count; ++i) {
+            const uint32_t binding = g_key_binding[i];
+            bool done = false;
+            for (uint32_t j = 0; j < i; ++j) if (g_key_binding[j] == binding) done = true;
+            if (done) continue;
+            const GState::Bind& vb = S.vtx[binding];
+            BufRef br = vb.addr ? resolve_buffer(vb.addr, vb.size) : BufRef{dummy_buffer(), 0, 65536, false};
+            VkDeviceSize size = vb.size ? std::min<VkDeviceSize>(vb.size, br.avail) : br.avail;
+            VkDeviceSize stride = static_cast<VkDeviceSize>(S.stream[binding].stride);
+            vkCmdBindVertexBuffers2(F->cb, binding, 1, &br.buffer, &br.offset, &size, &stride);
+        }
+    }
+    g_dirty = 0;
     *topo_out = topo;
     return true;
 }
@@ -768,6 +807,7 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
         vkCmdDispatch(F->cb, x, y, z);
     }
     memory_barrier(F->cb);
+    g_dirty = kAllDirty;
     counters().dispatches.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -791,6 +831,8 @@ void do_clear_color(const P_ClearColor& p) {
         const VkClearRect cr = full_rect();
         if (g_mask_ok && g_mask.record(F->cb, P.color_fmt[p.target], P.ncolor, p.target, p.mask, p.kind, p.value, cr.rect, P.samples)) {
             counters().clears.fetch_add(1, std::memory_order_relaxed);
+            g_bound_pipeline = VK_NULL_HANDLE;
+            g_dirty = kAllDirty;
             return;
         }
         note_unsupported("ClearColor with a partial channel mask (all channels are cleared)");
@@ -969,10 +1011,30 @@ void apply_bind_program(const P_BindProgram& p) {
         if (p.stages & (1u << st)) S.stage[st] = p.program ? p.program->stage[st] : nullptr;
 }
 
+void mark_dirty(const RecordReader& r) {
+    switch (r.op()) {
+        case Op::BindProgram: g_dirty |= kPipe | kDesc | kVb; break;
+        case Op::BindBuffers: g_dirty |= r.payload<P_BindBuffers>().kind == kBufVertex ? kVb : kDesc; break;
+        case Op::BindTextures: case Op::BindImages: case Op::SetTexturePool: case Op::SetSamplerPool: g_dirty |= kDesc; break;
+        case Op::BindVertexAttribs: case Op::BindVertexStreams: g_dirty |= kPipe | kVb; break;
+        case Op::BindBlend: case Op::BindColor: case Op::BindChannelMask: case Op::BindMultisample: case Op::SetDepthClamp: g_dirty |= kPipe; break;
+        case Op::BindPolygon: g_dirty |= kPipe | kDynRaster | kDynBias; break;
+        case Op::BindDepthStencil: case Op::SetDepthBounds: g_dirty |= kDynDepth | kDynStencil; break;
+        case Op::SetViewports: case Op::SetScissors: case Op::SetDepthRanges: g_dirty |= kDynVp; break;
+        case Op::SetStencil: g_dirty |= kDynStencil; break;
+        case Op::SetBlendColor: g_dirty |= kDynBlend; break;
+        case Op::SetLineWidth: case Op::SetRasterizerDiscard: case Op::SetPrimitiveRestart: g_dirty |= kDynRaster; break;
+        case Op::SetPolygonOffsetClamp: g_dirty |= kDynBias; break;
+        case Op::SetRenderTargets: g_dirty = kAllDirty; break;
+        default: break;
+    }
+}
+
 void run_list(const CmdList& list, int depth) {
     if (depth > kMaxDepth) { log_once("depth", "CallCommands nesting too deep"); return; }
     counters().lists_replayed.fetch_add(1, std::memory_order_relaxed);
     for (RecordReader r(list); r.next();) {
+        mark_dirty(r);
         switch (r.op()) {
             case Op::Nop: break;
             case Op::BindProgram: apply_bind_program(r.payload<P_BindProgram>()); break;
@@ -1197,6 +1259,11 @@ void replay_begin_submit(Frame& f) {
     P = Pass();
     g_set_cache.clear();
     g_bound_pipeline = VK_NULL_HANDLE;
+    g_dirty = kAllDirty;
+    g_pl = nullptr;
+    g_pipe = VK_NULL_HANDLE;
+    g_topo = g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+    g_restart_valid = false;
     // one support buffer per submission (Ryujinx SupportBuffer: render scales 1.0, no BGRA remap)
     g_support = f.upload(sizeof(SupportBuffer), 256);
     if (g_support) {

@@ -141,6 +141,7 @@ struct Shape {
     VkExtent3D base = {1, 1, 1};
     uint32_t levels = 1, layers = 1;
     bool cube = false;
+    uint32_t samples = 1;                      // multisampled render target / resolve source
 };
 
 Shape shape_of(const Texture& t) {
@@ -155,6 +156,10 @@ Shape shape_of(const Texture& t) {
     s.levels = std::max<uint32_t>(1, t.levels);
     s.layers = std::max<uint32_t>(1, t.layers);
     s.cube = target_is_cube(b.target);
+    if (target_is_multisample(b.target) || b.samples > 1) {
+        s.samples = static_cast<uint32_t>(vk_sample_count(b.samples));
+        s.levels = 1;
+    }
     return s;
 }
 
@@ -174,6 +179,7 @@ gfx::ImageDesc make_desc(const Shape& s, VkFormat fmt, VkImageUsageFlags usage, 
     d.array_layers = s.layers;
     d.usage = usage;
     d.flags = flags;
+    d.samples = static_cast<VkSampleCountFlagBits>(s.samples);
     d.create_view = false;
     d.name = "nvn texture";
     return d;
@@ -549,6 +555,7 @@ TexGpu* tex_gpu(Texture* t) { return tex_or_null(t); }
 void tex_ensure_current(Texture* t, Frame& f) {
     TexGpu* g = tex_or_null(t);
     if (!g || g->depth) return;
+    if (t->b.samples > 1 || target_is_multisample(t->b.target)) return;   // multisampled images are only ever rendered
     const bool dirty = t->cpu_dirty.load();
     if (g->uploaded && !dirty) return;           // the image already holds the storage's content
     if (g->gpu_written && !dirty) return;        // the GPU rendered it and the CPU did not write since

@@ -6,11 +6,12 @@
 //   2. refs/SuperMarioWonderRecomp/runtime/src/nvn/nvn_device.cpp, kDeviceInfo (only used for the 'disagrees' tags)
 //   3. refs/deko3d/source/maxwell/gpu_3d_state.cpp:295-297 (texture size 16384 is consistent with it; the only deko3d limit checked)
 //   4. refs/ssbu-recomp/runtime/nvn_stub.c g_devinfo (identical to smo, checked); refs/LASRecomp/runtime/nvn/objects.c (not used per line)
-//   API_MAJOR/API_MINOR = 53.105: refs/mp1r-practice-mod/src_framework/nvn/nvn.h:24 and docs/S4b.md:51 (the NVN version this game uses).
+//   API_MAJOR/API_MINOR = 55.15: the game's own check (main.elf NVNManaged::CDevice::Init at 0xffb48) refuses to start unless major == 55 and
+//   minor >= 8 ("NVN API version does not match driver version! Application: 55.8"). 55.15 is the value SuperMarioWonderRecomp reports.
 //   smo gives minor 312 and wonder gives 55.15 (its own game's check, main+5a7b48); neither is used.
 
-NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_API_MAJOR_VERSION, 53)  // disagrees: wonder=55
-NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_API_MINOR_VERSION, 105)  // API 53.105 per mp1r; smo=312 not used; disagrees: wonder=15
+NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_API_MAJOR_VERSION, 55)  // the game requires 55
+NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_API_MINOR_VERSION, 15)  // the game requires >= 8
 NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_UNIFORM_BUFFER_BINDINGS_PER_STAGE, 14)
 NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_MAX_UNIFORM_BUFFER_SIZE, 65536)
 NVN_DEVICE_INFO_VALUE(NVN_DEVICE_INFO_UNIFORM_BUFFER_ALIGNMENT, 256)
