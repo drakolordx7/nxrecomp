@@ -24,7 +24,7 @@ set(MPR_SHARDS_SUBSDK0 20 CACHE STRING "translation units of subsdk0")
 
 # module order and bases = recomp/games/mpr/config.py (runtime/include/nxrt/memory.h: main 0x7100000000, SDK modules from 0x7500000000)
 nxrecomp_add_module(mpr_main INPUT "${MPR_EXEFS}/main" NAME main INDEX 0 BASE 0x7100000000 GAME mpr SHARDS ${MPR_SHARDS_MAIN}
-                    OUTDIR "${MPR_GEN}/main")
+                    SITES "${CMAKE_CURRENT_LIST_DIR}/main.sites" OUTDIR "${MPR_GEN}/main")
 nxrecomp_add_module(mpr_sdk INPUT "${MPR_EXEFS}/sdk" NAME sdk INDEX 1 BASE 0x7500000000 GAME mpr SHARDS ${MPR_SHARDS_SDK}
                     OUTDIR "${MPR_GEN}/sdk")
 nxrecomp_add_module(mpr_subsdk0 INPUT "${MPR_EXEFS}/subsdk0" NAME subsdk0 INDEX 2 BASE 0x7600000000 GAME mpr SHARDS ${MPR_SHARDS_SUBSDK0}

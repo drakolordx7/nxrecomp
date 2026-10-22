@@ -22,7 +22,7 @@ version is `NXRECOMP_ABI_VERSION` (3).
 
 ## Use
 
-Python is `C:\mpr\tools\.venv\Scripts\python.exe` (3.13; packages in `requirements.txt`). Build tools: LLVM
+Python is `tools\.venv\Scripts\python.exe` at the repository root (3.13; packages in `requirements.txt`). Build tools: LLVM
 23 clang-cl, CMake, Ninja, sccache; `scripts\nx_env.cmd <command>` runs a command with the MSVC environment set up.
 
     python -m nxrecomp lift  <module.nso|prog.elf> <outdir> [--game mpr] [--base 0x7100000000] [--name main] [--index N]
