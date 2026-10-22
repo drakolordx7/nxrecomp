@@ -27,7 +27,9 @@ class CommandList {
     CommandList(Span<float> mixBuffer, uint32_t sampleCount, uint32_t sampleRate, uint32_t mixBufferCount, uint32_t voiceChannelCountMax)
         : SampleCount(sampleCount), SampleRate(sampleRate), Buffers(mixBuffer), BufferCount(mixBufferCount + voiceChannelCountMax) {
         _sampleCount = static_cast<int32_t>(sampleCount);
-        _buffersEntryCount = static_cast<int32_t>(mixBuffer.Length);
+        // The C# bounds indices by Buffers.Length (a float count), which lets an index run past the slab; here the bound is the buffer count.
+        _buffersEntryCount = static_cast<int32_t>(BufferCount);
+        _floatCount = mixBuffer.Length;
         Commands.reserve(256);
     }
 
@@ -40,7 +42,7 @@ class CommandList {
 
     void ClearBuffer(int32_t index) { std::memset(GetBufferPointer(index), 0, static_cast<size_t>(SampleCount) * sizeof(float)); }
 
-    void ClearBuffers() { std::memset(Buffers.Data, 0, static_cast<size_t>(_buffersEntryCount) * sizeof(float)); }
+    void ClearBuffers() { std::memset(Buffers.Data, 0, _floatCount * sizeof(float)); }
 
     void CopyBuffer(int32_t outputBufferIndex, int32_t inputBufferIndex) {
         std::memcpy(GetBufferPointer(outputBufferIndex), GetBufferPointer(inputBufferIndex), static_cast<size_t>(SampleCount) * sizeof(float));
@@ -68,6 +70,7 @@ class CommandList {
     }
     int32_t _sampleCount = 0;
     int32_t _buffersEntryCount = 0;
+    size_t _floatCount = 0;
 };
 
 }  // namespace nxrt::audren
