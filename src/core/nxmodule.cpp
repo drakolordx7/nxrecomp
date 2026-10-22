@@ -12,6 +12,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 
 #include "nxrt/dispatch.h"
 #include "nxrt/log.h"
@@ -36,6 +37,8 @@ std::atomic<Entry*> g_list[kMaxListed];               // the same, for lock-free
 std::atomic<size_t> g_count{0};
 std::atomic<Entry*> g_by_index[kMaxModules];
 std::atomic<uint64_t> g_import_calls{0};
+std::mutex g_type_lock;                               // resolved imported typeinfo slots (ABI 3 NxEh.type_syms), keyed by slot address
+std::unordered_map<const uint64_t*, uint64_t> g_type_cache;
 
 Entry* by_index(uint32_t index) { return index < kMaxModules ? g_by_index[index].load(std::memory_order_acquire) : nullptr; }
 
@@ -44,6 +47,8 @@ void invalidate_caches_locked() {
         Entry* e = g_list[k].load();
         for (size_t i = 0; i < e->ncache; i++) e->cache[i].store(0, std::memory_order_relaxed);
     }
+    std::lock_guard<std::mutex> lk(g_type_lock);
+    g_type_cache.clear();
 }
 
 RegResult refuse(RegStatus st, const NxModule* nx, const char* fmt, ...) {
@@ -172,12 +177,32 @@ void nxmodules_clear() {
         g_owned[k].reset();
     }
     g_import_calls = 0;
+    std::lock_guard<std::mutex> tk(g_type_lock);
+    g_type_cache.clear();
 }
 
 uint64_t nxmodule_symbol_address(const NxModule* nx, int sym) {
     if (!nx || sym < 0 || sym >= nx->nsyms || !nx->syms[sym].defined) return 0;
-    uint64_t v = nx->syms[sym].value;
-    return v >= nx->base ? v : nx->base + v;
+    return nx->syms[sym].value;      // ABI 3: a guest address for every defined symbol (TLS offsets and SHN_ABS numbers stay raw)
+}
+
+bool nxmodule_type_address(const NxModule* nx, const NxFde* fde, uint32_t filter, uint64_t* out) {
+    *out = 0;
+    if (!nx || !nx->eh || !fde || filter == 0) return false;
+    const NxEh* eh = nx->eh;
+    const uint64_t* slot = eh->types + fde->type_first + filter - 1;
+    if (*slot || !eh->type_syms) { *out = *slot; return true; }        // final address, or 0 = catch(...)
+    const int32_t sym = eh->type_syms[fde->type_first + filter - 1];
+    if (sym < 0) return true;                                          // 0 with no symbol: catch(...)
+    if (sym >= nx->nsyms || !nx->syms[sym].name) return false;
+    std::lock_guard<std::mutex> lk(g_type_lock);
+    auto it = g_type_cache.find(slot);
+    if (it != g_type_cache.end()) { *out = it->second; return it->second != 0; }
+    uint64_t a = nxmodule_find_export(nx->syms[sym].name, nx);         // the typeinfo is an import: the module that defines it
+    if (!a) NXLOG_W("loader", "typeinfo %s imported by %s is defined by no registered module: the clause matches nothing", nx->syms[sym].name, nx->name);
+    g_type_cache.emplace(slot, a);
+    *out = a;
+    return a != 0;
 }
 
 uint64_t nxmodule_find_export(const char* name, const NxModule* except) { return find_export(name, except); }
