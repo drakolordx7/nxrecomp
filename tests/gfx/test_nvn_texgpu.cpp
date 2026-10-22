@@ -789,8 +789,8 @@ NXTEST(dummy_storage_view_types_and_cache) {
     teardown(r);
 }
 
-// ---- 17: tex_has_storage follows NVN_TEXTURE_FLAGS_IMAGE ----------------------------------------------------------------------
-NXTEST(has_storage_follows_image_flag) {
+// ---- 17: tex_has_storage: every uncompressed colour image has the storage usage ------------------------------------------------
+NXTEST(has_storage_for_colour_images) {
     Rig r;
     if (!bring_up(r)) {
         CHECK(false);
@@ -804,7 +804,9 @@ NXTEST(has_storage_follows_image_flag) {
         Texture* toff = img_off.t.get();
         gpu::run_on_render_thread([&] {
             CHECK(gpu::tex_has_storage(ton));
-            CHECK(!gpu::tex_has_storage(toff));
+            // the IMAGE flag is only a hint (the game does not set it on the fog volume a vertex shader writes): every uncompressed
+            // colour image keeps the storage usage
+            CHECK(gpu::tex_has_storage(toff));
         });
     }
     teardown(r);

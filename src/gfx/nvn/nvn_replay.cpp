@@ -8,6 +8,7 @@
 // handles never dropped by count, deferred bind arrays read at record time.
 #include <algorithm>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <unordered_map>
 
@@ -919,6 +920,13 @@ void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, i
 }
 
 // Prepares everything a draw needs and binds it. False: skip the draw.
+// [nvn] trace_min_sec = 250: trace_after_fs only starts that many seconds after the first draw (the scene to look at comes late).
+bool trigger_time_ok() {
+    static const auto start = std::chrono::steady_clock::now();
+    static const double min_sec = static_cast<double>(nxrt::config_get_int("nvn", "trace_min_sec", 0));
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= min_sec;
+}
+
 bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* topo_out) {
     const ShaderInfo* vs = S.stage[kVertex];
     if (!vs) { log_once("draw-no-vs", "draw without a vertex shader skipped"); return false; }
@@ -927,7 +935,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         const ShaderInfo* stages[6] = {vs, S.stage[kFragment], S.stage[kGeometry], nullptr, nullptr, nullptr};
         g_pl = prog_layout(stages);
     }
-    if (!g_trigger_fs.empty() && !g_trigger_done && S.stage[kFragment] && S.stage[kFragment]->hash.compare(0, g_trigger_fs.size(), g_trigger_fs) == 0) {
+    if (!g_trigger_fs.empty() && !g_trigger_done && trigger_time_ok() && S.stage[kFragment] && S.stage[kFragment]->hash.compare(0, g_trigger_fs.size(), g_trigger_fs) == 0) {
         g_trigger_seen = true;
         g_trigger_present = static_cast<int64_t>(counters().presents.load());
     }
@@ -968,8 +976,9 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
               S.stage[kGeometry] ? S.stage[kGeometry]->hash.c_str() : "-", mode, indexed ? 1 : 0, line.c_str(), tex_desc(S.depth_tex.get(), b, sizeof b),
               P.depth_ro ? " (ro)" : "", S.color.blend_enable_mask, S.chmask.mask[0], S.ds.depth_test ? 1 : 0, S.ds.depth_write ? 1 : 0, S.ds.depth_func,
               S.poly.cull_face, static_cast<unsigned long long>(S.ubo[kVertex][0].addr), static_cast<unsigned long long>(S.ubo[kVertex][0].size));
-        for (uint32_t slot = 0; slot < 16; ++slot) {    // the first words of every uniform block bound to the vertex stage
-            const GState::Bind& ub = S.ubo[kVertex][slot];
+        for (int stg = kVertex; stg <= kFragment; ++stg)
+        for (uint32_t slot = 0; slot < 16; ++slot) {    // the first words of every uniform block bound to the vertex and the fragment stage
+            const GState::Bind& ub = S.ubo[stg][slot];
             if (!ub.addr) continue;
             BufRef ur = resolve_buffer(ub.addr, std::min<uint64_t>(ub.size, 256));
             std::string words;
@@ -977,7 +986,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
                 const uint32_t* w = reinterpret_cast<const uint32_t*>(ub.addr);
                 for (uint32_t i = 0; i < 64 && i * 4 < ub.size; ++i) { char t[16]; std::snprintf(t, sizeof t, " %08x", w[i]); words += t; }
             }
-            TRACE("    vs ubo%u %llx/%llu%s:%s", slot, static_cast<unsigned long long>(ub.addr), static_cast<unsigned long long>(ub.size), ur.ok ? "" : " (outside every pool)", words.c_str());
+            TRACE("    %s ubo%u %llx/%llu%s:%s", stg == kVertex ? "vs" : "fs", slot, static_cast<unsigned long long>(ub.addr), static_cast<unsigned long long>(ub.size), ur.ok ? "" : " (outside every pool)", words.c_str());
         }
         g_trace_sampled.clear();
         for (const BindingDesc& d : pl->bindings) {

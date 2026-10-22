@@ -388,6 +388,21 @@ VkImageView view_for(TexGpu& g, VkImageViewType type, uint32_t base_level, uint3
     vi.format = fmt;
     vi.components = swz;
     vi.subresourceRange = {aspect, base_level, level_count, base_layer, layer_count};
+    // A view takes the usages of its image; a format of the view that cannot do one of them (an sRGB view cannot be stored to) restricts it.
+    VkImageViewUsageCreateInfo uc = {VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
+    {
+        constexpr VkImageUsageFlags kViewUsages = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        VkFormatProperties fp = {};
+        vkGetPhysicalDeviceFormatProperties(device().physical(), fmt, &fp);
+        VkImageUsageFlags u = g.usage & kViewUsages;
+        if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)) u &= ~VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) u &= ~VK_IMAGE_USAGE_STORAGE_BIT;
+        if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)) u &= ~VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (u != (g.usage & kViewUsages) && !(aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
+            uc.usage = u;
+            vi.pNext = &uc;
+        }
+    }
     VkImageView view = VK_NULL_HANDLE;
     if (vkCreateImageView(vkdev(), &vi, nullptr, &view) != VK_SUCCESS) {
         NXLOG_W(kTag, "vkCreateImageView failed for a view of format %d", static_cast<int>(fmt));
