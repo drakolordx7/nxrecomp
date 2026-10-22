@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -462,7 +463,22 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         if (!o.skip_textures) {
             t0 = begin(Stage::Textures, 0, "textures");
             const std::string cache_dir = path_join(o.out_dir, "bc7_cache");
-            const std::string prev = st.get_meta("textures_done");   // "<quality>:<converted+skipped>"
+            std::string prev = st.get_meta("textures_done");   // "<quality>:<converted+skipped>"
+            // A cache made by another revision of the converter is thrown away (its files would pass the size check).
+            const std::string marker = path_join(cache_dir, "encoder.txt");
+            const std::string want_marker = "bc7 converter revision " + std::to_string(kTextureEncoderRev) + "\n";
+            {
+                std::string have;
+                read_text_file(marker, have);
+                if (have != want_marker && path_exists(cache_dir)) {
+                    MPRS_LOGI("The texture cache was made by an older converter: rebuilding it.");
+                    std::error_code ec;
+                    for (std::filesystem::directory_iterator it(widen(cache_dir), ec), end; !ec && it != end; it.increment(ec))
+                        if (it->is_directory()) std::filesystem::remove_all(it->path(), ec);
+                    prev.clear();
+                    st.set_meta("textures_done", "");
+                }
+            }
             const std::string want_prefix = std::to_string(o.bc7_quality) + ":";
             if (!o.verify_output && !prev.empty() && prev.compare(0, want_prefix.size(), want_prefix) == 0) {
                 MPRS_LOGI("Texture cache already built (%s textures at quality %d).", prev.substr(want_prefix.size()).c_str(), o.bc7_quality);
@@ -495,6 +511,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                 if (ts.failed)
                     fail(Fail::Generic, "%u textures could not be converted (see setup.log). Run setup again; if it keeps failing "
                                         "the dump may be damaged.", ts.failed);
+                write_text_file_atomic(marker, want_marker);
                 st.set_meta("textures_done", want_prefix + std::to_string(ts.converted + ts.skipped));
                 st.save();
             }

@@ -50,6 +50,20 @@ struct TexCachePlan {
 TexCachePlan texcache_plan(const TxtrInfo& info, const u8* tiled, size_t tiled_len, int quality);
 std::string texcache_path(const std::string& cache_dir_utf8, u64 key);
 
+// Revision of the ASTC -> BC7 conversion. A bc7_cache folder made by another revision is rebuilt by setup (it carries a marker file,
+// bc7_cache\encoder.txt); the runtime's own cache format and key are unchanged. 1: first version (opaque blocks without mode 6 and
+// without channel rotation); 2: opaque alpha kept exactly 255 by pinning, rotation allowed (RG normal maps 2 to 12 dB better).
+constexpr int kTextureEncoderRev = 2;
+
+// Level 0, layer 0, slice 0 of an ASTC texture as raw ASTC blocks (untiled, tightly packed), with its footprint. For quality
+// tools (tools/texq.cpp); false when the texture is not one the cache can hold.
+struct TexLevel0 {
+    u32 width = 0, height = 0, block_w = 0, block_h = 0;
+    bool srgb = false;
+    std::vector<u8> astc;
+};
+bool texcache_level0(const TxtrInfo& info, const u8* tiled, size_t tiled_len, TexLevel0& out);
+
 // Transcodes one texture (untile + ASTC -> BC7 per level/layer/slice with a2b_transcode, threads = 1 inside the library) and returns
 // the complete file bytes (NXB7 header + level table + data), identical in layout to nvn_texdata.cpp cache_write.
 // Throws Error on failure (never crashes on bad data).

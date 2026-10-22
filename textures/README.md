@@ -11,7 +11,7 @@ bc7e's ISPC object carries sse4, avx2 and avx512 paths with its own dispatch.
 ## Behaviour that matters
 
 - sRGB: ASTC sRGB data is decoded with astcenc's sRGB profile (RGB stays sRGB-encoded, alpha linear), BC7 is encoded on those 8-bit values, and the output is tagged `BC7_UNORM_SRGB` (DXGI 99). Linear ASTC gives `BC7_UNORM` (98). The `.astc` file format does not store the profile, so the CLI takes `--srgb`.
-- Alpha: opaque source blocks keep alpha exactly 255. bc7e otherwise lets mode 6 and channel rotation disturb it (`docs/debug/002.md`); the price is about 2 dB of RGB PSNR on opaque content. `--allow-opaque-mode6` turns this off.
+- Alpha: opaque source blocks keep alpha exactly 255. Left alone, bc7e stores opaque mode-6 alpha in the shared p-bit (254 half the time) and uses mode 4/5 channel rotation without pinning the swapped-in original alpha (244..253 on normal maps; `docs/debug/002.md`). The first version of this library switched mode 6 and rotation off for opaque blocks, which cost about 2 dB on albedo and 2 to 12 dB on two-channel (RG, B = 0) normal maps, where rotation is what gives the data channel in the alpha slot its own index set. Now (`allow_opaque_mode6 = 0`, the default) opaque blocks are encoded with mode 6 off (pinning it costs more RGB PSNR than the mode gains), with the preset's channel rotations (about +45% encode time at quality 3), and every opaque block is then fixed up exactly: the slot that holds the original alpha gets endpoints that decode to 255 for any index, which touches no data channel. `--allow-opaque-mode6` gives the raw bc7e output (alpha may drift); `--no-opaque-mode6` the first version.
 - Partial blocks: image sizes that are not multiples of 4 (or of the ASTC footprint) are handled; edge pixels are replicated into partial BC7 blocks.
 - Passthrough: DDS files with BC1 to BC7 (DX10 or legacy FourCC headers) are copied byte for byte, same format.
 - Presets: `--quality 0..6` = bc7e ultrafast, veryfast, fast, basic, slow, veryslow, slowest; default 5 (veryslow). Chosen from the sweep below: 5 has the best mean PSNR per unit time; 6 is 2x slower for no mean gain.
@@ -47,8 +47,8 @@ They sit 1.6 dB, 0.004 and 3.9 dB under the measured worst case or mean, so a re
 and below the roughly 40 dB usually called visually lossless, because the worst files are the noisiest 1024x1024 normal map at 4x4 to 5x5 (34.65 dB) and a 31x17 alpha crop.
 The reference is already lossy: BC7 is measured against what the ASTC decoder produces, not against the original.
 
-**Results** (i9-12900K, 16 threads, preset 5, 260 files, 99 s): ORACLE PASS. Decode identity 260 of 260 (0 differing bytes). Alpha 260 of 260. Passthrough 11 of 11.
-PSNR RGB min 34.65, mean 51.95 dB (by block size 50.3 dB at 4x4 to 54.3 dB at 12x12; by kind albedo 50.7, normal 55.1, gray 60.2, noise 48.0, alpha 46.7). SSIM luma min 0.9744, mean 0.997.
+**Results** (i9-12900K, 16 threads, preset 5, 260 files, 113 s): ORACLE PASS. Decode identity 260 of 260 (0 differing bytes). Alpha 260 of 260. Passthrough 11 of 11.
+PSNR RGB min 34.96, mean 53.81 dB (by kind albedo 50.8, normal 62.1, gray 60.2, noise 48.0, alpha 46.7; the first-version converter gave min 34.65, mean 51.95, normal 55.1). SSIM luma min 0.9854, mean 0.997.
 
 **Throughput** (preset 5, 1024x1024 sRGB 6x6, in memory, 16 threads): decode 117 MPix/s, BC7 encode 6.5 MPix/s, total 5.9 MPix/s (0.8 MPix/s on one thread, 7 to 9x scaling on 16 cores).
 Cold CLI process including file IO: 3.8 to 4.7 MPix/s. A 600 MPix texture set would take about two minutes.

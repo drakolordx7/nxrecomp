@@ -1,7 +1,7 @@
 # Metroid Prime Remastered PC: first-run setup
 
 The game ships without any Nintendo data. This tool builds the game folder from your own copy of the game.
-You run it once. It needs about 13 GB of free disk space and takes about 5 minutes on a modern PC.
+You run it once. It needs about 13 GB of free disk space and takes about 5 minutes on a 16-core PC.
 
 ## What you need
 
@@ -55,8 +55,18 @@ another `--quality`. The old textures stay on disk until you delete `bc7_cache`.
 
 | Quality | Time on a 16-core PC | Notes |
 |---|---|---|
-| 3 (default) | about 3 minutes | the value the game is tuned for |
-| 5 | about 11 minutes | slightly better on noisy textures |
+| 3 (default) | about 5 minutes in all (textures 250 s of 295 s, measured) | the value the game is tuned for |
+| 5 | about 15 minutes (estimated from the converter's speed ratio) | 0.2 to 1 dB better on the noisiest textures |
+
+The converter keeps the alpha of opaque textures exactly at 255 and encodes two-channel normal maps with BC7's channel
+rotation modes (see `tools/textures/README.md`). If a `bc7_cache` was made by an older converter (it carries
+`bc7_cache\encoder.txt` with the converter revision, `kTextureEncoderRev` in `src/texcache.h`), setup throws it away and
+converts again; the cache file format and keys the game reads are unchanged.
+
+Quality check on the game's own textures (developers): `tools\setup\scripts\check_texquality.py --baseline` runs
+`mpr_texq` over all 4,413 ASTC textures and checks per-texture floors (PSNR RGB 33 dB, alpha 32 dB, opaque alpha exactly
+255, SSIM 0.95; one white-noise texture is exempt). At quality 3 the minimum PSNR rose from 17.4 to 33.6 dB (19.2 dB for
+the noise texture) and the mean from 48.4 to 50.0 dB; textures under 33 dB went from 65 to 1.
 
 ## If something goes wrong
 

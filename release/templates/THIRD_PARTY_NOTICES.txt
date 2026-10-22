@@ -1,0 +1,159 @@
+THIRD-PARTY NOTICES
+Metroid Prime Remastered for Windows (x64)
+
+This program is GPL-3.0-or-later (see LICENSE). It contains and uses the third-party
+software listed below. The full licence texts are in the licenses folder, under the
+file names given in each entry.
+
+WHAT THE RELEASE CONTAINS
+
+mpr.exe contains the Metroid Prime Remastered v1.0.0 program code translated to native
+x64 code. That code and all game data remain the property of Nintendo and Retro Studios.
+The game data (models, textures, audio) is not included; the setup tool extracts it from
+your own dump.
+
+shader_cache.mprshc contains shaders translated from the game's own shaders.
+
+
+COMPONENTS WITH A LICENCE TEXT IN THE LICENSES FOLDER
+
+1. SDL3
+   Version:    3.4.18 (source tarball, SHA-256 pinned at build time)
+   Licence:    zlib
+   Copyright:  Copyright (C) 1997-2026 Sam Lantinga <slouken@libsdl.org>
+   Used in:    mpr.exe (statically linked)
+   File:       licenses\LICENSE.SDL3.zlib.txt
+
+2. hidapi (bundled inside SDL3)
+   Version:    as bundled in SDL3 3.4.18
+   Licence:    BSD, GPL-3.0 or the original hidapi licence, at the user's choice. The option
+               SDL3 takes has not been confirmed. Only the BSD text is included.
+   Copyright:  Copyright (c) 2010, Alan Ott, Signal 11 Software (BSD text)
+   Used in:    mpr.exe (inside SDL3)
+   File:       licenses\LICENSE.hidapi.BSD.txt
+
+3. Vulkan-Headers
+   Version:    vulkan-sdk-1.4.363.0
+   Licence:    Apache-2.0 OR MIT; used under MIT
+   Copyright:  Copyright 2015-2026 The Khronos Group Inc.
+   Used in:    mpr.exe (header declarations compiled in)
+   File:       licenses\LICENSE.Vulkan-Headers.md
+
+4. volk
+   Version:    vulkan-sdk-1.4.363.0
+   Licence:    MIT
+   Copyright:  Copyright (c) 2018-2026 Arseny Kapoulkine
+   Used in:    mpr.exe (loads the Vulkan entry points)
+   File:       licenses\LICENSE.volk.MIT.md
+
+5. VulkanMemoryAllocator (VMA)
+   Version:    v3.4.0
+   Licence:    MIT
+   Copyright:  Copyright (c) 2017-2026 Advanced Micro Devices, Inc. All rights reserved.
+   Used in:    mpr.exe (GPU memory allocator)
+   File:       licenses\LICENSE.VulkanMemoryAllocator.MIT.txt
+
+6. Dear ImGui
+   Version:    v1.92.9b
+   Licence:    MIT
+   Copyright:  Copyright (c) 2014-2026 Omar Cornut
+   Used in:    mpr.exe (core and Vulkan backend)
+   File:       licenses\LICENSE.imgui.MIT.txt
+
+7. NVN header (nvn.h)
+   Version:    from the mp1r-practice-mod repository; commit not recorded
+   Licence:    MIT, per the notice at the top of the header. The mp1r-practice-mod repository
+               as a whole is GPL-2.0; only this header is used.
+   Copyright:  Copyright (c) 2020 h1k421
+   Used in:    mpr.exe (type and function declarations of the graphics code)
+   File:       licenses\LICENSE.nvn.h.MIT.txt (the notice from the header)
+
+8. SuperMarioWonderRecomp
+   Version:    commit 665b2f9c175be3386cb0f683b677aa443afbbf06
+   Licence:    MIT
+   Copyright:  Copyright (c) 2026 BelmanteGu
+   Used in:    mpr.exe (runtime and recompiler header code, shader cache module)
+   File:       licenses\LICENSE.SuperMarioWonderRecomp.MIT.txt
+
+9. Ryujinx / ryubing
+   Version:    commit 5481723
+   Licence:    MIT
+   Copyright:  Copyright (c) Ryujinx Team and Contributors
+   Used in:    mpr.exe (service code and the Tegra tiling code)
+   File:       licenses\LICENSE.Ryubing.MIT.txt
+
+10. ScarletNX
+    Version:    commit 9ec73af7fe2712e8f823f399640ca3e71d3baff6
+    Licence:    GPL-3.0-or-later
+    Copyright:  not named in the licence file
+    Used in:    mpr.exe (service code)
+    File:       licenses\LICENSE.ScarletNX.GPL-3.0.txt
+
+11. smo-recomp
+    Version:    commit f88beab36ba39a29f574a9c97ee28b052e96104b
+    Licence:    GPL-3.0-or-later
+    Copyright:  not named in the licence file
+    Used in:    mpr.exe (runtime code and recompiler headers)
+    File:       licenses\LICENSE.smo-recomp.GPL-3.0.txt
+
+12. ssbu-recomp
+    Version:    commit fea28c18b785372b5024ece0a2ea52e860b1fa04
+    Licence:    GPL-3.0
+    Copyright:  not named in the licence file
+    Used in:    mpr.exe (exception handling code and headers)
+    File:       licenses\LICENSE.ssbu-recomp.GPL-3.0.txt
+
+13. ARM astc-encoder (decoder only)
+    Version:    5.7.0, commit baff485b0ff36d2f95d28961605106502c653966
+    Licence:    Apache-2.0
+    Copyright:  not named in the licence file
+    Used in:    astcdec-avx2-shared.dll, astcdec-sse4.1-shared.dll and astcdec-sse2-shared.dll,
+                shipped next to mpr.exe and the setup tools; loaded at run time
+    File:       licenses\LICENSE.astc-encoder.Apache-2.0
+
+14. bc7enc_rdo (bc7e.ispc)
+    Version:    commit b9438627eef73a1157e84201b6fa6eb2ffd6d9f0
+    Licence:    Apache-2.0 (bc7e.ispc only)
+    Copyright:  Copyright (C) 2018-2021 Binomial LLC
+    Used in:    mpr.exe and mpr_setup.exe (compiled into the texture converter)
+    File:       licenses\LICENSE.bc7enc_rdo
+
+15. zstd
+    Version:    1.5.7
+    Licence:    BSD-3-Clause, taken under the BSD option of the BSD / GPLv2 dual licence
+    Copyright:  Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+    Used in:    mpr_setup.exe and mpr_setup_cli.exe (statically linked; not in mpr.exe)
+    File:       licenses\LICENSE.zstd
+
+16. DejaVu Sans (fonts\DejaVuSans.ttf)
+    Version:    not recorded
+    Licence:    Bitstream Vera licence (DejaVu fonts)
+    Copyright:  Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved.
+                Copyright (c) 2006 by Tavmjong Bah. All Rights Reserved.
+    Used in:    fonts\DejaVuSans.ttf is loaded by mpr.exe at run time as the fallback font
+    File:       licenses\LICENSE.DejaVu.txt
+
+
+COMPONENTS WITHOUT A LICENCE TEXT IN THIS RELEASE
+
+17. Eden and yuzu (code adapted in the file-system, audio and display services)
+    Version:    not pinned
+    Licence:    GPL-2.0-or-later
+    Licence text: see the upstream project
+
+18. LLVM libc++abi (behaviour and data layouts only; no source text copied)
+    Version:    source read 2026-10-21; commit not recorded
+    Licence:    Apache-2.0 with LLVM exception
+    Upstream licence: https://llvm.org/LICENSE.txt
+    Used in:    exception handling code of mpr.exe
+
+19. Microsoft Visual C++ runtime and Windows SDK libraries
+    Version:    Visual Studio Build Tools 2026 (18.11.1)
+    Licence:    Microsoft licence terms
+    Used in:    static runtime objects linked into mpr.exe
+
+
+NOT SHIPPED
+
+The Khronos Vulkan loader (vulkan-1.dll) is not part of this release. It is installed by
+your graphics driver or the Vulkan SDK, under its own licence.

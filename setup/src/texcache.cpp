@@ -314,6 +314,25 @@ std::string texcache_path(const std::string& cache_dir_utf8, u64 key) {
     return narrow(p.wstring());
 }
 
+bool texcache_level0(const TxtrInfo& info, const u8* tiled, size_t tiled_len, TexLevel0& out) {
+    CacheLayout L;
+    const TxtrFormat* f = nullptr;
+    if (check_texture(info, tiled_len, 3, L, f) != nullptr) return false;
+    const tegra::LevelLayout& last = L.layout.levels.back();
+    const u64 lin_total = last.linear_offset + last.linear_slice_size * L.layers;
+    std::vector<u8> lin(static_cast<size_t>(lin_total));
+    if (!tegra::untile(L.desc, L.layout, tiled, lin.data())) return false;
+    const tegra::LevelLayout& g = L.layout.levels[0];
+    const u64 in_slice = g.linear_slice_size / g.depth;
+    out.width = g.width;
+    out.height = g.height;
+    out.block_w = f->block_w;
+    out.block_h = f->block_h;
+    out.srgb = f->srgb;
+    out.astc.assign(lin.begin() + static_cast<ptrdiff_t>(g.linear_offset), lin.begin() + static_cast<ptrdiff_t>(g.linear_offset + in_slice));
+    return true;
+}
+
 std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& plan, const u8* tiled, size_t tiled_len,
                                     int quality) {
     if (!plan.ok) fail(Fail::Generic, "Texture %s: the cache plan was rejected, nothing to build.", info.id.str().c_str());
