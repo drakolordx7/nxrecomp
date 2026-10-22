@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <deque>
 #include <functional>
+#include <string>
 #include <memory>
 #include <random>
 #include <thread>
@@ -170,8 +171,30 @@ uint32_t guest_spawn(int prio, int core, std::function<void()> body) {
     return h;
 }
 
+// Scheduling isolation. A contended guest mutex hands ownership straight to the waiter (as Horizon does), so every contended unlock is
+// a host thread switch and the throughput of these tests is the host's wake-up latency. The console core model pins every guest thread
+// to one host processor and switches Windows' wake-up boost off, so a woken thread cannot run before the scheduler takes the processor
+// from whatever else is running on it. With CPU-bound processes of normal priority around (a parallel build, other test runs) that is
+// a quantum of 15 ms or more per hand-over, and 20000 hand-overs outlast the 20 s watchdog (docs/debug/180.md). The tests therefore
+// run in the high priority class: even the lowest of the six guest bands then ranks above normal load. The class is raised in begin()
+// and put back in end(), so it covers exactly the time the kernel is under test.
+DWORD g_saved_class = 0;
+
+void raise_priority() {
+    if (g_saved_class) return;
+    g_saved_class = GetPriorityClass(GetCurrentProcess());
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+}
+
+void restore_priority() {
+    if (!g_saved_class) return;
+    SetPriorityClass(GetCurrentProcess(), g_saved_class);
+    g_saved_class = 0;
+}
+
 // Every test starts and ends here: no thread, waiter or handle survives from the previous test.
 void begin() {
+    raise_priority();
     ks::kernel_reset();
     g_bodies.clear();
     nxrt::fn_clear();
@@ -185,6 +208,7 @@ void begin() {
 void end() {
     ks::kernel_reset();
     g_bodies.clear();
+    restore_priority();
 }
 
 // Event helpers: KEvent objects made directly, as the SVC layer makes them (readable handle, shared state).
@@ -224,6 +248,33 @@ uint64_t run_mutex_exclusion(const char* test, int threads, int iters) {
     for (uint32_t h : hs) join_guest(test, h);
     CHECK_EQ(load_word(&m.word), 0u);
     return counter;
+}
+
+// Two guest threads on different cores hand a turn back and forth through a condition variable; returns the rounds each completed.
+struct PingPong {
+    int a_rounds = 0, b_rounds = 0, turn = 0;
+};
+
+PingPong run_pingpong(const char* test, int rounds) {
+    GMutex m;
+    GCond c;
+    int turn = 0;                 // 0: thread A's turn, 1: thread B's turn (guarded by m)
+    std::atomic<int> a_rounds{0}, b_rounds{0};
+    auto player = [&](int me, std::atomic<int>& done) {
+        for (int i = 0; i < rounds; i++) {
+            mutex_lock(m);
+            while (turn != me) cond_wait(c, m, -1);
+            turn = 1 - me;
+            done++;
+            cond_signal(c, 1);
+            mutex_unlock(m);
+        }
+    };
+    const uint32_t a = guest_spawn(44, 0, [&] { player(0, a_rounds); });
+    const uint32_t b = guest_spawn(44, 1, [&] { player(1, b_rounds); });
+    join_guest(test, a);
+    join_guest(test, b);
+    return {a_rounds.load(), b_rounds.load(), turn};
 }
 
 // One WaitForAddress / SignalToAddress scenario for signal type 2: `waiters` host threads wait (WaitIfEqual) on the word, one signal
@@ -394,28 +445,11 @@ NXTEST(mutex_wait_bit_protocol) {
 
 NXTEST(condvar_pingpong_round_trips) {
     begin();
-    GMutex m;
-    GCond c;
-    int turn = 0;                 // 0: thread A's turn, 1: thread B's turn (guarded by m)
     constexpr int kRounds = 20000;
-    std::atomic<int> a_rounds{0}, b_rounds{0};
-    auto player = [&](int me, std::atomic<int>& rounds) {
-        for (int i = 0; i < kRounds; i++) {
-            mutex_lock(m);
-            while (turn != me) cond_wait(c, m, -1);
-            turn = 1 - me;
-            rounds++;
-            cond_signal(c, 1);
-            mutex_unlock(m);
-        }
-    };
-    const uint32_t a = guest_spawn(44, 0, [&] { player(0, a_rounds); });
-    const uint32_t b = guest_spawn(44, 1, [&] { player(1, b_rounds); });
-    join_guest("condvar_pingpong_round_trips", a);
-    join_guest("condvar_pingpong_round_trips", b);
-    CHECK_EQ(a_rounds.load(), kRounds);
-    CHECK_EQ(b_rounds.load(), kRounds);
-    CHECK_EQ(turn, 0);            // an even number of hand-overs
+    const PingPong pp = run_pingpong("condvar_pingpong_round_trips", kRounds);
+    CHECK_EQ(pp.a_rounds, kRounds);
+    CHECK_EQ(pp.b_rounds, kRounds);
+    CHECK_EQ(pp.turn, 0);         // an even number of hand-overs
     CHECK_EQ(g_guest_errors.load(), 0);
     end();
 }
@@ -964,5 +998,105 @@ NXTEST(exclusion_twice_after_reset) {
     CHECK_EQ(ks::wait_for_address(addr_of(&w), 2, 0, 20 * kMs), ks::kTimedOut);   // no stale waiter interferes
     CHECK_MSG(slept_at_least(ms_since(t0), 20.0), "a fresh wait returned before its timeout");
     CHECK_EQ(ks::signal_to_address(addr_of(&w), 0, 0, -1), ks::kOk);
+    end();
+}
+
+// ---- 25: hand-overs keep their pace while other processes burn CPU on the same processors ----------------------------------------
+// Regression test for docs/debug/180.md. Child processes of normal priority spin on exactly the host processors the console core
+// model gives the guest threads (two per processor), then the two hand-over heavy workloads run: the condvar ping-pong and the
+// 8-thread mutex. They need tens of thousands of thread switches; unless the tests run above normal priority (begin()), each switch
+// waits for a scheduler quantum and the 20 s watchdog fires.
+
+NXTEST_CHILD(kernel_sync_hog) {
+    const double seconds = argc > 1 ? std::atof(argv[1]) : 60.0;
+    if (argc > 0) {
+        if (HANDLE ready = OpenSemaphoreA(SEMAPHORE_MODIFY_STATE, FALSE, argv[0])) {
+            ReleaseSemaphore(ready, 1, nullptr);
+            CloseHandle(ready);
+        }
+    }
+    const auto until = Clock::now() + std::chrono::duration<double>(seconds);
+    volatile uint64_t sink = 0;
+    while (Clock::now() < until)
+        for (int i = 0; i < 100000; i++) sink = sink + 1;
+    return 0;
+}
+
+namespace {
+
+// CPU-bound child processes at normal priority, pinned to the console cores' host processors. A job object ends them with the test.
+class Hogs {
+public:
+    ~Hogs() { stop(); }
+
+    bool start() {
+        const ks::SchedInfo info = ks::sched_info();
+        DWORD_PTR mask = 0;
+        int count = 0;
+        if (info.active) {
+            for (int i = 0; i < 3; i++) mask |= static_cast<DWORD_PTR>(info.host_masks[i]);
+            count = 6;
+        } else {
+            DWORD_PTR sys = 0;
+            GetProcessAffinityMask(GetCurrentProcess(), &mask, &sys);
+            count = static_cast<int>(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+        }
+        job_ = CreateJobObjectA(nullptr, nullptr);
+        if (!job_) return false;
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
+        lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &lim, sizeof lim);
+        const std::string sem_name = "Local\\nxrt_ks_hog_" + std::to_string(GetCurrentProcessId());
+        HANDLE ready = CreateSemaphoreA(nullptr, 0, 1000, sem_name.c_str());
+        if (!ready) return false;
+        char exe[MAX_PATH];
+        GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        for (int i = 0; i < count; i++) {
+            std::string cmd = std::string("\"") + exe + "\" --child kernel_sync_hog " + sem_name + " 120";
+            STARTUPINFOA su{};
+            su.cb = sizeof su;
+            PROCESS_INFORMATION pi{};
+            if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED | CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
+                                nullptr, nullptr, &su, &pi))
+                break;
+            AssignProcessToJobObject(job_, pi.hProcess);
+            SetProcessAffinityMask(pi.hProcess, mask);
+            ResumeThread(pi.hThread);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            started_++;
+        }
+        // Every hog counts itself in once it runs, so the contention is real before the workload starts.
+        int up = 0;
+        while (up < started_ && WaitForSingleObject(ready, 10000) == WAIT_OBJECT_0) up++;
+        CloseHandle(ready);
+        return started_ == count && up == count;
+    }
+
+    void stop() {
+        if (job_) CloseHandle(job_);       // KILL_ON_JOB_CLOSE ends every hog
+        job_ = nullptr;
+        started_ = 0;
+    }
+
+private:
+    HANDLE job_ = nullptr;
+    int started_ = 0;
+};
+
+}  // namespace
+
+NXTEST(handoffs_survive_cpu_contention) {
+    begin();
+    Hogs hogs;
+    CHECK_MSG(hogs.start(), "the load processes did not start");
+    constexpr int kRounds = 20000;
+    const PingPong pp = run_pingpong("handoffs_survive_cpu_contention", kRounds);
+    CHECK_EQ(pp.a_rounds, kRounds);
+    CHECK_EQ(pp.b_rounds, kRounds);
+    CHECK_EQ(pp.turn, 0);
+    CHECK_EQ(run_mutex_exclusion("handoffs_survive_cpu_contention", 8, 20000), 8ull * 20000ull);
+    CHECK_EQ(g_guest_errors.load(), 0);
+    hogs.stop();
     end();
 }
