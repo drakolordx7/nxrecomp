@@ -8,9 +8,6 @@
 //   * `PerformanceEntryAddresses performanceEntry = null` is a default-constructed value; `_performanceManager` is a pointer, null when
 //     performance recording is disabled (the C# null).
 //   * Effects and sinks are held as BaseEffect / BaseSink; the C# `(DelayEffect)effect` casts are static_cast after the Type check.
-//   * The C# `GetWorkBuffer(-1)` of Delay, Reverb, Reverb3d, Limiter (Ryujinx overrides it as `return GetSingleBuffer();`) is replaced by
-//     GetSingleWorkBuffer below, because the C++ classes do not override GetWorkBuffer (a defect in the existing effect headers, see the
-//     report). It calls the protected BaseEffect::GetSingleBuffer, which is the same code as the C# base method.
 //   * `Constants.UnusedSplitterIdInt` comparisons and `mixId < _mixContext.GetCount()` compare as 64-bit, which is what C# does for an
 //     int against a uint.
 #pragma once
@@ -68,23 +65,8 @@ inline Span<BiquadFilterState> BiquadFilterStatesOf(Span<VoiceState> state) {
     return state.Cast<uint8_t>().Slice(0, sizeof(BiquadFilterState) * static_cast<size_t>(Constants::VoiceBiquadFilterCount)).Cast<BiquadFilterState>();
 }
 
-// BaseEffect::GetSingleBuffer is protected and non-virtual. Ryujinx's Delay, Reverb, Reverb3d and Limiter effects override GetWorkBuffer
-// as `return GetSingleBuffer();`; the C++ classes do not override it, so the generator calls the base member through a pointer to it.
-// The pointer is obtained with an explicit instantiation, which the standard exempts from access checking ([temp.spec]).
-struct GetSingleBufferAccess {
-    using Function = DspAddress (BaseEffect::*)();
-    friend inline Function GetSingleBufferPointer(GetSingleBufferAccess);
-};
-template <GetSingleBufferAccess::Function Function>
-struct GetSingleBufferAccessor {
-    friend inline GetSingleBufferAccess::Function GetSingleBufferPointer(GetSingleBufferAccess) { return Function; }
-};
-template struct GetSingleBufferAccessor<&BaseEffect::GetSingleBuffer>;
-
-// C# `effect.GetWorkBuffer(-1)` for the effects whose C# override is `GetSingleBuffer()`.
-inline DspAddress GetSingleWorkBuffer(BaseEffect& effect) {
-    return (effect.*GetSingleBufferPointer(GetSingleBufferAccess{}))();
-}
+// C# `effect.GetWorkBuffer(-1)` for the effects whose C# override is `GetSingleBuffer()` (they override GetWorkBuffer here as well).
+inline DspAddress GetSingleWorkBuffer(BaseEffect& effect) { return effect.GetWorkBuffer(-1); }
 
 }  // namespace command_generator_detail
 
