@@ -31,8 +31,8 @@
 //                                     through the front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
 //   @give <item> <amount>             set an item of the player state (CPlayerStateMP1 item table): amount and capacity. <item> is a number or the game's
 //                                     name without case or underscores (MorphBall, ChargeBeam, Missiles, XRayVisor, WaveBeam ...)
-//   @rate <hz>                        switch the clock: hz > 0 = virtual game time at hz frames per game second from here on (deterministic mode),
-//                                     0 = the real clock again. Load areas in real time, then measure in virtual time
+//   @rate <hz>                        the game step is exactly 1/hz for every frame from here on (hz > 0), 0 = the configured mode again; the clock
+//                                     itself stays real, so areas load at full speed
 //   @sleep <ms>                       wait <ms> of host wall-clock time (not game time: loading and fade-outs run on the host clock even in
 //                                     deterministic mode); frames keep being delivered meanwhile
 //   @warp <world> <area>              warp to the area (practice-mod sequence, done by the runner); then waits until that area is current

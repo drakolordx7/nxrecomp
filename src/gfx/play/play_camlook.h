@@ -5,7 +5,7 @@
 //   * the morph ball camera: the mouse orbits the camera around the ball, with its own sensitivity.
 // The pieces here are plain maths and an accumulator; play.cpp feeds them the mouse counts (from the ProcessInput hook) and applies the
 // result to the camera object after the game's own Think (entry hooks on CFirstPersonCameraMP1::Think and CBallCameraMP1::Think).
-// Conventions (the game's world is Y up, forward is -Z at yaw 0, transforms are 3x4 row-major with the translation in column 3, local-to-world
+// Conventions (the game's world is Y up, forward is +Z at yaw 0 and left is +X, transforms are 3x4 row-major with the translation in column 3, local-to-world
 // for column vectors): mouse right turns the view right (yaw decreases), mouse up looks up (pitch increases), the same signs as the aim.
 #pragma once
 #include <cstdint>
@@ -31,7 +31,7 @@ private:
 };
 
 // Turns the camera transform `in` about `pivot`: first by `yaw` about the world's up axis, then by `pitch` about the camera's own right axis
-// (through the same pivot). The position moves with the rotation; with the pivot at the camera's own position only the view turns.
+// (through the same pivot); pitch > 0 looks up. The position moves with the rotation; with the pivot at the camera's own position only the view turns.
 void orbit_transform(const float in[12], const float pivot[3], double yaw, double pitch, float out[12]);
 
 }  // namespace nxrt::play

@@ -139,7 +139,7 @@ bool read_state(GameState* out) {
         float m[12];
         if (xf && rd(xf, &m)) {
             g.pos[0] = m[3]; g.pos[1] = m[7]; g.pos[2] = m[11];
-            g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is -Z at 0; + = turn left)
+            g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is +Z at 0; + = turn left)
             rd(player + 0x3f0, &g.move_state);
             g.have_player = std::isfinite(g.pos[0]) && std::isfinite(g.pos[1]) && std::isfinite(g.pos[2]);
         }
@@ -151,7 +151,7 @@ bool read_state(GameState* out) {
             const uint64_t xfp = fp ? rd64(rd64(rd64(fp + 8) + 0x20) + 0x40) : 0;
             if (xfp && rd(xfp, &cx) && std::isfinite(cx[2]) && std::isfinite(cx[0])) {
                 g.cam_yaw = std::atan2(cx[2], cx[0]);
-                g.cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, -cx[6])));
+                g.cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, cx[6])));
                 g.have_cam = true;
             }
         }
