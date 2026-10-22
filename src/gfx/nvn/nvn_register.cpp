@@ -14,6 +14,9 @@ void register_all_impls() {
         register_api_blend_color();
         register_api_vertex();
         register_api_depth_poly_ms();
+        register_api_cmdbuf();
+        register_api_cmd_state();
+        register_api_cmd_work();
         register_api_gpu();
     });
 }

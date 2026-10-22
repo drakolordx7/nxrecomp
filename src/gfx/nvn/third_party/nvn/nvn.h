@@ -21,6 +21,7 @@
  */
 
 // NVN types reconstructed from Darksiders II DWARF information.
+// NXRT NOTE: nvnMemoryPoolBuilderGetMemory and nvnCommandBufferGetMemoryCallbackData return void* (the original typedefs said void).
 // NXRT NOTE: copied from mp1r-practice-mod src_framework/nvn/nvn.h (MIT, notice above). One correction: the three
 // *GetMemoryPool typedefs returned NVNmemoryPool by value in the original; the driver returns a pointer (smo-recomp,
 // SuperMarioWonderRecomp), so they return const NVNmemoryPool* here.
@@ -1200,7 +1201,7 @@ typedef void (*PFNNVNMEMORYPOOLBUILDERSETDEVICEPROC)(NVNmemoryPoolBuilder*, NVNd
 typedef void (*PFNNVNMEMORYPOOLBUILDERSETDEFAULTSPROC)(NVNmemoryPoolBuilder*);
 typedef void (*PFNNVNMEMORYPOOLBUILDERSETSTORAGEPROC)(NVNmemoryPoolBuilder*, void*, size_t);
 typedef void (*PFNNVNMEMORYPOOLBUILDERSETFLAGSPROC)(NVNmemoryPoolBuilder*, int);
-typedef void (*PFNNVNMEMORYPOOLBUILDERGETMEMORYPROC)(const NVNmemoryPoolBuilder*);
+typedef void* (*PFNNVNMEMORYPOOLBUILDERGETMEMORYPROC)(const NVNmemoryPoolBuilder*);
 typedef size_t (*PFNNVNMEMORYPOOLBUILDERGETSIZEPROC)(const NVNmemoryPoolBuilder*);
 typedef NVNmemoryPoolFlags (*PFNNVNMEMORYPOOLBUILDERGETFLAGSPROC)(const NVNmemoryPoolBuilder*);
 typedef NVNboolean (*PFNNVNMEMORYPOOLINITIALIZEPROC)(NVNmemoryPool*, const NVNmemoryPoolBuilder*);
@@ -1739,7 +1740,7 @@ typedef void (*PFNNVNCOMMANDBUFFERINSERTDEBUGMARKERDYNAMICPROC)(NVNcommandBuffer
 typedef void (*PFNNVNCOMMANDBUFFERINSERTDEBUGMARKERPROC)(NVNcommandBuffer*, const char*);
 typedef PFNNVNCOMMANDBUFFERMEMORYCALLBACKPROC (*PFNNVNCOMMANDBUFFERGETMEMORYCALLBACKPROC)(
     const NVNcommandBuffer*);
-typedef void (*PFNNVNCOMMANDBUFFERGETMEMORYCALLBACKDATAPROC)(const NVNcommandBuffer*);
+typedef void* (*PFNNVNCOMMANDBUFFERGETMEMORYCALLBACKDATAPROC)(const NVNcommandBuffer*);
 typedef NVNboolean (*PFNNVNCOMMANDBUFFERISRECORDINGPROC)(const NVNcommandBuffer*);
 typedef NVNboolean (*PFNNVNSYNCINITIALIZEPROC)(NVNsync*, NVNdevice*);
 typedef void (*PFNNVNSYNCFINALIZEPROC)(NVNsync*);

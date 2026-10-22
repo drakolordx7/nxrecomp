@@ -2,6 +2,7 @@
 #include "nvn_abi.h"
 
 #include <atomic>
+#include <cstring>
 
 #include "nxrt/log.h"
 
@@ -18,8 +19,10 @@ bool register_checked(const char* name, HleFn fn, char ret, const char* args) {
         return false;
     }
     const Entry& e = entry_at(static_cast<size_t>(idx));
+    // the generated table was read from a header whose typedefs are wrong for these two (they return a pointer)
+    const bool wrong_void = e.ret == 'v' && ret == 'p' && (!std::strcmp(name, "nvnMemoryPoolBuilderGetMemory") || !std::strcmp(name, "nvnCommandBufferGetMemoryCallbackData"));
     if (e.args[0] != '?') {
-        bool ok = classes_compatible(e.ret, ret) || (e.ret == 'v' && ret == 'v');
+        bool ok = classes_compatible(e.ret, ret) || wrong_void;
         const char* a = e.args;
         const char* b = args;
         while (ok && (*a || *b)) {
