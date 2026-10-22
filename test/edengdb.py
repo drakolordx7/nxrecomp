@@ -178,9 +178,10 @@ def u64(b, o=0):
     return struct.unpack_from("<Q", b, o)[0]
 
 
-def read_state(g, base, mgr=0):
+def read_state(g, base, mgr=0, debug=False):
     """The same fields as tt_probe.cpp read_state: dict with world/area (32 hex), hp, igt, pos, yaw, state (what could be read)."""
     out = {}
+    dbg = {"mgr": mgr}
     gp = g.try_read(base + GP_GAME_STATE, 8)
     gs = u64(gp) if gp else 0
     if gs:
@@ -213,11 +214,15 @@ def read_state(g, base, mgr=0):
         lg = g.try_read(mgr + 0x4E0150, 8)
         pl = g.try_read(u64(lg) + 0x18, 8) if lg and u64(lg) else None
         player = u64(pl) if pl else 0
+        dbg["logic"] = u64(lg) if lg else None
+        dbg["player"] = player
         if player:
             a = g.try_read(player + 8, 8)
             b = g.try_read(u64(a) + 0x20, 8) if a else None
             c = g.try_read(u64(b) + 0x40, 8) if b else None
             m = g.try_read(u64(c), 48) if c else None
+            dbg["a"], dbg["b"], dbg["c"] = (u64(a) if a else None), (u64(b) if b else None), (u64(c) if c else None)
+            dbg["xf_raw"] = m.hex() if m else None
             if m:
                 f = struct.unpack("<12f", m)
                 out["pos"] = [f[3], f[7], f[11]]
@@ -225,7 +230,37 @@ def read_state(g, base, mgr=0):
                 st = g.try_read(player + 0x3F0, 4)
                 if st:
                     out["state"] = struct.unpack("<I", st)[0]
+    if debug:
+        out["_dbg"] = {k: (hex(v) if isinstance(v, int) else v) for k, v in dbg.items()}
     return out
+
+
+def raw_dump(g, base, mgr):
+    """Hex dumps of the objects on the player chain, for checking the probe layout against the live game."""
+    r = {}
+
+    def grab(name, addr, n):
+        b = g.try_read(addr, n) if addr else None
+        r[name] = {"addr": hex(addr or 0), "hex": b.hex() if b else None}
+        return b
+
+    grab("mgr_0x4e0140", mgr + 0x4E0140, 0x60)
+    grab("mgr_0", mgr, 0x20)
+    lg = grab("logic_ptr", mgr + 0x4E0150, 8)
+    logic = u64(lg) if lg else 0
+    grab("logic", logic, 0x60)
+    pl = g.try_read(logic + 0x18, 8) if logic else None
+    player = u64(pl) if pl else 0
+    grab("player_0", player, 0x40)
+    grab("player_0x3e0", player + 0x3E0, 0x30)
+    a = u64(g.try_read(player + 8, 8) or bytes(8)) if player else 0
+    grab("a", a, 0x60)
+    b = u64(g.try_read(a + 0x20, 8) or bytes(8)) if a else 0
+    grab("b", b, 0x80)
+    c = u64(g.try_read(b + 0x40, 8) or bytes(8)) if b else 0
+    grab("c", c, 0x60)
+    grab("b_plus_0x40_inline", b + 0x40, 0x30)
+    return r
 
 
 def capture_manager(g, base, wait_s=30.0):
@@ -304,7 +339,7 @@ def main(argv=None):
             g.cont()
         elif a.cmd == "state":
             base = main_base(g)
-            st = read_state(g, base)
+            st = read_state(g, base, 0, debug=True)
             print(json.dumps(st))
             g.cont()
         else:

@@ -7,8 +7,11 @@ Input is posted to the SDL window by edeninput.py. State can be sampled through 
   python eden_run.py --out work/eden_ref/session1 --every 120 --seconds 240
   python eden_run.py --out work/eden_ref/s2 --every 60 --timeline tools/test/timelines/title_to_frigate.json --seconds 600
 
-Timeline file: JSON list of events, each {"t": <seconds after the window appeared>, "press": "A" | "A+B", "hold": 0.15} or
-{"t": 30, "hold_keys": "LSTICK_UP", "seconds": 2.0} or {"t": 90, "state": "name"} (a GDB state read written to <out>/state_<name>.json).
+Timeline file: JSON list of events, executed in list order (an event waits for the one before it), each either timed with "t" or present-based with
+"at_present": N (fires once a captured frame with present number >= N has been converted; use a small --every, e.g. 30). Present numbers follow the game, not the wall
+clock, so they are the robust choice. Events are each {"t": <seconds after the window appeared>, "press": "A" | "A+B", "hold": 0.15} or
+{"t": 30, "hold_keys": "LSTICK_UP", "seconds": 2.0} or {"t": 90, "state": "name"} (a GDB state read written to <out>/state_<name>.json) or {"t": 300, "trace": 600, "name": "frigate"} (a per-frame
+GDB trace of 600 game frames, <out>/trace_<name>.jsonl, same JSONL as the runtime's trace).
 
 Output: <out>/frames/<present number>.png, <out>/index.json (frame list with wall times, events done), <out>/eden.log copy.
 """
@@ -79,7 +82,7 @@ def run(args):
     if args.timeline:
         with open(args.timeline) as f:
             events_peek = json.load(f)
-    want_gdb = args.gdb or any("state" in e for e in events_peek)
+    want_gdb = args.gdb or any("state" in e or "trace" in e for e in events_peek)
     # With the GDB stub on Eden waits at start until a client connects (and a connection pauses the game until a continue): only switch it on when needed.
     subprocess.run([sys.executable, os.path.join(HERE, "eden_config.py"), "set", "Debugging.use_gdbstub=" + ("true" if want_gdb else "false")] + (args.set or []), check=True)
     exe = os.path.join(eden_dir, "eden-cli.exe")
@@ -117,19 +120,53 @@ def run(args):
     events = []
     if args.timeline:
         with open(args.timeline) as f:
-            events = sorted(json.load(f), key=lambda e: e["t"])
+            events = json.load(f)
+        for e in events:
+            e.setdefault("t", 1e9 if "at_present" in e else 0)
     done = []
     gdb = None
     mgr = 0
     try:
         while time.time() - index.t0 < args.seconds and proc.poll() is None:
             now = time.time() - index.t0
-            while events and events[0]["t"] <= now:
+            newest = max((e["present"] for e in index), default=0)
+            while events and ("at_present" in events[0] and newest >= events[0]["at_present"] or "at_present" not in events[0] and events[0]["t"] <= now):
                 ev = events.pop(0)
                 if "press" in ev:
                     edeninput.press(hwnd, ev["press"].split("+"), ev.get("hold", 0.15))
                 elif "hold_keys" in ev:
                     edeninput.press(hwnd, ev["hold_keys"].split("+"), ev.get("seconds", 1.0))
+                elif "trace" in ev:
+                    try:
+                        if not mgr:
+                            gdb = edengdb.Gdb(port=args.port)
+                            mgr = edengdb.capture_manager(gdb, base, 30.0)
+                            gdb.close()
+                            gdb = None
+                        g = edengdb.Gdb(port=args.port)
+                        ev["frames_written"] = edengdb.trace(g, base, os.path.join(out, "trace_%s.jsonl" % ev.get("name", "eden")), int(ev["trace"]), mgr)
+                        g.close()
+                    except Exception as e:  # noqa: BLE001
+                        ev["error"] = str(e)
+                elif "raw" in ev:
+                    try:
+                        dump = {"main_base": hex(base)}
+                        for attempt in range(int(ev.get("attempts", 6))):
+                            gdb = edengdb.Gdb(port=args.port)
+                            mgr = mgr or edengdb.capture_manager(gdb, base, 30.0)
+                            gdb.close()
+                            if mgr:
+                                break
+                        dump["mgr"] = hex(mgr)
+                        if mgr:
+                            g = edengdb.Gdb(port=args.port)
+                            dump["regions"] = edengdb.raw_dump(g, base, mgr)
+                            g.cont()
+                            g.close()
+                        with open(os.path.join(out, "raw_%s.json" % ev["raw"]), "w") as f:
+                            json.dump(dump, f, indent=1)
+                    except Exception as e:  # noqa: BLE001
+                        ev["error"] = str(e)
                 elif "state" in ev:
                     try:
                         if not mgr:
@@ -138,7 +175,7 @@ def run(args):
                             gdb.close()
                             gdb = None
                         g = edengdb.Gdb(port=args.port)
-                        st = edengdb.read_state(g, base, mgr)
+                        st = edengdb.read_state(g, base, mgr, debug=True)
                         g.cont()
                         g.close()
                         st["_wall_s"] = round(now, 2)
