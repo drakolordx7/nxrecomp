@@ -6,7 +6,7 @@
   rows = gp.rows('work/verify/walk60')                    # trace rows (dicts) that carry the player
 
 Facts the scripts rely on (all read off the running game, see runtime/docs/S13.md):
-  * The world is Y up: forward is -Z at yaw 0, walking speed 12.8 units/s. yaw in the trace is the heading about Y (+ = turn left).
+  * The world is Y up: forward is +Z at yaw 0 and left is +X, walking speed 12.8 units/s. yaw in the trace is the heading about Y (+ = turn left).
   * The game clock (igt) stands still while an area loads, so waits are written in game seconds with `@run`, not frames.
   * Front-end presses are made with `@mash`, which presses A every few seconds until the new game's first area is current.
   * `@warp world area` loads any area with the player in control after about 4 s of game time; a new game start (Frigate) comes first.
