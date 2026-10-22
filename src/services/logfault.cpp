@@ -2,7 +2,7 @@
 // Log and fatal services (S3c): lm (ILogService / ILogger), fatal:u (fatal service) and fatal:p (private fatal service).
 // Command ids and layouts: https://switchbrew.org/wiki/Log_services (LogPacketHeader, LogPacketFlags, LogDataChunkKey, ILogger),
 // https://switchbrew.org/wiki/Fatal_services (fatal:u, fatal:p, the 0x250-byte CPU context offsets) and the service list of
-// https://switchbrew.org/wiki/Services_API. err:u is not in that list (see the report of S3c); it is not registered here.
+// https://switchbrew.org/wiki/Services_API. err:u is not in that list (see docs/S3c.md); it is not registered here.
 // Adapted from Ryujinx (MIT, Copyright (c) Ryujinx Team and Contributors): src/Ryujinx.Horizon/LogManager/Ipc/LmLogger.cs (the
 // message assembly and the TLV reading, with the size-driven numeric fields and the 5000-character cap), src/Ryujinx.Horizon/
 // LogManager/Types/LogPacket.cs (the line fields) and src/Ryujinx.HLE/HOS/Services/Fatal/IService.cs (the report layout and the
