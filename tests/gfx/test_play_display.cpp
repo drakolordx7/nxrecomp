@@ -194,6 +194,17 @@ NXTEST(hud_ortho_keeps_an_off_centre_camera_centred) {
     CHECK(close_to(static_cast<double>(t) - b, 9.0));
 }
 
+NXTEST(hud_ortho_keeps_the_reversed_order_of_the_retail_ball_hud) {
+    // FRME_BallHud stores left = 8, right = -8, top = 4.5, bottom = -4.5 (read from the game's own file)
+    float l = 8, r = -8, b = -4.5f, t = 4.5f;
+    CHECK(play::hud_ortho(&l, &r, &b, &t, kAspect21x9));
+    CHECK(close_to(l, 10.5, 1e-4) && close_to(r, -10.5, 1e-4));                 // wider, still left > right
+    CHECK(close_to(b, -4.5) && close_to(t, 4.5));
+    float l2 = 8, r2 = -8, b2 = -4.5f, t2 = 4.5f;
+    CHECK(play::hud_ortho(&l2, &r2, &b2, &t2, 16.0 / 9.0));                     // same aspect: unchanged
+    CHECK(close_to(l2, 8.0, 1e-4) && close_to(r2, -8.0, 1e-4));
+}
+
 NXTEST(fov_offset_is_added_in_degrees_and_clamped) {
     CHECK(close_to(play::fov_with_offset(1.0f, 10.0), 1.0 + 10.0 * kPi / 180.0, 1e-5));
     CHECK(close_to(play::fov_with_offset(1.0f, -300.0), 10.0 * kPi / 180.0, 1e-5));
