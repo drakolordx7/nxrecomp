@@ -70,6 +70,7 @@ struct GState {
     Ref<Texture> color_tex[8];
     TextureViewInfo color_view[8];
     bool color_has_view[8] = {};
+    uint32_t color_level[8] = {}, color_layer[8] = {}, color_layers[8] = {};   // level, first layer, layer count each colour target is attached with (trace)
     Ref<Texture> depth_tex;
     TextureViewInfo depth_view;
     bool depth_has_view = false;
@@ -151,6 +152,9 @@ bool g_pipe_xfb = false;             // the bound pipeline is a stream-out varia
 bool g_xfb_began = false;            // vkCmdBeginTransformFeedbackEXT is in effect in the open pass
 bool g_xfb_have_counter = false;     // a counter buffer holds the bytes written so far: the next begin continues after them
 gfx::Buffer g_xfb_counter;
+// Primitive counters (NVN_COUNTER_TYPE_PRIMITIVES_GENERATED = 13, TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN = 14): counted on the CPU by every
+// draw (count_primitives), process-wide like the console's, zeroed by ResetCounter of their type, dropped at shutdown.
+uint64_t g_prims_generated = 0, g_prims_xfb = 0;
 VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
 bool g_trace = false;
 struct TraceSnap { int index; int draw; std::string name; std::string desc; };
@@ -162,6 +166,7 @@ bool g_trace_snap_sampled = false;           // [nvn] trace_snap_sampled = 1: a 
 std::vector<Texture*> g_trace_sampled;       // textures sampled by the last traced draw
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
+std::vector<int64_t> g_trace_extra;   // more frames to trace
 // [nvn] trace_after_fs = "67d504": the frame after the first one that draws with a fragment shader of this hash prefix is traced
 // (a frame number is not stable from run to run: the load times differ).
 std::string g_trigger_fs;
@@ -264,10 +269,15 @@ Target make_target(Texture* t, const TextureViewInfo& v, bool has_view) {
             tg.layer = static_cast<uint32_t>(v.min_layer);
             tg.layers = std::max(1, v.num_layers);
         }
+        else if (t && t->layers > 1 && t->b.target != NVN_TEXTURE_TARGET_3D) tg.layers = t->layers;   // a view without layers
         if (v.has_format) {
             const FormatInfo* fi = format_info(v.format);
             if (fi && fi->vk != VK_FORMAT_UNDEFINED) tg.view_format = fi->vk;
         }
+    } else if (t && t->layers > 1 && t->b.target != NVN_TEXTURE_TARGET_3D) {
+        // no view: an array or cube map target is attached with all its layers (layered rendering: a geometry shader picks the layer with
+        // gl_Layer; without it the shaders draw to layer 0)
+        tg.layers = t->layers;
     }
     return tg;
 }
@@ -346,7 +356,11 @@ bool ensure_pass(bool depth_ro = false) {
     if (P.samples == 0) P.samples = 1;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, extent};
-    ri.layerCount = 1;
+    uint32_t layer_count = UINT32_MAX;     // layered rendering: the layers every attachment has in common
+    for (uint32_t i = 0; i < S.ncolor; ++i)
+        if (colors[i].imageView) layer_count = std::min(layer_count, std::max<uint32_t>(1, P.color[i].layers));
+    if (have_depth) layer_count = std::min(layer_count, std::max<uint32_t>(1, P.depth.layers));
+    ri.layerCount = layer_count == UINT32_MAX ? 1 : layer_count;
     uint32_t last = 0;
     for (uint32_t i = 0; i < S.ncolor; ++i)
         if (colors[i].imageView) last = i + 1;
@@ -793,7 +807,9 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
                 if (nmissing < 32) missing[nmissing++] = {loc, in.type};
                 continue;
             }
-            if (in.type == ScalarType::Float && is_int_format(f)) f = scaled_for(f);
+            // a float input fed by an integer attribute gets the raw bits: the integer format stays and the pipeline patches the shader
+            // (spirv_int_attributes); stream-out draws use the shader's stream-out variant, which is not patched: scaled floats there
+            if (in.type == ScalarType::Float && is_int_format(f) && g_xfb_active) f = scaled_for(f);
             else if ((in.type == ScalarType::Uint || in.type == ScalarType::Sint) && !is_int_format(f))
                 log_once("attr-type-mismatch", "a vertex attribute with a float format feeds an integer shader input (needs a SPIR-V variant)");
             if (key.attr_count >= 16) break;
@@ -990,6 +1006,20 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_dirty & (kDesc | kPipe)) {
         g_want_depth_ro = samples_depth_target(*pl);
         prepare_textures(*pl);
+        if (g_trace) {   // [nvn] trace_dump_tex: also the block-compressed level 0 as the GPU holds it, to compare with the prepared data
+            static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
+            static std::unordered_map<uint32_t, bool> raw_done;
+            if (!dump_dir.empty()) {
+                for (const BindingDesc& d : pl->bindings) {
+                    if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+                    const TexResolved r = resolve_texture(d);
+                    if (!r.tex || !raw_done.emplace(r.tex->id, true).second) continue;
+                    end_pass();
+                    const int ri = snapshot_record_raw(r.tex, *F);
+                    if (ri >= 0) g_trace_snaps.push_back({ri, g_trace_n, dump_dir + "/gpu_t" + std::to_string(r.tex->id) + ".bin", "raw"});
+                }
+            }
+        }
         scene_upscale_for_draw(*pl);
     }
     if (!ensure_pass(g_want_depth_ro)) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
@@ -1035,14 +1065,31 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             }
             TRACE("    %s ubo%u %llx/%llu%s:%s", stg == kVertex ? "vs" : "fs", slot, static_cast<unsigned long long>(ub.addr), static_cast<unsigned long long>(ub.size), ur.ok ? "" : " (outside every pool)", words.c_str());
         }
+        TRACE("    viewport %u: %g %g %g %g depth %g..%g scissor %u: %d %d %d %d", S.nvp, S.vp[0][0], S.vp[0][1], S.vp[0][2], S.vp[0][3], S.dr[0][0], S.dr[0][1], S.nsc,
+              S.sc[0][0], S.sc[0][1], S.sc[0][2], S.sc[0][3]);
+        for (uint32_t i = 0; i < P.ncolor; ++i)
+            if (Texture* ct = S.color_tex[i].get())
+                TRACE("    rt%u t%u mem %p storage %llu cpu-dirty %d view level %u layer %u layers %u", i, ct->id, static_cast<void*>(ct->mem), static_cast<unsigned long long>(ct->storage_size),
+                      ct->cpu_dirty.load() ? 1 : 0, S.color_level[i], S.color_layer[i], S.color_layers[i]);
         g_trace_sampled.clear();
         for (const BindingDesc& d : pl->bindings) {
             if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
             const TexResolved r = d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? resolve_image(d) : resolve_texture(d);
             if (r.tex) g_trace_sampled.push_back(r.tex);
-            TRACE("    %s set%u b%u %s -> %s%s mem %d%%%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
-                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
-                  r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "");
+            if (r.tex) {
+                static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
+                if (!dump_dir.empty()) trace_dump_prepared(r.tex, dump_dir);
+            }
+            char smp[200] = "", vw[120] = "";
+            if (r.has_sampler)
+                std::snprintf(smp, sizeof smp, " | sampler min %d mag %d wrap %d,%d,%d lod %g..%g bias %g aniso %g cmp %d", r.smp.min_filter, r.smp.mag_filter, r.smp.wrap_s, r.smp.wrap_t,
+                              r.smp.wrap_r, r.smp.lod_min, r.smp.lod_max, r.smp.lod_bias, r.smp.max_anisotropy, r.smp.compare_mode);
+            if (r.has_view)
+                std::snprintf(vw, sizeof vw, " | view levels %d+%d layers %d+%d%s", r.view.has_levels ? r.view.min_level : -1, r.view.has_levels ? r.view.num_levels : -1,
+                              r.view.has_layers ? r.view.min_layer : -1, r.view.has_layers ? r.view.num_layers : -1, r.view.has_format ? " format" : "");
+            TRACE("    %s set%u b%u %s -> %s @%p%s mem %d%%%s%s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
+                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.tex ? static_cast<void*>(r.tex->mem) : nullptr, r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
+                  r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "", smp, vw);
         }
     }
     if (g_xfb_active) {
@@ -1158,7 +1205,17 @@ void trace_snap_after_draw() {
     }
 }
 
+// Counts a draw for the primitive counters, before the replay decides whether to skip it: the console generates the primitives of every
+// draw it runs, and a draw of a feedback section also writes them (14). A draw with rendering disabled is not run by the console: not counted.
+void count_primitives(uint32_t mode, uint32_t count, uint32_t instances) {
+    if (!S.render_enable) return;
+    const uint64_t prims = primitives_for(static_cast<int>(mode), count) * std::max<uint32_t>(1, instances);
+    g_prims_generated += prims;
+    if (g_xfb_active) g_prims_xfb += prims;
+}
+
 void do_draw_arrays(const P_DrawArrays& p) {
+    count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), false, 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
@@ -1197,8 +1254,30 @@ void do_draw_arrays(const P_DrawArrays& p) {
 }
 
 void do_draw_elements(const P_DrawElements& p) {
+    count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), true, static_cast<int>(p.type), &topo)) { counters().draws_skipped.fetch_add(1); return; }
+    if (g_trace) {   // the indices and the first attributes of the first vertices
+        const uint32_t isz0 = index_size_bytes(static_cast<int>(p.type));
+        const uint8_t* ix = host_ptr(p.index_address);
+        TRACE("    indexed: count %u type %d instances %u base_vertex %d base_instance %u index address %llx", p.count, static_cast<int>(p.type), p.instance_count, static_cast<int>(p.base_vertex),
+              p.base_instance, static_cast<unsigned long long>(p.index_address));
+        for (uint32_t i = 0; ix && i < std::min<uint32_t>(p.count, 12); ++i) {
+            uint32_t v = 0;
+            if (isz0 == 1) v = ix[i]; else if (isz0 == 2) { uint16_t t; std::memcpy(&t, ix + i * 2, 2); v = t; } else std::memcpy(&v, ix + i * 4, 4);
+            std::string a;
+            for (uint32_t k = 0; k < S.attr_count && k < 3; ++k) {
+                const VertexAttribInfo& at = S.attr[k];
+                const auto& st = S.stream[at.stream];
+                const GState::Bind& vb = S.vtx[at.stream];
+                if (!vb.addr) continue;
+                const float* f = reinterpret_cast<const float*>(vb.addr + static_cast<uint64_t>(static_cast<int64_t>(v) + p.base_vertex) * st.stride + at.relative_offset);
+                char t[96]; std::snprintf(t, sizeof t, " a%u(fmt %d)=(%g %g %g)", k, at.format, f[0], f[1], f[2]);
+                a += t;
+            }
+            TRACE("      index %u:%s", v, a.c_str());
+        }
+    }
     const uint32_t isz = index_size_bytes(static_cast<int>(p.type));
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
     const uint8_t* src = host_ptr(p.index_address);
@@ -1245,6 +1324,8 @@ void do_draw_elements(const P_DrawElements& p) {
 }
 
 void do_draw_indirect(const P_DrawIndirect& p) {
+    static bool noted_indirect = false;   // the primitive counts of indirect draws are not known to the replay: nothing is counted
+    if (!noted_indirect) { noted_indirect = true; note_unsupported("primitive counters (13, 14) do not count indirect draws"); }
     const bool indexed = p.type != 0xffffffffu;
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), indexed, indexed ? static_cast<int>(p.type) : 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
@@ -1437,6 +1518,7 @@ void do_copy_buffer_texture(const P_CopyBufTex& p, bool to_texture) {
     if (to_texture) {
         tex_ensure_current(t, *F);
         tex_transition(t, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        tev(t, "copy_buffer_to_texture", p.address, p.has_view ? 1 : 0);
         tex_mark_gpu_written(t);
         vkCmdCopyBufferToImage(F->cb, br.buffer, tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     } else {
@@ -1461,6 +1543,7 @@ void do_copy_texture_texture(const P_CopyTexTex& p) {
     const bool same = s == d;
     tex_transition(s, *F, same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     if (!same) tex_transition(d, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    tev(d, "copy_texture_to_texture", reinterpret_cast<uint64_t>(s), 0);
     tex_mark_gpu_written(d);
     const VkImageLayout sl = same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     const VkImageLayout dl = same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -1658,6 +1741,11 @@ void run_list(const CmdList& list, int depth) {
                     S.color_tex[i] = i < p.count ? Ref<Texture>::share(p.color[i].tex) : Ref<Texture>();
                     if (i < p.count) { S.color_view[i] = p.color[i].view; S.color_has_view[i] = p.color[i].has_view != 0; }
                     else S.color_has_view[i] = false;
+                    const TextureViewInfo& v = S.color_view[i];
+                    const bool hv = S.color_has_view[i];
+                    S.color_level[i] = hv && v.has_levels ? static_cast<uint32_t>(v.min_level) : 0;
+                    S.color_layer[i] = hv && v.has_layers ? static_cast<uint32_t>(v.min_layer) : 0;
+                    S.color_layers[i] = hv && v.has_layers ? static_cast<uint32_t>(v.num_layers) : (S.color_tex[i] ? static_cast<uint32_t>(S.color_tex[i]->layers) : 0u);
                 }
                 S.depth_tex = Ref<Texture>::share(p.depth.tex);
                 S.depth_view = p.depth.view;
@@ -1727,7 +1815,12 @@ void run_list(const CmdList& list, int depth) {
                     }
                     break;
                 }
-                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed (reported as non-zero)");
+                if (p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED || p.type == NVN_COUNTER_TYPE_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN) {
+                    rep.counter = p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED ? g_prims_generated : g_prims_xfb;
+                    if (p.address) do_write_memory(p.address, &rep, sizeof rep);
+                    break;
+                }
+                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed, primitives generated and feedback primitives written are reported as non-zero");
                 if (p.type == NVN_COUNTER_TYPE_TIMESTAMP) rep.counter = 0;
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
@@ -1748,6 +1841,10 @@ void run_list(const CmdList& list, int depth) {
                     vkCmdBeginQuery(F->cb, g_occ_pool, slot, device().features().occlusion_query_precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
                     g_occ_active = static_cast<int32_t>(slot);
                     g_occ_last = -1;
+                } else if (p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED) {
+                    g_prims_generated = 0;
+                } else if (p.type == NVN_COUNTER_TYPE_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN) {
+                    g_prims_xfb = 0;
                 }
                 break;
             }
@@ -1822,7 +1919,19 @@ void run_list(const CmdList& list, int depth) {
 void replay_begin_submit(Frame& f) {
     F = &f;
     if (extras::LowLatency* ll = extras::lowlat()) ll->submit_begin();     // RENDERSUBMIT_START of the frame (stream S14)
-    if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
+    if (g_trace_frame == -2) {
+        // [nvn] trace_frame = "6050" or "6050,9300": every listed presented frame is traced (the first one is the main one)
+        const std::string list = nxrt::config_get_str("nvn", "trace_frame", "");
+        g_trace_frame = -1;
+        size_t i = 0;
+        while (i < list.size()) {
+            size_t j = list.find(',', i);
+            if (j == std::string::npos) j = list.size();
+            const long long v = std::atoll(list.substr(i, j - i).c_str());
+            if (g_trace_frame < 0) g_trace_frame = v; else g_trace_extra.push_back(v);
+            i = j + 1;
+        }
+    }
     if (!g_trigger_read) {
         g_trigger_read = true;
         g_trigger_fs = nxrt::config_get_str("nvn", "trace_after_fs", "");
@@ -1841,7 +1950,8 @@ void replay_begin_submit(Frame& f) {
         }
     }
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
-    if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }
+    for (int64_t e : g_trace_extra) g_trace |= static_cast<int64_t>(counters().presents.load()) == e;
+    if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }
     S.window_origin = window_origin_mode();
     S.depth_mode = depth_mode();
     P = Pass();
@@ -1906,6 +2016,7 @@ void replay_shutdown() {
     g_occ_pool = VK_NULL_HANDLE;
     g_occ_tried = false;
     g_occ_active = g_occ_last = -1;
+    g_prims_generated = g_prims_xfb = 0;
     g_mask.shutdown();
     g_mask_ready = false;
     pipeline_shutdown();

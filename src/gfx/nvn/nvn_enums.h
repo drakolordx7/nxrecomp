@@ -27,6 +27,10 @@ VkPrimitiveTopology vk_topology(int nvn_draw_primitive);  // NVNdrawPrimitive; u
 enum class PrimConversion : uint8_t { None, LineLoop, Quads, QuadStrip, Polygon };
 PrimConversion prim_conversion(int nvn_draw_primitive);   // None for everything Vulkan has a topology for (fans included)
 
+// Primitives a draw of `count` vertices in this NVN mode generates, for the NVN_COUNTER_TYPE_PRIMITIVES_GENERATED counter (one instance).
+// The replay multiplies by the instance count. Unknown modes give 0.
+uint64_t primitives_for(int nvn_draw_primitive, uint32_t count);
+
 // Samplers
 VkFilter vk_mag_filter(int nvn_mag_filter);                         // NVNmagFilter
 VkFilter vk_min_filter(int nvn_min_filter);                         // NVNminFilter: the min part of the 6 values

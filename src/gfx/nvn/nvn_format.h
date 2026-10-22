@@ -36,5 +36,8 @@ const FormatInfo* format_at(int index);
 // The format of a vertex attribute (nvnVertexAttribStateSetFormat): the Vulkan vertex-buffer format, VK_FORMAT_UNDEFINED
 // for a value that is not a vertex format. Includes the integer, scaled (USCALED/SSCALED) and normalised forms NVN offers.
 VkFormat vertex_format(int nvn_format);
+// A Vulkan integer colour/vertex format (UINT or SINT of 8, 16 or 32 bits and the packed 2-10-10-10 forms), and whether it is the signed one.
+bool vk_format_is_integer(VkFormat f);
+bool vk_format_is_signed_int(VkFormat f);
 
 }  // namespace nxrt::nvn
