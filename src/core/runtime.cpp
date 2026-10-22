@@ -19,6 +19,7 @@
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
 #include "nxrt/symbols.h"
+#include "nxrt/tt.h"
 
 namespace nxrt {
 namespace {
@@ -50,6 +51,7 @@ bool init(const InitOptions& opt) {
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
+    tt::init();                 // test tooling (deterministic mode, scripted runs, traces); a no-op unless a [test] key asks for it
     g_up = ok;
     return ok;
 }
@@ -84,6 +86,7 @@ void shutdown() {
     std::lock_guard<std::mutex> lk(g_lock);
     if (!g_up) return;
     NXLOG_I("runtime", "end-of-run summary:\n%s", summary().c_str());
+    tt::shutdown();
     watchdog_stop();
     memguard_stop();
     log_flush();

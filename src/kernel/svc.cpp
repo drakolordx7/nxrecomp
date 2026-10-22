@@ -12,6 +12,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "nxrt/tt.h"
 
 namespace nxrt {
 namespace {
@@ -85,6 +86,7 @@ static void report_unknown(::Ctx* c, uint32_t number, uint64_t pc) {
 }
 
 void svc_dispatch(::Ctx* c, uint32_t number, uint64_t pc) {
+    if (tt::detail::svc_every.load(std::memory_order_relaxed)) tt::detail::on_svc(c);      // test tooling: frame_source = svc:N
     SvcHandler h = svc_handler(number);
     if (number < kSvcCount) g_calls[number].fetch_add(1, std::memory_order_relaxed);
     if (!h) {
