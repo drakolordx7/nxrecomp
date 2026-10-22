@@ -72,7 +72,8 @@ void nvnDeviceSetDebugLabel(NVNdevice*, const char*) {}
 
 void nvnDeviceGetInteger(const NVNdevice* device, NVNdeviceInfo info, int* out) {
     if (!out) return;
-    *out = be::host_of<be::Device>(device) ? device_info_value(static_cast<int>(info)) : 0;
+    (void)device;   // the values do not depend on the device (the game asks before and after nvnDeviceInitialize)
+    *out = device_info_value(static_cast<int>(info));
 }
 
 uint64_t nvnDeviceGetCurrentTimestampInNanoseconds(const NVNdevice* device) {

@@ -55,8 +55,8 @@ NXTEST(no_duplicates_and_every_enumerator_once) {
 NXTEST(known_switch_values) {
     int dups = 0;
     const auto t = fill_table(dups);
-    CHECK_EQ(value_of(t, NVN_DEVICE_INFO_API_MAJOR_VERSION), 53);
-    CHECK_EQ(value_of(t, NVN_DEVICE_INFO_API_MINOR_VERSION), 105);
+    CHECK_EQ(value_of(t, NVN_DEVICE_INFO_API_MAJOR_VERSION), 55);
+    CHECK_EQ(value_of(t, NVN_DEVICE_INFO_API_MINOR_VERSION), 15);
     CHECK_EQ(value_of(t, NVN_DEVICE_INFO_UNIFORM_BUFFER_BINDINGS_PER_STAGE), 14);
     CHECK_EQ(value_of(t, NVN_DEVICE_INFO_MAX_UNIFORM_BUFFER_SIZE), 65536);
     CHECK_EQ(value_of(t, NVN_DEVICE_INFO_UNIFORM_BUFFER_ALIGNMENT), 256);

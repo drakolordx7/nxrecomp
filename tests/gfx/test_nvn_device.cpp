@@ -122,9 +122,9 @@ NXTEST(device_get_integer_known_and_unknown_values) {
     get(&dev, NVN_DEVICE_INFO_MAX_TEXTURE_SIZE, &v);
     CHECK(v == 16384);
     get(&dev, NVN_DEVICE_INFO_API_MAJOR_VERSION, &v);
-    CHECK(v == 53);
+    CHECK(v == 55);
     get(&dev, NVN_DEVICE_INFO_API_MINOR_VERSION, &v);
-    CHECK(v == 105);
+    CHECK(v == 15);
     get(&dev, NVN_DEVICE_INFO_TEXTURE_BINDINGS_PER_STAGE, &v);
     CHECK(v == 32);
     get(&dev, NVN_DEVICE_INFO_MAX_TEXTURE_LAYERS, &v);
@@ -521,7 +521,7 @@ NXTEST(objects_that_are_not_ours_are_tolerated) {
     CHECK(P<NVNtextureHandle(const NVNdevice*, int, int)>("nvnDeviceGetTextureHandle")(&dev, 1, 2) == 0);
     int v = 77;
     P<void(const NVNdevice*, NVNdeviceInfo, int*)>("nvnDeviceGetInteger")(&dev, NVN_DEVICE_INFO_UNIFORM_BUFFER_ALIGNMENT, &v);
-    CHECK(v == 0);
+    CHECK(v == 256);   // device info does not depend on the device object (the game asks before nvnDeviceInitialize)
     CHECK(static_cast<int>(P<NVNwindowOriginMode(const NVNdevice*)>("nvnDeviceGetWindowOriginMode")(&dev)) == 0);
     CHECK(static_cast<int>(P<NVNdepthMode(const NVNdevice*)>("nvnDeviceGetDepthMode")(&dev)) == 0);
     CHECK(P<NVNdebugDomainId(const NVNdevice*, const char*)>("nvnDeviceGenerateDebugDomainId")(&dev, "x") == 0);
