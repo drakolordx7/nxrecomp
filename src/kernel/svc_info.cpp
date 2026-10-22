@@ -22,13 +22,13 @@ constexpr uint32_t kInvalidCombination = 0xE801;   // kernel result 116 (Invalid
 // Values Switchbrew does not document (it gives names only) are nxrt choices; the comment on each says where a value comes from.
 constexpr uint64_t kCoreMaskApp = 0x7;                          // nxrt: cores 0..2, the three application cores
 constexpr uint64_t kPriorityMaskApp = 0x0FFFFFFFF0000000ull;    // nxrt: bits 28..59 = HOS priorities 0x1C..0x3B (kernel.h: applications 28..59)
-constexpr uint64_t kAslrRegionAddress = 0x0008000000ull;       // brief value (Switchbrew: no value given)
-constexpr uint64_t kAslrRegionSize = 0x7FF8000000ull;           // brief value (Switchbrew: no value given)
-constexpr uint64_t kTotalMemoryAvailable = 0xCD500000ull;       // brief value: ~3.2 GiB, like an application ([memory] app_memory_mb overrides)
-constexpr uint64_t kUsedMemoryOverhead = 0x4000000ull;          // brief value: 64 MiB added to the heap size for "used"
-constexpr uint64_t kEntropyDefaultSeed = 0x1234567890ABCDEFull; // brief value
+constexpr uint64_t kAslrRegionAddress = 0x0008000000ull;       // chosen value (Switchbrew: no value given)
+constexpr uint64_t kAslrRegionSize = 0x7FF8000000ull;           // chosen value (Switchbrew: no value given)
+constexpr uint64_t kTotalMemoryAvailable = 0xCD500000ull;       // chosen value: ~3.2 GiB, like an application ([memory] app_memory_mb overrides)
+constexpr uint64_t kUsedMemoryOverhead = 0x4000000ull;          // chosen value: 64 MiB added to the heap size for "used"
+constexpr uint64_t kEntropyDefaultSeed = 0x1234567890ABCDEFull; // chosen value
 constexpr uint64_t kGoldenRatio64 = 0x9E3779B97F4A7C15ull;      // used to separate the four RandomEntropy subtypes
-constexpr uint64_t kDefaultProcessId = 0x51;                    // brief value (config [process] pid)
+constexpr uint64_t kDefaultProcessId = 0x51;                    // chosen value (config [process] pid)
 constexpr uint32_t kInfoThreadTickCountOld = 0xF0000002u;       // ThreadTickCount id on firmware 1.0.0-12.1.0 (Switchbrew)
 constexpr uint32_t kInfoThreadTickCount = 25;                   // ThreadTickCount id on firmware 12.1.0+ (Switchbrew table)
 constexpr uint64_t kProcessStateStarted = 2;                    // Switchbrew ProcessState 2 = Started (not debugged)
@@ -133,7 +133,7 @@ uint32_t get_system_info(uint32_t type, uint64_t sub, uint64_t& out) {
     switch (type) {
         case 0:                                                // TotalPhysicalMemorySize per pool
             switch (sub) {
-                case 0: out = 0x100000000ull; return kernel::kOk;   // Application: 4 GiB (brief value)
+                case 0: out = 0x100000000ull; return kernel::kOk;   // Application: 4 GiB (chosen value)
                 case 1: out = 0x20000000ull; return kernel::kOk;    // Applet: 512 MiB (nxrt choice)
                 case 2: out = 0x10000000ull; return kernel::kOk;    // System: 256 MiB (nxrt choice)
                 case 3: out = 0x10000000ull; return kernel::kOk;    // SystemUnsafe: 256 MiB (nxrt choice)
@@ -162,7 +162,7 @@ void system_info_get(::Ctx* c) {
 // LimitableResource: 0 PhysicalMemoryMax, 1 ThreadCountMax, 2 EventCountMax, 3 TransferMemoryCountMax, 4 SessionCountMax.
 bool resource_limit(uint64_t which, uint64_t& v) {
     switch (which) {
-        case 0: v = kTotalMemoryAvailable; return true;   // brief value
+        case 0: v = kTotalMemoryAvailable; return true;   // chosen value
         case 1: v = 0x200; return true;                   // nxrt choice
         case 2: v = 0x600; return true;                   // nxrt choice
         case 3: v = 0x80; return true;                    // nxrt choice

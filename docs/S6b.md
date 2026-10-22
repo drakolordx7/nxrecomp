@@ -1,6 +1,6 @@
 # S6b: boot integration, second pass
 
-Stream S6b of the Metroid Prime Remastered recompilation. Branch `boot2` (worktree `runtime-wt/boot2`, contains `nvn`), root repo `game-build/`, `tools/boot`, `.weaver/`. Debug notes 120 to 123.
+Work area S6b of the Metroid Prime Remastered recompilation. Branch `boot2` (worktree `runtime-wt/boot2`, contains `nvn`), root repo `game-build/`, `tools/boot`, `.weaver/`. Debug notes 120 to 123.
 
 ## Result (2026-10-22)
 
@@ -60,7 +60,7 @@ Checked: kernel_threads 3 unloaded and 12 loaded runs (2x logical cores of busy 
 | 9 | Back end unsupported operations during title, menu and loading: ClearDepthStencil with a partial stencil mask (21,806), storage image / texel buffer descriptors (7,037), occlusion/statistics counters (38), transform feedback buffers (38) | NVN back end | S4d |
 | 10 | Black background behind the menu (the front-end scene is a movie or 3D scene) | likely 7 and 9 | lead / S4d |
 
-## Decisions not in the brief
+## Decisions not in the plan
 
 - Headless back end by default: nothing pumps SDL events on the guest main thread yet; `[boot] gfx = window` creates the window for the integration to wire (the PC-feature stream owns the event loop and the frame limiter).
 - `fn_register` plus `module_override_symbol` for the loader instead of an entry hook: the lifter only emits entry-hook sites listed in a site file and none exists for the MPR modules.
@@ -72,4 +72,4 @@ Checked: kernel_threads 3 unloaded and 12 loaded runs (2x logical cores of busy 
 - No window, vsync or frame limiter in `mpr.exe` (headless ring).
 - The input source is the scripted ManualInputSource; real input is the input stream's.
 - The path after the loading screen is unseen (device lost).
-- game-build depends on the nvn-merged runtime (`nxrt/nvn_backend.h`): build with `MPR_RUNTIME=<boot2>` until the lead merges `nvn` into main.
+- game-build depends on the nvn-merged runtime (`nxrt/nvn_backend.h`): build with `MPR_RUNTIME=<boot2>` until `nvn` is merged into main.

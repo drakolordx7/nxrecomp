@@ -47,7 +47,7 @@ constexpr uint32_t kSizeKey = 0x49621806;      // XORed with the size in the hea
 constexpr uint32_t kFileKey = 0x06186249;      // XORed with every little-endian word of a BFTTF file (and its magic)
 
 // SharedFontType (Switchbrew): 0 Standard (Japan, US, Europe), 1 Chinese Simplified, 2 Extended Chinese Simplified, 3 Chinese Traditional,
-// 4 Korean, 5 Nintendo Extended. The dump file names are the ones of the console's font archive as the brief names them; ScarletNX and
+// 4 Korean, 5 Nintendo Extended. The dump file names are the ones of the console's font archive as they are named in it; ScarletNX and
 // Ryujinx call slot 2 FontExtendedChineseSimplified.
 constexpr const char* kDumpNames[kFontCount] = {
     "FontStandard.bfttf",          "FontChineseSimplified.bfttf", "FontChineseSimplifiedExtension.bfttf",
