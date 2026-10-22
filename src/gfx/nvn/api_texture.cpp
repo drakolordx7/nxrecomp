@@ -177,6 +177,7 @@ void read_linear(const Target& r, const NVNcopyRegion& g, uint8_t* dst, int64_t 
 void write_texels(const Target& r, const NVNcopyRegion& g, const uint8_t* src, int64_t row, int64_t image) {
     if (r.L.block_linear) write_block_linear(r, g, src, row, image);
     else write_linear(r, g, src, row, image);
+    be::tev(r.t, "write_texels");
     r.t->cpu_dirty.store(true);
     gpu::mark_texture_cpu_dirty(r.t);
 }
@@ -215,12 +216,14 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
     }
     be::bind_guest(texture, t);                              // the guest object takes the one reference of t
     be::texture_registry_add(t);
+    be::tev(t, "init", static_cast<uint64_t>(info.offset), t->storage_size);
     return 1;
 }
 
 void nvnTextureFinalize(NVNtexture* texture) {
     Texture* t = tex_of(texture);
     if (!t) return;
+    be::tev(t, "finalize");
     t->destroyed.store(true);
     be::texture_registry_remove(t);
     be::unbind_guest(texture);
@@ -378,6 +381,7 @@ void nvnTextureFlushTexels(const NVNtexture* texture, const NVNtextureView* view
     (void)region;
     Texture* t = tex_of(texture);
     if (!t || !t->mem) return;
+    be::tev(t, "flush_texels");
     t->cpu_dirty.store(true);
     gpu::mark_texture_cpu_dirty(t);
 }

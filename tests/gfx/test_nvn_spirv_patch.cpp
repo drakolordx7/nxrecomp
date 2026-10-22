@@ -377,3 +377,56 @@ NXTEST(outputs_to_private_on_real_fragment_shader) {
     CHECK(!gpu::spirv_outputs_to_private(vs, keep));
     CHECK(keep.size() == 2);
 }
+
+// The geometry shader 80271a63 of the environment cube blend (one cube face per layer): a console passthrough geometry shader. Its translation sets
+// the position and gl_Layer only; without the passthrough rewrite the fragment shader's Location 0 (u, v, layer) was an output nobody wrote and the
+// blended cube came out as garbage (the rainbow noise on the Frigate; docs/S4f.md).
+NXTEST(gs_passthrough_copies_the_input_vertices) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> in;
+    if (!load_hash("80271a630230f99a", in)) {
+        nxtest::skip("geometry shader 80271a630230f99a not in the shader cache");
+        return;
+    }
+    auto count_op = [](const std::vector<uint32_t>& w, uint32_t op) {
+        size_t n = 0;
+        for (size_t i = 5; i < w.size();) {
+            const uint32_t len = w[i] >> 16;
+            if (!len || i + len > w.size()) break;
+            n += (w[i] & 0xffff) == op;
+            i += len;
+        }
+        return n;
+    };
+    const std::vector<gpu::SpvOutputSlot> slots = {{0, gpu::SpvScalar::Float}};
+    std::vector<uint32_t> out;
+    REQUIRE(gpu::spirv_gs_passthrough(in, slots, out));
+    CHECK_EQ(count_op(out, 62), count_op(in, 62) + 3);       // OpStore: one copy per emitted vertex
+    CHECK_EQ(count_op(out, 218), size_t(3));                 // OpEmitVertex untouched
+
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_gs", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+    ShaderReflection r;
+    std::string err;
+    CHECK_MSG(reflect(out, r, err), err);
+    CHECK(r.stage == ShaderStage::Geometry);
+    const ShaderIo* o = find_io(r.outputs, 0);
+    CHECK_MSG(o != nullptr, "no output at Location 0");
+
+    // no Input at the Location: refused, output untouched; an integer slot: refused
+    const std::vector<uint32_t> keep = {0xdeadbeefu, 7u};
+    std::vector<uint32_t> out2 = keep;
+    CHECK(!gpu::spirv_gs_passthrough(in, {{7, gpu::SpvScalar::Float}}, out2));
+    CHECK(out2 == keep);
+    CHECK(!gpu::spirv_gs_passthrough(in, {{0, gpu::SpvScalar::Uint}}, out2));
+    CHECK(out2 == keep);
+    // a vertex shader is no passthrough geometry shader
+    std::vector<uint32_t> vs;
+    REQUIRE(load_hash(kVertexHash, vs));
+    CHECK(!gpu::spirv_gs_passthrough(vs, slots, out2));
+    CHECK(out2 == keep);
+}

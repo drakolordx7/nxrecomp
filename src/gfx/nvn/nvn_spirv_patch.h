@@ -33,6 +33,13 @@ struct SpvOutputSlot {
 // Returns false (out untouched) when the module cannot be rewritten (malformed, no entry point, a slot that already has an output).
 bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOutputSlot>& slots, std::vector<uint32_t>& out);
 
+// A geometry shader the translator made for a console "passthrough" geometry shader (the hardware copies every attribute of the input
+// vertices to the output vertices; the shader code only sets the position and gl_Layer, so its translation writes no Location output at
+// all). Adds the outputs for `slots` like spirv_add_outputs and makes the k-th OpEmitVertex copy the input at the same Location of vertex k.
+// Needs an Input array [3] of vec4 at each slot's Location and exactly three OpEmitVertex in a module with triangle input. False (out
+// untouched) otherwise; the caller then uses spirv_add_outputs.
+bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<SpvOutputSlot>& slots, std::vector<uint32_t>& out);
+
 // Moves the fragment output at Location 1 to Location 0, Index 1. False (out untouched) when the module has no such output.
 bool spirv_dual_source_output(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);
 
