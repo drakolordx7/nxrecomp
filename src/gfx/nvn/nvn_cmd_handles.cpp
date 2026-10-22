@@ -153,7 +153,11 @@ const char* op_name(Op op) {
     "CallCommands",
     "DiscardColor",
     "DiscardDepthStencil",
-    "ResolveDepth"};
+    "ResolveDepth",
+    "BeginXfb",
+    "EndXfb",
+    "PauseXfb",
+    "ResumeXfb"};
     const size_t i = static_cast<size_t>(op);
     return i < sizeof(kNames) / sizeof(kNames[0]) ? kNames[i] : "?";
 }
