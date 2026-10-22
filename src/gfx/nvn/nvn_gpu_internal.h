@@ -17,8 +17,13 @@
 #include <volk.h>
 
 #include "nxrt/gfx.h"
+#include "nvn_present_pass.h"
 #include "nvn_core.h"
 #include "nvn_gpu.h"
+
+namespace nxrt {
+class FrameLimiter;
+}
 
 namespace nxrt::nvn::be::gpu {
 
@@ -97,6 +102,7 @@ VkBuffer dummy_buffer();
 uint64_t pool_imports();          // statistics
 // Called from destroy_pool_gpu on the render thread.
 void pool_gpu_destroy(PoolGpu* p);
+void pool_shutdown();             // destroys every imported pool still alive and the dummy buffer (device idle)
 
 // ---- textures --------------------------------------------------------------------------------------------------------------
 // What a binding site needs to see of a texture.
@@ -152,6 +158,14 @@ void replay_begin_submit(Frame& f);
 void replay_lists(Frame& f, const std::vector<Ref<CmdList>>& lists);
 void replay_end_submit(Frame& f);
 void replay_shutdown();           // destroys pipelines and layouts (render thread, device idle)
+
+// ---- shared facts (nvn_gpu.cpp) ----------------------------------------------------------------------------------------
+int window_origin_mode();
+int depth_mode();
+gfx::Renderer* renderer();
+FrameLimiter* limiter();
+PresentPass* present_pass();
+bool keep_aspect();
 
 // ---- present -----------------------------------------------------------------------------------------------------------
 void present_on_render_thread(Window* w, int index);

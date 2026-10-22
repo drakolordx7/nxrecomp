@@ -104,11 +104,17 @@ NVNdebugDomainId nvnDeviceGenerateDebugDomainId(const NVNdevice* device, const c
 }
 
 void nvnDeviceSetWindowOriginMode(NVNdevice* device, NVNwindowOriginMode mode) {
-    if (be::Device* dev = be::host_of<be::Device>(device)) dev->window_origin = static_cast<int>(mode);
+    if (be::Device* dev = be::host_of<be::Device>(device)) {
+        dev->window_origin = static_cast<int>(mode);
+        be::gpu::set_window_modes(dev->window_origin, dev->depth_mode);
+    }
 }
 
 void nvnDeviceSetDepthMode(NVNdevice* device, NVNdepthMode mode) {
-    if (be::Device* dev = be::host_of<be::Device>(device)) dev->depth_mode = static_cast<int>(mode);
+    if (be::Device* dev = be::host_of<be::Device>(device)) {
+        dev->depth_mode = static_cast<int>(mode);
+        be::gpu::set_window_modes(dev->window_origin, dev->depth_mode);
+    }
 }
 
 NVNboolean nvnDeviceRegisterFastClearColor(NVNdevice* device, const float*, NVNformat) {

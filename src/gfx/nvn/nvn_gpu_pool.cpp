@@ -5,6 +5,8 @@
 // the same pages. Measured on the RTX 3080 and the UHD 770 with MapViewOfFile views: imports work with 4096-byte alignment,
 // and GPU writes are visible through every view of the section.
 #include <mutex>
+#include <vector>
+#include <new>
 #include <unordered_set>
 
 #include "nxrt/log.h"
@@ -35,6 +37,8 @@ gfx::Buffer g_dummy_buf;
 std::once_flag g_dummy_once;
 std::mutex g_log_mu;
 std::unordered_set<uint64_t> g_logged;
+std::mutex g_live_mu;
+std::unordered_set<PoolGpu*> g_live;
 
 PoolGpu* import_pool(MemoryPool* p) {
     auto* g = new PoolGpu();
@@ -94,6 +98,7 @@ PoolGpu* import_pool(MemoryPool* p) {
         return g;
     }
     counters().pools_imported.fetch_add(1);
+    { std::lock_guard<std::mutex> lk(g_live_mu); g_live.insert(g); }
     NXLOG_D(kTag, "pool %p imported: 0x%llx bytes, memory type %u", static_cast<void*>(g->base), static_cast<unsigned long long>(size), ty);
     return g;
 }
@@ -148,10 +153,27 @@ BufRef resolve_buffer(uint64_t gpu_address, uint64_t size) {
     return out;
 }
 
+void pool_shutdown() {
+    std::vector<PoolGpu*> left;
+    {
+        std::lock_guard<std::mutex> lk(g_live_mu);
+        left.assign(g_live.begin(), g_live.end());
+    }
+    for (PoolGpu* p : left) pool_gpu_destroy(p);
+    if (g_dummy_buf.buffer) device().destroy_buffer(g_dummy_buf);
+    g_dummy = VK_NULL_HANDLE;
+    g_dummy_buf = gfx::Buffer();
+    new (&g_dummy_once) std::once_flag();
+}
+
 uint64_t pool_imports() { return counters().pools_imported.load(); }
 
 void pool_gpu_destroy(PoolGpu* p) {
     if (!p) return;
+    {
+        std::lock_guard<std::mutex> lk(g_live_mu);
+        if (!g_live.erase(p) && !p->failed) return;   // already destroyed by pool_shutdown
+    }
     gfx::Device& dev = device();
     if (p->buffer) vkDestroyBuffer(dev.device(), p->buffer, nullptr);
     if (p->mem) vkFreeMemory(dev.device(), p->mem, nullptr);
