@@ -19,8 +19,8 @@ Fetched into this folder (git-ignored by `tools/textures/.gitignore`). Nothing h
 - `bc7e.ispc`: Apache-2.0 (per LICENSE: "bc7e.ispc uses the Apache 2.0 license and is Copyright (C) 2018-2021 Binomial LLC"). The file header says "Copyright (C) 2018-2020 Binomial LLC ... Apache 2.0 license - see LICENSE." The years differ between LICENSE and the header.
 - Everything else in the repo: LICENSE says "All other source code files in this repo are available under 2 licenses -- choose whichever you prefer": Alternative A MIT (Copyright 2020-2021 Richard Geldreich, Jr.) or Alternative B public domain (Unlicense wording). `bc7enc.cpp` header: "MIT license or public domain".
 - `lodepng.cpp` / `lodepng.h`: LodePNG, Copyright 2005-2016 Lode Vandevenne, zlib-style licence text included in LICENSE.
-- Note: the repo ships a prebuilt `ispc.exe` (third_party/bc7enc_rdo/ispc.exe). NOT used. The official ISPC below is used instead.
-- Note: LICENSE contains no SPDX identifiers; the SPDX names above are read from the text.
+- The repo also ships a prebuilt `ispc.exe` (third_party/bc7enc_rdo/ispc.exe). It is not used; the official ISPC below is used instead.
+- LICENSE contains no SPDX identifiers, so the SPDX names above are read from the text.
 
 ## ISPC compiler (Intel Corporation)
 

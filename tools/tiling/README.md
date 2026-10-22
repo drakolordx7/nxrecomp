@@ -13,7 +13,7 @@ between the Switch GPU's block-linear texture layout and plain rows, for every l
   `linear_stride_align = 1` gives tight rows.
 - Block height is an input. Packaged (BNTX) textures carry their own value (BRTI +0x34, `1 << (layout & 7)`), which is
   often one step smaller than `default_gob_blocks_y()`; use the file's (see `refs\SuperMarioWonderRecomp\docs\nvn\TILING.md`).
-- Not covered: tile width above 1 (`gobBlocksInTileX`), 3D arrays, pitch-linear textures. Single-threaded, 4.5 to 5 GB/s on a
+- Not covered: tile width above 1 (`gobBlocksInTileX`), 3D arrays, pitch-linear textures. The code is single-threaded: 4.5 to 5 GB/s on a
   4096x4096 RGBA8 level on the i9-12900K (`tiling_test bench`).
 
 ```cpp
