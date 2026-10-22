@@ -31,6 +31,7 @@ struct AimLayout {
     uint32_t morph_state = 0x4d4;            // 0 = unmorphed (GetMorphBallTransitionState 0xc686fc)
     uint32_t orbit_state = 0x4e0;            // EPlayerOrbitState, 0 = none (SetOrbitState 0xc77e5c)
     uint32_t free_look_pitch = 0x5cc;        // float radians, + = up
+    uint32_t free_look_target = 0x5d0;       // float radians: the pitch CPlayerMP1::UpdateFreeLook (every Think) eases free_look_pitch toward; the input code sets it from the stick
     // CStateManager -> CStateManagerGameLogicMP1 -> CCameraManagerMP1
     uint32_t mgr_logic = 0x4e0150, logic_camera_mgr = 0x30;
     uint32_t cam_current_id = 0x00, cam_cinematic = 0x08, cam_cinematic2 = 0x18, cam_fp_object = 0x80, fp_object_id = 0x10;   // IsInFPCamera 0xc8c95c, IsInCinematicCamera 0xc8c974

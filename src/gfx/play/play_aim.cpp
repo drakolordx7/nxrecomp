@@ -169,6 +169,7 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
     if (original) original();
     const float out = static_cast<float>(pitch_);
     guest_write(player + l_.free_look_pitch, &out, sizeof out);
+    guest_write(player + l_.free_look_target, &out, sizeof out);      // else Think eases the view back toward the stick's (zero) target
     ++applied_;
     return true;
 }
