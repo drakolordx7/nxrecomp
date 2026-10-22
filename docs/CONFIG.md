@@ -80,6 +80,14 @@ Rules:
 | `fatal` | `terminate` | `true` | `NXRT_FATAL_TERMINATE` | `src/services/logfault.cpp` | `true` ends the process with exit code 5 after a fatal report. `false` returns. |
 | `net` | `offline` | `true` | `NXRT_NET_OFFLINE` | `src/services/network.cpp` | `true`: no connection, no friends and no BCAT data (the start-up log line says so). |
 | `pl` | `font_dir` | empty | `NXRT_PL_FONT_DIR` | `src/services/pl.cpp` | Folder searched first for `DejaVuSans.ttf` and the shared font dumps. Empty: the search goes on to `fonts\` next to the exe, then `assets\fonts\` under the working directory, then the exe's folder. |
+| `play` | `controls` | `controls.ini` | `NXRT_PLAY_CONTROLS` | `src/gfx/play/play.cpp` | Settings file of play mode (controls, sensitivity, display); written with the factory settings when missing. |
+| `play` | `capture_mouse` | `true` | `NXRT_PLAY_CAPTURE_MOUSE` | `src/gfx/play/play.cpp` | Capture the pointer (relative mode) while the game is in play. |
+| `play` | `pitch_limit_deg` | `0` | `NXRT_PLAY_PITCH_LIMIT_DEG` | `src/gfx/play/play.cpp` | Pitch limit of the mouse aim in degrees; 0 uses the game's tweak value. |
+| `play` | `quit_on_close` | `true` | `NXRT_PLAY_QUIT_ON_CLOSE` | `src/gfx/play/play.cpp` | Closing the window ends the process. |
+| `play` | `game_base` | `0x7100000000` | `NXRT_PLAY_GAME_BASE` | `src/gfx/play/play.cpp` | Base of the game's main module (hook addresses). |
+| `play` | `log_status` | `false` | `NXRT_PLAY_LOG_STATUS` | `src/gfx/play/play.cpp` | One status line per second in the log. |
+| `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
+| `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
 
 ### Audio notes

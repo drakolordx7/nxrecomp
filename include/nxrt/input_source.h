@@ -128,4 +128,12 @@ private:
     InputSnapshot snap_;
 };
 
+// Vibration the game sends to a pad (nn::hid SendVibrationValue / SendVibrationValues): the newest value for one hand of one pad. The play-mode
+// layer registers a sink that turns it into SDL rumble. The sink is called on the thread that handled the IPC command; it must be quick.
+struct VibrationValue {
+    float amp_low = 0, freq_low = 160.0f, amp_high = 0, freq_high = 320.0f;   // amplitudes 0..1, frequencies in Hz
+};
+using VibrationSink = void (*)(uint32_t npad_slot, int hand, const VibrationValue& v, void* user);   // hand 0 = left (or the only one), 1 = right
+void set_vibration_sink(VibrationSink fn, void* user = nullptr);        // nullptr removes it
+
 }  // namespace nxrt::hid

@@ -77,6 +77,8 @@ struct State {
     void* shot_user = nullptr;
     ExitFn exit_fn = nullptr;
     MouseSinkFn mouse_sink = nullptr;
+    KeySinkFn key_sink = nullptr;
+    std::vector<std::string> keys_down;      // names the key steps pressed and not yet released (released when the run ends)
     LARGE_INTEGER qpf{}, t_last{}, t_start{};
     double last_ms = 0;
     uint64_t last_mem_frame = 0;
@@ -91,6 +93,14 @@ struct State {
 State& S() {
     static State* s = new State;                  // never destroyed: threads may still touch it at exit
     return *s;
+}
+
+// Releases the keys the key steps left down (the run ended or the tooling shut down). Called with s.mu held.
+void release_held_keys(State& s) {
+    std::vector<std::string> keys;
+    keys.swap(s.keys_down);
+    if (!s.key_sink) return;
+    for (const std::string& k : keys) s.key_sink(k.c_str(), false);
 }
 
 uint64_t splitmix(uint64_t x) {
@@ -426,6 +436,7 @@ void shutdown() {
     s.stop_wall = true;
     if (s.wall_thread.joinable()) s.wall_thread.join();
     detail::svc_every.store(0);
+    release_held_keys(s);
     if (!s.finished) {
         s.finished = true;
         s.exit_code = 0;
@@ -453,6 +464,7 @@ void set_live_pad(const PadFrame& p) { S().live_pad = p; }
 void set_screenshot_provider(ScreenshotFn fn, void* user) { S().shot_fn = fn; S().shot_user = user; }
 void set_exit_handler(ExitFn fn) { S().exit_fn = fn; }
 void set_mouse_sink(MouseSinkFn fn) { S().mouse_sink = fn; }
+void set_key_sink(KeySinkFn fn) { S().key_sink = fn; }
 
 void reset_for_tests() {
     State& s = S();
@@ -463,12 +475,14 @@ void reset_for_tests() {
     detail::svc_every.store(0);
     ExitFn keep = s.exit_fn;
     MouseSinkFn keep_m = s.mouse_sink;
+    KeySinkFn keep_k = s.key_sink;
     ScreenshotFn sf = s.shot_fn;
     void* su = s.shot_user;
     s.~State();
     new (&s) State;
     s.exit_fn = keep;
     s.mouse_sink = keep_m;
+    s.key_sink = keep_k;
     s.shot_fn = sf;
     s.shot_user = su;
     detail::set_game_base(detail::kDefaultGameBase);
@@ -547,6 +561,19 @@ void add_checkpoint(const std::string& label) {
     NXLOG_I("tt", "checkpoint '%s' at frame %llu hash %016llx", label.c_str(), static_cast<unsigned long long>(c.frame), static_cast<unsigned long long>(c.hash));
 }
 
+bool key_event(const std::string& name, bool down) {
+    State& s = S();
+    if (!s.key_sink) return false;
+    if (!s.key_sink(name.c_str(), down)) return false;
+    auto it = std::find(s.keys_down.begin(), s.keys_down.end(), name);
+    if (down) {
+        if (it == s.keys_down.end()) s.keys_down.push_back(name);
+    } else if (it != s.keys_down.end()) {
+        s.keys_down.erase(it);
+    }
+    return true;
+}
+
 bool take_shot(const std::string& name, std::string* why_not) {
     State& s = S();
     const std::string path = join(s.shot_dir, name + ".png");
@@ -578,6 +605,7 @@ void end_run(int code, const char* verdict, const std::string& message) {
         s.message = message;
         s.stop_wall = true;
         NXLOG_I("tt", "run ended: %s (exit code %d) %s", verdict, code, message.c_str());
+        release_held_keys(s);
         write_result(s, code, verdict, message);
         flush_files(s);
         if (s.trace) std::fflush(s.trace);
@@ -643,7 +671,7 @@ void frame_boundary(::Ctx* c) {
     }
     if (s.recording) s.rec.record(k, s.recording && (s.replaying || s.runner_on) ? s.pad : live);
     // 4. publish
-    detail::publish_pad(s.pad, s.replaying || s.runner_on);
+    detail::publish_pad(s.pad, s.replaying || s.runner_on, s.runner_on && s.runner.has_key_steps());
     if ((s.pad.mouse_dx != 0 || s.pad.mouse_dy != 0) && s.mouse_sink && (s.replaying || s.runner_on)) s.mouse_sink(s.pad.mouse_dx, s.pad.mouse_dy);
     if (s.max_frames && k + 1 >= s.max_frames && !s.finished) end_run(1, "fail", "frame budget (max_frames) exhausted");
 }
