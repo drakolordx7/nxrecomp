@@ -59,6 +59,23 @@ void textures_cpu_wrote(const void* lo, uint64_t size) {
     }
 }
 
+Ref<Texture> texture_registry_find_alias(const Texture* t) {
+    if (!t || !t->mem || t->is_display) return Ref<Texture>();
+    std::lock_guard<std::mutex> lk(g_mu);
+    auto r = g_by_start.equal_range(reinterpret_cast<uint64_t>(t->mem));
+    for (auto it = r.first; it != r.second; ++it) {
+        Texture* o = it->second;
+        if (o == t || o->destroyed.load() || !o->gpu) continue;
+        if (o->storage_size != t->storage_size || o->levels != t->levels || o->layers != t->layers || o->fmt != t->fmt || o->block_linear != t->block_linear ||
+            o->block_height_gobs != t->block_height_gobs || o->b.target != t->b.target || o->b.width != t->b.width || o->b.height != t->b.height ||
+            o->b.depth != t->b.depth || o->b.samples != t->b.samples)
+            continue;
+        o->ref();
+        return Ref<Texture>(o);
+    }
+    return Ref<Texture>();
+}
+
 size_t texture_registry_size() {
     std::lock_guard<std::mutex> lk(g_mu);
     return g_by_start.size();

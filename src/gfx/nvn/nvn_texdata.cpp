@@ -338,6 +338,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     uint64_t key = 0;
     const VkFormat rgba8_format = fmt.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     bool entry_applies = false;   // the cache file of the key holds the output format the mode needs
+    VkFormat entry_format = VK_FORMAT_UNDEFINED;   // the format a valid cache file of the key declares
     if (fmt.astc) {
         if (caps.astc) mode = Mode::Passthrough;
         else if (caps.bc7_transcode) mode = Mode::Bc7;
@@ -348,6 +349,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
             key = cache_key_of(t, L, geo, fmt, bc7_quality());
             cache_file = bc7_cache_path(t, key);
             const VkFormat ef = cache_peek_format(cache_file, key);
+            entry_format = ef;
             const VkFormat bc7_format = fmt.srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
             const VkFormat bc5_format = VK_FORMAT_BC5_UNORM_BLOCK;
             const VkFormat want = caps.image_format;   // UNDEFINED: whatever the entry has
@@ -439,7 +441,8 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         }
         if (mode == Mode::Bc5) return fail("the BC5 cache entry could not be read");
     }
-    if (!bc7) cache_file.clear();   // only BC7 results are written to the cache
+    // only BC7 results are written to the cache, and never over a valid entry of another format (RGBA8 / BC5 entries come from the setup tool)
+    if (!bc7 || (entry_format != VK_FORMAT_UNDEFINED && entry_format != out.format)) cache_file.clear();
 
     // ---- the source image: tight linear buffer --------------------------------------------------------------------------
     const LevelGeom& last = geo.back();

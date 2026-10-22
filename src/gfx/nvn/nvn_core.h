@@ -181,6 +181,10 @@ void texture_registry_add(Texture* t);
 void texture_registry_remove(Texture* t);
 void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
 size_t texture_registry_size();
+// Another initialized texture whose storage starts at the same address and has the same shape (target, size, levels, format, layout),
+// that already has a GPU image: the game makes several texture objects over one piece of memory (one per mip level of a cube map it
+// renders, and the one the materials sample), and on the console they are the same bytes. Null when there is none.
+Ref<Texture> texture_registry_find_alias(const Texture* t);
 // [nvn] trace_tex_events = 1: logs the life of block-compressed 128x128 cube textures (init, writes by the CPU, copies, uploads) as nvn.tev lines.
 void tev(const Texture* t, const char* what, uint64_t a = 0, uint64_t b = 0);
 
