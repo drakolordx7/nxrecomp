@@ -245,10 +245,16 @@ class AudioRendererManager {
 
     // C# SendCommands (the worker main function): dispatches every session's commands to the AudioProcessor, one frame at a time.
     void SendCommandsWorker() {
+        BoostAudioThread();
+        TimerResolutionScope::Acquire();
         NXLOG_I("AudioRenderer", "Starting audio renderer");
         Processor.Wait();
 
+        int stallLogs = 0;
+
         while (_isRunning.load()) {
+            const auto frameStart = std::chrono::steady_clock::now();
+
             {
                 std::lock_guard<std::mutex> guard(_sessionLock);
 
@@ -259,9 +265,24 @@ class AudioRendererManager {
                 }
             }
 
+            const auto generated = std::chrono::steady_clock::now();
+
             Processor.Signal();
             Processor.Wait();
+
+            // Diagnostics, not in the C#: a frame that took long to generate (waiting for the renderer's lock, which the guest's update holds)
+            // or to render and pace is where a sound card would starve.
+            const auto frameEnd = std::chrono::steady_clock::now();
+            const double generateMs = std::chrono::duration<double, std::milli>(generated - frameStart).count();
+            const double restMs = std::chrono::duration<double, std::milli>(frameEnd - generated).count();
+
+            if ((generateMs > 15.0 || restMs > 60.0) && stallLogs < 40) {
+                stallLogs++;
+                NXLOG_W("AudioRenderer", "slow frame: generating the commands took %.1f ms, rendering and waiting %.1f ms", generateMs, restMs);
+            }
         }
+
+        TimerResolutionScope::Release();
     }
 
     // C# Register: adds the session to the table and starts the processor if needed.

@@ -2,7 +2,12 @@
 // 16-bit PCM WAV writer (WavWriter) and the tee sink behind [audio] wav_dump (include/nxrt/audio_sink.h).
 // The header is written with zero sizes, then patched: at the first write() that brings the data past another second of audio and
 // at close(). Every patch flushes the data before it, so the sizes in the header never claim bytes that are not in the file.
+#include <algorithm>
+#include <condition_variable>
 #include <cstdio>
+#include <deque>
+#include <mutex>
+#include <thread>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -43,41 +48,68 @@ private:
     std::vector<uint8_t> bytes_;
 };
 
-// Tee: forwards every call to the inner sink and writes the frames that go to write() into a WAV file.
+// Tee: forwards every call to the inner sink and writes the frames that go to write() into a WAV file. The file is written by a thread of
+// its own: write() runs on the audio renderer's thread, and a disk that stalls for a while (a busy machine, a full write cache) must not
+// make the renderer miss its frame. write() only copies the frames into a queue; close() waits until the queue is on disk.
 class WavTeeSink final : public AudioSink {
 public:
     WavTeeSink(std::shared_ptr<AudioSink> inner, std::string path)
-        : inner_(std::move(inner)), path_(std::move(path)), name_(std::string(inner_->name()) + "+wav") {}
-    ~WavTeeSink() override { close(); }
+        : inner_(std::move(inner)), path_(std::move(path)), name_(std::string(inner_->name()) + "+wav") {
+        thread_ = std::thread([this] { run(); });
+    }
+    ~WavTeeSink() override {
+        close();
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            quit_ = true;
+        }
+        cv_.notify_all();
+        thread_.join();
+    }
 
     bool open(uint32_t rate, uint32_t channels) override {
         const bool ok = inner_->open(rate, channels);
         // The file is kept while the format stays the same; a different format (or a reopen after close) starts a numbered file.
-        if (!wav_.is_open() || wav_.sample_rate() != rate || wav_.channels() != channels) {
-            wav_.close();
-            const std::string file = file_for(next_index_++);
-            if (wav_.open(file, rate, channels)) {
-                NXLOG_I("audio", "wav_dump: writing %s (%u Hz, %u channels)", file.c_str(), rate, channels);
-            } else {
-                NXLOG_W("audio", "wav_dump: cannot create %s", file.c_str());
-            }
+        if (!file_open_ || rate_ != rate || channels_ != channels) {
+            Job j;
+            j.kind = Job::Close;
+            push(std::move(j));
+            Job o;
+            o.kind = Job::Open;
+            o.path = file_for(next_index_++);
+            o.rate = rate;
+            o.channels = channels;
+            push(std::move(o));
+            file_open_ = true;
+            rate_ = rate;
+            channels_ = channels;
         }
         return ok;
     }
 
     void close() override {
         inner_->close();
-        wav_.close();
+        Job j;
+        j.kind = Job::Close;
+        push(std::move(j));
+        file_open_ = false;
+        drain();
         NXLOG_I("audio", "%s", format_stats(name_.c_str(), stats()).c_str());
     }
 
     uint32_t write(const int16_t* pcm, uint32_t frames) override {
         frames_written_ += frames;
-        wav_.write(pcm, frames);   // every frame, whether or not the inner sink queues it
+        if (file_open_ && channels_ != 0) {   // every frame, whether or not the inner sink queues it
+            Job j;
+            j.kind = Job::Data;
+            j.pcm.assign(pcm, pcm + static_cast<size_t>(frames) * channels_);
+            push(std::move(j));
+        }
         return inner_->write(pcm, frames);
     }
 
     uint32_t queued_frames() override { return inner_->queued_frames(); }
+    bool has_device_clock() const override { return inner_->has_device_clock(); }
     const char* name() const override { return name_.c_str(); }
 
     SinkStats stats() override {
@@ -87,6 +119,61 @@ public:
     }
 
 private:
+    struct Job {
+        enum Kind { Open, Data, Close } kind = Data;
+        std::string path;
+        uint32_t rate = 0, channels = 0;
+        std::vector<int16_t> pcm;
+    };
+
+    void push(Job&& j) {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            queue_.push_back(std::move(j));
+        }
+        cv_.notify_one();
+    }
+
+    // Waits until the writer thread has handled everything queued so far.
+    void drain() {
+        std::unique_lock<std::mutex> lk(mu_);
+        idle_cv_.wait(lk, [this] { return queue_.empty() && !busy_; });
+    }
+
+    void run() {
+        for (;;) {
+            Job j;
+            {
+                std::unique_lock<std::mutex> lk(mu_);
+                cv_.wait(lk, [this] { return quit_ || !queue_.empty(); });
+                if (queue_.empty()) return;   // quit_ and nothing left
+                j = std::move(queue_.front());
+                queue_.pop_front();
+                busy_ = true;
+            }
+            switch (j.kind) {
+                case Job::Open:
+                    if (wav_.open(j.path, j.rate, j.channels)) {
+                        NXLOG_I("audio", "wav_dump: writing %s (%u Hz, %u channels)", j.path.c_str(), j.rate, j.channels);
+                    } else {
+                        NXLOG_W("audio", "wav_dump: cannot create %s", j.path.c_str());
+                    }
+                    break;
+                case Job::Data:
+                    wav_.write(j.pcm.data(), static_cast<uint32_t>(j.pcm.size() / std::max<uint32_t>(wav_.channels(), 1)));
+                    break;
+                case Job::Close:
+                    wav_.close();
+                    break;
+            }
+            {
+                std::lock_guard<std::mutex> lk(mu_);
+                busy_ = false;
+            }
+            idle_cv_.notify_all();
+        }
+    }
+
     // Index 0 is the configured path; index n >= 1 is <stem>.<n><ext> next to it.
     std::string file_for(uint32_t index) const {
         if (index == 0) return path_;
@@ -97,9 +184,18 @@ private:
     std::shared_ptr<AudioSink> inner_;
     std::string path_;
     std::string name_;
-    WavWriter wav_;
+    // renderer thread only
+    bool file_open_ = false;
+    uint32_t rate_ = 0, channels_ = 0;
     uint32_t next_index_ = 0;
     uint64_t frames_written_ = 0;
+    // writer thread
+    WavWriter wav_;
+    std::mutex mu_;
+    std::condition_variable cv_, idle_cv_;
+    std::deque<Job> queue_;
+    bool quit_ = false, busy_ = false;
+    std::thread thread_;
 };
 
 }  // namespace

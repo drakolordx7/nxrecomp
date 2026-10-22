@@ -13,6 +13,7 @@
 
 #include "audren/Integration/HostAudioDevice.h"
 #include "audren/Integration/IWritableEvent.h"
+#include "audren/Integration/ThreadBoost.h"
 #include "audren/Server/AudioRenderSystem.h"
 #include "audren/Server/AudioRendererManager.h"
 #include "audren/Server/BehaviourInfo.h"
@@ -119,6 +120,11 @@ public:
             return 0;
         });
         auto update = [s](Request& req, Response&) -> uint32_t {
+            // The game updates the renderer from its main thread (CAudioManager::PostScriptingUpdate), and the update holds the renderer's lock.
+            // The renderer's own frame (SendCommands) waits for that lock; if the system deschedules the game thread inside the update, the
+            // frame is late and a sound card starves. The thread runs at higher priority while it holds the lock, as a priority-inheriting
+            // mutex would do.
+            audren::ScopedAudioLockBoost lock_boost;
             const ipc::Buffer out = req.out_buf(0), perf = req.out_buf(1), in = req.in_buf(0);
             if (!out.addr || !in.addr) return kResultNotImplemented;
             audren::Span<uint8_t> o(buf_mut(out), static_cast<size_t>(out.size));
