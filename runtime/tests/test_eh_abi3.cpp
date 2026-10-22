@@ -197,7 +197,7 @@ NXTEST(spec_allows_listed_type_and_unwinds_on) {
 
 NXTEST(spec_second_list_selected_by_index) {
     reset_world();
-    // specs = {1, 0, 2, 0}: list 0 = {1} (A), list 1 = {2} (B). Filter -3 is index 2 = the second list. (The plan says filter -2 for
+    // specs = {1, 0, 2, 0}: list 0 = {1} (A), list 1 = {2} (B). Filter -3 is index 2 = the second list. (An earlier expectation was filter -2 for
     // this list; by the ABI formula -2 is index 1, which is the empty list inside list 0, so -3 is the value that selects {2, 0}.)
     static const NxAction actions[] = {{-3, 0}};
     static const uint64_t types[] = {kA, kB};

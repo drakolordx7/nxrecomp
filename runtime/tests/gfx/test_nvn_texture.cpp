@@ -427,6 +427,32 @@ NXTEST(layout_survey_gpu_sizes) {
     CHECK_EQ(threed, 47);
 }
 
+// The sparse tile shape (64 KiB tiles, the standard sparse block shapes times the block size). The game's baked lighting volumes are
+// 512 x 256 x 368 BC1 and BC6H 3D textures: tiles of 128 x 64 x 16 and 64 x 64 x 16 texels divide them exactly (368 = 23 * 16).
+NXTEST(sparse_tile_shapes) {
+    setup();
+    Api a;
+    Pool pool(1 << 16);
+    struct Case { int target, format, w, h, d, tw, th, td; } cases[] = {
+        {NVN_TEXTURE_TARGET_3D, NVN_FORMAT_RGBA_DXT1, 512, 256, 368, 128, 64, 16},
+        {NVN_TEXTURE_TARGET_3D, NVN_FORMAT_BPTC_UFLOAT, 512, 256, 368, 64, 64, 16},
+        {NVN_TEXTURE_TARGET_3D, NVN_FORMAT_RGBA8, 64, 64, 64, 32, 32, 16},
+        {NVN_TEXTURE_TARGET_2D, NVN_FORMAT_RGBA_DXT1, 1024, 1024, 1, 512, 256, 1},
+        {NVN_TEXTURE_TARGET_2D, NVN_FORMAT_BPTC_UNORM, 1024, 1024, 1, 256, 256, 1},
+        {NVN_TEXTURE_TARGET_2D, NVN_FORMAT_R8, 1024, 1024, 1, 256, 256, 1},
+        {NVN_TEXTURE_TARGET_2D, NVN_FORMAT_RGBA16F, 1024, 1024, 1, 128, 64, 1},
+    };
+    for (const Case& c : cases) {
+        NVNtextureBuilder bld;
+        build(a, bld, pool, static_cast<NVNtextureTarget>(c.target), c.w, c.h, c.d, 1, static_cast<NVNformat>(c.format));
+        NVNtextureSparseTileLayout l{};
+        a.bget_sparse(&bld, &l);
+        CHECK_EQ(l.tileWidth, c.tw);
+        CHECK_EQ(l.tileHeight, c.th);
+        CHECK_EQ(l.tileDepth, c.td);
+    }
+}
+
 // ================================================================================================================================
 // Entry points: creation, getters, storage, teardown
 // ================================================================================================================================
@@ -442,9 +468,13 @@ NXTEST(initialize_getters_and_finalize) {
     CHECK_EQ(a.bget_class(&bld), 0);
     CHECK_EQ(a.bget_zcull(&bld), 0u);
     NVNtextureSparseTileLayout sparse{};
-    sparse.dummy[0] = 9;
+    sparse.unknown0 = 9;
+    sparse.tileWidth = 7;
     a.bget_sparse(&bld, &sparse);
-    CHECK_EQ(sparse.dummy[0], 0);
+    CHECK_EQ(sparse.unknown0, 0);
+    CHECK_EQ(sparse.tileWidth, 128);   // a 64 KiB tile of 32-bit texels: 128 x 128
+    CHECK_EQ(sparse.tileHeight, 128);
+    CHECK_EQ(sparse.tileDepth, 1);
 
     const size_t before = be::texture_registry_size();
     NVNtexture tex;
@@ -471,9 +501,13 @@ NXTEST(initialize_getters_and_finalize) {
     a.swizzle(&tex, &r, &g, &bl, &al);
     CHECK_EQ(static_cast<int>(r), static_cast<int>(NVN_TEXTURE_SWIZZLE_R));
     CHECK_EQ(static_cast<int>(al), static_cast<int>(NVN_TEXTURE_SWIZZLE_A));
-    sparse.dummy[0] = 9;
+    sparse.unknown0 = 9;
+    sparse.tileWidth = 7;
     a.sparse(&tex, &sparse);
-    CHECK_EQ(sparse.dummy[0], 0);
+    CHECK_EQ(sparse.unknown0, 0);
+    CHECK_EQ(sparse.tileWidth, 128);
+    CHECK_EQ(sparse.tileHeight, 128);
+    CHECK_EQ(sparse.tileDepth, 1);
     CHECK(a.debug_id(&tex) != 0);
     a.label(&tex, "test texture");   // accepted, nothing to read back
     CHECK_EQ(a.compare(&tex, &tex), 1);

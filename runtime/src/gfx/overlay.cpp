@@ -2,6 +2,9 @@
 // Dear ImGui overlay (declarations in include/nxrt/overlay.h). ImGui and its Vulkan backend are pinned in cmake/gfx_deps.cmake.
 #include "nxrt/overlay.h"
 
+#include <atomic>
+#include <mutex>
+
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_scancode.h>
 
@@ -60,7 +63,8 @@ struct Overlay::Impl {
     Context ctx;
     ImGuiContext* imgui = nullptr;
     bool backend_ready = false;
-    bool visible = false;
+    std::atomic<bool> visible{false};
+    std::mutex mu;                    // guards the ImGui context: events arrive on the game's main thread, drawing happens on the presenting thread
     int toggle_sc = SDL_SCANCODE_F1;
     bool restore_relative = false;
     std::chrono::steady_clock::time_point last_frame = std::chrono::steady_clock::now();
@@ -245,9 +249,13 @@ void Overlay::set_visible(bool v) {
     } else {
         if (s.restore_relative && platform::has_window()) platform::set_relative_mouse(true);
         s.restore_relative = false;
+        std::lock_guard<std::mutex> lk(s.mu);
+        ImGuiContext* prev = ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(s.imgui);
         ImGuiIO& io = ImGui::GetIO();   // drop pressed keys and buttons so nothing stays latched
         io.ClearInputKeys();
         io.ClearInputMouse();
+        ImGui::SetCurrentContext(prev);
     }
     NXLOG_I(kTag, "overlay %s", v ? "shown" : "hidden");
 }
@@ -259,7 +267,8 @@ void Overlay::set_toggle_scancode(int sc) { impl_->toggle_sc = sc; }
 uint64_t Overlay::frames_drawn() const { return impl_->drawn; }
 
 namespace {
-bool imgui_wants(ImGuiContext* ctx, bool mouse, bool keyboard) {
+bool imgui_wants(std::mutex& mu, ImGuiContext* ctx, bool mouse, bool keyboard) {
+    std::lock_guard<std::mutex> lk(mu);
     ImGuiContext* prev = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(ctx);
     const ImGuiIO& io = ImGui::GetIO();
@@ -269,9 +278,9 @@ bool imgui_wants(ImGuiContext* ctx, bool mouse, bool keyboard) {
 }
 }  // namespace
 
-bool Overlay::wants_input() const { return impl_->visible && imgui_wants(impl_->imgui, true, true); }
-bool Overlay::wants_mouse() const { return impl_->visible && imgui_wants(impl_->imgui, true, false); }
-bool Overlay::wants_keyboard() const { return impl_->visible && imgui_wants(impl_->imgui, false, true); }
+bool Overlay::wants_input() const { return impl_->visible && imgui_wants(impl_->mu, impl_->imgui, true, true); }
+bool Overlay::wants_mouse() const { return impl_->visible && imgui_wants(impl_->mu, impl_->imgui, true, false); }
+bool Overlay::wants_keyboard() const { return impl_->visible && imgui_wants(impl_->mu, impl_->imgui, false, true); }
 
 void Overlay::add_panel(const std::string& title, std::function<void()> fn) { impl_->panels.push_back({title, std::move(fn)}); }
 
@@ -283,6 +292,7 @@ bool Overlay::handle_event(const input::Event& e) {
         return true;   // the toggle key never reaches the game (press, repeat and release)
     }
     if (!s.visible) return false;
+    std::lock_guard<std::mutex> lk(s.mu);
     ImGuiContext* prev = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(s.imgui);
     ImGuiIO& io = ImGui::GetIO();
@@ -325,11 +335,20 @@ bool Overlay::handle_event(const input::Event& e) {
 }
 
 void Overlay::apply_pending() {
+    apply_present_pending();
+    apply_window_pending();
+}
+
+void Overlay::apply_present_pending() {
     Impl& s = *impl_;
     if (s.want_mode) {
         s.want_mode = false;
         s.ctx.renderer->set_present_mode(s.new_mode);
     }
+}
+
+void Overlay::apply_window_pending() {
+    Impl& s = *impl_;
     if (s.want_fullscreen) {
         s.want_fullscreen = false;
         platform::set_fullscreen(s.new_fullscreen);
@@ -342,6 +361,7 @@ void Overlay::draw(const FrameInfo& f) {
         s.last_frame = std::chrono::steady_clock::now();
         return;
     }
+    std::lock_guard<std::mutex> lk(s.mu);
     ImGuiContext* prev = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(s.imgui);
     ImGuiIO& io = ImGui::GetIO();

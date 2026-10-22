@@ -79,20 +79,29 @@ void svc_get_thread_core_mask(::Ctx* c) {      // w2 handle -> w1 ideal core, x2
     svc_ret(c, kOk);
 }
 
-void svc_set_thread_core_mask(::Ctx* c) {      // w0 handle, w1 ideal core (-2 default, -3 keep), x2 mask
+void svc_set_thread_core_mask(::Ctx* c) {      // w0 handle, w1 ideal core (0..3, -1 do not care, -2 process default, -3 keep), x2 mask
     auto t = handle_as<KThread>(static_cast<uint32_t>(X(c, 0)));
-    if (!t) return svc_ret(c, kInvalidHandle);
+    auto fail = [&](uint32_t r) {
+        NXLOG_W("svc", "SetThreadCoreMask(0x%x, ideal %d, mask 0x%llx) failed: 0x%x", static_cast<uint32_t>(X(c, 0)), static_cast<int32_t>(X(c, 1)),
+                static_cast<unsigned long long>(X(c, 2)), r);
+        return svc_ret(c, r);
+    };
+    if (!t) {
+        NXLOG_W("svc", "SetThreadCoreMask(0x%x, ideal %d, mask 0x%llx): not a thread handle", static_cast<uint32_t>(X(c, 0)), static_cast<int32_t>(X(c, 1)),
+                static_cast<unsigned long long>(X(c, 2)));
+        return svc_ret(c, kInvalidHandle);
+    }
     int32_t ideal = static_cast<int32_t>(X(c, 1));
     uint64_t mask = X(c, 2);
     if (ideal == -3) {                                   // keep the ideal core, replace the mask
-        if (!mask) return svc_ret(c, kInvalidCombination);
+        if (!mask) return fail(kInvalidCombination);
         ideal = t->ideal_core;
-    } else if (ideal != -2 && (ideal < 0 || ideal > 3)) {
-        return svc_ret(c, kInvalidCoreId);
+    } else if (ideal != -2 && (ideal < -1 || ideal > 3)) {              // -1 = IdealCoreDontCare: only the mask matters
+        return fail(kInvalidCoreId);
     } else if (!mask) {
-        return svc_ret(c, kInvalidCombination);
+        return fail(kInvalidCombination);
     }
-    if (!thread_set_core_mask(*t, ideal, mask)) return svc_ret(c, kInvalidCombination);
+    if (!thread_set_core_mask(*t, ideal, mask)) return fail(kInvalidCombination);
     svc_ret(c, kOk);
 }
 
@@ -123,7 +132,10 @@ void svc_reset_signal(::Ctx* c) {              // w0 readable event handle: Inva
 
 void svc_close_handle(::Ctx* c) {
     uint32_t h = static_cast<uint32_t>(X(c, 0));
-    if (h == kPseudoCurrentThread || h == kPseudoCurrentProcess || !handle_get(h)) return svc_ret(c, kInvalidHandle);
+    if (h == kPseudoCurrentThread || h == kPseudoCurrentProcess || !handle_get(h)) {
+        NXLOG_W("svc", "CloseHandle(0x%x): not a handle (lr=0x%llx)", h, static_cast<unsigned long long>(c->x[30]));
+        return svc_ret(c, kInvalidHandle);
+    }
     handle_close(h);
     svc_ret(c, kOk);
 }

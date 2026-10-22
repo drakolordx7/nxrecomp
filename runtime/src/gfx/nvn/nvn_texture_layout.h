@@ -23,6 +23,11 @@ struct TexLayout {
     bool valid = false;          // false: unknown format, bad size, a target without a layout (buffer), or a bad layout
 };
 
+// The shape of a 64 KiB sparse tile of a texture in texels (width, height, depth): the standard sparse block shapes (64 KiB of
+// blocks: 2D 256x256 / 256x128 / 128x128 / 128x64 / 64x64 blocks for 1 / 2 / 4 / 8 / 16 byte blocks; 3D 64x32x32 / 32x32x32 /
+// 32x32x16 / 32x16x16 / 16x16x16), times the block size of the format. False: no sparse tiles for this target or format.
+bool sparse_tile_shape(int nvn_target, const FormatInfo* fmt, int out[3]);
+
 // The layout of the texture the builder describes. Never fails on a zero-filled builder: it returns valid = false.
 TexLayout compute_texture_layout(const TextureBuilderInfo& b);
 

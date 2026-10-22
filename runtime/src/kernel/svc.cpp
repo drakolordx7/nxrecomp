@@ -11,7 +11,9 @@
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "nxrt/tt.h"
 
 namespace nxrt {
 namespace {
@@ -85,11 +87,19 @@ static void report_unknown(::Ctx* c, uint32_t number, uint64_t pc) {
 }
 
 void svc_dispatch(::Ctx* c, uint32_t number, uint64_t pc) {
+    if (tt::detail::svc_every.load(std::memory_order_relaxed)) tt::detail::on_svc(c);      // test tooling: frame_source = svc:N
     SvcHandler h = svc_handler(number);
     if (number < kSvcCount) g_calls[number].fetch_add(1, std::memory_order_relaxed);
     if (!h) {
         report_unknown(c, number, pc);
         c->x[0] = kernel::kNotImplemented;
+        return;
+    }
+    if (ft::on()) {
+        const uint64_t t0 = ft::now_ns();
+        h(c);
+        const uint64_t t1 = ft::now_ns();
+        if (t1 - t0 >= 100000) { static const uint16_t z = ft::zone_id("svc"); ft::event(z, t0, t1, number); }
         return;
     }
     h(c);

@@ -157,11 +157,37 @@ struct ViewData {
     uint32_t set;
     uint8_t swizzle[4];   // NVN swizzle values are 0..5
 };
-static_assert(sizeof(ViewData) <= sizeof(NVNtextureView), "texture view layout fits the NVN object");
-static_assert(sizeof(ViewData) == 36, "no padding in ViewData (Compare uses memcmp)");
+static_assert(sizeof(ViewData) == 36, "no padding in ViewData");
 
-ViewData load_v(const NVNtextureView* v) { ViewData d; std::memcpy(&d, v, sizeof d); return d; }
-void store_v(NVNtextureView* v, const ViewData& d) { std::memcpy(v, &d, sizeof d); }
+// What the object really holds: 16 bytes. The game's CGraphicsTextureToken_NVN keeps an NVNtextureView at +0x40 and its own fields at +0x50,
+// +0x58 and +0x60 (the descriptor id), so on this NVN version a view is at most 16 bytes wide and a SetDefaults that clears the 0x28 bytes
+// of the practice mod's header zeroes the token's id (debug note 121).
+struct ViewPacked {
+    int16_t min_level, num_levels, min_layer, num_layers;     // 16 bits each: levels and layers are small; -1 round trips
+    uint16_t format;
+    uint16_t swizzle;        // four 3-bit values (NVN swizzle values are 0..5)
+    uint8_t target, depth_stencil_mode, set, pad;
+};
+static_assert(sizeof(ViewPacked) == 16, "a texture view occupies 16 bytes of the game's object");
+
+ViewData load_v(const NVNtextureView* v) {
+    ViewPacked p;
+    std::memcpy(&p, v, sizeof p);
+    ViewData d{};
+    d.min_level = p.min_level; d.num_levels = p.num_levels; d.min_layer = p.min_layer; d.num_layers = p.num_layers;
+    d.format = p.format; d.target = p.target; d.depth_stencil_mode = p.depth_stencil_mode; d.set = p.set;
+    for (int k = 0; k < 4; ++k) d.swizzle[k] = static_cast<uint8_t>((p.swizzle >> (3 * k)) & 7);
+    return d;
+}
+void store_v(NVNtextureView* v, const ViewData& d) {
+    ViewPacked p{};
+    p.min_level = static_cast<int16_t>(d.min_level); p.num_levels = static_cast<int16_t>(d.num_levels);
+    p.min_layer = static_cast<int16_t>(d.min_layer); p.num_layers = static_cast<int16_t>(d.num_layers);
+    p.format = static_cast<uint16_t>(d.format); p.target = static_cast<uint8_t>(d.target);
+    p.depth_stencil_mode = static_cast<uint8_t>(d.depth_stencil_mode); p.set = static_cast<uint8_t>(d.set);
+    for (int k = 0; k < 4; ++k) p.swizzle = static_cast<uint16_t>(p.swizzle | ((d.swizzle[k] & 7) << (3 * k)));
+    std::memcpy(v, &p, sizeof p);
+}
 
 template <class F>
 void edit_v(NVNtextureView* v, F f) {
@@ -171,7 +197,7 @@ void edit_v(NVNtextureView* v, F f) {
 }
 
 void nvnTextureViewSetDefaults(NVNtextureView* v) {
-    std::memset(v, 0, sizeof(NVNtextureView));
+    std::memset(v, 0, sizeof(ViewPacked));
 }
 void nvnTextureViewSetLevels(NVNtextureView* v, int min_level, int num_levels) {
     edit_v(v, [&](ViewData& d) { d.min_level = min_level; d.num_levels = num_levels; d.set |= kSetLevels; });
@@ -237,8 +263,11 @@ NVNboolean nvnTextureViewGetTarget(const NVNtextureView* v, NVNtextureTarget* ta
 }
 // Compares every stored byte, the set flags included (smo compares its whole View the same way).
 NVNboolean nvnTextureViewCompare(const NVNtextureView* a, const NVNtextureView* b) {
-    return std::memcmp(a, b, sizeof(ViewData)) == 0 ? 1 : 0;
+    return std::memcmp(a, b, sizeof(ViewPacked)) == 0 ? 1 : 0;
 }
+
+// NVN 55 name the game asks for and never calls (signature assumed, like nvnTextureGetViewOffset): views do not move the storage.
+ptrdiff_t nvnTextureBuilderGetViewOffset(const NVNtextureBuilder*, const NVNtextureView*) { return 0; }
 
 }  // namespace
 
@@ -314,6 +343,7 @@ void register_api_texture_builder() {
     NVN_REG(nvnTextureBuilderGetWidth);
     NVN_REG(nvnTextureBuilderGetHeight);
     NVN_REG(nvnTextureBuilderGetDepth);
+    NVN_REG(nvnTextureBuilderGetViewOffset);
     NVN_REG(nvnTextureBuilderGetLevels);
     NVN_REG(nvnTextureBuilderGetFormat);
     NVN_REG(nvnTextureBuilderGetSamples);

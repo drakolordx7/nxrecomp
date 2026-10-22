@@ -3,6 +3,8 @@
 // Info SVCs (include/nxrt/svc.h): GetInfo 0x29, GetSystemInfo 0x6F, GetResourceLimitLimitValue 0x30, GetResourceLimitCurrentValue 0x31,
 // GetResourceLimitPeakValue 0x37, GetProcessId 0x24, GetThreadId 0x25, GetProcessInfo 0x7C.
 // AArch64 columns per Switchbrew: inputs in x1.., result in w0, outputs in x1.
+#include <windows.h>
+
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/kernel.h"
@@ -30,6 +32,7 @@ constexpr uint64_t kDefaultProcessId = 0x51;                    // chosen value 
 constexpr uint32_t kInfoThreadTickCountOld = 0xF0000002u;       // ThreadTickCount id on firmware 1.0.0-12.1.0 (Switchbrew)
 constexpr uint32_t kInfoThreadTickCount = 25;                   // ThreadTickCount id on firmware 12.1.0+ (Switchbrew table)
 constexpr uint64_t kProcessStateStarted = 2;                    // Switchbrew ProcessState 2 = Started (not debugged)
+constexpr uint64_t kSubAllCores = 0xFFFFFFFFFFFFFFFFull;        // ThreadTickCount sub-argument: the total over all cores (Switchbrew)
 
 }  // namespace
 uint64_t svc_total_memory() {
@@ -48,6 +51,17 @@ uint64_t user_exception_context() {
     static uint64_t page = 0;
     if (page == 0 || !mem::is_mapped(page, mem::kPage)) page = mem::alloc_kernel(mem::kPage);
     return page;
+}
+
+// CPU time a thread has used, in system ticks. Win32 gives kernel + user time in 100 ns units; the split keeps the product in 64 bits.
+uint64_t thread_cpu_ticks(HANDLE h) {
+    if (!h) return 0;                                      // thread not started yet
+    FILETIME created{}, exited{}, kernel_time{}, user_time{};
+    if (!GetThreadTimes(h, &created, &exited, &kernel_time, &user_time)) return 0;
+    auto to_u64 = [](const FILETIME& f) { return (static_cast<uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+    const uint64_t t100ns = to_u64(kernel_time) + to_u64(user_time);
+    constexpr uint64_t kUnitsPerSecond = 10000000;
+    return (t100ns / kUnitsPerSecond) * kernel::kTickHz + (t100ns % kUnitsPerSecond) * kernel::kTickHz / kUnitsPerSecond;
 }
 
 // Returns the result code; `out` receives the value (0 on error).
@@ -87,13 +101,19 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
         case 22: out = used_memory(); return kernel::kOk;                     // UsedNonSystemMemorySize (same as 7)
         case 23: out = 1; return kernel::kOk;                                 // IsApplication
         case kInfoThreadTickCountOld:
-        case kInfoThreadTickCount:
-            // ThreadTickCount needs a thread handle (or the pseudo handle of the calling thread); the tick value itself
-            // is 0 for now: kernel::system_tick() is declared in kernel.h but not defined on this branch.
-            // TODO(lead): return kernel::system_tick() (or the per-core/total tick of the thread) once it is implemented.
+        case kInfoThreadTickCount: {
+            // ThreadTickCount(thread handle or pseudo handle of the calling thread, core): the CPU time the thread has used, in ticks.
             if (handle != kernel::kPseudoCurrentThread && !kernel::handle_get(handle)) return kernel::kInvalidHandle;
-            out = 0;
+            // Core sub-argument: 0..3 names a console core, all-ones asks for the total over all cores (Switchbrew).
+            if (sub != kSubAllCores && sub > 3) return kInvalidCombination;
+            auto t = kernel::handle_as<kernel::KThread>(handle);
+            if (!t) return kernel::kOk;                    // pseudo handle outside a guest thread: 0
+            // nxrt pins each thread to its ideal core: that core reports the total, the other cores report 0.
+            if (sub != kSubAllCores && static_cast<int64_t>(sub) != t->ideal_core) return kernel::kOk;
+            // The pseudo handle is GetCurrentThread() (the calling thread); any other handle uses the thread's own host handle.
+            out = thread_cpu_ticks(handle == kernel::kPseudoCurrentThread ? GetCurrentThread() : static_cast<HANDLE>(t->host_handle));
             return kernel::kOk;
+        }
         default:
             NXLOG_W("svc", "svcGetInfo: unknown type %u sub %llu", type, static_cast<unsigned long long>(sub));
             return kInvalidCombination;
@@ -154,9 +174,8 @@ bool resource_limit(uint64_t which, uint64_t& v) {
 bool resource_current(uint64_t which, uint64_t& v) {
     switch (which) {
         case 0: v = svc_current_heap_size(); return true;
-        // TODO(lead): kernel::threads().size() once kernel::threads() is implemented; thread_count_running() is declared but not
-        // defined on this branch, so the calling thread is reported as the only thread for now.
-        case 1: v = 1; return true;
+        // ThreadCountMax current: guest threads started and not yet exited; never below 1 (the calling thread).
+        case 1: v = kernel::thread_count_running(); if (v < 1) v = 1; return true;
         case 2: case 3: case 4: v = 0; return true;
         default: return false;
     }

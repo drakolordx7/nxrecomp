@@ -341,7 +341,7 @@ NXTEST(draw_texture_regions_and_transform_feedback_noops) {
     CB_PROC(DRAWTEXTURE, nvnCommandBufferDrawTexture)(&c, 0x123456789ull, reinterpret_cast<const NVNdrawTextureRegion*>(dst),
                                                       reinterpret_cast<const NVNdrawTextureRegion*>(src));
     CB_PROC(DRAWTEXTURE, nvnCommandBufferDrawTexture)(&c, 0x42ull, nullptr, nullptr);
-    // transform feedback: accepted, nothing recorded, no draw counted
+    // transform feedback: Begin / Pause / Resume / End are recorded (the control buffer address); DrawTransformFeedback is not; no draw counted
     CB_PROC(DRAWTRANSFORMFEEDBACK, nvnCommandBufferDrawTransformFeedback)(&c, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x100);
     CB_PROC(BEGINTRANSFORMFEEDBACK, nvnCommandBufferBeginTransformFeedback)(&c, 0x100);
     CB_PROC(PAUSETRANSFORMFEEDBACK, nvnCommandBufferPauseTransformFeedback)(&c, 0x100);
@@ -368,6 +368,10 @@ NXTEST(draw_texture_regions_and_transform_feedback_noops) {
             CHECK_EQ(p.dst[i], 0.0f);
             CHECK_EQ(p.src[i], 0.0f);
         }
+    }
+    for (Op op : {Op::BeginXfb, Op::PauseXfb, Op::ResumeXfb, Op::EndXfb}) {
+        NEXT_OR_RETURN(w, op);
+        CHECK_EQ(static_cast<unsigned long long>(w.r.payload<P_Counter>().address), 0x100ull);
     }
     CHECK(w.at_end());
 }

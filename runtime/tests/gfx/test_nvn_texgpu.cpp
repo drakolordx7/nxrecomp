@@ -23,6 +23,7 @@
 #include "nvn_texdata.h"
 #include "nvn_texture_layout.h"
 #include "nxrt/gfx.h"
+#include "nxrt/gfx_tuning.h"
 #include "tegra_tiling.h"
 #include "test_framework.h"
 NXTEST_GROUP(gfx_nvn_texgpu)
@@ -507,6 +508,92 @@ NXTEST(samplers) {
     teardown(r);
 }
 
+// ---- 8b: display tuning on the samplers: anisotropy and LOD bias only where the rules allow ---------------------------------------
+NXTEST(sampler_tuning) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    const bool aniso_ok = r.dev->features().sampler_anisotropy;
+    std::printf("    sampler_anisotropy on this device: %s\n", aniso_ok ? "yes" : "no");
+    gpu::run_on_render_thread([&] {
+        // Puts the tuning back to its defaults when the case ends, also when a check above failed.
+        struct Reset {
+            ~Reset() {
+                gfx::tuning().anisotropy.store(0);
+                gfx::tuning().lod_bias.store(0.0f);
+            }
+        } reset;
+        auto set_tuning = [](int aniso, float bias) {
+            gfx::tuning().anisotropy.store(aniso);
+            gfx::tuning().lod_bias.store(bias);
+        };
+
+        // 1 and 2: linear-mipmap-linear filters take both the anisotropy and the LOD bias.
+        SamplerInfo L;
+        L.min_filter = NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR;
+        L.mag_filter = NVN_MAG_FILTER_LINEAR;
+        L.max_anisotropy = 1;
+        set_tuning(0, 0.0f);
+        const VkSampler base = gpu::sampler_for(L);
+        CHECK(base != VK_NULL_HANDLE);
+
+        set_tuning(8, 0.0f);
+        const VkSampler aniso8 = gpu::sampler_for(L);
+        if (aniso_ok) {
+            CHECK(aniso8 != base);
+        } else {
+            std::printf("    anisotropy is not available on this GPU: the anisotropy handle check is skipped\n");
+        }
+        set_tuning(0, 0.0f);
+        CHECK(gpu::sampler_for(L) == base);
+
+        set_tuning(0, 0.5f);
+        const VkSampler bias05 = gpu::sampler_for(L);
+        CHECK(bias05 != base);
+        CHECK(bias05 != aniso8);
+        set_tuning(0, 0.0f);
+        CHECK(gpu::sampler_for(L) == base);
+
+        // 3: nearest filtering is never changed.
+        SamplerInfo N;
+        N.min_filter = NVN_MIN_FILTER_NEAREST;
+        N.mag_filter = NVN_MAG_FILTER_NEAREST;
+        set_tuning(0, 0.0f);
+        const VkSampler nearest0 = gpu::sampler_for(N);
+        CHECK(nearest0 != VK_NULL_HANDLE);
+        set_tuning(16, -1.0f);
+        CHECK(gpu::sampler_for(N) == nearest0);
+        set_tuning(0, 0.0f);
+
+        // 4: comparison samplers are never changed.
+        SamplerInfo C = L;
+        C.compare_mode = NVN_COMPARE_MODE_COMPARE_R_TO_TEXTURE;
+        set_tuning(0, 0.0f);
+        const VkSampler cmp0 = gpu::sampler_for(C);
+        CHECK(cmp0 != VK_NULL_HANDLE);
+        set_tuning(16, 0.0f);
+        CHECK(gpu::sampler_for(C) == cmp0);
+        set_tuning(0, 1.0f);
+        CHECK(gpu::sampler_for(C) == cmp0);
+        set_tuning(0, 0.0f);
+
+        // 5: linear minification without mipmaps is changed by neither the anisotropy nor the LOD bias.
+        SamplerInfo Lin;
+        Lin.min_filter = NVN_MIN_FILTER_LINEAR;
+        Lin.mag_filter = NVN_MAG_FILTER_LINEAR;
+        set_tuning(0, 0.0f);
+        const VkSampler lin0 = gpu::sampler_for(Lin);
+        CHECK(lin0 != VK_NULL_HANDLE);
+        set_tuning(16, 0.0f);
+        CHECK(gpu::sampler_for(Lin) == lin0);
+        set_tuning(0, 1.0f);
+        CHECK(gpu::sampler_for(Lin) == lin0);
+    });
+    teardown(r);
+}
+
 // ---- 9: CPU rewrites are uploaded; a GPU write suppresses uploads until the CPU writes again ----------------------------------
 NXTEST(cpu_dirty_and_gpu_written) {
     Rig r;
@@ -641,5 +728,173 @@ NXTEST(dummy_views_and_sampler) {
         CHECK(gpu::dummy_sampler() != VK_NULL_HANDLE);
         CHECK(gpu::dummy_sampler() == gpu::dummy_sampler());
     });
+    teardown(r);
+}
+
+// ---- 13: a 3D image: layout barriers cover every slice, no validation warnings ------------------------------------------------
+NXTEST(transition_3d_texture_no_warnings) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex x;
+        CHECK(make_tex(x, info(NVN_TEXTURE_TARGET_3D, 8, 8, 4, 3, NVN_FORMAT_RGBA8)));
+        fill_random(x.lin, 21);
+        tile_into_storage(x);
+        Texture* t = x.t.get();
+        VkImageLayout after_upload = VK_IMAGE_LAYOUT_UNDEFINED, after_src = VK_IMAGE_LAYOUT_UNDEFINED, after_back = VK_IMAGE_LAYOUT_UNDEFINED;
+        gpu::run_frame_sync([&](Frame& f) {
+            gpu::tex_ensure_current(t, f);
+            after_upload = gpu::tex_layout(t);
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            after_src = gpu::tex_layout(t);
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            after_back = gpu::tex_layout(t);
+        });
+        CHECK_EQ(after_upload, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        CHECK_EQ(after_src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        CHECK_EQ(after_back, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const ValidationStats v = r.dev->validation_stats();
+        std::printf("    3D 8x8x4 RGBA8, 3 levels: validation %llu errors, %llu warnings after the transitions\n",
+                    static_cast<unsigned long long>(v.errors), static_cast<unsigned long long>(v.warnings));
+        CHECK_EQ(v.errors, 0ull);
+        CHECK_EQ(v.warnings, 0ull);
+    }
+    teardown(r);
+}
+
+// ---- 14: raw-bit aliases of 32-bit integer and float formats -------------------------------------------------------------------
+NXTEST(sampled_view_float_alias_of_uint_texture) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex u, fl, rgba;
+        CHECK(make_tex(u, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_R32UI)));
+        CHECK(make_tex(fl, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_R32F)));
+        CHECK(make_tex(rgba, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        Texture* tu = u.t.get();
+        Texture* tf = fl.t.get();
+        Texture* tr = rgba.t.get();
+        gpu::run_on_render_thread([&] {
+            ViewRequest q;
+            q.component = 1;   // float shader over the uint texture: R32_SFLOAT alias
+            const VkImageView vfloat = gpu::tex_sampled_view(tu, q);
+            q.component = 3;   // uint shader: the image's own R32_UINT
+            const VkImageView vuint = gpu::tex_sampled_view(tu, q);
+            q.component = 0;   // unknown: the image's own format
+            const VkImageView vown = gpu::tex_sampled_view(tu, q);
+            CHECK(vfloat != VK_NULL_HANDLE);
+            CHECK(vuint != VK_NULL_HANDLE);
+            CHECK(vown != VK_NULL_HANDLE);
+            CHECK(vfloat != vuint);
+            q.component = 1;
+            CHECK(gpu::tex_sampled_view(tu, q) == vfloat);
+            // The reverse: a float texture read by a uint shader gets the R32_UINT alias.
+            q.component = 3;
+            const VkImageView fuint = gpu::tex_sampled_view(tf, q);
+            q.component = 0;
+            const VkImageView fown = gpu::tex_sampled_view(tf, q);
+            CHECK(fuint != VK_NULL_HANDLE);
+            CHECK(fown != VK_NULL_HANDLE);
+            CHECK(fuint != fown);
+            // Colour attachments of the uint texture render through the float alias; RGBA8 is unchanged.
+            CHECK_EQ(gpu::tex_attachment_format(tu, VK_FORMAT_UNDEFINED), VK_FORMAT_R32_SFLOAT);
+            CHECK(gpu::tex_attachment_view(tu, 0, 0, 1, VK_FORMAT_UNDEFINED) != VK_NULL_HANDLE);
+            CHECK_EQ(gpu::tex_attachment_format(tr, VK_FORMAT_UNDEFINED), VK_FORMAT_R8G8B8A8_UNORM);
+        });
+    }
+    teardown(r);
+}
+
+// ---- 15: sampled layout by format: colour vs depth and stencil ----------------------------------------------------------------
+NXTEST(sampled_layout_by_format) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex rgba, d32, d24s8;
+        CHECK(make_tex(rgba, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        CHECK(make_tex(d32, info(NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_DEPTH32F)));
+        CHECK(make_tex(d24s8, info(NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_DEPTH24_STENCIL8)));
+        Texture* tr = rgba.t.get();
+        Texture* td = d32.t.get();
+        Texture* ts = d24s8.t.get();
+        gpu::run_on_render_thread([&] {
+            CHECK_EQ(gpu::tex_sampled_layout(tr), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            CHECK_EQ(gpu::tex_sampled_layout(td), VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+            CHECK_EQ(gpu::tex_sampled_layout(ts), VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+        });
+        VkImageLayout after = VK_IMAGE_LAYOUT_UNDEFINED;
+        gpu::run_frame_sync([&](Frame& f) {
+            gpu::tex_transition(td, f, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+            after = gpu::tex_layout(td);
+        });
+        CHECK_EQ(after, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+        CHECK_EQ(after, gpu::tex_sampled_layout(td));
+    }
+    teardown(r);
+}
+
+// ---- 16: dummy storage views: types, formats, cache, cube as 2D array ----------------------------------------------------------
+NXTEST(dummy_storage_view_types_and_cache) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    gpu::run_on_render_thread([&] {
+        const VkImageViewType types[] = {VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_IMAGE_VIEW_TYPE_3D, VK_IMAGE_VIEW_TYPE_1D};
+        const VkFormat formats[] = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32_UINT, VK_FORMAT_R32_SFLOAT};
+        std::vector<VkImageView> seen;
+        for (VkImageViewType ty : types)
+            for (VkFormat fm : formats) {
+                const VkImageView v = gpu::dummy_storage_view(ty, fm);
+                CHECK(v != VK_NULL_HANDLE);
+                CHECK(gpu::dummy_storage_view(ty, fm) == v);
+                seen.push_back(v);
+            }
+        // Each (type, format) pair is its own view.
+        const std::set<VkImageView> distinct(seen.begin(), seen.end());
+        CHECK_EQ(distinct.size(), seen.size());
+        CHECK_EQ(distinct.size(), 12u);
+        // Cube requests use the 2D array dummy of the same format.
+        const VkImageView arr_u = gpu::dummy_storage_view(VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_FORMAT_R32_UINT);
+        CHECK(gpu::dummy_storage_view(VK_IMAGE_VIEW_TYPE_CUBE, VK_FORMAT_R32_UINT) == arr_u);
+        const VkImageView arr_c = gpu::dummy_storage_view(VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_FORMAT_R8G8B8A8_UNORM);
+        CHECK(gpu::dummy_storage_view(VK_IMAGE_VIEW_TYPE_CUBE_ARRAY, VK_FORMAT_R8G8B8A8_UNORM) == arr_c);
+        // UNDEFINED format means RGBA8 UNORM.
+        CHECK(gpu::dummy_storage_view(VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_UNDEFINED) == gpu::dummy_storage_view(VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_R8G8B8A8_UNORM));
+    });
+    teardown(r);
+}
+
+// ---- 17: tex_has_storage: every uncompressed colour image has the storage usage ------------------------------------------------
+NXTEST(has_storage_for_colour_images) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex img_on, img_off;
+        CHECK(make_tex(img_on, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8, NVN_TEXTURE_FLAGS_IMAGE)));
+        CHECK(make_tex(img_off, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        Texture* ton = img_on.t.get();
+        Texture* toff = img_off.t.get();
+        gpu::run_on_render_thread([&] {
+            CHECK(gpu::tex_has_storage(ton));
+            // the IMAGE flag is only a hint (the game does not set it on the fog volume a vertex shader writes): every uncompressed
+            // colour image keeps the storage usage
+            CHECK(gpu::tex_has_storage(toff));
+        });
+    }
     teardown(r);
 }

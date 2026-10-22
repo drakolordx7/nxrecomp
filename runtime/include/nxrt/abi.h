@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The generated-code ABI as the runtime sees it. S1 owns the header (recomp/include/nxrecomp/ctx.h: Ctx, V128, FnEntry,
+// The generated-code ABI as the runtime sees it. The recompiler owns the header (recomp/include/nxrecomp/ctx.h: Ctx, V128, FnEntry,
 // DynSym, NxModule, NxEh and the declarations of the functions this runtime provides: call_indirect, host_import(c, import_id),
 // guest_trap, guest_unimpl, guest_svc, guest_mrs, guest_msr, stx_diag, nx_catch_call, nx_site_inline, nx_site_midhook,
 // nx_hook_entry; their definitions are src/core/abi_glue.cpp, src/core/hooks.cpp and src/eh/catch_call.cpp).

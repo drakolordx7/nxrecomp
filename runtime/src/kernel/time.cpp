@@ -3,10 +3,12 @@
 #include <windows.h>
 
 #include "nxrt/kernel.h"
+#include "nxrt/tt.h"
 
 namespace nxrt::kernel {
 
 uint64_t system_tick() {
+    if (uint64_t vt; tt::virtual_tick(&vt)) return vt;      // deterministic mode: the virtual clock (test tooling)
     static const uint64_t freq = [] {
         LARGE_INTEGER f;
         QueryPerformanceFrequency(&f);
@@ -22,6 +24,7 @@ uint64_t system_tick() {
 // 1 ms or 15.6 ms grid, so the wait runs on a high-resolution waitable timer (100 ns units); Sleep() is only the fallback.
 // A zero or negative span yields, as on the console.
 void sleep_ns(int64_t ns) {
+    if (tt::virtual_sleep(ns)) return;                      // deterministic mode: time advances, the thread only yields
     static thread_local HANDLE timer = nullptr;
     static thread_local bool no_timer = false;
     if (ns <= 0) {

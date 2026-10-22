@@ -6,7 +6,11 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -50,6 +54,20 @@ __declspec(noinline) int touch(uint64_t addr, bool write) {
 }
 
 uint32_t* word_at(uint64_t addr) { return reinterpret_cast<uint32_t*>(addr); }
+
+// The host's answer for [addr, addr + size): VirtualQuery over the same page span that mem::is_mapped uses, with no page table.
+bool host_mapped(uint64_t addr, uint64_t size) {
+    const uint64_t start = addr & ~(kPg - 1);
+    const uint64_t end = (addr + size + kPg - 1) & ~(kPg - 1);
+    for (uint64_t cur = start; cur < end;) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi) != sizeof mbi || mbi.RegionSize == 0) return false;
+        if (mbi.State != MEM_COMMIT) return false;
+        if ((mbi.Protect & 0xFF) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD)) return false;
+        cur = std::min<uint64_t>(end, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize);
+    }
+    return true;
+}
 
 }  // namespace
 
@@ -445,5 +463,113 @@ NXTEST(is_mapped_reports_committed_accessible_pages) {
     CHECK(mem::protect(a + kPg, kPg, mem::Prot::None));
     CHECK(!mem::is_mapped(a + kPg, kPg));                   // PAGE_NOACCESS counts as not mapped
     CHECK(mem::release_fixed(a));
+    mem::shutdown();
+}
+
+NXTEST(heap_is_mapped_tracks_commit_state) {
+    mem::shutdown();
+    CHECK(mem::init());
+    CHECK(mem::heap_create(kHeapSmall));
+    CHECK(mem::heap_commit(0, 4ull << 20));
+    CHECK(mem::is_mapped(mem::kHeapBase, 4ull << 20));          // the whole committed part
+    CHECK(mem::is_mapped(mem::kHeapBase + (1ull << 20), 64ull << 10));
+    CHECK(mem::is_mapped(mem::kHeapBase + 100, 8));              // unaligned start inside a committed page
+    CHECK(!mem::is_mapped(mem::kHeapBase + (4ull << 20) - kPg, 2 * kPg));  // last committed page plus one never committed
+    CHECK(!mem::is_mapped(mem::kHeapBase + (4ull << 20), kPg));  // first never-committed page
+    CHECK(!mem::is_mapped(mem::kHeapBase + (8ull << 20), kPg));  // far inside the section, never committed
+    CHECK(!mem::is_mapped(mem::kHeapBase, kHeapSmall));          // the range runs past the committed part
+    CHECK(mem::heap_decommit(0, kPg));
+    CHECK(!mem::is_mapped(mem::kHeapBase, kPg));                 // decommitted page
+    CHECK(mem::is_mapped(mem::kHeapBase + kPg, kPg));            // its neighbour still committed
+    mem::shutdown();
+}
+
+NXTEST(heap_protect_none_and_back_keeps_neighbours) {
+    mem::shutdown();
+    CHECK(mem::init());
+    CHECK(mem::heap_create(kHeapSmall));
+    CHECK(mem::heap_commit(0, 4ull << 20));
+    const uint64_t r = mem::kHeapBase + (1ull << 20);
+    CHECK(mem::protect(r, 64ull << 10, mem::Prot::None));
+    CHECK(!mem::is_mapped(r, 64ull << 10));
+    CHECK(!touch(r, false));                                     // the host agrees: reads fault
+    CHECK(mem::is_mapped(r - (64ull << 10), 64ull << 10));       // left neighbour stays mapped
+    CHECK(mem::is_mapped(r + (64ull << 10), 64ull << 10));       // right neighbour stays mapped
+    CHECK(!mem::is_mapped(r - kPg, 2 * kPg));                    // a range that touches the protected pages
+    CHECK(mem::protect(r, 64ull << 10, mem::Prot::RW));
+    CHECK(mem::is_mapped(r, 64ull << 10));
+    CHECK(touch(r, true));                                       // writable again
+    // A range that includes never-committed pages is refused and changes nothing.
+    CHECK(!mem::protect(mem::kHeapBase + (3ull << 20), 2ull << 20, mem::Prot::None));
+    CHECK(mem::is_mapped(mem::kHeapBase + (3ull << 20), 1ull << 20));
+    CHECK(touch(mem::kHeapBase + (3ull << 20), true));
+    CHECK(!mem::protect(mem::kHeapBase + (4ull << 20), kPg, mem::Prot::RW));  // wholly uncommitted
+    CHECK(!mem::is_mapped(mem::kHeapBase + (4ull << 20), kPg));
+    mem::shutdown();
+}
+
+NXTEST(heap_decommit_then_protect_restores_access) {
+    mem::shutdown();
+    CHECK(mem::init());
+    CHECK(mem::heap_create(kHeapSmall));
+    CHECK(mem::heap_commit(0, 4ull << 20));
+    const uint64_t r = mem::kHeapBase + (1ull << 20);
+    CHECK(mem::heap_decommit(1ull << 20, 128ull << 10));
+    CHECK_EQ(mem::heap_committed(), (4ull << 20) - (128ull << 10));
+    CHECK(!mem::is_mapped(r, 128ull << 10));
+    CHECK(!mem::is_mapped(r, kPg));
+    CHECK(mem::is_mapped(mem::kHeapBase, 1ull << 20));           // neighbour below stays mapped
+    CHECK(mem::protect(r, 128ull << 10, mem::Prot::RW));         // host pages are still committed, so this succeeds
+    CHECK(mem::is_mapped(r, 128ull << 10));
+    CHECK(touch(r, true));
+    CHECK(host_mapped(r, 128ull << 10));                         // the host agrees
+    mem::shutdown();
+}
+
+NXTEST(heap_is_mapped_agrees_with_virtualquery_on_random_ranges) {
+    mem::shutdown();
+    CHECK(mem::init());
+    CHECK(mem::heap_create(kHeapSmall));
+    CHECK(mem::heap_commit(0, 4ull << 20));
+    // Holes in the table: a protected run, a decommitted run, and a decommitted run made accessible again.
+    CHECK(mem::protect(mem::kHeapBase + (512ull << 10), 256ull << 10, mem::Prot::None));
+    CHECK(mem::heap_decommit(2ull << 20, 512ull << 10));
+    CHECK(mem::protect(mem::kHeapBase + (2ull << 20) + (128ull << 10), 128ull << 10, mem::Prot::RW));
+    const uint64_t lo = mem::kHeapBase - 64 * kPg;               // 64 pages before the section
+    const uint64_t span = kHeapSmall + 128 * kPg;                // through 64 pages after the section
+    const uint64_t hot_span = (6ull << 20) + 128 * kPg;          // the committed part and a little beyond it
+    std::mt19937_64 rng(0x5EED0003ull);
+    size_t yes = 0, no = 0;
+    for (uint32_t i = 0; i < 200; i++) {
+        // Every other range starts around the committed part, so both answers occur often; the rest cover the whole span.
+        const uint64_t addr = (i % 2 == 0) ? lo + rng() % hot_span : lo + rng() % span;
+        const uint64_t size = (i % 4 == 0) ? 1 + rng() % (16ull << 10) : 1 + rng() % (2ull << 20);
+        const bool want = host_mapped(addr, size);
+        const bool got = mem::is_mapped(addr, size);
+        (want ? yes : no)++;
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "addr %llx size %llx", static_cast<unsigned long long>(addr),
+                      static_cast<unsigned long long>(size));
+        CHECK_MSG(got == want, buf);
+    }
+    CHECK(yes > 20 && no > 20);  // both answers occur often enough for the comparison to mean something
+    mem::shutdown();
+}
+
+NXTEST(heap_protect_cycle_is_fast_with_full_heap) {
+    mem::shutdown();
+    CHECK(mem::init());
+    CHECK(mem::heap_create(kHeapSmall));
+    CHECK(mem::heap_commit(0, kHeapSmall));                      // the whole 256 MiB section committed
+    const uint64_t src = mem::kHeapBase + (1ull << 20);
+    const auto t0 = std::chrono::steady_clock::now();
+    for (uint32_t i = 0; i < 50; i++) {
+        CHECK(mem::protect(src, 1ull << 20, mem::Prot::None));
+        CHECK(!mem::is_mapped(src, 1ull << 20));
+        CHECK(mem::protect(src, 1ull << 20, mem::Prot::RW));
+        CHECK(mem::is_mapped(src, 1ull << 20));
+    }
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    CHECK_MSG(ms < 2000, "50 protect cycles on a 256 MiB committed heap took " + std::to_string(ms) + " ms");
     mem::shutdown();
 }

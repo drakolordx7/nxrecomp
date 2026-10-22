@@ -4,10 +4,12 @@
 #include <cstdlib>
 #include <mutex>
 
+#include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/eh.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/hooks.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
@@ -15,10 +17,13 @@
 #include "nxrt/memguard.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
+#include "nxrt/movie.h"
 #include "nxrt/nxmodule.h"
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
 #include "nxrt/symbols.h"
+#include "nxrt/timestep.h"
+#include "nxrt/tt.h"
 
 namespace nxrt {
 namespace {
@@ -46,10 +51,16 @@ bool init(const InitOptions& opt) {
         ok = false;
     }
     svc_init();
-    if (opt.services) services::register_all();
+    if (opt.services) {
+        services::register_all();
+        media::install_movie_hle();   // movie:: on Media Foundation ([media] movie = off keeps the library in subsdk0)
+    }
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
+    ft::start_from_config();    // frame trace ([prof] trace); a no-op when unset
+    tt::init();                 // test tooling (deterministic mode, scripted runs, traces); a no-op unless a [test] key asks for it
+    timestep::init();           // real-time frame step for the game ([time] section; the hooks do nothing until the lifted game calls them)
     g_up = ok;
     return ok;
 }
@@ -58,6 +69,7 @@ std::string summary() {
     std::string s;
     s += svc_summary() + "\n";
     s += ipc::ipc_summary();
+    s += "audio: " + audio::stats_report() + "\n";
     size_t stubs = 0, called_stubs = 0;
     for (auto& h : hle_list()) {
         stubs += h.stub;
@@ -84,6 +96,8 @@ void shutdown() {
     std::lock_guard<std::mutex> lk(g_lock);
     if (!g_up) return;
     NXLOG_I("runtime", "end-of-run summary:\n%s", summary().c_str());
+    timestep::shutdown();
+    tt::shutdown();
     watchdog_stop();
     memguard_stop();
     log_flush();

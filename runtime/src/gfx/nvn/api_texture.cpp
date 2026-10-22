@@ -4,7 +4,7 @@
 // object; its storage is the game's memory inside a pool (be::MemoryPool::base + offset), in the block-linear layout of
 // nvn_texture_layout.cpp. Texel access untiles the selected level into a scratch buffer, copies the region and tiles the
 // level back (tegra::untile_level / tile_level). Correct first, not fast.
-// Not implemented here (no NVN signature in sigs.txt, so skipped as the plan says): nvnTextureBuilderGetDevice,
+// Not implemented here (no NVN signature in sigs.txt, so skipped): nvnTextureBuilderGetDevice,
 // nvnTextureBuilderGetPackagedTextureLayout, nvnTextureBuilderGetRawStorageClass, nvnTextureGetRawStorageClass.
 // Debug labels are accepted and dropped (be::Texture has no label field).
 // Packaged layout handling: smo-recomp runtime/gfx/nvn_gl.c (GPL-3.0), layout/defaults checked, no code copied.
@@ -318,9 +318,23 @@ NVNtextureAddress nvnTextureGetTextureAddress(const NVNtexture* texture) {
     return pool ? pool->gpu_base + static_cast<uint64_t>(t->b.offset) : 0;
 }
 
+void fill_sparse_layout(const TextureBuilderInfo& b, NVNtextureSparseTileLayout* layout) {
+    if (!layout) return;
+    std::memset(layout, 0, sizeof *layout);
+    int shape[3];
+    if (!be::sparse_tile_shape(b.target, format_info(b.format), shape)) return;
+    layout->tileWidth = shape[0];
+    layout->tileHeight = shape[1];
+    layout->tileDepth = shape[2];
+}
+
 void nvnTextureGetSparseTileLayout(const NVNtexture* texture, NVNtextureSparseTileLayout* layout) {
-    (void)texture;
-    if (layout) std::memset(layout, 0, sizeof *layout);   // no sparse tiles
+    const Texture* t = tex_of(texture);
+    if (!t) {
+        if (layout) std::memset(layout, 0, sizeof *layout);
+        return;
+    }
+    fill_sparse_layout(t->b, layout);
 }
 
 void nvnTextureWriteTexels(const NVNtexture* texture, const NVNtextureView* view, const NVNcopyRegion* region, const void* data) {
@@ -424,8 +438,11 @@ NVNstorageClass nvnTextureBuilderGetStorageClass(const NVNtextureBuilder* builde
 }
 
 void nvnTextureBuilderGetSparseTileLayout(const NVNtextureBuilder* builder, NVNtextureSparseTileLayout* layout) {
-    (void)builder;
-    if (layout) std::memset(layout, 0, sizeof *layout);
+    if (!builder) {
+        if (layout) std::memset(layout, 0, sizeof *layout);
+        return;
+    }
+    fill_sparse_layout(decode(builder), layout);
 }
 
 size_t nvnTextureBuilderGetZCullStorageSize(const NVNtextureBuilder* builder) {

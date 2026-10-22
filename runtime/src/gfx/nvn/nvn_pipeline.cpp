@@ -3,17 +3,21 @@
 // VkPipelineCache persists between runs ([nvn] pipeline_cache, default "pipeline_cache.bin").
 #include "nvn_pipeline.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <mutex>
 #include <unordered_map>
 
 #include "nxrt/config.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
+#include "nvn_spirv_patch.h"
 
 namespace nxrt::nvn::be::gpu {
 namespace {
@@ -25,8 +29,18 @@ struct LayoutKey {
     bool operator<(const LayoutKey& o) const { return std::memcmp(s, o.s, sizeof s) < 0; }
 };
 
+// Shader modules and layouts are also made by the prewarm workers (nvn_prewarm.cpp), so they have locks; the pipeline buckets below stay
+// render thread only.
+std::mutex g_layout_mu;
+std::recursive_mutex g_module_mu;   // every module cache below; the variant makers call shader_module
 std::map<LayoutKey, ProgLayout> g_layouts;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
+std::atomic<bool> g_cache_dirty{false};
+// Producer modules with extra outputs (nvn_spirv_patch.h): (shader, slots as location * 4 + scalar type).
+std::map<std::pair<const ShaderInfo*, std::vector<uint32_t>>, VkShaderModule> g_variants;
+std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;
+std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, bool>> g_no_out;   // (module, owned by this map)      // fragment shaders with private outputs (passes without colour attachments)
+std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, uint32_t>> g_xfb_mod;   // vertex shaders with the captured outputs, their stride       // fragment shaders with the second blend source at Location 0, Index 1
 std::unordered_map<uint64_t, std::vector<std::pair<GraphicsKey, VkPipeline>>> g_gfx;
 std::map<std::pair<const ShaderInfo*, VkPipelineLayout>, VkPipeline> g_compute;
 VkPipelineCache g_cache = VK_NULL_HANDLE;
@@ -47,7 +61,12 @@ VkShaderStageFlagBits stage_bit(ShaderStage s) {
     }
 }
 
+std::mutex g_cache_mu;
+std::atomic<bool> g_cache_ready{false};
+
 void ensure_cache() {
+    if (g_cache_ready.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::mutex> lk(g_cache_mu);       // the prewarm workers and the render thread may get here together
     if (g_cache_tried) return;
     g_cache_tried = true;
     g_cache_path = config_get_str("nvn", "pipeline_cache", "pipeline_cache.bin");
@@ -66,19 +85,36 @@ void ensure_cache() {
     } else if (!data.empty()) {
         NXLOG_I(kTag, "pipeline cache loaded: %zu bytes from %s", data.size(), g_cache_path.c_str());
     }
+    g_cache_ready.store(true, std::memory_order_release);
 }
 
 void save_cache() {
     if (!g_cache || g_cache_path.empty()) return;
+    g_cache_dirty.store(false);
     size_t n = 0;
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, nullptr) != VK_SUCCESS || !n) return;
     std::vector<char> data(n);
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, data.data()) != VK_SUCCESS) return;
-    std::ofstream f(g_cache_path, std::ios::binary | std::ios::trunc);
-    if (f) f.write(data.data(), static_cast<std::streamsize>(n));
+    // written to a temporary file and renamed, so a process that ends in the middle of it leaves the old cache intact
+    const std::string tmp = g_cache_path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f.write(data.data(), static_cast<std::streamsize>(n));
+        if (!f) return;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, g_cache_path, ec);
+    if (ec) {
+        std::filesystem::remove(g_cache_path, ec);
+        std::filesystem::rename(tmp, g_cache_path, ec);
+    }
 }
 
 }  // namespace
+
+bool pipeline_cache_dirty() { return g_cache_dirty.load(std::memory_order_relaxed); }
+void pipeline_cache_save() { save_cache(); }
 
 bool GraphicsKey::operator==(const GraphicsKey& o) const { return std::memcmp(this, &o, sizeof *this) == 0; }
 uint64_t GraphicsKey::hash() const {
@@ -88,16 +124,13 @@ uint64_t GraphicsKey::hash() const {
     return h;
 }
 
-VkShaderModule shader_module(const ShaderInfo* s) {
-    if (!s) return VK_NULL_HANDLE;
-    auto it = g_modules.find(s);
-    if (it != g_modules.end()) return it->second;
-    // The translator declares OpCapability Float64 in every module although no module uses a 64-bit float; devices without
-    // shaderFloat64 (Intel iGPUs) reject that. Drop the capability when no OpTypeFloat 64 exists.
+// A module for SPIR-V words. The translator declares OpCapability Float64 in every module although no module uses a 64-bit float;
+// devices without shaderFloat64 (Intel iGPUs) reject that, so the capability is dropped when no OpTypeFloat 64 exists.
+static VkShaderModule create_module(const std::vector<uint32_t>& words, const char* what) {
     std::vector<uint32_t> fixed;
-    const std::vector<uint32_t>* code = &s->spirv;
+    const std::vector<uint32_t>* code = &words;
     {
-        const auto& w = s->spirv;
+        const auto& w = words;
         size_t cap_at = 0;
         bool uses64 = false;
         for (size_t i = 5; i < w.size();) {
@@ -118,14 +151,118 @@ VkShaderModule shader_module(const ShaderInfo* s) {
     ci.pCode = code->data();
     VkShaderModule m = VK_NULL_HANDLE;
     const VkResult r = vkCreateShaderModule(vkdev(), &ci, nullptr, &m);
-    if (r != VK_SUCCESS) NXLOG_E(kTag, "vkCreateShaderModule failed (%d) for %s", static_cast<int>(r), s->hash.c_str());
+    if (r != VK_SUCCESS) NXLOG_E(kTag, "vkCreateShaderModule failed (%d) for %s", static_cast<int>(r), what);
+    return m;
+}
+
+VkShaderModule shader_module(const ShaderInfo* s) {
+    if (!s) return VK_NULL_HANDLE;
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    auto it = g_modules.find(s);
+    if (it != g_modules.end()) return it->second;
+    VkShaderModule m = create_module(s->spirv, s->hash.c_str());
     g_modules[s] = m;
+    return m;
+}
+
+static const std::pair<VkShaderModule, uint32_t>& xfb_variant(const ShaderInfo* vs) {
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    auto it = g_xfb_mod.find(vs);
+    if (it != g_xfb_mod.end()) return it->second;
+    std::vector<uint32_t> patched;
+    std::vector<SpvXfbOutput> lay;
+    uint32_t stride = 0;
+    VkShaderModule m = VK_NULL_HANDLE;
+    if (spirv_add_xfb(vs->spirv, patched, &lay, &stride)) {
+        m = create_module(patched, vs->hash.c_str());
+        std::string desc;
+        for (const SpvXfbOutput& o : lay) desc += " loc" + std::to_string(o.location) + "x" + std::to_string(o.components) + "@" + std::to_string(o.offset);
+        NXLOG_I(kTag, "%s: transform feedback variant, %u bytes per vertex:%s", vs->hash.c_str(), stride, desc.c_str());
+    } else {
+        NXLOG_W(kTag, "%s: no transform feedback variant could be made (no Location outputs?)", vs->hash.c_str());
+    }
+    return g_xfb_mod.emplace(vs, std::make_pair(m, stride)).first->second;
+}
+
+uint32_t xfb_stride(const ShaderInfo* vs) { return vs ? xfb_variant(vs).second : 0; }
+
+static VkShaderModule no_output_module(const ShaderInfo* fs) {
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    auto it = g_no_out.find(fs);
+    if (it != g_no_out.end()) return it->second.first;
+    std::vector<uint32_t> patched;
+    std::pair<VkShaderModule, bool> e = {VK_NULL_HANDLE, false};
+    if (spirv_outputs_to_private(fs->spirv, patched)) e = {create_module(patched, fs->hash.c_str()), true};
+    else e = {shader_module(fs), false};
+    g_no_out[fs] = e;
+    return e.first;
+}
+
+static VkShaderModule dual_source_module(const ShaderInfo* fs) {
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    auto it = g_dual_src.find(fs);
+    if (it != g_dual_src.end()) return it->second;
+    VkShaderModule m = VK_NULL_HANDLE;
+    std::vector<uint32_t> patched;
+    if (spirv_dual_source_output(fs->spirv, patched)) {
+        m = create_module(patched, fs->hash.c_str());
+    } else {
+        NXLOG_W(kTag, "%s: dual-source blending is on but the fragment shader has no second output; the unpatched module is used", fs->hash.c_str());
+        m = shader_module(fs);
+    }
+    g_dual_src[fs] = m;
+    return m;
+}
+
+// The slots `consumer` reads that `producer` does not write: the console gives them undefined values, Vulkan needs an output.
+static std::vector<SpvOutputSlot> missing_outputs(const ShaderInfo* producer, const ShaderInfo* consumer) {
+    std::vector<SpvOutputSlot> missing;
+    if (!producer || !consumer) return missing;
+    bool covered[64] = {};
+    for (const ShaderIo& o : producer->refl.outputs)
+        for (uint32_t e = 0; e < (o.array ? o.array : 1); ++e)
+            if (o.location + e < 64) covered[o.location + e] = true;
+    for (const ShaderIo& in : consumer->refl.inputs) {
+        for (uint32_t e = 0; e < (in.array ? in.array : 1); ++e) {
+            const uint32_t loc = in.location + e;
+            if (loc >= 64 || covered[loc]) continue;
+            covered[loc] = true;
+            SpvOutputSlot slot;
+            slot.location = loc;
+            slot.type = in.type == ScalarType::Sint ? SpvScalar::Sint : in.type == ScalarType::Uint ? SpvScalar::Uint : SpvScalar::Float;
+            missing.push_back(slot);
+        }
+    }
+    return missing;
+}
+
+// The module of `producer` to use in a pipeline whose next stage is `consumer`: the translated one, or a copy with the outputs the
+// consumer reads and the producer lacks. Null on a Vulkan error.
+static VkShaderModule producer_module(const ShaderInfo* producer, const ShaderInfo* consumer) {
+    const std::vector<SpvOutputSlot> missing = missing_outputs(producer, consumer);
+    if (missing.empty()) return shader_module(producer);
+    std::vector<uint32_t> id;
+    for (const SpvOutputSlot& m : missing) id.push_back(m.location * 4 + static_cast<uint32_t>(m.type));
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    auto it = g_variants.find({producer, id});
+    if (it != g_variants.end()) return it->second;
+    VkShaderModule m = VK_NULL_HANDLE;
+    std::vector<uint32_t> patched;
+    if (spirv_add_outputs(producer->spirv, missing, patched)) {
+        m = create_module(patched, producer->hash.c_str());
+        NXLOG_D(kTag, "%s: %zu outputs added for the next stage", producer->hash.c_str(), missing.size());
+    } else {
+        NXLOG_W(kTag, "%s: the %zu varyings the next stage reads could not be added; the unpatched module is used", producer->hash.c_str(), missing.size());
+        m = shader_module(producer);
+    }
+    g_variants[{producer, id}] = m;
     return m;
 }
 
 const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
     LayoutKey key;
     for (int i = 0; i < 6; ++i) key.s[i] = stages[i];
+    std::lock_guard<std::mutex> lk(g_layout_mu);
     auto it = g_layouts.find(key);
     if (it != g_layouts.end()) return &it->second;
 
@@ -185,24 +322,33 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
     return &g_layouts.emplace(key, std::move(pl)).first->second;
 }
 
-VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
+VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     ensure_cache();
-    const uint64_t h = key.hash();
-    auto& bucket = g_gfx[h];
-    for (auto& e : bucket)
-        if (e.first == key) {
-            counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
-            return e.second;
-        }
     const auto t0 = std::chrono::steady_clock::now();
 
     VkPipelineShaderStageCreateInfo stages[3] = {};
     uint32_t ns = 0;
     const VkShaderStageFlagBits bits[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
+    // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
+    const int feeder = key.stage[2] ? 2 : 0;
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
-        VkShaderModule m = shader_module(key.stage[i]);
-        if (!m) { bucket.emplace_back(key, VK_NULL_HANDLE); return VK_NULL_HANDLE; }
+        if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
+        if (key.xfb) {
+            VkShaderModule m = xfb_variant(key.stage[0]).first;
+            if (!m) return VK_NULL_HANDLE;
+            stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+            stages[ns].stage = bits[0];
+            stages[ns].module = m;
+            stages[ns].pName = "main";
+            ++ns;
+            continue;
+        }
+        VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1])
+                           : (i == 1 && key.no_out)      ? no_output_module(key.stage[i])
+                           : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
+                                                         : shader_module(key.stage[i]);
+        if (!m) return VK_NULL_HANDLE;
         stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         stages[ns].stage = bits[i];
         stages[ns].module = m;
@@ -313,9 +459,34 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
         pipe = VK_NULL_HANDLE;
     } else {
         counters().pipelines_created.fetch_add(1);
-        ++g_pipeline_count;
-        NXLOG_D(kTag, "graphics pipeline #%zu created in %.1f ms (vs %s fs %s)", g_pipeline_count, ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
+        g_cache_dirty.store(true, std::memory_order_relaxed);
+        NXLOG_D(kTag, "graphics pipeline created in %.1f ms (vs %s fs %s)", ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
                 key.stage[1] ? key.stage[1]->hash.c_str() : "-");
+    }
+    return pipe;
+}
+
+VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
+    ensure_cache();
+    const uint64_t h = key.hash();
+    auto& bucket = g_gfx[h];
+    for (auto& e : bucket)
+        if (e.first == key) {
+            counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
+            return e.second;
+        }
+    prewarm_init();
+    VkPipeline pipe = VK_NULL_HANDLE;
+    if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
+        ++g_pipeline_count;
+        bucket.emplace_back(key, pipe);
+        return pipe;
+    }
+    NXFT("pipe.create");
+    pipe = build_graphics_pipeline(key, layout);
+    if (pipe) {
+        ++g_pipeline_count;
+        prewarm_record(key);
     }
     bucket.emplace_back(key, pipe);
     return pipe;
@@ -341,6 +512,7 @@ VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout) {
         } else {
             counters().pipelines_created.fetch_add(1);
             ++g_pipeline_count;
+            g_cache_dirty.store(true, std::memory_order_relaxed);
         }
     }
     g_compute[k] = pipe;
@@ -382,6 +554,7 @@ size_t pipeline_count() { return g_pipeline_count; }
 
 void pipeline_shutdown() {
     VkDevice d = vkdev();
+    prewarm_shutdown();
     save_cache();
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket)
@@ -399,6 +572,18 @@ void pipeline_shutdown() {
     for (auto& [k, m] : g_modules)
         if (m) vkDestroyShaderModule(d, m, nullptr);
     g_modules.clear();
+    for (auto& [k, m] : g_variants)
+        if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_variants.clear();
+    for (auto& [k, m] : g_dual_src)
+        if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_dual_src.clear();
+    for (auto& [k, e] : g_no_out)
+        if (e.first && e.second) vkDestroyShaderModule(d, e.first, nullptr);
+    g_no_out.clear();
+    for (auto& [k, v] : g_xfb_mod)
+        if (v.first) vkDestroyShaderModule(d, v.first, nullptr);
+    g_xfb_mod.clear();
     for (auto& [k, b] : g_const_bufs) device().destroy_buffer(b.first);
     g_const_bufs.clear();
     if (g_driver_const_made) device().destroy_buffer(g_driver_const);
@@ -406,6 +591,8 @@ void pipeline_shutdown() {
     if (g_cache) vkDestroyPipelineCache(d, g_cache, nullptr);
     g_cache = VK_NULL_HANDLE;
     g_cache_tried = false;
+    g_cache_ready.store(false);
+    g_cache_dirty.store(false);
     g_pipeline_count = 0;
 }
 

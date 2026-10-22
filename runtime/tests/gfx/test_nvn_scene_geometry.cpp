@@ -228,7 +228,10 @@ bool draw_positions(App& app, NVNprogram* prog, const App::Buf& vb, int mode, in
 
 // The window origin test. NDC +y is the top edge of a viewport rectangle in upper-left mode (image row 0 is the top of the picture:
 // the apex of the triangle is near the top) and the GL convention in lower-left mode, where window y 0 is memory row 0 and NDC -y
-// is the first row: the picture is vertically mirrored. Scissor and viewport y count image rows in both modes, from row 0.
+// is the first row: the window texture is vertically mirrored in memory, and the present step flips it back (what the console's
+// display does: the real game runs in lower-left mode and shows an upright picture, boot note 122), so the PRESENTED picture the test
+// reads back is upright in both modes. Scissor and viewport y count memory rows in both modes, from row 0: in lower-left mode the
+// scissor band 0..11 appears at the bottom of the presented picture.
 void origin_case(bool upper_left, const char* ref) {
     if (!have_data()) return;
     App app;
@@ -248,13 +251,8 @@ void origin_case(bool upper_left, const char* ref) {
     const Census top = census(px, 0, 13, kW, 14), bottom = census(px, 0, 34, kW, 35);
     std::printf("    %s origin, triangle: row 13 (near the apex at y=+0.5) %zu magenta, row 34 (near the base) %zu magenta\n",
                 upper_left ? "upper-left" : "lower-left", top.magenta, bottom.magenta);
-    if (upper_left) {   // the apex (NDC y = +0.5) is near the top; lower-left mirrors the picture (apex near the bottom)
-        CHECK(top.magenta <= 4);
-        CHECK(bottom.magenta >= 28);
-    } else {
-        CHECK(top.magenta >= 28);
-        CHECK(bottom.magenta <= 4);
-    }
+    CHECK(top.magenta <= 4);        // the apex (NDC y = +0.5) is near the top of the presented picture in both modes
+    CHECK(bottom.magenta >= 28);
     CHECK_EQ(census(px).other, size_t(0));
     check_reference(ref, px);
 
@@ -268,10 +266,10 @@ void origin_case(bool upper_left, const char* ref) {
         bind_program(app, c, prog.get());
         app.api.nvnCommandBufferDrawArrays(c, NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 6);
     }, &px2));
-    const Census band = census(px2, 0, 0, kW, 12);
+    const Census band = upper_left ? census(px2, 0, 0, kW, 12) : census(px2, 0, kH - 12, kW, kH);
     const Census all = census(px2);
     std::printf("    %s origin, scissor 0,0,64,12: %zu magenta in the origin band (%s), %zu in total, %zu other\n",
-                upper_left ? "upper-left" : "lower-left", band.magenta, "rows 0..11", all.magenta, all.other);
+                upper_left ? "upper-left" : "lower-left", band.magenta, upper_left ? "presented rows 0..11" : "presented rows bottom 12", all.magenta, all.other);
     CHECK_EQ(band.magenta, size_t(768));
     CHECK_EQ(all.magenta, size_t(768));
     CHECK_EQ(all.other, size_t(0));

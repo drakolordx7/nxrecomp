@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_framework.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
+#include "nxrt/diag.h"
 #include "nxrt/kernel.h"
 #include "nxrt/memory.h"
 #include "nxrt/svc.h"
@@ -40,10 +44,12 @@ constexpr uint64_t kPseudoProcess = 0xFFFF8001;
 constexpr uint64_t kPseudoThread = 0xFFFF8000;
 constexpr uint64_t kBogusHandle = 0x12345;
 constexpr uint32_t kInfoThreadTickCountOld = 0xF0000002u;
+constexpr uint32_t kInfoThreadTickCount = 25;
 constexpr uint64_t kInvalidCombination = 0xE801;
 constexpr uint64_t kInvalidHandle = 0xE401;
 constexpr uint64_t kTotalMemory = 0xCD500000ull;
 constexpr uint64_t kGolden = 0x9E3779B97F4A7C15ull;
+constexpr uint64_t kAllCores = 0xFFFFFFFFFFFFFFFFull;
 
 }  // namespace
 
@@ -176,9 +182,51 @@ NXTEST(info_thread_tick_count_bad_handle) {
 }
 
 NXTEST(info_thread_tick_count_pseudo_handle) {
-    // Pseudo handle of the calling thread: accepted even outside a guest thread (the tick value is 0 for now).
+    // Pseudo handle of the calling thread: accepted even outside a guest thread, where the tick value is 0.
     Result r = call(kSvcGetInfo, kInfoThreadTickCountOld, kPseudoThread, 0xFFFFFFFFFFFFFFFFull);
     CHECK_EQ(r.rc, 0u);
+}
+
+namespace {
+// Burns host CPU for about `ms` milliseconds (a CPU-bound loop, so its CPU time is about its wall time).
+void burn_cpu(int ms) {
+    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    volatile uint64_t x = 0;
+    while (std::chrono::steady_clock::now() < end) x = x + 1;
+}
+}  // namespace
+
+NXTEST(info_thread_tick_count_pseudo_handle_counts_cpu) {
+    // A guest thread (adopted on a helper host thread) burns about 20 ms of CPU: its tick count is positive and never goes down.
+    std::atomic<uint32_t> adopted{0};
+    std::atomic<uint32_t> rc_ok{0xFFFF};
+    std::atomic<uint64_t> first{0}, second{0}, third{0};
+    std::thread th([&] {
+        adopted = nxrt::kernel::main_thread_adopt(0x100000);
+        Result a = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        burn_cpu(20);
+        Result b = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        Result c = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        rc_ok = (a.rc == 0 && b.rc == 0 && c.rc == 0) ? 0u : 1u;
+        first = a.x1;
+        second = b.x1;
+        third = c.x1;
+        nxrt::diag_unregister_thread();
+    });
+    th.join();
+    CHECK(adopted.load() != 0);
+    CHECK_EQ(rc_ok.load(), 0u);
+    CHECK(second.load() > 0);
+    CHECK(first.load() <= second.load());
+    CHECK(third.load() >= second.load());
+    nxrt::kernel::kernel_reset();   // forget the helper thread so later cases see no running guest thread
+}
+
+NXTEST(info_thread_tick_count_invalid_handle_any_sub) {
+    // The handle is checked before the core sub-argument, so a bad handle is rejected whatever sub says.
+    CHECK_EQ(call(kSvcGetInfo, kInfoThreadTickCount, kBogusHandle, kAllCores).rc, kInvalidHandle);
+    CHECK_EQ(call(kSvcGetInfo, kInfoThreadTickCount, kBogusHandle, 0).rc, kInvalidHandle);
+    CHECK_EQ(call(kSvcGetInfo, kInfoThreadTickCount, kBogusHandle, 9).rc, kInvalidHandle);
 }
 
 NXTEST(info_unknown_type) {
@@ -241,10 +289,17 @@ NXTEST(resource_current_values) {
     Result r = call(kSvcCurrentValue, 0x1234, 0);
     CHECK_EQ(r.rc, 0u);
     CHECK_EQ(r.x1, nxrt::svc_current_heap_size());
-    // Thread count is 1 for now (placeholder until kernel::threads() exists).
+    // Thread count: started, not yet exited guest threads, at least 1. No guest thread runs in this group, so it is 1.
     CHECK_EQ(call(kSvcCurrentValue, 0x1234, 1).x1, 1u);
     CHECK_EQ(call(kSvcCurrentValue, 0x1234, 2).x1, 0u);
     CHECK_EQ(call(kSvcCurrentValue, 0x1234, 5).rc, kInvalidCombination);
+}
+
+NXTEST(resource_current_thread_count_at_least_one) {
+    // The test thread is not a guest thread, so the count can be 0 here; the floor of 1 applies.
+    Result r = call(kSvcCurrentValue, 0x1234, 1);
+    CHECK_EQ(r.rc, 0u);
+    CHECK(r.x1 >= 1);
 }
 
 NXTEST(resource_peak_values) {

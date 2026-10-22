@@ -1,0 +1,100 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Play mode: the binding engine. Keyboard keys, mouse buttons and wheel notches go in with timestamps; the Switch-pad contribution
+// (buttons and stick deflection) comes out for any moment in time. No SDL, no game memory, no threads of its own: the caller supplies the
+// clock, so the tests drive it with made-up times.
+//
+// Rules (docs/S8.md has the player-facing version):
+//  * Bindings of the current context win over bindings of the `all` layer for the same input. `none` as the action switches the input off.
+//  * Triggers: press = active while held. tap = a pulse of [timing] pulse_ms right after a release that came within the tap window.
+//    hold = active while held, from the hold delay on. toggle = each press flips it. doubletap = active while held when the press came
+//    within the window after the previous release of the same input. A mouse wheel notch is a pulse for every trigger except toggle (which flips).
+//  * Beam / visor selects (and the wheel cycling) are edge actions: when the binding becomes active the select output is pressed for pulse_ms,
+//    however long the key stays down. BeamNext / BeamPrev walk the tracked beam (the last one selected through the engine or told by
+//    set_game_hints) over the beams in the hint mask.
+//  * Changing the context consumes every held input whose bindings differ in the new context: it does nothing until it is released.
+//  * Stick contributions are summed per stick and normalised to length 1 (W + D is a diagonal, not 1.41).
+#pragma once
+#include <array>
+#include <cstdint>
+#include <map>
+#include <mutex>
+#include <vector>
+
+#include "play_types.h"
+
+namespace nxrt::play {
+
+struct EngineOut {
+    uint64_t buttons = 0;       // nn::hid::NpadButton bits
+    float lx = 0, ly = 0;       // -1..1, y up = +
+    float rx = 0, ry = 0;
+};
+
+class Engine {
+public:
+    Engine();
+    explicit Engine(const Settings& s);
+
+    // Replaces bindings, outputs and timing; keeps what is held (held inputs are consumed if their bindings changed).
+    void set_settings(const Settings& s, uint64_t now_ns);
+    Settings settings() const;
+
+    void set_context(Ctx c, uint64_t now_ns);
+    Ctx context() const;
+
+    // Input events. Times are nanoseconds on any monotonic clock; they must not go backwards between calls.
+    void key(int scancode, bool down, uint64_t now_ns);
+    void mouse_button(int button, bool down, uint64_t now_ns);    // 1 left .. 5, the numbering of input.h
+    void wheel(int dir, uint64_t now_ns);                          // +1 up, -1 down: one notch
+    void release_all(uint64_t now_ns);                             // focus lost: everything is released (no taps fire)
+
+    // What the game knows: the beam currently selected (0 power, 1 wave, 2 ice, 3 plasma; -1 = unknown) and a bit mask of the beams the player owns.
+    // The game's view is adopted only when no select of ours is pending or recent (the game needs a frame or two to act on a pulse).
+    void set_game_hints(int current_beam, unsigned beam_mask, uint64_t now_ns);
+    int tracked_beam() const;
+
+    // The Switch-side result at time now. Thread safe.
+    EngineOut output(uint64_t now_ns);
+
+    // Diagnostics for the settings page and the tests.
+    bool input_held(const InputId& id) const;
+    bool act_active(Act a, uint64_t now_ns);             // any binding of the action is active (select actions: the pulse is running)
+    uint64_t activations(Act a) const;                   // activation edges since construction
+    Act last_activated() const;
+
+private:
+    struct InState {
+        bool held = false, consumed = false, had_release = false;
+        uint64_t press_ns = 0, release_ns = 0;
+    };
+    struct BindRt {
+        bool toggled = false, dt_on = false, prev = false;
+        uint64_t pulse_until = 0;
+    };
+    void rebuild();                                       // eff_ and cur_ from settings_ + ctx_
+    std::vector<int> effective(Ctx c, const InputId& id) const;
+    std::vector<std::array<int, 3>> effective_sig(Ctx c, const InputId& id) const;   // (act, trigger, ms) per effective binding
+    void press(const InputId& id, uint64_t now);
+    void release(const InputId& id, uint64_t now);
+    bool binding_active(int b, uint64_t now) const;
+    void step(uint64_t now);
+    void on_activate(int b, uint64_t now);
+    void select(Act eff_act, uint64_t now);
+    static bool is_select(Act a);
+
+    mutable std::mutex mu_;
+    Settings st_;
+    Ctx ctx_ = Ctx::Menu;
+    std::vector<BindRt> rt_;
+    std::vector<int> cur_;                                // indices of the bindings that apply in ctx_
+    std::map<InputId, InState> in_;
+    struct Sel { Act act; uint64_t start, end; };
+    std::vector<Sel> sels_;                               // select pulses, queued so that two selects never overlap
+    uint64_t acts_[kActCount] = {};
+    Act last_ = Act::None;
+    int beam_ = 0;
+    uint64_t last_select_ns_ = 0;
+    unsigned beam_mask_ = 0x0f;
+};
+
+}  // namespace nxrt::play

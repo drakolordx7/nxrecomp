@@ -19,9 +19,11 @@ Rules:
 | `memory` | `app_memory_mb` | `0` (= 3285, 0xCD500000 bytes) | `NXRT_MEMORY_APP_MEMORY_MB` | `src/kernel/svc_info.cpp`, `svc_memory.cpp` | Physical memory the process is told it has: GetInfo TotalMemorySize, and the ceiling of SetHeapSize together with the module images and 64 MiB. |
 | `memory` | `limit_gb` | `8` | `NXRT_MEMORY_LIMIT_GB` | `src/diag/memguard.cpp` | Private commit limit in GB. Zero, negative or non-numeric: 8. |
 | `memory` | `poll_ms` | `250` | `NXRT_MEMORY_POLL_MS` | `src/diag/memguard.cpp` | Memory guard poll interval in milliseconds. Zero or negative: 250. |
+| `memory` | `fast_query` | `true` | `NXRT_MEMORY_FAST_QUERY` | `src/mem/memory.cpp` | Answer `is_mapped` and `protect` for ranges inside the heap view from a per-page table instead of `VirtualQuery` (which walks every page of the run on a section view: about 75 ms for a 3 GiB heap). `false` goes back to `VirtualQuery`; for before/after measurements. Read once. |
 | `diag` | `watchdog_seconds` | `10` | `NXRT_DIAG_WATCHDOG_SECONDS` | `src/diag/watchdog.cpp` | Freeze threshold in seconds. Zero or negative disables the watchdog. Read only when the start call passes no value. |
 | `sched` | `console_cores` | `true` | `NXRT_SCHED_CONSOLE_CORES` | `src/kernel/sched.cpp` | `false` turns off the console core model. |
 | `sched` | `host_cpus` | empty | `NXRT_SCHED_HOST_CPUS` | `src/kernel/sched.cpp` | Hexadecimal mask of host processors, intersected with the process affinity. Ignored when no bit matches. Empty: the runtime picks processors itself. |
+| `sched` | `priority_class` | `auto` | `NXRT_SCHED_PRIORITY_CLASS` | `src/kernel/sched.cpp` | Process priority class: `auto` (high when play mode has a window, otherwise left alone), `high`, `above_normal`, `normal`. The guest threads are pinned with the wake-up boost off, so under background CPU load a woken thread waits a scheduler quantum; see debug note 221. |
 | `ipc` | `stub_result` | `0xBCBD5` | `NXRT_IPC_STUB_RESULT` | `src/ipc/stub.cpp` | Result every stub-service command answers. `0` answers success with an empty reply (bring-up probe: the guest then reads zeros, so it only maps which services it asks for next). |
 | `svc` | `unknown_log_limit` | `100` | `NXRT_SVC_UNKNOWN_LOG_LIMIT` | `src/kernel/svc.cpp` | Each unknown SVC number is logged for its first N calls, then every 1000th call. Read on the first unknown SVC. |
 | `process` | `entropy_seed` | `0x1234567890ABCDEF` | `NXRT_PROCESS_ENTROPY_SEED` | `src/kernel/svc_info.cpp` | Seed for GetInfo RandomEntropy, subtypes 0 to 3. |
@@ -44,10 +46,23 @@ Rules:
 | `nvn` | `shader_cache` | `` | `NXRT_NVN_SHADER_CACHE` | `src/gfx/nvn/nvn_shaders.cpp` | Folder with `<code hash>.spv` and `results.tsv` (translated shaders). Empty: `./shader_cache/spirv`, then `C:/mpr/work/shader_cache/spirv`. |
 | `nvn` | `bc7_cache` | `bc7_cache` | `NXRT_NVN_BC7_CACHE` | `src/gfx/nvn/nvn_texdata.cpp` | Folder of ASTC to BC7 transcodes, keyed by a hash of the source bytes. Empty disables. |
 | `nvn` | `bc7_quality` | `3` | `NXRT_NVN_BC7_QUALITY` | `src/gfx/nvn/nvn_texdata.cpp` | bc7e preset 0-6 for transcodes done at run time (the setup tool uses 5). |
-| `nvn` | `pipeline_cache` | `pipeline_cache.bin` | `NXRT_NVN_PIPELINE_CACHE` | `src/gfx/nvn/nvn_pipeline.cpp` | VkPipelineCache file, loaded with the first pipeline and saved at shutdown. Empty disables. |
+| `nvn` | `pipeline_cache` | `pipeline_cache.bin` | `NXRT_NVN_PIPELINE_CACHE` | `src/gfx/nvn/nvn_pipeline.cpp` | VkPipelineCache file, loaded with the first pipeline and written by a background thread every 2 s while new pipelines appear (and at shutdown). Empty disables. |
+| `nvn` | `pipeline_keys` | `pipeline_keys.bin` | `NXRT_NVN_PIPELINE_KEYS` | `src/gfx/nvn/nvn_prewarm.cpp` | Key file of the pipeline prewarm: every pipeline created at a draw is appended; the next run builds the recorded pipelines of a program on worker threads when the game sets its shaders. Empty disables the prewarm. |
+| `nvn` | `prewarm` | `true` | `NXRT_NVN_PREWARM` | `src/gfx/nvn/nvn_prewarm.cpp` | `false` turns the pipeline prewarm (recording and building ahead) off. The pipeline cache file is still used. |
+| `nvn` | `prewarm_threads` | `max(1, min(4, cpus / 6))` | `NXRT_NVN_PREWARM_THREADS` | `src/gfx/nvn/nvn_prewarm.cpp` | Worker threads that build recorded pipelines. |
+| `nvn` | `pool_prefetch` | `true` | `NXRT_NVN_POOL_PREFETCH` | `src/gfx/nvn/nvn_gpu_pool.cpp` | Import a memory pool into Vulkan on a background thread when a buffer is created over it, instead of on the render thread at the first draw. |
+| `prof` | `trace` | empty | `NXRT_PROF_TRACE` | `src/diag/ftrace.cpp` | Frame trace file: zones of the render path, slow SVCs and slow HLE calls with their threads and times, flushed once a second. Analyse with `scripts/prof/ftrace_report.py`. Empty: off (one relaxed load per zone). |
+| `prof` | `trace_events` | `6000000` | `NXRT_PROF_TRACE_EVENTS` | `src/diag/ftrace.cpp` | Size of the event array (24 bytes each, allocated when the trace starts); events past it are dropped. |
+| `prof` | `stall_ms` | `0` | `NXRT_PROF_STALL_MS` | `src/diag/ftrace.cpp` | With a trace on: when no frame was presented for this many milliseconds, dump every thread's stack to `<trace>.stacks` (up to four times per stall) and, when the stall ends, the CPU time each thread used in it. Analyse with `scripts/prof/stack_report.py`. |
 | `am` | `resolution` | empty (docked 1920x1080, handheld 1280x720) | `NXRT_AM_RESOLUTION` | `src/services/am.cpp` | Output size as `WIDTHxHEIGHT`, e.g. `1280x720`. Empty or not parseable: the default for the operation mode. |
 | `am` | `operation_mode` | `docked` | `NXRT_AM_OPERATION_MODE` | `src/services/common.cpp` | `handheld` sets handheld mode. Any other value is docked. |
-| `audio` | `sink` | `null` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `xaudio2` plays through XAudio2. Any other value keeps the null sink (no output). |
+| `audio` | `sink` | `auto` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `auto` plays through XAudio2 on the default output device and falls back to the null sink (no sound, a warning in the log) when XAudio2 or a device is missing. `xaudio2` is the same with an explicit name. `paced` is a simulated device: it drains its queue at the sample rate and reports underruns and queue levels, which is how the renderer's timing is checked on a machine without a sound card. `null` discards everything. Tests install their own sink. |
+| `audio` | `paced_ppm` | `0` | `NXRT_AUDIO_PACED_PPM` | `src/services/audio_paced.cpp` | Clock error of the paced sink in parts per million (positive: the simulated device runs fast). Used to check that the renderer follows a device clock that is not exactly the host's. |
+| `media` | `movie` | `mf` | `NXRT_MEDIA_MOVIE` | `src/media/movie_mf.cpp` | `mf`: the game's `movie::` imports (Extractor, Decoder, MediaData, Buffer) are answered on Windows Media Foundation. `off`: the library compiled into subsdk0 runs (it needs the NVDEC/VIC driver, which does not exist here, so no movie plays). |
+| `media` | `movie_log` | `false` | `NXRT_MEDIA_MOVIE_LOG` | `src/media/movie_mf.cpp` | One log line per sample read and per input buffer sent to a decoder. Very verbose. |
+| `audio` | `wav_dump` | empty | `NXRT_AUDIO_WAV_DUMP` | `src/services/audio_sink.cpp`, `src/services/audio_wav.cpp` | Path of a 16-bit PCM WAV file that receives every frame the game sends to the host sink. Empty: no file. See the audio notes below. |
+| `audio` | `volume` | `1.0` | `NXRT_AUDIO_VOLUME` | `src/services/audio_sink.cpp`, `src/services/audio_xaudio2.cpp` | Master volume, from `0.0` (silent) to `1.0`. Values outside that range are clamped. Applied by the XAudio2 sink. |
+| `audio` | `device` | `default` | `NXRT_AUDIO_DEVICE` | `src/services/audio_xaudio2.cpp`, `src/services/audio_devices.cpp` | Output device for the XAudio2 sink: `default`, an endpoint id, or part of a device's name. See the audio notes below. |
 | `title` | `program_id` | `0x010012101468C000` | `NXRT_TITLE_PROGRAM_ID` | `src/services/common.cpp` | Title id of the game. `[process] program_id`, when set, overrides it. Also the default for `save_owner_id`. |
 | `title` | `name` | `Metroid Prime Remastered` | `NXRT_TITLE_NAME` | `src/services/common.cpp` | Title name in the control data. |
 | `title` | `display_version` | `1.0.0` | `NXRT_TITLE_DISPLAY_VERSION` | `src/services/common.cpp` | Display version string in the control data. |
@@ -74,7 +89,44 @@ Rules:
 | `fatal` | `terminate` | `true` | `NXRT_FATAL_TERMINATE` | `src/services/logfault.cpp` | `true` ends the process with exit code 5 after a fatal report. `false` returns. |
 | `net` | `offline` | `true` | `NXRT_NET_OFFLINE` | `src/services/network.cpp` | `true`: no connection, no friends and no BCAT data (the start-up log line says so). |
 | `pl` | `font_dir` | empty | `NXRT_PL_FONT_DIR` | `src/services/pl.cpp` | Folder searched first for `DejaVuSans.ttf` and the shared font dumps. Empty: the search goes on to `fonts\` next to the exe, then `assets\fonts\` under the working directory, then the exe's folder. |
+| `play` | `controls` | `controls.ini` | `NXRT_PLAY_CONTROLS` | `src/gfx/play/play.cpp` | Settings file of play mode (controls, sensitivity, display); written with the factory settings when missing. |
+| `play` | `capture_mouse` | `true` | `NXRT_PLAY_CAPTURE_MOUSE` | `src/gfx/play/play.cpp` | Capture the pointer (relative mode) while the game is in play. |
+| `play` | `pitch_limit_deg` | `0` | `NXRT_PLAY_PITCH_LIMIT_DEG` | `src/gfx/play/play.cpp` | Pitch limit of the mouse aim in degrees; 0 uses the game's tweak value. |
+| `play` | `quit_on_close` | `true` | `NXRT_PLAY_QUIT_ON_CLOSE` | `src/gfx/play/play.cpp` | Closing the window ends the process. |
+| `play` | `game_base` | `0x7100000000` | `NXRT_PLAY_GAME_BASE` | `src/gfx/play/play.cpp` | Base of the game's main module (hook addresses). |
+| `play` | `log_status` | `false` | `NXRT_PLAY_LOG_STATUS` | `src/gfx/play/play.cpp` | One status line per second in the log. |
+| `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
+| `play` | `late_sample` | `true` | `NXRT_PLAY_LATE_SAMPLE` | `src/gfx/play/play.cpp` | Pump the window's events again right before the first `ProcessInput` of a frame takes the mouse counts, so the aim includes what the mouse did since the frame boundary. |
+| `time` | `mode` | `real` | `NXRT_TIME_MODE` | `src/timestep/timestep.cpp` | Frame step the game runs: `real` (measured frame time, clamped and smoothed), `fixed` (1/`rate` and the frame is held to it: the 60 Hz lock) or `off` (the game's own 1/60 per call). Needs the lifted game built with the S11 sites in `recomp/games/mpr/main.sites`. |
+| `time` | `rate` | `60` | `NXRT_TIME_RATE` | `src/timestep/timestep.cpp` | Steps per second in `fixed` mode (10 to 1000). |
+| `time` | `max_rate` | `480` | `NXRT_TIME_MAX_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never shorter than 1/max_rate, and with `pace` a frame is held until then. This is also the cap of an unlimited frame rate: the game's logic never runs faster than this. |
+| `time` | `min_rate` | `30` | `NXRT_TIME_MIN_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never longer than 1/min_rate. A slower frame makes the game run in slow motion instead of taking one huge step. |
+| `time` | `smooth` | `4` | `NXRT_TIME_SMOOTH` | `src/timestep/timestep.cpp` | `real` mode: the step is the mean of the last N frame times (1 = raw, 64 at most); a frame more than 50 % away from the mean restarts the window. |
+| `time` | `pace` | `true` | `NXRT_TIME_PACE` | `src/timestep/timestep.cpp` | Hold the frame in the Update hook until the shortest step the mode allows has passed. |
+| `time` | `off_rate` | `0` | `NXRT_TIME_OFF_RATE` | `src/timestep/timestep.cpp` | `off` mode only: hold the frame to this rate and keep the retail 1/60 step. A diagnostic: the game then runs `off_rate / 60` times faster. |
+| `time` | `movie_real` | `true` | `NXRT_TIME_MOVIE_REAL` | `src/timestep/timestep.cpp` | The movie list's clock is real elapsed time (up to `movie_max` per call) instead of the game's step. |
+| `time` | `movie_max` | `0.5` | `NXRT_TIME_MOVIE_MAX` | `src/timestep/timestep.cpp` | Longest delta handed to the movie list in one call, seconds. |
+| `time` | `fix_friction` | `true` | `NXRT_TIME_FIX_FRICTION` | `src/timestep/timestep.cpp` | Scale the in-air walk friction constant (3.5 per 1/60 s) of `CPlayerMP1::GetDampedClampedVelocityWR` by the step. |
+| `time` | `fix_render_timings` | `true` | `NXRT_TIME_FIX_RENDER_TIMINGS` | `src/timestep/timestep.cpp` | `NRenderUtilMPT::TickRenderTimings` (texture scroll, UV animation, water) advances by the step instead of one frame per call. |
+| `time` | `fix_streaming` | `true` | `NXRT_TIME_FIX_STREAMING` | `src/timestep/timestep.cpp` | Texture streaming ages its entries by the step instead of 1/60. |
+| `time` | `fix_budget` | `true` | `NXRT_TIME_FIX_BUDGET` | `src/timestep/timestep.cpp` | The 14 ms background-work budget after the tick scales with the step. |
+| `time` | `log_every` | `0` | `NXRT_TIME_LOG_EVERY` | `src/timestep/timestep.cpp` | One log line of frame statistics every N frames (0 = off). |
+| `time` | `csv` | empty | `NXRT_TIME_CSV` | `src/timestep/timestep.cpp` | Write one line per frame: frame, host time, measured elapsed, step, sum of steps, movie frames delivered, render-timing clock. |
+| `time` | `game_base` | `0x7100000000` | `NXRT_TIME_GAME_BASE` | `src/timestep/timestep.cpp` | Guest address of the main module (the hooks are keyed by it). |
+| `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
+
+### Audio notes
+
+When the sink has a clock of its own (XAudio2, or `paced`), the audio renderer keeps about 40 ms of audio queued on it and renders the next 5 ms frame whenever the queue falls below that, instead of waiting on the host clock. The sound card and the host clock never agree exactly; pacing by the host clock alone would fill the queue slowly (frames dropped) or drain it (a click). With the null sink the renderer keeps its 5 ms host-clock pacing. The pace does not depend on the game's frame rate: the renderer runs on its own thread and the game's audio thread waits for the renderer's frame event.
+
+`wav_dump` is read when the first audio sink is created and works with either sink. `device` and `volume` only affect the XAudio2 sink (the null sink plays nothing). `device` is read each time the XAudio2 sink opens. `volume` is read once, at first use, and can also be changed in code while the program runs.
+
+`wav_dump` writes the game's sound to a WAV file as well as to the output device. Every frame that reaches the sink is written, including frames the device drops because its queue is full. The file header is updated about once a second of audio and again when the sink closes, so a file from a run that was killed is still playable up to the last update. If the sample rate or channel count changes during the run (for example a switch from stereo to 5.1), the next file gets a number before its extension: `dump.wav`, then `dump.1.wav`, and so on.
+
+`device` chooses where the XAudio2 sink plays. `default` (or an empty value) uses the system's default output. Any other text is looked for first as an exact endpoint id, then as part of a device's friendly name, ignoring upper and lower case. The first match wins. If nothing matches, the log gets a warning and the default device is used. Each time the XAudio2 sink opens, the log lists the active output devices with their names and ids, so the text for this key can be copied from there.
+
+When a sink closes, it writes one line to the log with its counters: frames written, accepted, dropped, underruns (times the device ran out of audio after playback had started) and the largest number of buffers queued at once.
 
 ## Environment variables read directly
 
@@ -126,7 +178,12 @@ host_stack_mb = 64
 operation_mode = docked
 
 [audio]
-sink = null
+sink = auto              ; auto (XAudio2, null sink when no device), xaudio2, paced (simulated device), null
+; volume = 1.0           ; master volume 0.0 .. 1.0 (XAudio2)
+; device = default       ; default, an endpoint id, or part of a device name
+; wav_dump = game.wav    ; also write everything the game plays to a WAV file
+[media]
+movie = mf               ; mf: movies on Media Foundation, off: the library in subsdk0 (no movies)
 
 [title]
 program_id = 0x010012101468C000
@@ -171,3 +228,25 @@ offline = true
 [time]
 zone = host
 ```
+
+## Test tooling keys (`[test]`, work area S5)
+
+All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment variable = `NXRT_TEST_<KEY>`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `script` | empty | Scripted run (`.nxs`, grammar in `include/nxrt/tt_script.h`). Exit code 0 pass, 1 fail, 2 usage/parse error, 4 crash, 5 freeze, 6 process ended early, 124 wall timeout. |
+| `regions` | `regions.tsv` next to the script | Name table for `@area` / `@warp` (`name<TAB>world guid<TAB>area guid`). |
+| `out` | `testout` | Output folder: `result.json`, `trace.jsonl`, `shots/`. |
+| `deterministic` | `false` | Virtual clock (one frame = `clock_step_ticks`), seeded RNG, fixed wall-clock epoch. |
+| `seed` | `0x5EED5EED` | RNG seed of deterministic mode. |
+| `clock_step_ticks` | `320000` | Virtual ticks (19.2 MHz) per frame. |
+| `frame_source` | `hook` | `hook` (needs `tests/sites/mpr_testtools.sites` in the lifted game), `tick` (`diag_frame_tick`), `svc:N` (a frame every N SVCs, bring-up), `manual` (tests). |
+| `trace` | `<out>/trace.jsonl` | Per-frame JSON lines; `none` disables. |
+| `record` / `replay` | empty | Record the live pad of every frame / feed a recorded input trace (`replay_exit=1` ends the run where it ends). |
+| `hash_regions` | empty | Memory folded into the frame hash: comma list of `0xADDR+0xSIZE` and `module:<name>` (the module's RW pages). |
+| `max_frames` | `0` | Fail the run after this many frames. |
+| `wall_timeout_s` | `900` with a script | End the run with exit code 124 after this long. |
+| `freeze_exit` | `true` with a script | A watchdog fire ends the run with exit code 5. |
+| `shot_dir` / `require_shots` | `<out>/shots` / `false` | Where `@shot` writes; a missing screenshot provider fails the run when set. |
+| `game_base` | `0x7100000000` | Base of the game's main module (probe and hook addresses). |
