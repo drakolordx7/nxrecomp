@@ -24,6 +24,7 @@
 #include "nvn_enums.h"
 #include "nvn_format.h"
 #include "nvn_gpu_internal.h"
+#include "extras/hdr_nvn.h"
 #include "nvn_texdata.h"
 #include "nvn_texture_layout.h"
 #include "tegra_tiling.h"
@@ -35,6 +36,7 @@ static std::mutex g_live_mu;
 static std::set<struct TexGpu*> g_live_set;
 
 struct TexGpu {
+    bool promoted = false;                              // HDR scene pipeline: an 8-bit sRGB render target kept as RGBA16F (src/gfx/extras/hdr_nvn.h)
     gfx::Image img;                                     // the image; created without a view (views are cached below)
     const FormatInfo* fmt = nullptr;
     VkFormat format = VK_FORMAT_UNDEFINED;              // the image format: the NVN one, its fallback, or BC7 for ASTC
@@ -160,6 +162,12 @@ bool format_view_ok(const TexGpu& g, VkFormat fmt) {
     return bit_alias_class(g.format) && (fmt == float_alias(g.format) || fmt == uint_alias(g.format) || fmt == sint_alias(g.format));
 }
 
+// A promoted image answers the 8-bit RGBA formats the game asks for (its sRGB and UNORM views) with its own format: the values are linear floats.
+VkFormat promoted_view_format(const TexGpu& g, VkFormat f) {
+    if (g.promoted && (f == VK_FORMAT_R8G8B8A8_SRGB || f == VK_FORMAT_R8G8B8A8_UNORM)) return g.format;
+    return f;
+}
+
 // The format a colour attachment of this image is rendered through: integer 32-bit formats as their float alias, because the
 // translated fragment shaders write float outputs and the console stores the register bits unconverted.
 VkFormat attachment_format_of(const TexGpu& g, VkFormat requested) {
@@ -277,6 +285,14 @@ TexGpu* create_texture_gpu(Texture* t) {
         why = r;
     }
     if (chosen == VK_FORMAT_UNDEFINED) return fail(why);
+
+    if (const VkFormat hf = extras::hdr_promote_target(chosen, t->b.flags, s.type == VK_IMAGE_TYPE_2D, s.levels, s.layers, s.samples, g->fmt->srgb)) {
+        if (device().image_supported(make_desc(s, hf, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, base_flags(s, hf)))) {
+            NXLOG_I(kTag, "texture %u: %s %ux%u (flags 0x%x) kept as float16 for the HDR scene", t->id, g->fmt->name, s.base.width, s.base.height, static_cast<unsigned>(t->b.flags));
+            chosen = hf;
+            g->promoted = true;
+        }
+    }
 
     g->format = chosen;
     g->transcoded = to_bc7;
@@ -631,6 +647,12 @@ void tex_ensure_current(Texture* t, Frame& f) {
     const bool dirty = t->cpu_dirty.load();
     if (g->uploaded && !dirty) return;           // the image already holds the storage's content
     if (g->gpu_written && !dirty) return;        // the GPU rendered it and the CPU did not write since
+    if (g->promoted) {                           // a float16 render target of the HDR scene: nothing in memory matches its format
+        t->cpu_dirty.exchange(false);
+        if (!g->uploaded) fill_zero(f, *g);
+        g->uploaded = true;
+        return;
+    }
     t->cpu_dirty.exchange(false);
     if (g->gpu_written) {
         static int logged = 0;
@@ -752,7 +774,7 @@ VkImageView tex_sampled_view(Texture* t, const ViewRequest& req) {
         default:
             return bad_view(*t, "1D views are not supported (the image is 2D with height 1)");
     }
-    VkFormat fmt = req.format == VK_FORMAT_UNDEFINED ? g->format : req.format;
+    VkFormat fmt = req.format == VK_FORMAT_UNDEFINED ? g->format : promoted_view_format(*g, req.format);
     if (req.component != 0 && g->mutable_fmt && fmt == g->format) {
         // The shader's sampled type decides how the bits read: float shaders over an integer texture (and the reverse) see the raw bits.
         const VkFormat a = req.component == 1 ? float_alias(fmt) : req.component == 2 ? sint_alias(fmt) : uint_alias(fmt);
@@ -771,7 +793,7 @@ VkImageView tex_attachment_view(Texture* t, uint32_t level, uint32_t layer, uint
     const uint32_t total_layers = g->type == VK_IMAGE_TYPE_3D ? g->base.depth : g->layers;
     const uint32_t n = layer_count > 1 ? layer_count : 1;
     if (layer >= total_layers || layer + n > total_layers) return bad_view(*t, "attachment layers out of range");
-    const VkFormat fmt = attachment_format_of(*g, view_format);
+    const VkFormat fmt = attachment_format_of(*g, promoted_view_format(*g, view_format));
     if (!format_view_ok(*g, fmt)) return bad_view(*t, "attachment format is not compatible with the image");
     const VkImageViewType type = n > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     return view_for(*g, type, level, 1, layer, n, fmt, g->aspect, kIdentity);
@@ -779,7 +801,7 @@ VkImageView tex_attachment_view(Texture* t, uint32_t level, uint32_t layer, uint
 
 VkFormat tex_attachment_format(Texture* t, VkFormat view_format) {
     TexGpu* g = tex_or_null(t);
-    return g ? attachment_format_of(*g, view_format) : VK_FORMAT_UNDEFINED;
+    return g ? attachment_format_of(*g, promoted_view_format(*g, view_format)) : VK_FORMAT_UNDEFINED;
 }
 
 bool tex_has_storage(Texture* t) {

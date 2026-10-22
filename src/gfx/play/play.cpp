@@ -8,6 +8,9 @@
 //                                                            present mode), the ImGui overlay and the settings page
 //   hid sampling thread                                      PlaySource::poll (200 Hz): reads the pad snapshot and asks the binding engine for the
 //                                                            keyboard and mouse contribution at that instant
+#include "nxrt/extras.h"
+#include "nxrt/lowlat.h"
+#include "extras/tonemap_hook.h"
 #include "nxrt/play.h"
 
 #include <windows.h>
@@ -20,6 +23,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -225,6 +229,7 @@ void apply_frame_cap(const Settings& s) {
         if (cap <= 0 || (hz > 0 && cap >= hz)) cap = 0;
     }
     st.limiter.set_target_fps(cap);
+    if (extras::LowLatency* ll = extras::lowlat()) ll->set_cap_fps(cap);     // Reflex / Anti-Lag pace to the same cap
 }
 
 // ---- hooks ----------------------------------------------------------------------------------------------------------------------------
@@ -478,6 +483,11 @@ void poll_pads(uint64_t now) {
 int update_hook(::Ctx*, uint64_t, void*) {
     G& st = g();
     ft::mark("main.update");
+    // low latency (S14): the sleep that lets the frame start as late as the GPU allows, then the input sample marker; the events are pumped right after
+    if (extras::LowLatency* ll = extras::lowlat()) {
+        ll->sim_begin();
+        ll->input_sample();
+    }
     const uint64_t now = now_ns();
     st.frames++;
     st.update_seq++;
@@ -502,6 +512,8 @@ int update_hook(::Ctx*, uint64_t, void*) {
             st.engine->set_settings(s, now);
             apply_frame_cap(s);
             display_apply(s.display);
+            extras::set_settings(s.extras);
+            extras::hdr_refresh_levels();
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) set_window_mode(s.display.window_mode);
             std::string err;
@@ -605,6 +617,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         // whole Update body runs first). Pump again so the counts include whatever the mouse did in between. Main thread only, like the pump
         // in the frame-boundary hook; the key and button events it queues are handled at the next boundary.
         if (st.late_sample && st.window && std::this_thread::get_id() == st.pump_thread) platform::pump_events();
+        if (extras::LowLatency* ll = extras::lowlat()) ll->input_sample();
         const input::MouseDelta d = input::mouse_delta_take();
         dx = d.dx;
         dy = d.dy;
@@ -734,6 +747,32 @@ SelfTestHost* selftest_host() {
     return &h;
 }
 
+// mpr.ini and the environment override the settings file for the display extras. A key that is set there ([hdr] mode in mpr.ini, or NXRT_HDR_MODE)
+// replaces the file's value with the one extras::settings_from_config() reads; other keys keep the file's value (the F1 page edits the file).
+extras::Settings merge_env(const extras::Settings& from_file) {
+    const extras::Settings env = extras::settings_from_config();
+    extras::Settings r = from_file;
+    auto set = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr && v[0] != '\0';
+    };
+    if (config_has("hdr", "mode")) r.hdr.mode = env.hdr.mode;
+    if (config_has("hdr", "format")) r.hdr.format = env.hdr.format;
+    if (config_has("hdr", "peak_nits")) r.hdr.peak_nits = env.hdr.peak_nits;
+    if (config_has("hdr", "paper_white_nits")) r.hdr.paper_white_nits = env.hdr.paper_white_nits;
+    if (config_has("hdr", "highlight_boost")) r.hdr.highlight_boost = env.hdr.highlight_boost;
+    if (config_has("upscale", "mode")) r.upscale.mode = env.upscale.mode;
+    if (config_has("upscale", "sharpness")) r.upscale.sharpness = env.upscale.sharpness;
+    if (config_has("upscale", "scene_scale")) r.upscale.scene_scale = env.upscale.scene_scale;
+    if (config_has("upscale", "fsr_dll")) r.upscale.fsr_dll = env.upscale.fsr_dll;
+    if (config_has("upscale", "dlss_dll")) r.upscale.dlss_dll = env.upscale.dlss_dll;
+    if (config_has("upscale", "xess_dll")) r.upscale.xess_dll = env.upscale.xess_dll;
+    if (config_has("upscale", "frame_generation")) r.upscale.frame_generation = env.upscale.frame_generation;
+    if (config_has("latency", "mode")) r.latency.mode = env.latency.mode;
+    if (config_has("latency", "log_timings")) r.latency.log_timings = env.latency.log_timings;
+    return r;
+}
+
 }  // namespace
 
 // ---- public API ---------------------------------------------------------------------------------------------------------------------------
@@ -753,6 +792,9 @@ bool load() {
     } else {
         NXLOG_I(kTag, "settings loaded from %s (%zu bindings)", st.path.c_str(), st.settings.bindings.size());
     }
+    // Display extras: a value set in mpr.ini or in the environment (NXRT_HDR_MODE ...) overrides the file; the file overrides the built-in defaults.
+    st.settings.extras = merge_env(st.settings.extras);
+    extras::set_settings(st.settings.extras);
     st.capture_mouse = config_get_bool("play", "capture_mouse", true);
     st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);
@@ -842,6 +884,7 @@ bool start(const StartOptions& opt) {
         if (st.window) platform::pixel_size(&ww, &wh);
         if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
         display_install(st.base, st.settings.display, ww, wh);
+    extras::tonemap_hook_install(st.base);
     }
     st.hook_update = hook_add_entry(st.base + kFnUpdate, &update_hook);
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
