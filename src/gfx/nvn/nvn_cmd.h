@@ -33,6 +33,7 @@ enum class Op : uint16_t {
     CopyBufferToBuffer, CopyBufferToTexture, CopyTextureToBuffer, CopyTextureToTexture, Downsample, UpdateUniformBuffer,
     Dispatch, DispatchIndirect, ReportCounter, ReportValue, ResetCounter, Barrier, FenceSync, WaitSync, SignalEvent, WaitEvent,
     CallCommands, DiscardColor, DiscardDepthStencil, ResolveDepth,
+    BeginXfb, EndXfb, PauseXfb, ResumeXfb,            // transform feedback: P_Counter (address = the control buffer)
     Count
 };
 const char* op_name(Op op);
