@@ -8,13 +8,13 @@
 
 #include <nxrecomp/ctx.h>
 
-static_assert(NXRECOMP_ABI_VERSION == 2,
-              "nxrt was written against nxrecomp ABI version 2: review src/core/abi_glue.cpp, nxmodule.cpp, hooks.cpp, eh/ and diag/ before bumping");
+static_assert(NXRECOMP_ABI_VERSION == 3,
+              "nxrt was written against nxrecomp ABI version 3: review src/core/abi_glue.cpp, nxmodule.cpp, hooks.cpp, eh/ and diag/ before bumping");
 
 namespace nxrt {
 
 // The ABI version this runtime implements. A lifted module built against another version is refused (nxmodule.h).
-constexpr uint32_t kAbiVersion = 2;
+constexpr uint32_t kAbiVersion = 3;
 
 using GuestFn = void (*)(::Ctx*);   // a lifted function (or an HLE handler): guest registers in, guest registers out
 using HleFn = GuestFn;

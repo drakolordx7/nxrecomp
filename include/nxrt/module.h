@@ -12,7 +12,9 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "nxrt/abi.h"
@@ -99,11 +101,17 @@ private:
     std::vector<uint64_t> init_rel_, fini_rel_;                       // module-relative init/fini entries read before relocation
     uint64_t init_arr_ = 0, init_arr_sz_ = 0, fini_arr_ = 0, fini_arr_sz_ = 0;
     uint64_t init_fn_ = 0, fini_fn_ = 0;                              // DT_INIT / DT_FINI
+    mutable std::once_flag index_once_;                               // name -> first global/weak definition, built on the first find_symbol
+    mutable std::unordered_map<std::string, uint32_t> index_;
 };
 
 // Phase 1: map and parse. Returns null (with *err) on a malformed image, an occupied address range or an oversize image.
 Module* module_load_file(const char* path, const LoadOptions& opt = {}, std::string* err = nullptr);
 Module* module_load_memory(const void* data, size_t size, const LoadOptions& opt = {}, std::string* err = nullptr);
+// An NSO (the ExeFS container of main, rtld, sdk, subsdk*): LZ4 segments are expanded and mapped like an ELF module at opt.base
+// (src/loader/nso.cpp). The module's addresses stay module relative, exactly as in the lifter's input.
+Module* module_load_nso_file(const char* path, const LoadOptions& opt = {}, std::string* err = nullptr);
+Module* module_load_nso_memory(const void* data, size_t size, const LoadOptions& opt = {}, std::string* err = nullptr);
 // Phase 2: apply relocations of every module that is mapped but not yet linked, then protect segments. False when a module failed.
 bool module_link_all();
 // Lifted code: registers each entry in the call_indirect table. Entries outside the module's image are rejected (counted, logged).

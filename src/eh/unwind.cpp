@@ -5,7 +5,9 @@
 // frame (pc - 1), read the CFI row at pc - 1: CFA = x[cfa_reg] + cfa_off and the callee-saved registers saved at CFA + off, which
 // gives the caller's registers (pc = restored x30, sp = CFA). A frame's LSDA call site covering pc - 1 names a landing pad and an
 // action chain; the chain's records are filter > 0 (catch the type types[fde.type_first + filter - 1], 0 = catch(...)), filter == 0
-// (cleanup) or filter < 0 (exception specification, not supported: logged, never matches).
+// (cleanup) or filter < 0 (ABI 3 exception specification: -(filter) - 1 indexes NxEh.specs, a 0-terminated list of type filters; an
+// exception that matches none of them violates the specification and the frame lands with that (negative) selector, where the guest
+// calls __cxa_call_unexpected / terminates; an empty list, `throw()`, allows nothing).
 //
 // Two phases like libgcc/libc++abi: phase 1 (search) walks without side effects until a handler matches (can_catch over the guest's
 // typeinfo) and returns _URC_END_OF_STACK if none does, leaving the guest untouched so the guest's std::terminate sees the throw
@@ -165,9 +167,8 @@ Pick pick(const FrameInfo& fi, uint64_t pc, const Thrown& t, Phase phase) {
                 return p;
             }
             if (act->filter > 0) {
-                const uint64_t type = eh->types[f->type_first + act->filter - 1];
-                uint64_t adj = t.object;
-                if (can_catch(type, t.type, &adj)) {
+                uint64_t type = 0, adj = t.object;
+                if (nxmodule_type_address(fi.mod, f, static_cast<uint32_t>(act->filter), &type) && can_catch(type, t.type, &adj)) {
                     p.land = true;
                     p.handler = true;
                     p.pad = s->pad;
@@ -175,9 +176,20 @@ Pick pick(const FrameInfo& fi, uint64_t pc, const Thrown& t, Phase phase) {
                     p.adjusted = adj;
                     return p;
                 }
-            } else {
-                static std::atomic<bool> warned{false};
-                if (!warned.exchange(true)) NXLOG_W(kTag, "exception specification (filter %d) in the call-site table: not supported, treated as never matching", act->filter);
+            } else if (eh->specs) {                                      // exception specification: land when the exception is NOT allowed
+                bool allowed = false;
+                for (const uint32_t* k = eh->specs + (-static_cast<int64_t>(act->filter) - 1); *k && !allowed; k++) {
+                    uint64_t type = 0, adj = t.object;
+                    allowed = nxmodule_type_address(fi.mod, f, *k, &type) && can_catch(type, t.type, &adj);
+                }
+                if (!allowed) {
+                    p.land = true;
+                    p.handler = true;
+                    p.pad = s->pad;
+                    p.selector = act->filter;
+                    p.adjusted = t.object;
+                    return p;
+                }
             }
             a = act->next;
         }
@@ -267,7 +279,7 @@ void legacy_forget(uint64_t exc) {
     for (int i = 0; i < 8; i++) c->v[8 + i].d[0] = st.d[i];
     c->x[0] = exc;
     c->x[1] = static_cast<uint64_t>(selector);
-    if (selector > 0) {
+    if (selector != 0) {                      // a catch clause, or (negative) an exception specification violation
         g_stats.caught.fetch_add(1, std::memory_order_relaxed);
         if (legacy) legacy_forget(exc);
     } else {
