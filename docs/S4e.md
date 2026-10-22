@@ -4,7 +4,7 @@ S4e carries the NVN-on-Vulkan back end (S4d) from "the title screen renders and 
 
 ## Result
 
-See the table at the end of "Where the run gets to". Debug note 140 lists every validation message and its fix; `docs/nvn_struct_sizes.md` has the struct audit.
+The game now runs from the title screen through the main menu, New Game and the loading screen into the Frigate Orpheon: the opening cutscene over the planet, then the hangar with the HUD. A validation run of 420 s (about 22,000 presented frames, most of them in the world) logs 0 validation messages and no device loss. The first runs of this work logged 268 messages of 15 kinds and lost the device about a minute into the loading screen. Debug note 140 lists every message and its fix, `docs/nvn_struct_sizes.md` has the struct audit, and "Where the run gets to" below says what is still wrong on screen.
 
 ## Struct sizes
 
@@ -34,7 +34,9 @@ Agreeing with the header: device, queue, window, memory pool, buffer, sync, comm
 | Masked depth/stencil clear | `nvn_mask_clear.*` | partial stencil write mask by a draw |
 | Occlusion counters | `nvn_replay.cpp` (`ResetCounter`, `ReportCounter`) | a Vulkan occlusion query from ResetCounter to ReportCounter (precise when the device has it); the 64-bit sample count is copied into the report. Statistics counters other than samples passed are reported as non-zero |
 | Sparse (virtual) textures | `api_memory.cpp`, `api_texture.cpp`, `nvn_texture_layout.*` | `nvnMemoryPoolMapVirtual` succeeds (sparse textures are ordinary resident images that the game fills with copy commands); `GetSparseTileLayout` returns the standard 64 KiB tile shapes |
-| Transform feedback | `api_cmd_work.cpp`, `nvn_replay.cpp` | Begin / End / Pause / Resume and the feedback buffers are recorded and logged (`nvn.xfb`); the stream-out itself is not executed (see "Open points") |
+| Transform feedback | `api_cmd_work.cpp`, `nvn_replay.cpp`, `nvn_pipeline.cpp`, `nvn_spirv_patch.*` | Begin / End and the feedback buffer are executed with VK_EXT_transform_feedback. The vertex shader gets a variant (`spirv_add_xfb`) that captures its Location outputs in Location order into buffer 0, each narrowed to the components the shader stores (a vec4 with xyz written is 12 bytes), and the pipeline has no fragment stage. The console's real layout lives in the driver's compile data and is not in the shader binary; this layout matches the one stream-out shader checked (shadow decals, 12 bytes per vertex). A pipeline change inside a section ends feedback and the next begin continues after the bytes already written. Draws in a section that have no variant and no attachment are skipped. Not done: the stream-out counters (13 and 14) are reported as non-zero, not as the real primitive counts |
+| Storage usage | `nvn_gpu_texture.cpp` | every uncompressed colour image keeps the storage usage when the GPU accepts it. The game does not set the builder's IMAGE flag on the fog volume that a vertex shader writes; without the usage the write went to a dummy image, the volume stayed empty, its transmittance read as zero and the whole world rendered black |
+| Depth-only passes | `nvn_spirv_patch.*`, `nvn_pipeline.cpp` | a pass without colour attachments runs fragment shaders whose outputs became private variables (`spirv_outputs_to_private`), so nothing writes to a missing attachment |
 | NVN 55 names | `scripts/gen_nvn_table.py`, `api_*.cpp` | the 11 names the game asks for by name are table entries with no-op implementations |
 
 ## Tools
@@ -46,7 +48,30 @@ Agreeing with the header: device, queue, window, memory pool, buffer, sync, comm
 | `NXRT_NVN_TRACE_FRAME=<n>` (`[nvn] trace_frame`) | logs every draw, clear, copy and dispatch of the frame presented as number n (`nvn.trace`): programs, render targets, sampled textures, state; afterwards dumps every render target it drew to as a PNG with per-channel statistics (`trace_t<id>_<format>.png`, HDR values shown as x / (1 + x)) |
 | `NXRT_NVN_DUMP_MISSING=<dir>` (`[nvn] dump_missing`) | writes every shader block the cache lacks in the corpus layout, ready for `spirv_harness --batch` |
 | `NXRT_NVN_TRACE_SNAP=<draws>` (`[nvn] trace_snap`) | with a traced frame: after each listed draw number the pass is closed and the colour and depth targets are copied; written after the frame as `snap_d<draw>_t<id>_<format>.png` with statistics. Mid-frame views without a graphics debugger |
+| `NXRT_NVN_TRACE_SNAP_FS=<hash prefixes>`, `NXRT_NVN_TRACE_SNAP_SAMPLED=1` | the same snapshot after every draw whose fragment shader hash starts with a prefix; with `SAMPLED` the uncompressed textures that draw samples are copied too (a 3D texture as all its slices stacked into one tall image) |
+| `NXRT_NVN_TRACE_AFTER_FS=<hash prefix>`, `NXRT_NVN_TRACE_MIN_SEC=<s>` | traces the frame after the first one that draws with that fragment shader (after that many seconds of run time). A frame number differs from run to run, a shader does not |
+| trace lines | every traced draw lists the first words of the vertex and fragment uniform blocks, the vertex count, and for every sampled texture the share of its storage in game memory that is non-zero (`mem 0%`: the game never wrote it, so it is a render target or a movie plane) |
 
 ## Tests
 
-New or changed groups: `gfx_nvn_scene_state` (partial stencil clear with and without depth, occlusion counts), `gfx_nvn_texgpu` (3D transitions without warnings, raw-bit aliases, sampled layout, dummy storage views), `gfx_nvn_spirv_patch` (both patches on real shaders, spirv-val), `gfx_nvn_texture` (sparse tile shapes), `gfx_nvn_cmd_work`, `gfx_nvn_memory`, `gfx_nvn` (struct sizes).
+New or changed groups: `gfx_nvn_scene_state` (partial stencil clear with and without depth, occlusion counts), `gfx_nvn_texgpu` (3D transitions without warnings, raw-bit aliases, sampled layout, dummy storage views), `gfx_nvn_spirv_patch` (the four patches on real shaders, spirv-val: extra outputs, dual-source, stream-out variant, private outputs), `gfx_nvn_texture` (sparse tile shapes), `gfx_nvn_cmd_work`, `gfx_nvn_memory`, `gfx_nvn` (struct sizes).
+
+## Where the run gets to
+
+| Stage | State | Screenshot (`work/run_nvn2/final/`) |
+|---|---|---|
+| Title | "PRESS A TO START" correct; the background is black (a movie, see open points) | `title.png` |
+| Menu / file screen | correct | `menu_hud_screen.png` |
+| Opening cutscene | nebula, planet, asteroids and stars render and are lit | `opening_cutscene_nebula.png`, `opening_cutscene_planet.png`, `gameplay_planet_cutscene.png` |
+| Hangar with HUD | geometry, lighting, fog, bloom, tone mapping and HUD render; the door panel shows colour noise (open points) | `gameplay_hangar_hud.png`, `gameplay_hangar_hud_2.png`, `validation_run_world.png` |
+
+Frame structure of a world frame, found with the trace tools: depth prepass, a 646x32 R32_UINT pass with the light lists, the forward pass into an R11G11B10F target, a fog pass (an 800x456 target, then a vertex shader that writes one froxel column per vertex into a 100x57x64 RGBA16F volume, then a full-screen composite), a bloom mip chain, tone mapping with two 33x33x33 grading volumes into the swap chain texture, the HUD.
+
+## Open points
+
+- Title background: the first draw of the title frame is a full-screen quad that samples an R8 1600x900 texture and an RG8 800x450 texture, both with no data in game memory. Their sizes are those of the two planes of a 4:2:0 video frame, so the background is a movie (the media stream's work), not a missing NVN path.
+- A rectangle of saturated colour noise covers the door panel of the hangar. It is written into the HDR target by draws of the fragment shader `8b08a5cc12e27480` (vertex shader `87c66db517720684`), in the same pass and with the same textures as neighbouring draws that are correct, so the bad value comes from data or uniforms of those draws, not from a texture. Checked and ruled out: the fog volume (now written), tone mapping and the grading volumes (correct), the sampled textures (identical in clean and bad draws). Not yet checked: the fragment uniform blocks of the bad draws against a reference. The shader loops over the lights of a tile read from the R32_UINT light grid and samples a BC6H texture array of 2888x2888x4.
+- Stream-out counters 13 and 14 are not counted; `ReportCounter` for them writes a non-zero value.
+- RenderDoc cannot capture the game: the capture layer does not offer VK_EXT_external_memory_host, which the back end needs for the imported pools. The trace and snapshot tools above replace it.
+- The shader cache survey missed some blocks (two were translated in this work). `[nvn] dump_missing` writes any block the cache lacks in the layout `spirv_harness --batch` reads.
+- The lift tests (`tests/lift`) are off in this worktree (no `../recomp` next to it), so they were not run here.
