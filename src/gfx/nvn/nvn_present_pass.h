@@ -29,6 +29,8 @@ public:
     // Destroys the pipeline, samplers and descriptor pool. Call before the device is destroyed (the destructor calls it too).
     void shutdown();
     bool initialised() const { return dev_ != nullptr; }
+    // Presents the picture upside down (the lower-left window origin mode of NVN). Applies to the next record() calls.
+    void set_flip_y(bool flip) { flip_y_ = flip; }
 
     // Records into cb, outside any render pass: the destination image must be in COLOR_ATTACHMENT_OPTIMAL. Begins dynamic rendering
     // on dst_view (clear to black when keep_aspect, else don't-care: the triangle covers the target), draws, ends rendering.
@@ -48,6 +50,7 @@ private:
     uint32_t next_set_ = 0;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
+    bool flip_y_ = false;
 };
 
 }  // namespace nxrt::nvn::be

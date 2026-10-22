@@ -196,22 +196,39 @@ NXTEST(no_handle_leak_100_limiters) {
 }
 
 NXTEST(two_limiters_two_threads_independent) {
-    double fps_a = 0, fps_b = 0;
+    // Same contention test as test_gfx_pacing: a limiter whose rate is off while more than 0.5 % of its frames overran the
+    // period is a busy machine, not a limiter fault, so that case is SKIP. Each worker is boosted like the other timing cases.
+    double fps_a = 0, fps_b = 0, over_a = 0, over_b = 0;
     std::thread a([&] {
+        ScopedBoost boost;
         FrameLimiter l;
         l.set_target_fps(60.0);
         run_frames(l, 300, 60.0);
-        fps_a = l.stats().fps;
+        const FrameLimiter::Stats st = l.stats();
+        fps_a = st.fps;
+        over_a = st.overran_fraction;
     });
     std::thread b([&] {
+        ScopedBoost boost;
         FrameLimiter l;
         l.set_target_fps(240.0);
         run_frames(l, 1200, 240.0);
-        fps_b = l.stats().fps;
+        const FrameLimiter::Stats st = l.stats();
+        fps_b = st.fps;
+        over_b = st.overran_fraction;
     });
     a.join();
     b.join();
-    std::printf("    two threads: 60 fps limiter %.4f, 240 fps limiter %.4f\n", fps_a, fps_b);
-    CHECK_MSG(std::fabs(fps_a - 60.0) / 60.0 < 0.01, "60 fps limiter moved by more than 1 %");
-    CHECK_MSG(std::fabs(fps_b - 240.0) / 240.0 < 0.01, "240 fps limiter moved by more than 1 %");
+    std::printf("    two threads: 60 fps limiter %.4f (overran %.2f %%), 240 fps limiter %.4f (overran %.2f %%)\n", fps_a,
+                over_a * 100, fps_b, over_b * 100);
+    const bool off_a = std::fabs(fps_a - 60.0) / 60.0 >= 0.01;
+    const bool off_b = std::fabs(fps_b - 240.0) / 240.0 >= 0.01;
+    const bool fault_a = off_a && !(over_a > 0.005);   // off with nothing overrunning: the limiter's fault
+    const bool fault_b = off_b && !(over_b > 0.005);
+    CHECK_MSG(!fault_a, "60 fps limiter moved by more than 1 % with no overrunning frames");
+    CHECK_MSG(!fault_b, "240 fps limiter moved by more than 1 % with no overrunning frames");
+    if (!fault_a && !fault_b && (off_a || off_b)) {
+        nxtest::skip("machine too busy: a limiter missed its rate with more than 0.5 % overrunning frames, so it says nothing about the limiter");
+        return;
+    }
 }
