@@ -15,7 +15,7 @@ endif()
 
 option(NXRT_BUILD_TESTS "Build the nxrt_tests executable and register its CTest entries" ON)
 
-# The generated-code ABI header (Ctx, call_indirect, ...) is owned by S1 (recomp/include/nxrecomp/).
+# The generated-code ABI header (Ctx, call_indirect, ...) lives in the recompiler (recomp/include/nxrecomp/).
 # Found next to the checkout (../recomp) or, for a git worktree under runtime-wt/<name>, two levels up (../../recomp).
 set(NXRT_RECOMP_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../recomp/include" CACHE PATH "Directory that holds nxrecomp/")
 if(NOT EXISTS "${NXRT_RECOMP_INCLUDE}/nxrecomp/ctx.h" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/include/nxrecomp/ctx.h")
