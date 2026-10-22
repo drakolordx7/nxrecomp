@@ -58,8 +58,12 @@ typedef struct {
 } NVNdeviceBuilder;
 
 typedef struct {
-    // TODO: reverse and define this as it looks like it's not an opaque type.
-    char dummy[1];
+    // 16 bytes (four words), as the game passes it (docs/S4e.md): word 0 is not read by the game, words 1 to 3 are the width, height
+    // and depth of a 64 KiB sparse tile in texels.
+    int unknown0;
+    int tileWidth;
+    int tileHeight;
+    int tileDepth;
 } NVNtextureSparseTileLayout;
 
 typedef struct {

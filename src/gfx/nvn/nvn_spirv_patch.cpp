@@ -134,21 +134,23 @@ bool spirv_dual_source_output(const std::vector<uint32_t>& in, std::vector<uint3
     std::map<uint32_t, bool> is_output;
     for (const Inst& n : insts)
         if (n.op == OpVariable && n.len >= 4 && in[n.at + 3] == StorageOutput) is_output[in[n.at + 2]] = true;
-    out.clear();
-    out.reserve(in.size() + 4);
-    out.insert(out.end(), in.begin(), in.begin() + 5);
+    std::vector<uint32_t> result;
+    result.reserve(in.size() + 4);
+    result.insert(result.end(), in.begin(), in.begin() + 5);
     bool changed = false;
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
         if (n.op == OpDecorate && n.len == 4 && w[2] == DecorationLocation && w[3] == 1 && is_output.count(w[1])) {
-            out.insert(out.end(), {(4u << 16) | OpDecorate, w[1], DecorationLocation, 0u});
-            out.insert(out.end(), {(4u << 16) | OpDecorate, w[1], 32u /* Index */, 1u});
+            result.insert(result.end(), {(4u << 16) | OpDecorate, w[1], DecorationLocation, 0u});
+            result.insert(result.end(), {(4u << 16) | OpDecorate, w[1], 32u /* Index */, 1u});
             changed = true;
             continue;
         }
-        out.insert(out.end(), in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
+        result.insert(result.end(), in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
     }
-    return changed;
+    if (!changed) return false;
+    out = std::move(result);
+    return true;
 }
 
 }  // namespace nxrt::nvn::be::gpu

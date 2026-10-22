@@ -117,6 +117,25 @@ VkPrimitiveTopology g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
 bool g_restart = false, g_restart_valid = false;
 uint32_t g_key_attr_count = 0;
 uint8_t g_key_binding[16] = {};
+// Occlusion counter (NVN_COUNTER_TYPE_SAMPLES_PASSED): ResetCounter starts a Vulkan occlusion query outside any pass; it stays active across
+// the passes that follow (the console counts continuously); ReportCounter ends it and copies its 64-bit result into the report.
+constexpr uint32_t kOccSlots = 256;
+VkQueryPool g_occ_pool = VK_NULL_HANDLE;
+bool g_occ_tried = false;
+uint32_t g_occ_next = 0;
+int32_t g_occ_active = -1, g_occ_last = -1;
+
+bool occ_ready() {
+    if (g_occ_pool) return true;
+    if (g_occ_tried || !device().features().occlusion_query) return false;
+    g_occ_tried = true;
+    VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+    qi.queryType = VK_QUERY_TYPE_OCCLUSION;
+    qi.queryCount = kOccSlots;
+    if (vkCreateQueryPool(vkdev(), &qi, nullptr, &g_occ_pool) != VK_SUCCESS) g_occ_pool = VK_NULL_HANDLE;
+    return g_occ_pool != VK_NULL_HANDLE;
+}
+
 uint8_t g_key_dummy_binding = 0;      // 1 + the binding that feeds the defaults of unset vertex attributes (0: none)
 bool g_want_depth_ro = false;         // some texture this draw samples is the current depth attachment
 bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in this command buffer (dynamic strides need one)
@@ -124,6 +143,7 @@ bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in t
 // [nvn] trace_frame = N (NXRT_NVN_TRACE_FRAME): every draw, clear, copy and dispatch of the frame that is presented as number N is logged
 // at Info ("trace ..." lines): programs, render targets, sampled textures, blend and depth state. For finding out what a frame does.
 bool g_trace = false;
+std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
 int g_trace_n = 0;
 #define TRACE(...) do { if (g_trace) NXLOG_I("nvn.trace", __VA_ARGS__); } while (0)
@@ -734,7 +754,19 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
         }
     }
     key.color_count = P.ncolor;
-    for (uint32_t i = 0; i < P.ncolor && i < 8; ++i) {
+    if (device().features().dynamic_rendering_unused_attachments) {
+        // the fragment shader may write outputs the pass has no attachment for: they are listed as unused (format UNDEFINED)
+        if (const ShaderInfo* fs = S.stage[kFragment])
+            for (const ShaderIo& o : fs->refl.outputs)
+                for (uint32_t e = 0; e < (o.array ? o.array : 1); ++e)
+                    if (o.location + e < 8 && o.location + e >= key.color_count) key.color_count = o.location + e + 1;
+    }
+    for (uint32_t i = 0; i < key.color_count && i < 8; ++i) {
+        if (i >= P.ncolor) {
+            key.color_format[i] = VK_FORMAT_UNDEFINED;
+            key.write_mask[i] = 0;
+            continue;
+        }
         key.color_format[i] = P.color_fmt[i];
         key.blend_enable[i] = (S.color.blend_enable_mask >> i) & 1;
         const BlendInfo& b = S.blend[i];
@@ -855,6 +887,13 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_trace) {
         char a[96], b[96], c[96];
         std::string line;
+        auto remember = [](Texture* t) {
+            if (!t) return;
+            for (const Ref<Texture>& r : g_trace_targets) if (r.get() == t) return;
+            g_trace_targets.push_back(Ref<Texture>::share(t));
+        };
+        for (uint32_t i = 0; i < P.ncolor; ++i) remember(S.color_tex[i].get());
+        remember(S.depth_tex.get());
         for (uint32_t i = 0; i < P.ncolor; ++i) { line += tex_desc(S.color_tex[i].get(), a, sizeof a); line += " | "; }
         TRACE("draw #%d vs %s fs %s gs %s mode %d idx %d | rt %s ds %s%s | blend %u mask %x depth t%d w%d f%d cull %d | ubo0 %llx/%llu",
               ++g_trace_n, S.stage[kVertex] ? S.stage[kVertex]->hash.c_str() : "-", S.stage[kFragment] ? S.stage[kFragment]->hash.c_str() : "-",
@@ -1063,6 +1102,8 @@ void do_clear_color(const P_ClearColor& p) {
             counters().clears.fetch_add(1, std::memory_order_relaxed);
             g_bound_pipeline = VK_NULL_HANDLE;
             g_dirty = kAllDirty;
+            g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;   // binding a pipeline without these dynamic states invalidates them
+            g_restart_valid = false;
             return;
         }
         note_unsupported("ClearColor with a partial channel mask (all channels are cleared)");
@@ -1093,6 +1134,8 @@ void do_clear_depth_stencil(const P_ClearDepthStencil& p) {
             counters().clears.fetch_add(1, std::memory_order_relaxed);
             g_bound_pipeline = VK_NULL_HANDLE;
             g_dirty = kAllDirty;
+            g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;   // binding a pipeline without these dynamic states invalidates them
+            g_restart_valid = false;
             return;
         }
         note_unsupported("ClearDepthStencil with a partial stencil mask (the whole stencil is cleared)");
@@ -1437,8 +1480,27 @@ void run_list(const CmdList& list, int depth) {
             case Op::DispatchIndirect: do_dispatch(0, 0, 0, r.payload<P_DispatchIndirect>().address); break;
             case Op::ReportCounter: {
                 const auto& p = r.payload<P_Counter>();
-                struct { uint64_t counter, timestamp; } rep = {1, timestamp_ns()};   // occlusion counters are reported as 'visible'
-                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("occlusion/statistics counters (reported as non-zero)");
+                struct { uint64_t counter, timestamp; } rep = {1, timestamp_ns()};   // counters other than samples passed are reported as non-zero
+                if (p.type == NVN_COUNTER_TYPE_SAMPLES_PASSED && occ_ready()) {
+                    end_pass();
+                    if (g_occ_active >= 0) {
+                        vkCmdEndQuery(F->cb, g_occ_pool, static_cast<uint32_t>(g_occ_active));
+                        g_occ_last = g_occ_active;
+                        g_occ_active = -1;
+                    }
+                    if (p.address) {
+                        rep.counter = 0;
+                        do_write_memory(p.address, &rep, sizeof rep);
+                        BufRef b = resolve_buffer(p.address, sizeof rep);
+                        if (b.ok && g_occ_last >= 0) {
+                            vkCmdCopyQueryPoolResults(F->cb, g_occ_pool, static_cast<uint32_t>(g_occ_last), 1, b.buffer, b.offset, 16,
+                                                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+                            memory_barrier(F->cb);
+                        }
+                    }
+                    break;
+                }
+                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed (reported as non-zero)");
                 if (p.type == NVN_COUNTER_TYPE_TIMESTAMP) rep.counter = 0;
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
@@ -1449,7 +1511,19 @@ void run_list(const CmdList& list, int depth) {
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
             }
-            case Op::ResetCounter: break;
+            case Op::ResetCounter: {
+                const auto& p = r.payload<P_Counter>();
+                if (p.type == NVN_COUNTER_TYPE_SAMPLES_PASSED && occ_ready()) {
+                    end_pass();
+                    if (g_occ_active >= 0) vkCmdEndQuery(F->cb, g_occ_pool, static_cast<uint32_t>(g_occ_active));
+                    const uint32_t slot = g_occ_next++ % kOccSlots;
+                    vkCmdResetQueryPool(F->cb, g_occ_pool, slot, 1);
+                    vkCmdBeginQuery(F->cb, g_occ_pool, slot, device().features().occlusion_query_precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
+                    g_occ_active = static_cast<int32_t>(slot);
+                    g_occ_last = -1;
+                }
+                break;
+            }
             case Op::Barrier: end_pass(); memory_barrier(F->cb); break;
             case Op::FenceSync: {
                 const auto& p = r.payload<P_Sync>();
@@ -1497,6 +1571,7 @@ void run_list(const CmdList& list, int depth) {
 
 void replay_begin_submit(Frame& f) {
     F = &f;
+    renderdoc_start_if_due(counters().presents.load());
     if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }
@@ -1527,13 +1602,34 @@ void replay_lists(Frame& f, const std::vector<Ref<CmdList>>& lists) {
         if (l) run_list(*l, 0);
 }
 
+void trace_dump_targets() {
+    if (g_trace_targets.empty()) return;
+    std::vector<Ref<Texture>> list;
+    list.swap(g_trace_targets);
+    for (const Ref<Texture>& t : list) {
+        char buf[96];
+        std::string stats;
+        const std::string png = std::string("trace_t") + std::to_string(t->id) + "_" + (t->fmt ? t->fmt->name : "x") + ".png";
+        const bool ok = dump_texture(t.get(), png, &stats);
+        NXLOG_I("nvn.trace", "target %s -> %s: %s", tex_desc(t.get(), buf, sizeof buf), ok ? png.c_str() : "(not dumped)", ok ? stats.c_str() : "");
+    }
+}
+
 void replay_end_submit(Frame& f) {
     F = &f;
     end_pass();
+    if (g_occ_active >= 0) {   // a query cannot outlive its command buffer: the count of an unreported counter is dropped
+        vkCmdEndQuery(f.cb, g_occ_pool, static_cast<uint32_t>(g_occ_active));
+        g_occ_active = -1;
+    }
     F = nullptr;
 }
 
 void replay_shutdown() {
+    if (g_occ_pool) vkDestroyQueryPool(vkdev(), g_occ_pool, nullptr);
+    g_occ_pool = VK_NULL_HANDLE;
+    g_occ_tried = false;
+    g_occ_active = g_occ_last = -1;
     g_mask.shutdown();
     g_mask_ready = false;
     pipeline_shutdown();
