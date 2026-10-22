@@ -15,7 +15,9 @@
 #include <thread>
 
 #include "nxrt/config.h"
+#include "nxrt/diag.h"
 #include "nxrt/frame_limiter.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
@@ -37,6 +39,8 @@ struct Slot {
     VkDeviceSize upload_off = 0;
     std::vector<gfx::Buffer> extra;       // staging / overflow buffers of the submission
     uint64_t serial = 0;                  // last submission that used the slot
+    bool timed = false;                   // frame trace: the submission wrote GPU timestamps (query pair index = slot index * 2)
+    uint64_t cpu_t0 = 0;
 };
 
 struct Deferred {
@@ -56,6 +60,7 @@ struct Gpu {
     uint64_t recording = 0;               // render thread: serial of the submission being recorded (0 outside)
     std::atomic<uint64_t> last_submitted{0};
     Slot slots[kSlots];
+    VkQueryPool qpool = VK_NULL_HANDLE;   // frame trace: two timestamps per slot
     uint32_t next_slot = 0;
     Counters ctr;
 
@@ -111,6 +116,7 @@ void retire() {
 void render_loop() {
     g->tid = std::this_thread::get_id();
     log_set_thread_name("nvn-render");
+    diag_register_thread("nvn-render", nullptr);   // so the freeze watchdog and the stall sampler can see its stack
     for (;;) {
         std::function<void()> job;
         {
@@ -165,6 +171,7 @@ VkDescriptorPool new_dpool() {
 
 void wait_serial_blocking(uint64_t serial) {
     if (!serial || read_completed() >= serial) return;
+    NXFT("gpu.wait");
     VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &g->timeline;
@@ -175,9 +182,20 @@ void wait_serial_blocking(uint64_t serial) {
 }
 
 Slot& acquire_slot() {
+    NXFT_MIN("slot.acquire", 20000);
     Slot& s = g->slots[g->next_slot];
     g->next_slot = (g->next_slot + 1) % kSlots;
     wait_serial_blocking(s.serial);
+    if (s.timed) {
+        s.timed = false;
+        uint64_t ts[2] = {0, 0};
+        const uint32_t idx = static_cast<uint32_t>(&s - g->slots) * 2;
+        if (vkGetQueryPoolResults(g->dev->device(), g->qpool, idx, 2, sizeof ts, ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS && ts[1] >= ts[0]) {
+            static const uint16_t z = ft::zone_id("gpu.exec");
+            const double ns = static_cast<double>(ts[1] - ts[0]) * g->dev->properties().limits.timestampPeriod;
+            ft::event(z, s.cpu_t0, s.cpu_t0 + static_cast<uint64_t>(ns), static_cast<uint32_t>(s.serial));
+        }
+    }
     retire();
     vkResetCommandPool(g->dev->device(), s.pool, 0);
     for (VkDescriptorPool p : s.dpools) vkResetDescriptorPool(g->dev->device(), p, 0);
@@ -333,6 +351,7 @@ void memory_barrier(VkCommandBuffer cb) {
 namespace {
 
 uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record) {
+    NXFT("replay");
     const auto t0 = std::chrono::steady_clock::now();
     Slot& s = acquire_slot();
     const uint64_t serial = g->submitted + 1;
@@ -344,7 +363,15 @@ uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record) {
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(s.cb, &bi);
+    const uint32_t qi = static_cast<uint32_t>(&s - g->slots) * 2;
+    if (g->qpool) {
+        vkCmdResetQueryPool(s.cb, g->qpool, qi, 2);
+        vkCmdWriteTimestamp(s.cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g->qpool, qi);
+        s.timed = true;
+        s.cpu_t0 = ft::now_ns();
+    }
     record(f);
+    if (g->qpool) vkCmdWriteTimestamp(s.cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g->qpool, qi + 1);
     vkEndCommandBuffer(s.cb);
     VkCommandBufferSubmitInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
     cbi.commandBuffer = s.cb;
@@ -400,6 +427,7 @@ std::atomic<uint64_t> g_idle_serial{0};   // without a back end submissions stil
 
 uint64_t submit(const std::vector<Ref<CmdList>>& lists) {
     if (!g) return ++g_idle_serial;
+    NXFT("submit");
     uint64_t serial = 0;
     run_on_render_thread([&] {
         serial = submit_on_render_thread([&](Frame& f) {
@@ -432,6 +460,7 @@ bool wait_serial(uint64_t serial, uint64_t timeout_ns) {
     if (!g || !serial) return true;
     if (serial_done(serial)) return true;
     if (timeout_ns == 0) return false;
+    NXFT("sync.wait");
     VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &g->timeline;
@@ -443,6 +472,7 @@ bool wait_serial(uint64_t serial, uint64_t timeout_ns) {
 
 void present(Window* window, int index) {
     if (!g || !window) return;
+    NXFT("present.call");
     Ref<Window> keep = Ref<Window>::share(window);
     run_on_render_thread([&] { present_on_render_thread(window, index); });
 }
@@ -516,6 +546,12 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
             delete gp;
             return false;
         }
+    if (ft::on()) {
+        VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qi.queryCount = kSlots * 2;
+        if (vkCreateQueryPool(dev.device(), &qi, nullptr, &gp->qpool) != VK_SUCCESS) gp->qpool = VK_NULL_HANDLE;
+    }
     gp->th = std::thread(render_loop);
     // wait for the thread id to be published
     for (int i = 0; i < 1000 && gp->tid == std::thread::id(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -562,6 +598,7 @@ void tear_down() {
         d.destroy_buffer(s.upload);
         if (s.pool) vkDestroyCommandPool(d.device(), s.pool, nullptr);
     }
+    if (gp->qpool) vkDestroyQueryPool(d.device(), gp->qpool, nullptr);
     if (gp->timeline) vkDestroySemaphore(d.device(), gp->timeline, nullptr);
     g = nullptr;
     delete gp;
@@ -589,6 +626,9 @@ bool install_backend(const BackendDesc& desc) {
 
 void shutdown_backend() { be::gpu::tear_down(); }
 bool backend_installed() { return be::gpu::active(); }
+void backend_flush_caches() {
+    if (be::gpu::active()) be::gpu::flush_caches();
+}
 
 BackendStats backend_stats() {
     BackendStats s;

@@ -32,6 +32,8 @@ struct BackendDesc {
 bool install_backend(const BackendDesc& desc);   // idempotent per process: a second call with another device fails
 void shutdown_backend();                         // waits for the GPU, destroys every Vulkan object of the back end
 bool backend_installed();
+// Writes the on-disk caches (the pipeline cache) now. For the paths that end the process without shutting the back end down (window closed).
+void backend_flush_caches();
 
 struct BackendStats {
     uint64_t submits = 0, lists_replayed = 0, draws = 0, draws_skipped = 0, dispatches = 0, clears = 0, copies = 0, presents = 0;

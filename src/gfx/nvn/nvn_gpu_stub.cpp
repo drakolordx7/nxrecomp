@@ -26,6 +26,8 @@ bool serial_done(uint64_t) { return true; }
 void present(Window*, int) {}
 void destroy_texture_gpu(TexGpu*) {}
 void destroy_pool_gpu(PoolGpu*) {}
+void prefetch_pool(MemoryPool*) {}
+void prewarm_program_shaders(const ShaderInfo* const*) {}
 void mark_texture_cpu_dirty(Texture*) {}
 bool download_texture(Texture*) { return false; }
 void set_window_modes(int, int) {}
