@@ -21,7 +21,7 @@ import argparse, os, re, subprocess, sys, shutil, time, collections
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RUN = os.path.join(ROOT, 'work', 'run')
-EXE = os.path.join(ROOT, 'game-build', 'build', 'release', 'mpr.exe')
+EXE = os.path.join(os.environ.get('MPR_BUILD_DIR') or os.path.join(ROOT, 'game-build', 'build', 'release'), 'mpr.exe')   # MPR_RUNTIME / MPR_BUILD_DIR: build against another runtime checkout (game-build/scripts/build.ps1)
 CXXFILT = r'C:\Program Files\LLVM\bin\llvm-cxxfilt.exe'
 sys.path.insert(0, os.path.dirname(__file__))
 import addrname
