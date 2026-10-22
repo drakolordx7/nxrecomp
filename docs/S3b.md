@@ -1,12 +1,12 @@
-# S3b stream log: runtime and recompiler integration (ABI version 2, C++ exceptions)
+# S3b log: runtime and recompiler integration (ABI version 2, C++ exceptions)
 
-Stream S3b of the Metroid Prime Remastered recompilation. Scope: port the runtime to the recompiler's ABI version 2, implement C++ exception support, and run the recompiler's end-to-end programs through the real runtime. Still no game binary: every check ran on test programs.
+S3b, part of the Metroid Prime Remastered recompilation, ports the runtime to the recompiler's ABI version 2, adds C++ exception support, and runs the recompiler's end-to-end programs through the real runtime. No game binary was available yet, so every check ran on test programs.
 
 ## Result (2026-10-21)
 
-- Clean Release build plus `ctest`: 46 entries (17 original groups, 4 new unit groups, 25 lifted-program entries). `nxrt_tests --all`: 314 cases, 0 failed (255 before this stream).
+- Clean Release build plus `ctest`: 46 entries (17 original groups, 4 new unit groups, 25 lifted-program entries). `nxrt_tests --all`: 314 cases, 0 failed (255 before S3b).
 - Rerun everything: `pwsh scripts\build.ps1 -Clean -Test` (about 95 s clean, most of it lifting and compiling the 23 test programs). Lifted programs only: `ctest --test-dir build\release -R lift_` (under a second).
-- The kernel_sync and kernel_threads groups are timing tests of the earlier stream; on a busy machine (other builds running) `kernel_sync.mutex_mutual_exclusion` came close to its 20 s watchdog (14.6 s idle, over 20 s once) and `kernel_threads.system_tick_monotonic_and_rate` failed once on a tolerance. Both passed when rerun alone. Not touched here.
+- The kernel_sync and kernel_threads groups are timing tests from S3; on a busy machine (other builds running) `kernel_sync.mutex_mutual_exclusion` came close to its 20 s watchdog (14.6 s idle, over 20 s once) and `kernel_threads.system_tick_monotonic_and_rate` failed once on a tolerance. Both passed when rerun alone. Not changed in S3b.
 
 ## What changed
 
@@ -50,7 +50,7 @@ Algorithm (`src/eh/unwind.cpp`): from the registers at the call (pc = x30, sp = 
 - Landing target: a function entered through `nx_catch_call` has a setjmp frame keyed by its entry SP (= its CFA); the unwinder stores the pad and longjmps there and `nx_catch_call` calls `body(c, pad)`. Otherwise the pad is found in `NxModule.resume` and `u_<entry>(c, pad)` is called. A cleanup pad ends in `_Unwind_Resume`, which repeats phase 1 from the cleaned function's caller (deterministic, so no state is kept between the phases) and continues.
 - State is per thread (`thread_local` catch-frame stack, legacy type table); one host thread is one guest thread.
 
-Itanium typeinfo matching (`src/eh/typeinfo.cpp`, `can_catch`): exact type (same object or same name; a name starting with `*` is internal linkage and only equals itself); derived-to-base for single, multiple and virtual inheritance with the "unambiguous public base" rule (same subobject reached twice counts once; two different subobjects is ambiguous; a private/protected path does not match); pointers: same type, qualification conversion (qualifiers may be added, not removed), derived-to-base pointer conversion with adjustment, `void*`, pointer to pointer with the const rule at every level, `nullptr_t`; pointers to members; `catch(...)`; foreign exception classes match only `catch(...)` and cleanups; dependent exceptions (`std::exception_ptr`) take type and object from the primary. The kind of a typeinfo is told by its vptr: `discover_typeinfo_vtables()` finds the nine `_ZTVN10__cxxabiv...` vtable symbols with `module_find_symbol` / the module exports; without them a typeinfo only matches itself (log line at start-up).
+Itanium typeinfo matching (`src/eh/typeinfo.cpp`, `can_catch`): exact type (same object or same name; a name starting with `*` is internal linkage and only equals itself); derived-to-base for single, multiple and virtual inheritance with the "unambiguous public base" rule (same subobject reached twice counts once; two different subobjects is ambiguous; a private/protected path does not match); pointers: same type, qualification conversion (qualifiers may be added, not removed), derived-to-base pointer conversion with adjustment, `void*`, pointer to pointer with the const rule at every level, `nullptr_t`; pointers to members; `catch(...)`; foreign exception classes match only `catch(...)` and cleanups; dependent exceptions (`std::exception_ptr`) take type and object from the primary. The kind of a typeinfo is read from its vptr: `discover_typeinfo_vtables()` finds the nine `_ZTVN10__cxxabiv...` vtable symbols with `module_find_symbol` / the module exports; without them a typeinfo only matches itself (log line at start-up).
 
 The uncaught report also asks `std::exception`-derived types for `what()` (a guest call from the failure path; `[eh] call_what = 0` turns it off).
 
@@ -69,18 +69,16 @@ Layout (`eh::AbiLayout`): `__cxa_exception` is 0x80 bytes, `_Unwind_Exception` a
 | `eh_typeinfo` (16) | hand-built typeinfo graphs: single, multiple, virtual diamond, ambiguous, private, pointers, qualification, `void*`, null, nullptr, pointer to pointer, corrupt graphs, names with bit 63 |
 | `eh` (15) | the unwinder on a hand-built NxModule: landing with restored registers, selectors, cleanup before handler, no handler, unknown pc, libc++abi header front end (both layouts), dependent and foreign exceptions, nested catch frames, re-landing, terminate backtrace, what() in the uncaught report |
 | `lift_<program>` (15) | all of S1's `oracle/e2e/progs` through lifter, real runtime and loader; results[] must equal Unicorn's. 09_tls masks 13 environment-dependent words (TPIDRRO address and the words behind it, hash) |
-| `lift_19..26` (8) + 2 | this stream's exception programs (`tests/lift/progs`, written against `tests/lift/guest/rt2.h`, a miniature libc++abi with the real header layout): probe, class hierarchies, pointer conversions, rethrow and nested, catch-all and misc, terminate (uncaught, noexcept), 8 guest threads at once; expected results come from the same source compiled for the host with its own C++ exceptions |
+| `lift_19..26` (8) + 2 | the S3b exception programs (`tests/lift/progs`, written against `tests/lift/guest/rt2.h`, a miniature libc++abi with the real header layout): probe, class hierarchies, pointer conversions, rethrow and nested, catch-all and misc, terminate (uncaught, noexcept), 8 guest threads at once; expected results come from the same source compiled for the host with its own C++ exceptions |
 | `lift_00_smoke_abi_mismatch`, `lift_24_eh_term_uncaught_exit` | wrong ABI versions refused; exit code 134 and the log of an uncaught throw (child process) |
 
 `liftrun` (tests/lift/driver.cpp) also checks that `test_main` returns with the callee-saved registers and SP it was entered with, which is what a correct unwinder has to restore.
 
 Mutation check of the exception code (planted bug, rebuild, the suite must go red): ignoring the public flag, not restoring callee-saved registers, skipping cleanups, never ambiguous, not dereferencing thrown pointers, ignoring the vbase offset, not restoring SP, wrong selector: all caught (2 to 10 tests each). The ninth, skipping the first frame's call-site table on a raise, is not caught because no test program raises from a function with a landing pad around the raise itself.
 
-## Worker use
+Writing the S3b tests surfaced two real findings: the stale import cache (debug note 006) and the nounwind hazard (debug note 007).
 
-Haiku workers wrote the exception test programs (hierarchy, pointers, rethrow/nested, catch-all, terminate) against a briefing with the native and guest checks, and the unit tests for hooks, the module registry and the typeinfo matcher. Everything was rerun by me; their reports surfaced two real findings (the stale import cache, debug 006, and the nounwind hazard, debug 007). The unwinder, the typeinfo matcher, the registry, the driver and the CMake integration are mine.
-
-## Decisions not in the brief
+## Decisions
 
 - Two-phase search/cleanup, returning `_URC_END_OF_STACK` instead of terminating in the runtime when nothing catches: the guest's libc++abi decides what terminate does (handler, message), and the throw site stays on the stack for the backtrace.
 - Hook semantics for several hooks on one address (ordered chain, first nonzero wins for entry and mid, all for inline).
@@ -91,7 +89,7 @@ Haiku workers wrote the exception test programs (hierarchy, pointers, rethrow/ne
 - The static test ELFs get `.symtab` symbols from the loader so that backtraces and `module_find_symbol` work on them.
 - `tests/*.cpp` is now a non-recursive glob (debug note 008).
 
-## Lifter notes (recomp is read-only here; for the lead)
+## Lifter notes (recomp is read-only here)
 
 1. Emit the ABI version next to `nxmod_<name>` (for example `extern "C" const uint32_t nxmod_<name>_abi = NXRECOMP_ABI_VERSION;`) so a stale prebuilt lifted library is refused. The registry takes the number as an argument already.
 2. `DynSym.value` of a defined symbol is absolute for static ELFs and module-relative for NSO-derived ELFs in the S1 samples; the runtime rebases values below the module base. Please state which it is for `nx_elf` / `nso` inputs.
