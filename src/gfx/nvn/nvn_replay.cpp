@@ -14,6 +14,7 @@
 #include "nvn_decoded.h"
 #include "nvn_enums.h"
 #include "nvn_format.h"
+#include "nvn_mask_clear.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_pipeline.h"
 #include "nvn_shaders.h"
@@ -96,7 +97,8 @@ Frame* F = nullptr;
 std::unordered_map<uint64_t, VkDescriptorSet> g_set_cache;
 VkPipeline g_bound_pipeline = VK_NULL_HANDLE;
 UploadAlloc g_support;
-uint64_t g_dyn_valid = 0;   // not used for skipping yet
+MaskClear g_mask;
+bool g_mask_ready = false, g_mask_ok = false;
 
 void log_once(const char* key, const char* msg) {
     static std::unordered_map<std::string, bool> seen;
@@ -256,7 +258,6 @@ bool ensure_pass() {
 // ---- viewport conversion -------------------------------------------------------------------------------------------------
 VkRect2D scissor_rect(const int32_t* r) {
     int32_t x = r[0], y = r[1], w = r[2], h = r[3];
-    if (S.window_origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT) y = static_cast<int32_t>(P.extent.height) - (y + h);
     if (x < 0) { w += x; x = 0; }
     if (y < 0) { h += y; y = 0; }
     w = std::max(0, std::min<int32_t>(w, static_cast<int32_t>(P.extent.width) - x));
@@ -272,8 +273,11 @@ void set_viewports_and_scissors() {
     for (uint32_t i = 0; i < nvp; ++i) {
         float x = S.vp[i][0], y = S.vp[i][1], w = S.vp[i][2], h = S.vp[i][3];
         if (!S.nvp) { x = 0; y = 0; w = static_cast<float>(P.extent.width); h = static_cast<float>(P.extent.height); }
-        float top = (S.window_origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT) ? static_cast<float>(P.extent.height) - y : y + h;
-        vp[i] = {x, top, w, -h, S.dr[i][0], S.dr[i][1] == 0.0f && S.dr[i][0] == 0.0f ? 1.0f : S.dr[i][1]};
+        // Upper-left origin: window y is the image row from the top and NDC +y is the top edge of the rectangle (negative height).
+        // Lower-left origin (the GL convention): window y 0 is memory row 0 and NDC -y is the first row, so no flip.
+        const bool lower_left = S.window_origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT;
+        vp[i] = lower_left ? VkViewport{x, y, w, h, S.dr[i][0], S.dr[i][1] == 0.0f && S.dr[i][0] == 0.0f ? 1.0f : S.dr[i][1]}
+                           : VkViewport{x, y + h, w, -h, S.dr[i][0], S.dr[i][1] == 0.0f && S.dr[i][0] == 0.0f ? 1.0f : S.dr[i][1]};
         if (i < S.nsc) sc[i] = scissor_rect(S.sc[i]);
         else sc[i] = {{0, 0}, P.extent};
     }
@@ -378,21 +382,20 @@ void prepare_textures(const ProgLayout& pl) {
     }
 }
 
-struct StorageSlot { int slot; };
 int storage_slot_for(int nvn_stage, int c0_offset) {
-    // c[0] storage buffer descriptors of this SDK's driver, from the translated shaders of the game: binding 0 of a stage sits at
-    // vertex 0x44, geometry 0x104, fragment 0x144, compute 0xC4 (+4 per further binding for compute), +0x10 per binding for
-    // graphics stages. Anything else maps to binding 0.
-    int base = 0, step = 0x10;
+    // c[0] storage buffer descriptors (byte offsets, as the translator reports them): 0x110 + 0x100 * hardware stage + 0x10 * binding
+    // with hardware stage 0 vertex, 3 geometry, 4 fragment; compute: 0x310 + 0x10 * binding. Checked against the translated shaders of the
+    // game (vertex 0x110, geometry 0x410, fragment 0x510, compute 0x310 and 0x320).
+    int base = 0;
     switch (nvn_stage) {
-        case kVertex: base = 0x44; break;
-        case kGeometry: base = 0x104; break;
-        case kFragment: base = 0x144; break;
-        case kCompute: base = 0xC4; step = 4; break;
+        case kVertex: base = 0x110; break;
+        case kGeometry: base = 0x410; break;
+        case kFragment: base = 0x510; break;
+        case kCompute: base = 0x310; break;
         default: return 0;
     }
     if (c0_offset < base) return 0;
-    return (c0_offset - base) / step;
+    return (c0_offset - base) / 0x10;
 }
 
 VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
@@ -564,7 +567,11 @@ void set_dynamic_state(VkPrimitiveTopology topo, bool indexed, int index_type) {
     VkCommandBuffer cb = F->cb;
     set_viewports_and_scissors();
     vkCmdSetCullMode(cb, vk_cull_mode(S.poly.cull_face));
-    vkCmdSetFrontFace(cb, vk_front_face(S.poly.front_face));
+    {
+        VkFrontFace ff = vk_front_face(S.poly.front_face);
+        if (S.window_origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT) ff = ff == VK_FRONT_FACE_CLOCKWISE ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE;   // unflipped viewport
+        vkCmdSetFrontFace(cb, ff);
+    }
     vkCmdSetPrimitiveTopology(cb, topo);
     const bool have_depth = P.depth_fmt != VK_FORMAT_UNDEFINED;
     vkCmdSetDepthTestEnable(cb, have_depth && S.ds.depth_test);
@@ -776,9 +783,18 @@ VkClearRect full_rect() {
 void do_clear_color(const P_ClearColor& p) {
     if (p.target >= 8 || !S.color_tex[p.target]) return;
     if (p.mask == 0) return;
-    if (p.mask != 0xf) note_unsupported("ClearColor with a partial channel mask (all channels are cleared)");
     if (!ensure_pass()) return;
     if (!P.color_fmt[p.target]) return;
+    if (p.mask != 0xf) {
+        // vkCmdClearAttachments ignores the colour write mask: a masked clear is a draw with that mask
+        if (!g_mask_ready) { g_mask_ok = g_mask.init(device()); g_mask_ready = true; }
+        const VkClearRect cr = full_rect();
+        if (g_mask_ok && g_mask.record(F->cb, P.color_fmt[p.target], P.ncolor, p.target, p.mask, p.kind, p.value, cr.rect, P.samples)) {
+            counters().clears.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        note_unsupported("ClearColor with a partial channel mask (all channels are cleared)");
+    }
     VkClearAttachment ca = {};
     ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     ca.colorAttachment = p.target;
@@ -913,7 +929,7 @@ void do_copy_texture_texture(const P_CopyTexTex& p) {
         b.srcOffsets[1] = {sr.x + sr.w, sr.y + sr.h, sr.z + std::max(1, sr.d)};
         b.dstOffsets[0] = {dr.x, dr.y, dr.z};
         b.dstOffsets[1] = {dr.x + dr.w, dr.y + dr.h, dr.z + std::max(1, dr.d)};
-        vkCmdBlitImage(F->cb, tex_image(s), sl, tex_image(d), dl, 1, &b, (p.flags & 1) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+        vkCmdBlitImage(F->cb, tex_image(s), sl, tex_image(d), dl, 1, &b, (p.flags & NVN_COPY_FLAGS_LINEAR_FILTER_BIT) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
     }
     memory_barrier(F->cb);
     counters().copies.fetch_add(1, std::memory_order_relaxed);
@@ -1139,9 +1155,18 @@ void run_list(const CmdList& list, int depth) {
             case Op::SignalEvent: {
                 const auto& p = r.payload<P_Event>();
                 if (p.event && p.event->pool && p.event->pool->base) {
-                    if (p.mode != NVN_EVENT_SIGNAL_MODE_WRITE) note_unsupported("SignalEvent ADD (written as SET)");
-                    const uint32_t v = p.value;
-                    do_write_memory(p.event->pool->gpu_base + static_cast<uint64_t>(p.event->offset), &v, 4);
+                    Event* ev = p.event;
+                    uint32_t v = p.value;
+                    if (p.mode != NVN_EVENT_SIGNAL_MODE_WRITE) {
+                        // ADD: the GPU cannot add into memory; the sum is computed here from the value after the signals recorded so far
+                        uint32_t base = 0;
+                        if (ev->shadow_valid.load()) base = ev->shadow.load();
+                        else std::memcpy(&base, ev->pool->base + ev->offset, 4);
+                        v = base + p.value;
+                    }
+                    ev->shadow.store(v);
+                    ev->shadow_valid.store(true);
+                    do_write_memory(ev->pool->gpu_base + static_cast<uint64_t>(ev->offset), &v, 4);
                 }
                 break;
             }
@@ -1193,6 +1218,8 @@ void replay_end_submit(Frame& f) {
 }
 
 void replay_shutdown() {
+    g_mask.shutdown();
+    g_mask_ready = false;
     pipeline_shutdown();
     S = GState();
     P = Pass();
