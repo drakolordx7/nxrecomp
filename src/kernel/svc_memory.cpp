@@ -62,7 +62,11 @@ bool in_heap(uint64_t addr, uint64_t size, uint64_t heap) { return within(addr, 
 // (svc_info.cpp: 0x8000000 + 0x7FF8000000). The SDK picks random free addresses in it (StackGuardManager::MapAtRandomAddress) and retries
 // on a refusal, so any address the host can give out exactly is accepted.
 constexpr uint64_t kMapRegionBase = 0x0008000000ull, kMapRegionSize = 0x7FF8000000ull;
-bool in_map_region(uint64_t addr, uint64_t size) { return within(addr, size, kMapRegionBase, kMapRegionSize); }
+// The guest layout owns [kMainBase, kKernelBase + kKernelSize) (images, HLE thunks, heap view, stacks, kernel region): only the alias
+// region of that span and everything below the main image is open for map calls.
+bool in_map_region(uint64_t addr, uint64_t size) {
+    return within(addr, size, kMapRegionBase, mem::kMainBase - kMapRegionBase) || within(addr, size, mem::kAliasBase, mem::kAliasSize);
+}
 
 std::map<uint64_t, uint64_t> g_reserve_base;   // window address -> base of its host reservation (differs when addr is not 64 KiB aligned)
 
