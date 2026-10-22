@@ -43,3 +43,11 @@ entryhook 0x71003a450c
 entryhook 0x71003a69b0
 #   CUIDisplayManager::UpdateCameraNodes: the front end (title, menus) draws its 2D UI through the "UIOrthoCamera" scene node of this manager, authored for 16:9
 entryhook 0x7100b0e5ec
+# S14 (display extras, branch extras; runtime src/gfx/extras, docs/S14.md): HDR output.
+#   NTonemap::build_tonemap_eval_params(STonemapParams const&): writes the 80-byte tone-curve block (exposure, toe, linear, shoulder, LUT scale) the
+#   tone-map shader reads, through x8; the runtime runs it and then moves the shoulder's asymptote to the display's peak
+entryhook 0x7100211c60
+# S13 (verify; runtime src/gfx/play/play_camlook.cpp, docs/S13.md): mouse look that moves a camera and not the body. After the game's own Think the
+# camera transform is turned: free look about the eye (first person, Alt held), the morph ball camera orbited about the ball.
+entryhook 0x7100d72314   # CFirstPersonCameraMP1::Think(float, CStateManager&): x0 = the camera
+entryhook 0x7100cff7ec   # CBallCameraMP1::Think(float, CStateManager&): x0 = the camera
