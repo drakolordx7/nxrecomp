@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The boundary between the NVN entry points (host side, api_*.cpp) and the GPU back end (render thread, nvn_gpu*.cpp,
+// nvn_replay.cpp). The api files only use the functions below; they never include Vulkan. nvn_gpu_stub.cpp implements the same
+// functions without a GPU (a serial counter and nothing else) so the api files can be unit-tested on their own.
+#pragma once
+#include <cstdint>
+#include <vector>
+
+#include "nvn_cmd.h"
+#include "nvn_core.h"
+
+namespace nxrt::nvn::be::gpu {
+
+// True when a Vulkan back end is running (install_backend was called with a device). The stub reports false.
+bool active();
+
+// ---- submission --------------------------------------------------------------------------------------------------------
+// Replays the lists on the render thread, in order, and returns when the commands are recorded into Vulkan (not when the GPU
+// has run them). Returns the serial of the submission: the GPU timeline value that is reached when it has completed.
+uint64_t submit(const std::vector<Ref<CmdList>>& lists);
+// Submits whatever is pending (nothing is pending in this design: submit() always submits) and returns the last serial.
+uint64_t flush();
+// Waits until every submission so far has completed on the GPU and its write-backs are visible to the CPU.
+void finish();
+uint64_t last_serial();
+// Waits for `serial` to complete (timeout_ns: 0 poll, UINT64_MAX forever). True when it did.
+bool wait_serial(uint64_t serial, uint64_t timeout_ns);
+bool serial_done(uint64_t serial);
+
+// Window: texture `index` of the window is shown (after the submissions already made). The call returns when the frame has
+// been handed to the swapchain; it honours the shell's frame limiter.
+void present(Window* window, int index);
+
+// ---- resources (called from destructors and finalizers, any thread) --------------------------------------------------------
+void destroy_texture_gpu(TexGpu* t);          // the Vulkan image of a finalized texture; deferred until the GPU is done with it
+void destroy_pool_gpu(PoolGpu* p);
+// The CPU wrote texture memory (nvnMemoryPoolFlushMappedRange, nvnTextureWriteTexels ...): upload again before the next use.
+void mark_texture_cpu_dirty(Texture* t);
+
+// The GPU image of a texture is copied back into the texture's storage in the game's memory in its block-linear layout (for
+// nvnTextureReadTexels / CopyTextureToBuffer users that read render targets on the CPU). Waits for the GPU. False when the
+// texture has no GPU image yet or cannot be read back.
+bool download_texture(Texture* t);
+
+// ---- device facts for the api files ------------------------------------------------------------------------------------
+uint64_t timestamp_ns();                       // nvnDeviceGetCurrentTimestampInNanoseconds
+
+}  // namespace nxrt::nvn::be::gpu

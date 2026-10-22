@@ -171,6 +171,13 @@ struct SamplerPool : Obj {
     std::shared_mutex lock;
 };
 
+// Every initialized texture is in a registry keyed by its storage range, so a flush of pool memory can mark the textures
+// that live there as CPU-written (nvn_texture_registry.cpp).
+void texture_registry_add(Texture* t);
+void texture_registry_remove(Texture* t);
+void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
+size_t texture_registry_size();
+
 // NVNtextureHandle = (sampler id << 20) | texture id
 constexpr uint64_t make_texture_handle(uint32_t tex_id, uint32_t sampler_id) { return (static_cast<uint64_t>(sampler_id) << 20) | (tex_id & 0xfffffu); }
 constexpr uint32_t handle_texture_id(uint64_t h) { return static_cast<uint32_t>(h & 0xfffffu); }
@@ -182,7 +189,7 @@ struct ShaderInfo;   // translated shader (nvn_shaders.h)
 struct Program : Obj {
     static constexpr Kind kKind = Kind::Program;
     Program() : Obj(kKind) {}
-    // stages indexed by NVN stage: 0 vertex, 1 tess control, 2 tess eval, 3 geometry, 4 fragment, 5 compute
+    // stages indexed by the NVNshaderStage value: 0 vertex, 1 fragment, 2 geometry, 3 tess control, 4 tess eval, 5 compute
     const ShaderInfo* stage[6] = {};
     uint64_t code_hash[6] = {};
     bool linked = false;

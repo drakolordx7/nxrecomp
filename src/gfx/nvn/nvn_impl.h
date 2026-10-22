@@ -21,8 +21,11 @@ void register_api_cmdbuf();
 void register_api_cmd_state();
 void register_api_cmd_work();
 
-// Families that need the GPU back end (nvn_backend.cpp and the files it lists).
-void register_api_gpu();
+// Host-side families that talk to the GPU layer only through nvn_gpu.h.
+void register_api_device();         // Device, Queue, Sync, Event, Window (api_device.cpp)
+void register_api_memory();         // MemoryPool, Buffer, TexturePool, SamplerPool (api_memory.cpp)
+void register_api_texture();        // Texture and the builder functions that need the layout (api_texture.cpp)
+void register_api_program();        // Program (api_program.cpp)
 
 // Registers every implementation above; called by install_backend(). Idempotent.
 void register_all_impls();

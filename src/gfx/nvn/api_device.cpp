@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// STUB until the GPU families exist.
+// STUB: replaced by the worker for this family.
 #include "nvn_impl.h"
 namespace nxrt::nvn {
-void register_api_gpu() {}
+void register_api_device() {}
 }  // namespace nxrt::nvn
