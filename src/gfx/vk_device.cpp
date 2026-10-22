@@ -240,6 +240,8 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
         const char* const* pe = platform::vulkan_instance_extensions(&cnt);
         for (uint32_t i = 0; pe && i < cnt; ++i) inst_exts.push_back(pe[i]);
     }
+    const bool x_colorspace = !headless && has_iext(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);   // HDR10 / scRGB entries in the surface format list
+    if (x_colorspace) inst_exts.push_back(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
     if (validation_ && has_iext(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
         inst_exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         debug_utils_ = true;
@@ -276,6 +278,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     VkResult r = vkCreateInstance(&ici, nullptr, &instance_);
     if (r != VK_SUCCESS) return fail("vkCreateInstance failed (" + std::to_string(r) + ")");
     volkLoadInstance(instance_);
+    features_.swapchain_colorspace = x_colorspace;
     if (debug_utils_) vkCreateDebugUtilsMessengerEXT(instance_, &dbg, nullptr, &messenger_);
 
     if (!headless) {
@@ -398,6 +401,8 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT avids = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT};
     VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT adrua = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT};
     VkPhysicalDeviceTransformFeedbackFeaturesEXT atfb = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT};
+    VkPhysicalDevicePresentIdFeaturesKHR apid = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
+    VkPhysicalDeviceAntiLagFeaturesAMD aal = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD};
     std::vector<const char*> dev_exts;
     void* chain = nullptr;
     auto add_ext = [&](const char* name, void* feat_struct) {
@@ -417,6 +422,13 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     const bool x_vids = add_ext(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, &avids);
     const bool x_drua = add_ext(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, &adrua);
     const bool x_tfb = add_ext(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, &atfb);
+    // display extras: HDR metadata and the latency extensions (low_latency2 needs present_id; neither is used unless the settings ask)
+    const bool x_hdrmd = !headless && has_dext(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+    if (x_hdrmd) dev_exts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
+    const bool x_pid = !headless && add_ext(VK_KHR_PRESENT_ID_EXTENSION_NAME, &apid);
+    const bool x_ll2 = x_pid && has_dext(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
+    if (x_ll2) dev_exts.push_back(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
+    const bool x_aal = !headless && add_ext(VK_AMD_ANTI_LAG_EXTENSION_NAME, &aal);
     features_.external_memory_host = has_dext(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (features_.external_memory_host) dev_exts.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (has_dext(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) { dev_exts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME); features_.push_descriptor = true; }
@@ -471,6 +483,10 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.vertex_input_dynamic_state = x_vids && avids.vertexInputDynamicState;
     features_.dynamic_rendering_unused_attachments = x_drua && adrua.dynamicRenderingUnusedAttachments;
     features_.transform_feedback = x_tfb && atfb.transformFeedback;
+    features_.hdr_metadata = x_hdrmd;
+    features_.present_id = x_pid && apid.presentId;
+    features_.low_latency2 = x_ll2 && features_.present_id;
+    features_.anti_lag = x_aal && aal.antiLag;
     NXLOG_I(kTag, "texture compression on this GPU: BC %s, ASTC-LDR %s, ETC2 %s", features_.bc ? "yes" : "no",
             features_.astc_ldr ? "yes" : "no", features_.etc2 ? "yes" : "no");
     NXLOG_I(kTag, "features: geometry %d float64 %d int64 %d dualSrc %d logicOp %d multiViewport %d drawParams %d descIndexing %d interlock %d depthClipControl %d customBorder %d hostMemImport %d pushDesc %d",

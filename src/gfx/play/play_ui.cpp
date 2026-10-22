@@ -13,7 +13,9 @@
 
 #include "imgui.h"
 #include "nxrt/frame_limiter.h"
+#include "nxrt/extras.h"
 #include "nxrt/input_source.h"
+#include "nxrt/lowlat.h"
 
 namespace nxrt::play {
 
@@ -113,6 +115,12 @@ void sanitize(Settings& s) {
     // A fixed render size is 0 (follow the window) or 320..16384 per side; the settings file rejects anything else.
     s.display.render_width = s.display.render_width <= 0 ? 0 : std::clamp(s.display.render_width, 320, 16384);
     s.display.render_height = s.display.render_height <= 0 ? 0 : std::clamp(s.display.render_height, 320, 16384);
+    // Extras: peak and paper white are 0 (auto) or in range; the upscale mode is kept as it is, even for the modes not yet offered.
+    extras::HdrSettings& h = s.extras.hdr;
+    h.peak_nits = h.peak_nits <= 0 ? 0 : std::clamp(h.peak_nits, 200.0, 10000.0);
+    h.paper_white_nits = h.paper_white_nits <= 0 ? 0 : std::clamp(h.paper_white_nits, 80.0, 500.0);
+    h.highlight_boost = std::clamp(h.highlight_boost, 0.0, 2.0);
+    s.extras.upscale.sharpness = std::clamp(s.extras.upscale.sharpness, 0.0, 1.0);
 }
 
 void apply_now(UiHost& host, Page& p) {
@@ -347,6 +355,149 @@ void display_tab(const LiveStatus& live, Page& p) {
     ImGui::Text("Display %.2f Hz, window %d x %d, %.1f fps", live.refresh_hz, live.width, live.height, live.fps);
 }
 
+// ---- Extras -------------------------------------------------------------------------------------------------------------------------
+
+// HDR output, upscaling and low latency (nxrt/extras.h). Items that apply at the next start say so in their labels, as the Display tab does.
+constexpr const char* kHdrModeNames[] = {"Off", "Auto", "On"};
+constexpr const char* kHdrFormatNames[] = {"Auto", "HDR10", "scRGB"};
+constexpr const char* kLatencyModeNames[] = {"Off", "Auto", "On", "Boost"};
+constexpr const char* kUpscaleNames[] = {"Off", "FSR 1 (spatial)", "FSR 3", "DLSS", "XeSS"};
+constexpr int kUpscaleCount = static_cast<int>(sizeof kUpscaleNames / sizeof kUpscaleNames[0]);
+
+// Only Off and FSR 1 can be picked for now. The other modes stay in the list, greyed out, and a file that holds one shows it as selected.
+bool upscale_available(extras::UpscaleMode m) { return m == extras::UpscaleMode::Off || m == extras::UpscaleMode::Fsr1; }
+
+// A hover tooltip for the item drawn last.
+void tip(const char* text) {
+    if (ImGui::IsItemHovered()) ImGui::SetItemTooltip("%s", text);
+}
+
+// A nits field where 0 means "auto" (shown as "auto"). Other values are clamped into lo..hi when the field is left, so the slider can be
+// dragged through the gap below lo while it is held.
+bool auto_nits_slider(const char* label, double* v, int lo, int hi) {
+    int x = static_cast<int>(std::lround(*v));
+    bool changed = ImGui::SliderInt(label, &x, 0, hi, x <= 0 ? "auto" : "%d nits");
+    if (ImGui::IsItemDeactivated()) {
+        const int c = x <= 0 ? 0 : std::clamp(x, lo, hi);
+        changed = changed || c != x;
+        x = c;
+    }
+    if (changed) *v = x;
+    return changed;
+}
+
+void hdr_group(Page& p) {
+    extras::HdrSettings& h = p.edit.extras.hdr;
+    ImGui::SeparatorText("HDR output");
+
+    const int mode = static_cast<int>(h.mode);
+    const bool mode_open = ImGui::BeginCombo("Mode (restart)##hdr_mode", kHdrModeNames[mode]);
+    tip("Off keeps the SDR picture, Auto uses HDR when the display and Windows offer it, On runs the HDR pipeline even without an HDR display.");
+    if (mode_open) {
+        for (int i = 0; i < 3; ++i) {
+            if (ImGui::Selectable(kHdrModeNames[i], i == mode) && i != mode) {
+                h.mode = static_cast<extras::HdrMode>(i);
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    const int format = static_cast<int>(h.format);
+    const bool format_open = ImGui::BeginCombo("Format (restart)##hdr_format", kHdrFormatNames[format]);
+    tip("The signal sent to the display: HDR10, or scRGB; Auto picks HDR10 when the display offers it and scRGB otherwise.");
+    if (format_open) {
+        for (int i = 0; i < 3; ++i) {
+            if (ImGui::Selectable(kHdrFormatNames[i], i == format) && i != format) {
+                h.format = static_cast<extras::HdrFormat>(i);
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    if (auto_nits_slider("Peak brightness##hdr_peak", &h.peak_nits, 200, 10000)) mark(p);
+    tip("How bright the brightest highlights get, in nits; auto reads the peak brightness the display reports.");
+    if (auto_nits_slider("Paper white##hdr_paper", &h.paper_white_nits, 80, 500)) mark(p);
+    tip("The brightness of ordinary white in the game, in nits; auto follows Windows' SDR content brightness when HDR is on there, else 203.");
+    if (slider("Highlight boost", &h.highlight_boost, 0.0, 2.0, "%.2f")) mark(p);
+    tip("0 keeps the game's SDR look up to its own white, 1 lets highlights reach the display's peak, 2 pushes them further.");
+
+    const extras::HdrState hs = extras::hdr_state();
+    ImGui::Text("HDR scene: %s, swapchain: %s, paper white %.0f nits, peak %.0f nits, peak ratio %.2f, display reports HDR: %s",
+                hs.scene_hdr ? "on" : "off", extras::output_kind_name(hs.output), static_cast<double>(hs.paper_white_nits),
+                static_cast<double>(hs.peak_nits), static_cast<double>(hs.peak_ratio), yes_no(hs.display_hdr));
+}
+
+void upscale_group(Page& p) {
+    extras::UpscaleSettings& u = p.edit.extras.upscale;
+    ImGui::SeparatorText("Upscaling");
+
+    const int mode = static_cast<int>(u.mode);
+    std::string preview = kUpscaleNames[mode];
+    if (!upscale_available(u.mode)) preview += " (not available yet)";
+    const bool open = ImGui::BeginCombo("Mode##upscale_mode", preview.c_str());
+    tip("FSR 1 draws the game below the window size and sharpens it up to the window; the other modes are not available yet.");
+    if (open) {
+        for (int i = 0; i < kUpscaleCount; ++i) {
+            const bool ok = upscale_available(static_cast<extras::UpscaleMode>(i));
+            std::string label = kUpscaleNames[i];
+            if (!ok) label += " (not available yet)";
+            ImGui::BeginDisabled(!ok);
+            const bool picked = ImGui::Selectable(label.c_str(), i == mode);
+            ImGui::EndDisabled();
+            if (picked && i != mode) {
+                u.mode = static_cast<extras::UpscaleMode>(i);
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    if (slider("Sharpness", &u.sharpness, 0.0, 1.0, "%.2f")) mark(p);
+    tip("How much FSR 1 sharpens the upscaled picture; 1 is the sharpest.");
+    if (ImGui::SliderInt("Scene resolution##upscale_scene", &u.scene_scale, 25, 100, "%d%%")) mark(p);
+    tip("Renders the 3D scene at this percent of the output size per side; the game scales it up and keeps the HUD and the post effects at full size. 100 turns it off. Applies live.");
+    ImGui::TextDisabled("Or render everything below the window size with Display > Render scale (restart); FSR 1 then fills the rest.");
+}
+
+void latency_group(Page& p) {
+    extras::LatencySettings& l = p.edit.extras.latency;
+    ImGui::SeparatorText("Low latency");
+
+    const int mode = static_cast<int>(l.mode);
+    const bool open = ImGui::BeginCombo("Mode (restart)##latency_mode", kLatencyModeNames[mode]);
+    tip("Lowers the delay from input to picture with NVIDIA Reflex or AMD Anti-Lag 2, whichever the GPU has; Boost asks Reflex for its boost mode.");
+    if (open) {
+        for (int i = 0; i < 4; ++i) {
+            if (ImGui::Selectable(kLatencyModeNames[i], i == mode) && i != mode) {
+                l.mode = static_cast<extras::LatencyMode>(i);
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    if (ImGui::SliderInt("Frames ahead (restart)##latency_ahead", &l.frames_ahead, -1, 3, l.frames_ahead < 0 ? "no limit" : "%d")) mark(p);
+    tip("With the mode on, the game starts simulating a frame only when at most this many earlier frames are still on their way to the screen. 1 keeps the game's frame queue short; 0 is the shortest delay and costs frame rate.");
+    if (ImGui::Checkbox("Log timings (restart)##latency_log", &l.log_timings)) mark(p);
+    tip("Writes one line of latency timings to the log every second.");
+
+    if (const extras::LowLatency* ll = extras::lowlat()) {
+        const extras::LowLatency::Stats st = ll->stats();
+        ImGui::Text("%s: enabled %s, input to present %.2f ms, driver input to GPU end %.2f ms, sleep %.2f ms", ll->backend_name(),
+                    yes_no(st.enabled), st.input_to_present_ms, st.input_to_gpu_ms, st.sleep_ms_avg);
+    } else {
+        ImGui::TextDisabled("Not running: the renderer has not started its low-latency part yet, or the mode is off.");
+    }
+}
+
+void extras_tab(Page& p) {
+    hdr_group(p);
+    upscale_group(p);
+    latency_group(p);
+}
+
 // ---- Bindings -----------------------------------------------------------------------------------------------------------------------
 
 std::string input_button_text(const Binding& b, bool waiting) {
@@ -574,6 +725,10 @@ void draw_settings_page(UiHost& host) {
         }
         if (ImGui::BeginTabItem("Display")) {
             display_tab(live, p);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Extras")) {
+            extras_tab(p);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Bindings")) {

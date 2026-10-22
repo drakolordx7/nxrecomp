@@ -106,6 +106,15 @@ bool same_settings(const Settings& a, const Settings& b) {
           da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.bloom == db.bloom &&
           da.chromatic_aberration == db.chromatic_aberration))
         return false;
+    const nxrt::extras::Settings &ea = a.extras, &eb = b.extras;
+    if (!(ea.hdr.mode == eb.hdr.mode && ea.hdr.format == eb.hdr.format && ea.hdr.peak_nits == eb.hdr.peak_nits &&
+          ea.hdr.paper_white_nits == eb.hdr.paper_white_nits && ea.hdr.highlight_boost == eb.hdr.highlight_boost))
+        return false;
+    if (!(ea.upscale.mode == eb.upscale.mode && ea.upscale.sharpness == eb.upscale.sharpness && ea.upscale.fsr_dll == eb.upscale.fsr_dll &&
+          ea.upscale.dlss_dll == eb.upscale.dlss_dll && ea.upscale.xess_dll == eb.upscale.xess_dll &&
+          ea.upscale.frame_generation == eb.upscale.frame_generation))
+        return false;
+    if (!(ea.latency.mode == eb.latency.mode && ea.latency.log_timings == eb.latency.log_timings && ea.latency.frames_ahead == eb.latency.frames_ahead)) return false;
     for (int i = 0; i < kActCount; ++i) {
         if (!(a.out[i] == b.out[i])) return false;
     }
@@ -500,7 +509,7 @@ NXTEST(unknown_keys_and_sections_warn) {
 
 NXTEST(format_has_sections_in_order) {
     const std::string text = format_settings(default_settings());
-    const char* order[] = {"[mouse]", "[pad]", "[timing]", "[display]", "[switch]", "[bindings.all]", "[bindings.gameplay]",
+    const char* order[] = {"[mouse]", "[pad]", "[timing]", "[display]", "[hdr]", "[upscale]", "[latency]", "[switch]", "[bindings.all]", "[bindings.gameplay]",
                            "[bindings.morph]", "[bindings.map]", "[bindings.menu]", "[bindings.scan]"};
     size_t at = 0;
     for (const char* h : order) {
@@ -803,4 +812,278 @@ NXTEST(display_render_keys_round_trip) {
         REQUIRE_MSG(parse_settings(format_settings(s), &r, &err), err);
         CHECK(r.display.aspect == a);
     }
+}
+
+// ---- display extras: [hdr] [upscale] [latency] (nxrt/extras.h) ----------------------------------------------------------------------
+
+using nxrt::extras::HdrFormat;
+using nxrt::extras::HdrMode;
+using nxrt::extras::LatencyMode;
+using nxrt::extras::UpscaleMode;
+
+namespace {
+// Every key of the three sections, with values that differ from the defaults.
+const char* const kExtrasFile =
+    "[hdr]\n"
+    "mode = on\n"
+    "format = hdr10\n"
+    "peak_nits = 1000\n"
+    "paper_white_nits = 250\n"
+    "highlight_boost = 1.5\n"
+    "[upscale]\n"
+    "mode = fsr1\n"
+    "sharpness = 0.5\n"
+    "fsr_dll = C:\\Tools\\amd_fidelityfx_vk.dll\n"
+    "dlss_dll = D:\\dlss\\nvngx_dlss.dll\n"
+    "xess_dll = \n"
+    "frame_generation = 1\n"
+    "[latency]\n"
+    "mode = boost\n"
+    "frames_ahead = 2\n"
+    "log_timings = 1\n";
+}  // namespace
+
+NXTEST(extras_defaults) {
+    const Settings d = default_settings();
+    CHECK(d.extras.hdr.mode == HdrMode::Auto);
+    CHECK(d.extras.hdr.format == HdrFormat::Auto);
+    CHECK(d.extras.hdr.peak_nits == 0.0);
+    CHECK(d.extras.hdr.paper_white_nits == 0.0);
+    CHECK(d.extras.hdr.highlight_boost == 1.0);
+    CHECK(d.extras.upscale.mode == UpscaleMode::Off);
+    CHECK(d.extras.upscale.sharpness == 0.8);
+    CHECK(d.extras.upscale.fsr_dll.empty());
+    CHECK(d.extras.upscale.dlss_dll.empty());
+    CHECK(d.extras.upscale.xess_dll.empty());
+    CHECK(!d.extras.upscale.frame_generation);
+    CHECK(d.extras.latency.mode == LatencyMode::Off);
+    CHECK(!d.extras.latency.log_timings);
+
+    // A file without the sections keeps the defaults.
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
+    CHECK(s.extras.hdr.mode == HdrMode::Auto);
+    CHECK(s.extras.latency.mode == LatencyMode::Off);
+}
+
+NXTEST(extras_full_file_every_key) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings(kExtrasFile, &s, &err, &w), err);
+    CHECK(w.empty());
+    CHECK(s.extras.hdr.mode == HdrMode::On);
+    CHECK(s.extras.hdr.format == HdrFormat::Hdr10);
+    CHECK(s.extras.hdr.peak_nits == 1000.0);
+    CHECK(s.extras.hdr.paper_white_nits == 250.0);
+    CHECK(s.extras.hdr.highlight_boost == 1.5);
+    CHECK(s.extras.upscale.mode == UpscaleMode::Fsr1);
+    CHECK(s.extras.upscale.sharpness == 0.5);
+    CHECK_EQ(s.extras.upscale.fsr_dll, std::string("C:\\Tools\\amd_fidelityfx_vk.dll"));
+    CHECK_EQ(s.extras.upscale.dlss_dll, std::string("D:\\dlss\\nvngx_dlss.dll"));
+    CHECK(s.extras.upscale.xess_dll.empty());
+    CHECK(s.extras.upscale.frame_generation);
+    CHECK(s.extras.latency.mode == LatencyMode::Boost);
+    CHECK(s.extras.latency.log_timings);
+    CHECK_EQ(s.extras.latency.frames_ahead, 2);
+}
+
+NXTEST(extras_numbers_range_and_auto) {
+    struct Case {
+        const char* text;
+        const char* expect;   // the start of err
+    };
+    const Case bad[] = {
+        {"[hdr]\npeak_nits = 100\n", "line 2: peak_nits must be 0 (auto) or 200..10000, got 100"},
+        {"[hdr]\npeak_nits = 10001\n", "line 2: peak_nits must be 0 (auto) or 200..10000, got 10001"},
+        {"[hdr]\npeak_nits = bright\n", "line 2: peak_nits must be a number"},
+        {"[hdr]\npaper_white_nits = 79\n", "line 2: paper_white_nits must be 0 (auto) or 80..500, got 79"},
+        {"[hdr]\npaper_white_nits = 501\n", "line 2: paper_white_nits must be 0 (auto) or 80..500, got 501"},
+        {"[hdr]\nhighlight_boost = 2.5\n", "line 2: highlight_boost must be 0..2, got 2.5"},
+        {"[hdr]\nhighlight_boost = -0.1\n", "line 2: highlight_boost must be 0..2, got -0.1"},
+        {"[upscale]\nsharpness = 1.5\n", "line 2: sharpness must be 0..1, got 1.5"},
+    };
+    for (const Case& c : bad) {
+        Settings s;
+        std::string err;
+        CHECK(!parse_settings(c.text, &s, &err));
+        CHECK_MSG(starts_with(err, c.expect), err);
+    }
+
+    // The edges, and 0 (auto), are accepted.
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[hdr]\npeak_nits = 200\npaper_white_nits = 80\nhighlight_boost = 0\n", &s, &err), err);
+    CHECK(s.extras.hdr.peak_nits == 200.0);
+    CHECK(s.extras.hdr.paper_white_nits == 80.0);
+    CHECK(s.extras.hdr.highlight_boost == 0.0);
+    REQUIRE_MSG(parse_settings("[hdr]\npeak_nits = 10000\npaper_white_nits = 500\nhighlight_boost = 2\n", &s, &err), err);
+    CHECK(s.extras.hdr.peak_nits == 10000.0);
+    CHECK(s.extras.hdr.paper_white_nits == 500.0);
+    CHECK(s.extras.hdr.highlight_boost == 2.0);
+    REQUIRE_MSG(parse_settings("[hdr]\npeak_nits = 0\npaper_white_nits = 0\n", &s, &err), err);
+    CHECK(s.extras.hdr.peak_nits == 0.0);
+    CHECK(s.extras.hdr.paper_white_nits == 0.0);
+    REQUIRE_MSG(parse_settings("[upscale]\nsharpness = 0\n", &s, &err), err);
+    CHECK(s.extras.upscale.sharpness == 0.0);
+    REQUIRE_MSG(parse_settings("[upscale]\nsharpness = 1\n", &s, &err), err);
+    CHECK(s.extras.upscale.sharpness == 1.0);
+}
+
+NXTEST(extras_bad_enum_words_name_the_allowed_ones) {
+    struct Case {
+        const char* text;
+        const char* expect;
+    };
+    const Case bad[] = {
+        {"[hdr]\nmode = maybe\n", "line 2: mode must be off, auto or on, got 'maybe'"},
+        {"[hdr]\nformat = hdr12\n", "line 2: format must be auto, hdr10 or scrgb, got 'hdr12'"},
+        {"[upscale]\nmode = taa\n", "line 2: mode must be off, fsr1, spatial, fsr3, dlss or xess, got 'taa'"},
+        {"[latency]\nmode = fast\n", "line 2: mode must be off, auto, on or boost, got 'fast'"},
+        {"[latency]\nlog_timings = maybe\n", "line 2: log_timings must be 1/0"},
+        {"[upscale]\nframe_generation = x\n", "line 2: frame_generation must be 1/0"},
+    };
+    for (const Case& c : bad) {
+        Settings s;
+        std::string err;
+        CHECK(!parse_settings(c.text, &s, &err));
+        CHECK_MSG(starts_with(err, c.expect), err);
+    }
+}
+
+NXTEST(extras_upscale_modes_round_trip) {
+    struct Case {
+        const char* word;      // as written in the file
+        UpscaleMode want;
+        const char* written;   // as format_settings writes it
+    };
+    const Case cases[] = {
+        {"off", UpscaleMode::Off, "off"},   {"fsr1", UpscaleMode::Fsr1, "fsr1"}, {"spatial", UpscaleMode::Fsr1, "fsr1"},
+        {"fsr3", UpscaleMode::Fsr3, "fsr3"}, {"dlss", UpscaleMode::Dlss, "dlss"}, {"xess", UpscaleMode::Xess, "xess"},
+    };
+    for (const Case& c : cases) {
+        Settings s;
+        std::string err;
+        REQUIRE_MSG(parse_settings(std::string("[upscale]\nmode = ") + c.word + "\n", &s, &err), err);
+        CHECK(s.extras.upscale.mode == c.want);
+        const std::string text = format_settings(s);
+        CHECK_MSG(text.find(std::string("[upscale]\nmode = ") + c.written + "\n") != std::string::npos, c.word);
+        Settings r;
+        REQUIRE_MSG(parse_settings(text, &r, &err), err);
+        CHECK(r.extras.upscale.mode == c.want);
+        CHECK(same_settings(s, r));
+    }
+}
+
+NXTEST(extras_unknown_keys_warn_not_fail) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[hdr]\nbogus = 1\n[upscale]\nsharpen = 1\n[latency]\nmode = on\n", &s, &err, &w), err);
+    REQUIRE_MSG(w.size() == 2u, "two warnings");
+    CHECK_EQ(w[0], std::string("line 2: unknown key 'bogus' in [hdr]"));
+    CHECK_EQ(w[1], std::string("line 4: unknown key 'sharpen' in [upscale]"));
+    CHECK(s.extras.latency.mode == LatencyMode::On);
+}
+
+NXTEST(extras_keys_and_words_case_insensitive) {
+    const char* text =
+        "[HDR]\nMODE = ON\nFormat = ScRGB\nPeak_Nits = 1000\nPaper_White_Nits = 0\nHighlight_Boost = 0.5\n"
+        "[Upscale]\nMode = FSR1\nSharpness = 0.25\nFrame_Generation = YES\n"
+        "[LATENCY]\nMode = Boost\nLog_Timings = On\n";
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings(text, &s, &err, &w), err);
+    CHECK(w.empty());
+    CHECK(s.extras.hdr.mode == HdrMode::On);
+    CHECK(s.extras.hdr.format == HdrFormat::ScRgb);
+    CHECK(s.extras.hdr.peak_nits == 1000.0);
+    CHECK(s.extras.hdr.paper_white_nits == 0.0);
+    CHECK(s.extras.hdr.highlight_boost == 0.5);
+    CHECK(s.extras.upscale.mode == UpscaleMode::Fsr1);
+    CHECK(s.extras.upscale.sharpness == 0.25);
+    CHECK(s.extras.upscale.frame_generation);
+    CHECK(s.extras.latency.mode == LatencyMode::Boost);
+    CHECK(s.extras.latency.log_timings);
+}
+
+NXTEST(extras_defaults_are_written) {
+    const std::string text = format_settings(default_settings());
+    CHECK(text.find("[hdr]\nmode = auto\nformat = auto\npeak_nits = 0\npaper_white_nits = 0\nhighlight_boost = 1\n") != std::string::npos);
+    CHECK(text.find("[upscale]\nmode = off\nsharpness = 0.8\nscene_scale = 100\nfsr_dll = \ndlss_dll = \nxess_dll = \nframe_generation = 0\n") !=
+          std::string::npos);
+    CHECK(text.find("[latency]\nmode = off\nframes_ahead = 1\nlog_timings = 0\n") != std::string::npos);
+}
+
+NXTEST(extras_full_file_round_trip) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings(kExtrasFile, &s, &err), err);
+    const std::string text = format_settings(s);
+    CHECK(text.find("[hdr]\nmode = on\nformat = hdr10\npeak_nits = 1000\npaper_white_nits = 250\nhighlight_boost = 1.5\n") !=
+          std::string::npos);
+    CHECK(text.find("[upscale]\nmode = fsr1\nsharpness = 0.5\nscene_scale = 100\nfsr_dll = C:\\Tools\\amd_fidelityfx_vk.dll\n") != std::string::npos);
+    CHECK(text.find("xess_dll = \nframe_generation = 1\n") != std::string::npos);
+    CHECK(text.find("[latency]\nmode = boost\nframes_ahead = 2\nlog_timings = 1\n") != std::string::npos);
+
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(same_settings(s, r));
+    CHECK_EQ(format_settings(r), text);
+}
+
+NXTEST(extras_fsr3_and_dlss_paths_survive_a_save) {
+    Settings s = default_settings();
+    s.extras.upscale.mode = UpscaleMode::Fsr3;
+    s.extras.upscale.frame_generation = true;
+    s.extras.upscale.fsr_dll = "C:\\Program Files\\AMD Tools\\amd_fidelityfx_vk.dll";
+    s.extras.upscale.dlss_dll = "D:\\games\\dlss = 3\\nvngx_dlss.dll";   // an '=' in a path: the key ends at the first '='
+    Settings r;
+    std::string err;
+    REQUIRE_MSG(parse_settings(format_settings(s), &r, &err), err);
+    CHECK(r.extras.upscale.mode == UpscaleMode::Fsr3);
+    CHECK(r.extras.upscale.frame_generation);
+    CHECK_EQ(r.extras.upscale.fsr_dll, std::string("C:\\Program Files\\AMD Tools\\amd_fidelityfx_vk.dll"));
+    CHECK_EQ(r.extras.upscale.dlss_dll, std::string("D:\\games\\dlss = 3\\nvngx_dlss.dll"));
+    CHECK(same_settings(s, r));
+}
+
+NXTEST(extras_numbers_round_trip_exactly) {
+    Settings s = default_settings();
+    s.extras.hdr.mode = HdrMode::On;
+    s.extras.hdr.format = HdrFormat::ScRgb;
+    s.extras.hdr.peak_nits = 1234.5678;
+    s.extras.hdr.paper_white_nits = 203.33333333333334;   // needs 17 digits
+    s.extras.hdr.highlight_boost = 0.1;
+    s.extras.upscale.sharpness = 1.0 / 3.0;
+    s.extras.latency.mode = LatencyMode::Auto;
+    s.extras.latency.log_timings = true;
+    const std::string text = format_settings(s);
+    Settings r;
+    std::string err;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(r.extras.hdr.peak_nits == 1234.5678);
+    CHECK(r.extras.hdr.paper_white_nits == 203.33333333333334);
+    CHECK(r.extras.hdr.highlight_boost == 0.1);
+    CHECK(r.extras.upscale.sharpness == 1.0 / 3.0);
+    CHECK(same_settings(s, r));
+    CHECK_EQ(format_settings(r), text);
+}
+
+NXTEST(extras_sections_written_after_display) {
+    const std::string text = format_settings(default_settings());
+    const size_t display = text.find("[display]");
+    const size_t hdr = text.find("[hdr]");
+    const size_t upscale = text.find("[upscale]");
+    const size_t latency = text.find("[latency]");
+    const size_t sw = text.find("[switch]");
+    REQUIRE_MSG(display != std::string::npos && hdr != std::string::npos && upscale != std::string::npos && latency != std::string::npos &&
+                    sw != std::string::npos,
+                "every section is written");
+    CHECK(display < hdr);
+    CHECK(hdr < upscale);
+    CHECK(upscale < latency);
+    CHECK(latency < sw);
 }

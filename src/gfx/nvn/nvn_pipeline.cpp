@@ -18,6 +18,8 @@
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_spirv_patch.h"
+#include "extras/hdr_nvn.h"
+#include "nxrt/extras.h"
 
 namespace nxrt::nvn::be::gpu {
 namespace {
@@ -198,6 +200,19 @@ static VkShaderModule no_output_module(const ShaderInfo* fs) {
     return e.first;
 }
 
+// The tone-map fragment shader runs as its HDR variant while the HDR scene is active (extras/hdr_nvn.h); every other fragment shader is the translated one.
+static VkShaderModule hdr_fragment_module(const ShaderInfo* fs) {
+    if (!extras::hdr_scene_active() || fs->spirv.size() > 16384) return shader_module(fs);
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    static std::unordered_map<const ShaderInfo*, VkShaderModule> cache;
+    auto it = cache.find(fs);
+    if (it != cache.end()) return it->second;
+    std::vector<uint32_t> patched;
+    VkShaderModule m = extras::hdr_tonemap_variant(fs->spirv, fs->hash, patched) ? create_module(patched, fs->hash.c_str()) : shader_module(fs);
+    cache[fs] = m;
+    return m;
+}
+
 static VkShaderModule dual_source_module(const ShaderInfo* fs) {
     std::lock_guard<std::recursive_mutex> lk(g_module_mu);
     auto it = g_dual_src.find(fs);
@@ -347,6 +362,7 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
         VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1])
                            : (i == 1 && key.no_out)      ? no_output_module(key.stage[i])
                            : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
+                           : (i == 1)                    ? hdr_fragment_module(key.stage[i])
                                                          : shader_module(key.stage[i]);
         if (!m) return VK_NULL_HANDLE;
         stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};

@@ -12,7 +12,11 @@
 #include "nxrt/config.h"
 #include "nxrt/gfx.h"
 #include "nxrt/log.h"
+#include "nxrt/lowlat.h"
 #include "nxrt/platform.h"
+#include "extras/hdr_capture.h"
+#include "extras/hdr_math.h"
+#include "extras/win_display.h"
 
 namespace nxrt::gfx {
 namespace {
@@ -140,6 +144,12 @@ struct Renderer::Impl {
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_B8G8R8A8_UNORM;
+    // display extras (S14)
+    extras::OutputKind wanted = extras::OutputKind::Sdr8;     // what the settings and the surface asked for at creation
+    extras::OutputKind kind = extras::OutputKind::Sdr8;       // what the swapchain in use carries
+    VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    uint32_t format_serial = 0;
+    std::unique_ptr<extras::LowLatency> latency;
     VkExtent2D extent = {0, 0};
     uint32_t headless_w = 0, headless_h = 0;
     struct Target {
@@ -192,6 +202,61 @@ struct Renderer::Impl {
         return PresentMode::Fifo;
     }
 
+    // Records the swapchain flavour in use; publishes the change.
+    void set_kind(extras::OutputKind k, VkColorSpaceKHR cs, VkFormat f) {
+        const bool changed = k != kind || f != format || cs != color_space;
+        kind = k;
+        color_space = cs;
+        format = f;
+        if (changed) {
+            ++format_serial;
+            extras::HdrState hs = extras::hdr_state();
+            hs.output = k;
+            if (k == extras::OutputKind::Sdr8) hs.peak_ratio = 1.0f;
+            extras::hdr_set_state(hs);
+        }
+    }
+
+    // HDR decision (S14): from [hdr] and what the surface offers. Publishes the HdrState (scene_hdr, levels, peak ratio).
+    void decide_output() {
+        const extras::Settings es = extras::settings();
+        extras::HdrState hs;
+        wanted = extras::OutputKind::Sdr8;
+        if (es.hdr.mode != extras::HdrMode::Off) {
+            bool o10 = false, osc = false;
+            extras::DisplayHdrInfo di;
+            if (headless) {
+                o10 = osc = es.hdr.mode == extras::HdrMode::On;         // an offscreen image can be anything; only a forced mode asks for HDR
+            } else {
+                uint32_t n = 0;
+                vkGetPhysicalDeviceSurfaceFormatsKHR(dev->physical(), dev->surface(), &n, nullptr);
+                std::vector<VkSurfaceFormatKHR> fmts(n);
+                vkGetPhysicalDeviceSurfaceFormatsKHR(dev->physical(), dev->surface(), &n, fmts.data());
+                for (auto& f : fmts) {
+                    if (f.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT && (f.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || f.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32)) o10 = true;
+                    if (f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT && f.format == VK_FORMAT_R16G16B16A16_SFLOAT) osc = true;
+                }
+                extras::query_display_hdr(platform::native_hwnd(), &di);
+                NXLOG_I(kTag, "HDR: surface offers HDR10 %s, scRGB %s; display %s: hdr %s, peak %.0f nits, SDR white %.0f nits (%s)", o10 ? "yes" : "no", osc ? "yes" : "no",
+                        di.monitor, di.hdr_enabled ? "on" : "off", di.max_nits, di.sdr_white_nits, di.how);
+            }
+            const bool pick10 = es.hdr.format == extras::HdrFormat::Hdr10 ? o10 : es.hdr.format == extras::HdrFormat::ScRgb ? false : o10;
+            const bool pickSc = es.hdr.format == extras::HdrFormat::ScRgb ? osc : es.hdr.format == extras::HdrFormat::Hdr10 ? false : (!o10 && osc);
+            if (pick10) wanted = extras::OutputKind::Hdr10;
+            else if (pickSc) wanted = extras::OutputKind::ScRgb;
+            hs.scene_hdr = wanted != extras::OutputKind::Sdr8 || es.hdr.mode == extras::HdrMode::On;
+            hs.display_hdr = di.hdr_enabled;
+            hs.display_peak_nits = di.valid ? di.max_nits : 0.0f;
+            hs.display_sdr_white_nits = di.valid ? di.sdr_white_nits : 80.0f;
+            extras::hdr_resolve_levels(es.hdr, di.valid && di.hdr_enabled, di.valid ? di.max_nits : 0.0f, di.sdr_white_nits, &hs.paper_white_nits, &hs.peak_nits);
+            hs.peak_ratio = wanted == extras::OutputKind::Sdr8 ? 1.0f : extras::peak_ratio(hs.peak_nits, hs.paper_white_nits, static_cast<float>(es.hdr.highlight_boost));
+        }
+        hs.output = extras::OutputKind::Sdr8;     // the swapchain sets the real one
+        extras::hdr_set_state(hs);
+        NXLOG_I(kTag, "HDR: mode %d, scene %s, wanted output %s, paper white %.0f nits, peak %.0f nits, peak ratio %.2f", static_cast<int>(es.hdr.mode), hs.scene_hdr ? "HDR" : "SDR",
+                extras::output_kind_name(wanted), hs.paper_white_nits, hs.peak_nits, hs.peak_ratio);
+    }
+
     void destroy_targets() {
         for (auto& t : targets) {
             if (t.render_done) vkDestroySemaphore(vk(), t.render_done, nullptr);
@@ -214,7 +279,15 @@ struct Renderer::Impl {
         if (headless) {
             destroy_targets();
             extent = {want_w, want_h};
-            format = VK_FORMAT_B8G8R8A8_UNORM;
+            VkFormat want_fmt = VK_FORMAT_B8G8R8A8_UNORM;
+            extras::OutputKind got = extras::OutputKind::Sdr8;
+            if (wanted != extras::OutputKind::Sdr8) {       // HDR output into an offscreen image (tests, scripted runs, screenshots of the HDR path)
+                ImageDesc probe;
+                probe.format = wanted == extras::OutputKind::Hdr10 ? VK_FORMAT_A2B10G10R10_UNORM_PACK32 : VK_FORMAT_R16G16B16A16_SFLOAT;
+                probe.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+                if (dev->image_supported(probe)) { want_fmt = probe.format; got = wanted; }
+            }
+            set_kind(got, got == extras::OutputKind::Hdr10 ? VK_COLOR_SPACE_HDR10_ST2084_EXT : got == extras::OutputKind::ScRgb ? VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT : VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, want_fmt);
             const uint32_t count = desc.frames_in_flight + 1;
             for (uint32_t i = 0; i < count; ++i) {
                 ImageDesc id;
@@ -254,10 +327,25 @@ struct Renderer::Impl {
         std::vector<VkSurfaceFormatKHR> fmts(n);
         vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surf, &n, fmts.data());
         VkSurfaceFormatKHR chosen = fmts.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR} : fmts[0];
-        for (VkFormat want : {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM}) {
-            bool found = false;
-            for (auto& f : fmts) if (f.format == want && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { chosen = f; found = true; break; }
-            if (found) break;
+        extras::OutputKind got = extras::OutputKind::Sdr8;
+        if (wanted != extras::OutputKind::Sdr8) {     // HDR: the first of the wanted flavour, then the other one, then SDR
+            auto find = [&](VkFormat f, VkColorSpaceKHR cs) {
+                for (auto& x : fmts) if (x.format == f && x.colorSpace == cs) { chosen = x; return true; }
+                return false;
+            };
+            const auto hdr10 = [&] { return find(VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT) || find(VK_FORMAT_A2R10G10B10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT); };
+            const auto scrgb = [&] { return find(VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT); };
+            if (wanted == extras::OutputKind::Hdr10) got = hdr10() ? extras::OutputKind::Hdr10 : scrgb() ? extras::OutputKind::ScRgb : extras::OutputKind::Sdr8;
+            else got = scrgb() ? extras::OutputKind::ScRgb : hdr10() ? extras::OutputKind::Hdr10 : extras::OutputKind::Sdr8;
+            if (got == extras::OutputKind::Sdr8)
+                NXLOG_W(kTag, "HDR output was chosen but the surface does not offer it any more (Windows HDR off?): the picture is shown as SDR");
+        }
+        if (got == extras::OutputKind::Sdr8) {
+            for (VkFormat want : {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM}) {
+                bool found = false;
+                for (auto& f : fmts) if (f.format == want && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { chosen = f; found = true; break; }
+                if (found) break;
+            }
         }
         VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         capture_supported = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
@@ -298,18 +386,36 @@ struct Renderer::Impl {
         ci.presentMode = to_vk(active);
         ci.clipped = VK_TRUE;
         ci.oldSwapchain = old;
+        if (latency) latency->prepare_swapchain(&ci);
         VkSwapchainKHR fresh = VK_NULL_HANDLE;
         VkResult r = vkCreateSwapchainKHR(vk(), &ci, nullptr, &fresh);
         destroy_targets();
-        if (old) vkDestroySwapchainKHR(vk(), old, nullptr);
+        if (old) {
+            if (latency) latency->swapchain_destroyed(old);
+            vkDestroySwapchainKHR(vk(), old, nullptr);
+        }
         swapchain = VK_NULL_HANDLE;
         if (r != VK_SUCCESS) {
             NXLOG_E(kTag, "vkCreateSwapchainKHR failed (%d)", static_cast<int>(r));
             return false;
         }
         swapchain = fresh;
-        format = chosen.format;
+        set_kind(got, chosen.colorSpace, chosen.format);
         extent = ext;
+        if (latency) latency->swapchain_created(swapchain);
+        if (got != extras::OutputKind::Sdr8 && dev->features().hdr_metadata) {
+            const extras::HdrState hs = extras::hdr_state();
+            VkHdrMetadataEXT md = {VK_STRUCTURE_TYPE_HDR_METADATA_EXT};
+            md.displayPrimaryRed = {0.708f, 0.292f};       // BT.2020
+            md.displayPrimaryGreen = {0.170f, 0.797f};
+            md.displayPrimaryBlue = {0.131f, 0.046f};
+            md.whitePoint = {0.3127f, 0.3290f};
+            md.maxLuminance = hs.peak_nits;
+            md.minLuminance = 0.0f;
+            md.maxContentLightLevel = hs.peak_nits;
+            md.maxFrameAverageLightLevel = std::max(hs.paper_white_nits, hs.peak_nits * 0.25f);
+            vkSetHdrMetadataEXT(vk(), 1, &swapchain, &md);
+        }
         uint32_t count = 0;
         vkGetSwapchainImagesKHR(vk(), swapchain, &count, nullptr);
         std::vector<VkImage> imgs(count);
@@ -327,8 +433,8 @@ struct Renderer::Impl {
         }
         dirty = false;
         st.swapchain_creates++;
-        NXLOG_I(kTag, "swapchain %ux%u, %u images, format %d, present mode %s%s", ext.width, ext.height, count, static_cast<int>(format),
-                present_mode_name(active), active != requested ? " (requested mode not available)" : "");
+        NXLOG_I(kTag, "swapchain %ux%u, %u images, format %d, color space %d (%s), present mode %s%s", ext.width, ext.height, count, static_cast<int>(format),
+                static_cast<int>(color_space), extras::output_kind_name(kind), present_mode_name(active), active != requested ? " (requested mode not available)" : "");
         return true;
     }
 
@@ -400,6 +506,9 @@ std::unique_ptr<Renderer> Renderer::create(Device& dev, const RendererDesc& desc
     s.headless = dev.headless();
     s.headless_w = desc_in.headless_width;
     s.headless_h = desc_in.headless_height;
+    s.decide_output();
+    s.latency = std::make_unique<extras::LowLatency>(dev);
+    extras::lowlat_set(s.latency.get());
     if (!s.create_slots()) {
         if (error) *error = "could not create the frame slots";
         return nullptr;
@@ -484,7 +593,7 @@ bool Renderer::begin_frame(FrameInfo* out) {
     barrier(slot.cmd, t.image, kUndefined, kColorAtt);
 
     s.cur_image = idx;
-    s.info = FrameInfo{slot.cmd, t.image, t.view, s.format, s.extent, s.cur_slot, idx, s.frame_number};
+    s.info = FrameInfo{slot.cmd, t.image, t.view, s.format, s.extent, s.cur_slot, idx, s.frame_number, s.kind != extras::OutputKind::Sdr8};
     s.in_frame = true;
     if (out) *out = s.info;
     return true;
@@ -501,8 +610,9 @@ void Renderer::end_frame() {
     const bool capturing = s.cap_pending && (s.headless || s.capture_supported);
     Buffer cap;
     const uint32_t w = s.extent.width, h = s.extent.height;
+    const uint32_t bpp = s.format == VK_FORMAT_R16G16B16A16_SFLOAT ? 8u : 4u;
     if (capturing) {
-        if (s.dev->create_buffer(static_cast<VkDeviceSize>(w) * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUse::Readback, &cap, "screenshot") != VK_SUCCESS) {
+        if (s.dev->create_buffer(static_cast<VkDeviceSize>(w) * h * bpp, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUse::Readback, &cap, "screenshot") != VK_SUCCESS) {
             NXLOG_E(kTag, "screenshot buffer allocation failed");
         }
     }
@@ -565,7 +675,18 @@ void Renderer::end_frame() {
             pi.swapchainCount = 1;
             pi.pSwapchains = &s.swapchain;
             pi.pImageIndices = &s.cur_image;
+            uint64_t present_id = 0;
+            VkPresentIdKHR pid = {VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
+            if (s.latency && s.latency->enabled() && s.latency->backend() == extras::LowLatency::Backend::Reflex) {
+                present_id = s.latency->present_begin();
+                pid.swapchainCount = 1;
+                pid.pPresentIds = &present_id;
+                pi.pNext = &pid;
+            } else if (s.latency) {
+                s.latency->present_begin();
+            }
             r = vkQueuePresentKHR(s.dev->queue(), &pi);
+            if (s.latency) s.latency->present_end();
             s.st.presents++;
             if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_SURFACE_LOST_KHR) {
                 s.dirty = true;
@@ -581,13 +702,37 @@ void Renderer::end_frame() {
 
     if (cap) {
         vkWaitForFences(s.vk(), 1, &slot.fence, VK_TRUE, UINT64_MAX);
-        std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
+        std::vector<uint8_t> raw(static_cast<size_t>(w) * h * bpp);
         s.dev->invalidate_buffer(cap);
-        std::memcpy(px.data(), cap.mapped, px.size());
+        std::memcpy(raw.data(), cap.mapped, raw.size());
         s.dev->destroy_buffer(cap);
-        if (s.format == VK_FORMAT_B8G8R8A8_UNORM || s.format == VK_FORMAT_B8G8R8A8_SRGB)
-            for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
-        for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+        std::vector<uint8_t> px;
+        if (s.kind != extras::OutputKind::Sdr8) {
+            // HDR: the PNG is the picture clipped to SDR (paper white = 1.0); next to it a false-colour map of the brightness above paper white and a
+            // PFM with the scene-linear values (1.0 = paper white), and the statistics in the log.
+            const extras::HdrState hs = extras::hdr_state();
+            const extras::CaptureFormat cf = s.format == VK_FORMAT_R16G16B16A16_SFLOAT ? extras::CaptureFormat::Rgba16F
+                                           : s.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ? extras::CaptureFormat::A2R10G10B10 : extras::CaptureFormat::A2B10G10R10;
+            std::vector<float> lin;
+            std::vector<uint8_t> map;
+            extras::HdrCaptureStats cs;
+            if (extras::decode_hdr_capture(cf, raw.data(), w, h, hs.paper_white_nits, &lin, &px, &map, &cs)) {
+                if (!s.cap_path.empty()) {
+                    std::string base = s.cap_path;
+                    if (base.size() > 4 && base.compare(base.size() - 4, 4, ".png") == 0) base.resize(base.size() - 4);
+                    save_png_rgba(base + ".hdrmap.png", map.data(), w, h);
+                    extras::write_pfm(base + ".pfm", lin, w, h, hs.paper_white_nits / 100.0f);
+                    NXLOG_I(kTag, "HDR screenshot: %s (paper white %.0f nits, peak %.0f)", extras::capture_stats_line(cs).c_str(), hs.paper_white_nits, hs.peak_nits);
+                }
+            } else {
+                px.assign(static_cast<size_t>(w) * h * 4, 0);
+            }
+        } else {
+            px = std::move(raw);
+            if (s.format == VK_FORMAT_B8G8R8A8_UNORM || s.format == VK_FORMAT_B8G8R8A8_SRGB)
+                for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+            for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+        }
         if (!s.cap_path.empty() && save_png_rgba(s.cap_path, px.data(), w, h)) NXLOG_I(kTag, "screenshot %ux%u written to %s", w, h, s.cap_path.c_str());
         if (s.cap_out) *s.cap_out = std::move(px);
         if (s.cap_w) *s.cap_w = w;
@@ -630,6 +775,12 @@ bool Renderer::resize_headless(uint32_t w, uint32_t h) {
     s.dirty = true;
     return true;
 }
+
+extras::OutputKind Renderer::output_kind() const { return impl_->kind; }
+VkColorSpaceKHR Renderer::color_space() const { return impl_->color_space; }
+uint32_t Renderer::format_serial() const { return impl_->format_serial; }
+VkSwapchainKHR Renderer::swapchain() const { return impl_->swapchain; }
+extras::LowLatency* Renderer::low_latency() { return impl_->latency.get(); }
 
 VkExtent2D Renderer::extent() const { return impl_->extent; }
 VkFormat Renderer::format() const { return impl_->format; }

@@ -83,6 +83,34 @@ bool to_bool(const std::string& v, bool* out) {
     return false;
 }
 
+// One word of a fixed list (case-insensitive): its index in `words`. A word that is none of them sets *msg listing the allowed ones.
+bool pick_word(const std::string& k, const std::string& v, const std::vector<const char*>& words, int* idx, std::string* msg) {
+    const std::string l = lower(v);
+    for (size_t i = 0; i < words.size(); ++i) {
+        if (l == words[i]) {
+            *idx = static_cast<int>(i);
+            return true;
+        }
+    }
+    std::string allowed;
+    for (size_t i = 0; i < words.size(); ++i) {
+        if (i > 0) allowed += i + 1 == words.size() ? " or " : ", ";
+        allowed += words[i];
+    }
+    *msg = k + " must be " + allowed + ", got '" + v + "'";
+    return false;
+}
+
+// The words the file uses for the display extras enums, indexed by the enum value (the first word of each list is the default's).
+const std::vector<const char*> kHdrModeWords = {"off", "auto", "on"};
+const std::vector<const char*> kHdrFormatWords = {"auto", "hdr10", "scrgb"};
+const std::vector<const char*> kUpscaleWords = {"off", "fsr1", "fsr3", "dlss", "xess"};
+const std::vector<const char*> kLatencyWords = {"off", "auto", "on", "boost"};
+// The upscale words accepted when reading (spatial is an alias of fsr1) and the enum value each one means.
+const std::vector<const char*> kUpscaleReadWords = {"off", "fsr1", "spatial", "fsr3", "dlss", "xess"};
+const extras::UpscaleMode kUpscaleFromWord[] = {extras::UpscaleMode::Off, extras::UpscaleMode::Fsr1, extras::UpscaleMode::Fsr1,
+                                                extras::UpscaleMode::Fsr3, extras::UpscaleMode::Dlss, extras::UpscaleMode::Xess};
+
 // Splits on '\n'. Line i of the result is line i+1 of the file (for error messages).
 std::vector<std::string> split_lines(const std::string& text) {
     std::vector<std::string> lines;
@@ -118,7 +146,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Switch, Bindings };
+enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Hdr, Upscale, Latency, Switch, Bindings };
 
 const char* sec_label(Sec s) {
     switch (s) {
@@ -126,6 +154,9 @@ const char* sec_label(Sec s) {
         case Sec::Pad: return "[pad]";
         case Sec::Timing: return "[timing]";
         case Sec::Display: return "[display]";
+        case Sec::Hdr: return "[hdr]";
+        case Sec::Upscale: return "[upscale]";
+        case Sec::Latency: return "[latency]";
         case Sec::Switch: return "[switch]";
         default: return "";
     }
@@ -152,6 +183,20 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         }
         if (x < lo || x > hi) {
             *msg = k + " must be " + num(lo) + ".." + num(hi) + ", got " + v;
+            return false;
+        }
+        *dst = x;
+        return true;
+    };
+    // A real that is either 0 (the "auto" value) or within lo..hi.
+    auto set_zero_or_real = [&](double lo, double hi, double* dst) {
+        double x = 0;
+        if (!to_double(v, &x)) {
+            *msg = k + " must be a number, got '" + v + "'";
+            return false;
+        }
+        if (x != 0 && (x < lo || x > hi)) {
+            *msg = k + " must be 0 (auto) or " + num(lo) + ".." + num(hi) + ", got " + v;
             return false;
         }
         *dst = x;
@@ -274,6 +319,62 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "bloom") return set_bool(&s->display.bloom);
             if (k == "chromatic_aberration") return set_bool(&s->display.chromatic_aberration);
             break;
+        case Sec::Hdr: {
+            extras::HdrSettings& h = s->extras.hdr;
+            if (k == "mode") {
+                int i = 0;
+                if (!pick_word(k, v, kHdrModeWords, &i, msg)) return false;
+                h.mode = static_cast<extras::HdrMode>(i);
+                return true;
+            }
+            if (k == "format") {
+                int i = 0;
+                if (!pick_word(k, v, kHdrFormatWords, &i, msg)) return false;
+                h.format = static_cast<extras::HdrFormat>(i);
+                return true;
+            }
+            if (k == "peak_nits") return set_zero_or_real(200.0, 10000.0, &h.peak_nits);
+            if (k == "paper_white_nits") return set_zero_or_real(80.0, 500.0, &h.paper_white_nits);
+            if (k == "highlight_boost") return set_real(0.0, 2.0, &h.highlight_boost);
+            break;
+        }
+        case Sec::Upscale: {
+            extras::UpscaleSettings& u = s->extras.upscale;
+            if (k == "mode") {
+                int i = 0;
+                if (!pick_word(k, v, kUpscaleReadWords, &i, msg)) return false;
+                u.mode = kUpscaleFromWord[i];
+                return true;
+            }
+            if (k == "sharpness") return set_real(0.0, 1.0, &u.sharpness);
+            if (k == "fsr_dll") {   // a path: kept as written
+                u.fsr_dll = v;
+                return true;
+            }
+            if (k == "dlss_dll") {
+                u.dlss_dll = v;
+                return true;
+            }
+            if (k == "xess_dll") {
+                u.xess_dll = v;
+                return true;
+            }
+            if (k == "scene_scale") return set_int(25, 100, &u.scene_scale);
+            if (k == "frame_generation") return set_bool(&u.frame_generation);
+            break;
+        }
+        case Sec::Latency: {
+            extras::LatencySettings& l = s->extras.latency;
+            if (k == "mode") {
+                int i = 0;
+                if (!pick_word(k, v, kLatencyWords, &i, msg)) return false;
+                l.mode = static_cast<extras::LatencyMode>(i);
+                return true;
+            }
+            if (k == "frames_ahead") return set_int(-1, 3, &l.frames_ahead);
+            if (k == "log_timings") return set_bool(&l.log_timings);
+            break;
+        }
         case Sec::Switch: {
             Act a = Act::None;
             if (!parse_act(k, &a) || a == Act::None) break;   // unknown action name: a warning
@@ -355,6 +456,9 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             else if (key == "pad") sec = Sec::Pad;
             else if (key == "timing") sec = Sec::Timing;
             else if (key == "display") sec = Sec::Display;
+            else if (key == "hdr") sec = Sec::Hdr;
+            else if (key == "upscale") sec = Sec::Upscale;
+            else if (key == "latency") sec = Sec::Latency;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -494,6 +598,27 @@ std::string format_settings(const Settings& s) {
     kv("lod_bias", num_exact(s.display.lod_bias));
     kv("bloom", flag(s.display.bloom));
     kv("chromatic_aberration", flag(s.display.chromatic_aberration));
+
+    o += "\n[hdr]\n";
+    kv("mode", kHdrModeWords[static_cast<int>(s.extras.hdr.mode)]);
+    kv("format", kHdrFormatWords[static_cast<int>(s.extras.hdr.format)]);
+    kv("peak_nits", num_exact(s.extras.hdr.peak_nits));
+    kv("paper_white_nits", num_exact(s.extras.hdr.paper_white_nits));
+    kv("highlight_boost", num_exact(s.extras.hdr.highlight_boost));
+
+    o += "\n[upscale]\n";
+    kv("mode", kUpscaleWords[static_cast<int>(s.extras.upscale.mode)]);
+    kv("sharpness", num_exact(s.extras.upscale.sharpness));
+    kv("scene_scale", std::to_string(s.extras.upscale.scene_scale));
+    kv("fsr_dll", s.extras.upscale.fsr_dll);
+    kv("dlss_dll", s.extras.upscale.dlss_dll);
+    kv("xess_dll", s.extras.upscale.xess_dll);
+    kv("frame_generation", flag(s.extras.upscale.frame_generation));
+
+    o += "\n[latency]\n";
+    kv("mode", kLatencyWords[static_cast<int>(s.extras.latency.mode)]);
+    kv("frames_ahead", std::to_string(s.extras.latency.frames_ahead));
+    kv("log_timings", flag(s.extras.latency.log_timings));
 
     o += "\n[switch]\n";
     for (int a = 1; a < kActCount; ++a) {   // every action except none
