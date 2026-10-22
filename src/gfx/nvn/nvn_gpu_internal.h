@@ -18,6 +18,8 @@
 
 #include "nxrt/gfx.h"
 #include "nvn_present_pass.h"
+
+namespace nxrt::extras { class OutputPass; }
 #include "nvn_core.h"
 #include "nvn_gpu.h"
 
@@ -185,6 +187,7 @@ int depth_mode();
 gfx::Renderer* renderer();
 FrameLimiter* limiter();
 PresentPass* present_pass();
+extras::OutputPass* output_pass();
 bool keep_aspect();
 
 // After a traced frame ([nvn] trace_frame): dumps the targets it drew to (PNG next to the log: trace_<texture id>_<format>.png) and logs their statistics.

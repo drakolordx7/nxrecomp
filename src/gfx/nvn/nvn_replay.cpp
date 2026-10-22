@@ -19,6 +19,9 @@
 #include "nvn_format.h"
 #include "nvn_mask_clear.h"
 #include "nvn_gpu_internal.h"
+#include "nxrt/lowlat.h"
+#include "extras/hdr_nvn.h"
+#include "extras/fsr1_spatial.h"
 #include "nvn_pipeline.h"
 #include "nvn_shaders.h"
 
@@ -614,6 +617,9 @@ int storage_slot_for(int nvn_stage, int c0_offset) {
     return (c0_offset - base) / 0x10;
 }
 
+Texture* g_su_tex = nullptr;                 // scene upscaler override (S14), see scene_upscale_for_draw
+VkImageView g_su_view = VK_NULL_HANDLE;
+
 VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
     std::vector<VkWriteDescriptorSet> writes;
     std::vector<VkDescriptorBufferInfo> binfo;
@@ -704,6 +710,10 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                     ii.imageView = v;
                     ii.imageLayout = tex_sampled_layout(r.tex);
                     if (r.has_sampler) ii.sampler = sampler_for(r.smp);
+                    if (r.tex == g_su_tex && g_su_view) {            // the upscaled scene replaces the small one for this draw (S14)
+                        ii.imageView = g_su_view;
+                        ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+                    }
                 }
             } else if (r.tex && is_color_feedback(r.tex)) {
                 log_once("color-feedback", "a texture is sampled while it is a colour attachment of the pass: the dummy texture is bound");
@@ -927,6 +937,42 @@ bool trigger_time_ok() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= min_sec;
 }
 
+// Scene upscaler (stream S14, src/gfx/extras/hdr_nvn.h): before a tone-map draw whose HDR scene input is smaller than its target, FSR 1 enlarges the scene
+// to the target's size and the draw samples that instead. The override lives until the next draw.
+void scene_upscale_for_draw(const ProgLayout& pl) {
+    g_su_tex = nullptr;
+    g_su_view = VK_NULL_HANDLE;
+    const ShaderInfo* fs = S.stage[kFragment];
+    if (!fs || !extras::scene_upscale_wanted() || S.ncolor == 0 || !S.color_tex[0] || !extras::hdr_is_tonemap(fs->spirv, fs->hash)) return;
+    Texture* target = S.color_tex[0].get();
+    if (!tex_gpu(target)) return;
+    const VkExtent3D te = tex_extent(target, 0);
+    for (const BindingDesc& d : pl.bindings) {
+        if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+        const DescriptorBinding& b = d.shader->refl.bindings[d.index];
+        if (b.nvn.source != NvnSource::SamplerBinding && b.nvn.source != NvnSource::HandleInUniform) continue;
+        if (view_type_for(b) != VK_IMAGE_VIEW_TYPE_2D) continue;
+        TexResolved r = resolve_texture(d);
+        if (!r.tex || !tex_gpu(r.tex) || r.tex == S.depth_tex.get()) continue;
+        const VkExtent3D se = tex_extent(r.tex, 0);
+        if (se.width >= te.width && se.height >= te.height) return;          // nothing to enlarge
+        extras::Fsr1Spatial* su = extras::scene_upscaler(&device());
+        if (!su) return;
+        end_pass();                                                           // compute work cannot run inside a render pass
+        tex_ensure_current(r.tex, *F);
+        tex_transition(r.tex, *F, tex_sampled_layout(r.tex));
+        VkImageView src = tex_sampled_view(r.tex, make_request(b, r));
+        if (!src) return;
+        VkImageView up = su->upscale(F->cb, src, VkExtent2D{se.width, se.height}, VkExtent2D{se.width, se.height}, VkExtent2D{te.width, te.height}, true,
+                                     extras::scene_upscale_prescale(), extras::upscale_sharpness());
+        if (up) {
+            g_su_tex = r.tex;
+            g_su_view = up;
+        }
+        return;
+    }
+}
+
 bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* topo_out) {
     const ShaderInfo* vs = S.stage[kVertex];
     if (!vs) { log_once("draw-no-vs", "draw without a vertex shader skipped"); return false; }
@@ -944,6 +990,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_dirty & (kDesc | kPipe)) {
         g_want_depth_ro = samples_depth_target(*pl);
         prepare_textures(*pl);
+        scene_upscale_for_draw(*pl);
     }
     if (!ensure_pass(g_want_depth_ro)) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
     const VkPrimitiveTopology topo = vk_topology(mode);
@@ -1774,6 +1821,7 @@ void run_list(const CmdList& list, int depth) {
 
 void replay_begin_submit(Frame& f) {
     F = &f;
+    if (extras::LowLatency* ll = extras::lowlat()) ll->submit_begin();     // RENDERSUBMIT_START of the frame (stream S14)
     if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
     if (!g_trigger_read) {
         g_trigger_read = true;
@@ -1782,6 +1830,15 @@ void replay_begin_submit(Frame& f) {
     if (!g_trigger_fs.empty() && g_trigger_seen && !g_trigger_done && static_cast<int64_t>(counters().presents.load()) > g_trigger_present) {
         g_trigger_done = true;
         g_trace_frame = static_cast<int64_t>(counters().presents.load());
+    }
+    {   // [nvn] trace_sec = N (NXRT_NVN_TRACE_SEC): trace the first frame presented N seconds after the first draw (frame numbers differ between runs)
+        static const double trace_sec = static_cast<double>(nxrt::config_get_int("nvn", "trace_sec", 0));
+        static const auto t0 = std::chrono::steady_clock::now();
+        static bool trace_sec_done = false;
+        if (trace_sec > 0 && !trace_sec_done && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() >= trace_sec) {
+            trace_sec_done = true;
+            g_trace_frame = static_cast<int64_t>(counters().presents.load());
+        }
     }
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }

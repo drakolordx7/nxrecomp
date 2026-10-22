@@ -20,6 +20,7 @@
 #include "nxrt/log.h"
 #include "nxrt/nvn.h"
 #include "nxrt/platform.h"
+#include "extras/overlay_composite.h"
 
 namespace nxrt::gfx {
 namespace {
@@ -83,6 +84,8 @@ struct Overlay::Impl {
     int frame_ms_pos = 0;
     int fps_choice = 0;
     VkFormat color_format = VK_FORMAT_UNDEFINED;
+    bool hdr = false;                 // HDR swapchain: the overlay is drawn into an RGBA8 target and composited (draw)
+    extras::OverlayComposite composite;
 
     void build_ui();
 };
@@ -190,6 +193,15 @@ std::unique_ptr<Overlay> Overlay::create(const Context& ctx, std::string* error)
     Impl& s = *o->impl_;
     s.ctx = ctx;
     s.color_format = ctx.renderer->format();
+    if (ctx.renderer->output_kind() != extras::OutputKind::Sdr8) {
+        // HDR swapchain: ImGui draws into an RGBA8 target that the composite maps onto the swapchain (see draw)
+        if (s.composite.init(*ctx.device)) {
+            s.hdr = true;
+            s.color_format = VK_FORMAT_R8G8B8A8_UNORM;
+        } else {
+            NXLOG_W(kTag, "HDR overlay composite failed to initialise: the overlay is drawn straight into the HDR swapchain (colours will look wrong)");
+        }
+    }
     const std::string key = config_get_str("gfx", "overlay_key", "F1");
     if (const SDL_Scancode sc = SDL_GetScancodeFromName(key.c_str()); sc != SDL_SCANCODE_UNKNOWN) s.toggle_sc = sc;
     else NXLOG_W(kTag, "unknown [gfx] overlay_key '%s': using F1", key.c_str());
@@ -234,6 +246,7 @@ std::unique_ptr<Overlay> Overlay::create(const Context& ctx, std::string* error)
 Overlay::~Overlay() {
     if (!impl_) return;
     if (impl_->ctx.device) impl_->ctx.device->wait_idle();
+    impl_->composite.shutdown();
     if (impl_->backend_ready) ImGui_ImplVulkan_Shutdown();
     if (impl_->imgui) ImGui::DestroyContext(impl_->imgui);
     delete impl_;
@@ -361,6 +374,9 @@ void Overlay::draw(const FrameInfo& f) {
         s.last_frame = std::chrono::steady_clock::now();
         return;
     }
+    const bool hdr_frame = s.hdr && f.hdr_output;
+    if (s.hdr && !f.hdr_output) return;      // the display left HDR mode: the RGBA8 overlay pipeline does not match the SDR swapchain, so no overlay until the next start
+    if (hdr_frame && !s.composite.ensure_target(f.extent)) return;
     std::lock_guard<std::mutex> lk(s.mu);
     ImGuiContext* prev = ImGui::GetCurrentContext();
     ImGui::SetCurrentContext(s.imgui);
@@ -375,19 +391,32 @@ void Overlay::draw(const FrameInfo& f) {
     s.build_ui();
     ImGui::Render();
 
-    VkRenderingAttachmentInfo att = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    att.imageView = f.view;
-    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, f.extent};
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &att;
-    vkCmdBeginRendering(f.cmd, &ri);
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), f.cmd);
-    vkCmdEndRendering(f.cmd);
+    // one dynamic-rendering pass that draws the ImGui draw data into view
+    auto render_into = [&](VkImageView view, VkAttachmentLoadOp load) {
+        VkRenderingAttachmentInfo att = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        att.imageView = view;
+        att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att.loadOp = load;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.clearValue.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
+        VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, f.extent};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &att;
+        vkCmdBeginRendering(f.cmd, &ri);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), f.cmd);
+        vkCmdEndRendering(f.cmd);
+    };
+    if (hdr_frame) {
+        // HDR: the overlay goes into the cleared RGBA8 target, then the composite maps it onto the swapchain image (UI white = paper white)
+        const extras::HdrState hs = extras::hdr_state();
+        s.composite.begin_overlay(f.cmd);
+        render_into(s.composite.target_view(), VK_ATTACHMENT_LOAD_OP_CLEAR);
+        s.composite.composite(f.cmd, f.view, f.format, f.extent, s.ctx.renderer->output_kind(), hs.paper_white_nits, hs.peak_nits);
+    } else {
+        render_into(f.view, VK_ATTACHMENT_LOAD_OP_LOAD);
+    }
     s.drawn++;
     ImGui::SetCurrentContext(prev);
 }
