@@ -22,8 +22,8 @@ constexpr double kPi = 3.14159265358979323846;
                            "got " + std::to_string(nx_g) + ", want " + std::to_string(nx_w));                       \
     } while (0)
 
-// forward of a transform (column vector convention: -Z of the local frame in world space) = minus column 2
-void forward(const float xf[12], double f[3]) { f[0] = -xf[2]; f[1] = -xf[6]; f[2] = -xf[10]; }
+// forward of a transform (column vector convention): +Z of the local frame in world space = column 2
+void forward(const float xf[12], double f[3]) { f[0] = xf[2]; f[1] = xf[6]; f[2] = xf[10]; }
 }  // namespace
 
 NXTEST(offsets_are_linear_and_signed) {
@@ -75,23 +75,23 @@ NXTEST(orbit_yaw_matches_the_aim_yaw) {
 }
 
 NXTEST(orbit_about_a_pivot_moves_the_position) {
-    // camera 10 behind a ball at the origin (behind = +Z, the camera looks along -Z), turned 90 degrees to the left about up
-    const float in[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 10};
+    // camera 10 behind a ball at the origin (behind = -Z, the camera looks along +Z), turned 90 degrees to the left about up
+    const float in[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -10};
     const float pivot[3] = {0, 0, 0};
     float out[12];
     play::orbit_transform(in, pivot, kPi / 2, 0, out);
-    CHECK_NEAR(out[3], 10, 1e-5);     // Ry(+90): (0,0,10) -> (10,0,0): the camera is now to the right of the ball, looking left along -X
+    CHECK_NEAR(out[3], -10, 1e-5);    // Ry(+90): (0,0,-10) -> (-10,0,0): the camera is now to the right of the ball, looking along +X (left of the old view)
     CHECK_NEAR(out[11], 0, 1e-5);
     double f[3];
     forward(out, f);
-    CHECK_NEAR(f[0], -1, 1e-5);
+    CHECK_NEAR(f[0], 1, 1e-5);
     CHECK_NEAR(f[2], 0, 1e-5);
     // the camera still looks at the pivot: pivot - position is parallel to the forward vector
     CHECK_NEAR(-out[3] * f[0] / 10.0, 1.0, 1e-5);
 }
 
 NXTEST(orbit_pitch_up_looks_up_and_moves_the_camera_below) {
-    const float in[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 10};
+    const float in[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -10};
     const float pivot[3] = {0, 0, 0};
     float out[12];
     play::orbit_transform(in, pivot, 0, 0.5, out);

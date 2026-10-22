@@ -98,7 +98,7 @@ private:
 };
 
 // The transform maths (row-major 3x4: three rows of {r0, r1, r2, translation}); public for the tests.
-double yaw_of_transform(const float xf[12]);                               // atan2(xf[2], xf[0]): heading about Y (the world is Y up, forward is -Z at 0, + = turn left)
+double yaw_of_transform(const float xf[12]);                               // atan2(xf[2], xf[0]): heading about Y (the world is Y up, forward is +Z at 0, + = turn left)
 void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Ry(dyaw) * rotation, translation kept
 
 // Guest memory access used by the driver and the probes (ReadProcessMemory on this process: a bad pointer gives false, never a fault).

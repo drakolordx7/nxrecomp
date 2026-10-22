@@ -115,6 +115,8 @@ using ClockFn = double (*)();
 void set_clock_for_tests(ClockFn fn);
 // Tests: treat the run as deterministic with this step (seconds); 0 = follow [test] deterministic.
 void set_deterministic_for_tests(double step_seconds);
+// The script step `@rate <hz>` (test tooling): from the next frame on the game step is exactly 1/hz, nothing waits (hz > 0), or the configured mode again (0).
+void set_run_rate(double hz);
 
 // Guest addresses of the sites, main-module relative (docs/S11.md has what each does).
 namespace site {

@@ -47,7 +47,7 @@ double yaw_of_transform(const float xf[12]) { return std::atan2(static_cast<doub
 
 void rotate_transform_yaw(const float in[12], double dyaw, float out[12]) {
     const double c = std::cos(dyaw), s = std::sin(dyaw);
-    // The game's world is Y up (forward is -Z at yaw 0): the heading turns about Y, left-multiplied onto the rotation (rows 0 and 2 mix, row 1 stays).
+    // The game's world is Y up (forward is +Z at yaw 0: forward = (sin yaw, 0, cos yaw), + = turn left): the heading turns about Y, left-multiplied onto the rotation (rows 0 and 2 mix, row 1 stays).
     for (int col = 0; col < 3; ++col) {
         const double r0 = in[col], r2 = in[8 + col];
         out[col] = static_cast<float>(c * r0 + s * r2);

@@ -48,7 +48,7 @@ void orbit_transform(const float in[12], const float pivot[3], double yaw, doubl
     if (len > 1e-9 && pitch != 0.0) {
         const double a[3] = {right[0] / len, right[1] / len, right[2] / len};
         double rp[9];
-        axis_angle(a, pitch, rp);
+        axis_angle(a, -pitch, rp);      // forward is +Z in the game: a positive pitch (looking up) turns about the right axis the other way
         mul3(rp, m1, m2);
         mulv(rp, p1, p2);
     } else {

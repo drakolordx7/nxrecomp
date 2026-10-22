@@ -17,8 +17,7 @@ uint64_t system_tick() {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
     const uint64_t v = static_cast<uint64_t>(c.QuadPart);
-    const uint64_t t = (v / freq) * kTickHz + (v % freq) * kTickHz / freq;     // split so the multiplication cannot overflow
-    return static_cast<uint64_t>(static_cast<int64_t>(t) + tt::tick_offset());
+    return (v / freq) * kTickHz + (v % freq) * kTickHz / freq;     // split so the multiplication cannot overflow
 }
 
 // SleepThread takes nanoseconds and the console timer is good to a few microseconds. Sleep() counts whole milliseconds on a
