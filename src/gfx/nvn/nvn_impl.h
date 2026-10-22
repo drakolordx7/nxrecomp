@@ -15,6 +15,12 @@ void register_api_blend_color();    // BlendState, ColorState, ChannelMaskState
 void register_api_vertex();         // VertexAttribState, VertexStreamState (the reference family)
 void register_api_depth_poly_ms();  // DepthStencilState, PolygonState, MultisampleState
 
+// Command buffer: lifecycle and memory bookkeeping (api_cmdbuf.cpp), recorders of the state and bind commands (api_cmd_state.cpp)
+// and of draws, clears, copies, compute, counters, sync (api_cmd_work.cpp). All of them only record; no GPU involved.
+void register_api_cmdbuf();
+void register_api_cmd_state();
+void register_api_cmd_work();
+
 // Families that need the GPU back end (nvn_backend.cpp and the files it lists).
 void register_api_gpu();
 

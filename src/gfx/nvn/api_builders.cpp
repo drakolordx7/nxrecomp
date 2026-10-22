@@ -165,8 +165,8 @@ void nvnMemoryPoolBuilderSetStorage(NVNmemoryPoolBuilder* b, void* memory, size_
     wr<uint64_t>(b, kPStorage, bits_of(memory));
     wr<uint64_t>(b, kPSize, size);
 }
-// The header declares this as returning nothing (no out-pointer), so the storage is only visible through decode().
-void nvnMemoryPoolBuilderGetMemory(const NVNmemoryPoolBuilder* b) { (void)b; }
+// Returns the storage pointer given to SetStorage (the original header typedef said void; the driver returns void*).
+void* nvnMemoryPoolBuilderGetMemory(const NVNmemoryPoolBuilder* b) { return ptr_of<void>(rd<uint64_t>(b, kPStorage)); }
 size_t nvnMemoryPoolBuilderGetSize(const NVNmemoryPoolBuilder* b) { return rd<uint64_t>(b, kPSize); }
 void nvnMemoryPoolBuilderSetFlags(NVNmemoryPoolBuilder* b, int flags) { wr<int32_t>(b, kPFlags, flags); }
 NVNmemoryPoolFlags nvnMemoryPoolBuilderGetFlags(const NVNmemoryPoolBuilder* b) {
