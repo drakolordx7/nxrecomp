@@ -15,6 +15,7 @@
 #include <string>
 
 #include "nvn_core.h"
+#include "nvn_gpu.h"
 #include "nvn_impl.h"
 #include "nvn_shaders.h"
 #include "nxrt/log.h"
@@ -127,6 +128,7 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
         p->code_hash[stage] = parse_hash(si->hash);
     }
     p->linked = all_found;
+    if (all_found && gpu::active()) gpu::prewarm_program_shaders(p->stage);
     return all_found ? 1 : 0;
 }
 

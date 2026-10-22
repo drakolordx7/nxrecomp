@@ -35,6 +35,7 @@
 #include "nxrt/input.h"
 #include "nxrt/input_source.h"
 #include "nxrt/log.h"
+#include "nxrt/nvn_backend.h"
 #include "nxrt/overlay.h"
 #include "nxrt/platform.h"
 #include "nxrt/runtime.h"
@@ -293,6 +294,7 @@ void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
         if (!save_settings(st.path, st.settings, &err)) NXLOG_W(kTag, "cannot save %s: %s", st.path.c_str(), err.c_str());
         st.dirty = false;
     }
+    nvn::backend_flush_caches();                    // the pipeline cache; this path does not shut the back end down
     nxrt::log_flush();
     if (tt::enabled() && !tt::finished()) tt::end_run(code, verdict, message);     // writes result.json, then terminates
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
@@ -561,10 +563,10 @@ int update_hook(::Ctx*, uint64_t, void*) {
 
     if (st.log_status && now - st.last_status_ns > 1000 * kMs) {
         st.last_status_ns = now;
-        NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d", ctx_name(ctx),
+        NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d display_hook_calls=%u", ctx_name(ctx),
                 in_game ? 1 : 0, aim_block_name(st.aim->last_block()), static_cast<unsigned long long>(st.frames.load()),
                 static_cast<unsigned long long>(st.pi_calls.load()), static_cast<unsigned long long>(st.aim_frames.load()),
-                static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0);
+                static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0, display_hook_calls());
     }
     if (st.selftest.active()) st.selftest.tick(st.renderer, &st.limiter, selftest_host());
     return 0;

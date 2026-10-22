@@ -46,6 +46,8 @@ def main():
     ap.add_argument('--env', action='append', default=[])
     ap.add_argument('--press', default='', help='NXRT_BOOT_PRESS, e.g. A@12')
     ap.add_argument('--shots', default='', help='NXRT_BOOT_SCREENSHOT_AT seconds')
+    ap.add_argument('--shots-every', default='', help='NXRT_BOOT_SCREENSHOT_EVERY seconds')
+    ap.add_argument('--set', action='append', default=[], help='[display] key=value in controls.ini, e.g. render_scale=200')
     ap.add_argument('--fresh-cache', action='store_true', help='start without pipeline_cache.bin')
     ap.add_argument('--no-report', action='store_true')
     ap.add_argument('--hogs', type=int, default=0, help='run N busy-loop processes (normal priority) during the run: a repeatable background load')
@@ -58,6 +60,10 @@ def main():
     w, h = a.size.split('x')
     for k, v in (('fps_cap', a.cap), ('vsync', int(a.vsync)), ('width', w), ('height', h)):
         ini = re.sub(r'(?m)^%s\s*=.*$' % k, '%s = %s' % (k, v), ini)
+    for kv in a.set:
+        k, v = kv.split('=', 1)
+        if re.search(r'(?m)^%s\s*=' % k, ini): ini = re.sub(r'(?m)^%s\s*=.*$' % k, '%s = %s' % (k, v), ini)
+        else: ini = ini.replace('[display]', '[display]' + chr(10) + '%s = %s' % (k, v), 1)
     open(os.path.join(run, 'controls.ini'), 'w').write(ini)
     trace = os.path.join(ROOT, 'work', 'prof', a.tag + '.trace')
     if a.fresh_cache and os.path.exists(os.path.join(run, 'pipeline_cache.bin')):
@@ -67,6 +73,7 @@ def main():
                NXRT_NVN_BC7_CACHE=os.path.join(ROOT, 'work', 'run', 'bc7_cache'), NXRT_PROF_TRACE=trace, NXRT_LOG_LEVEL='info')
     if a.press: env['NXRT_BOOT_PRESS'] = a.press
     if a.shots: env['NXRT_BOOT_SCREENSHOT_AT'] = a.shots
+    if a.shots_every: env['NXRT_BOOT_SCREENSHOT_EVERY'] = a.shots_every
     for kv in a.env:
         k, v = kv.split('=', 1); env[k] = v
     cmd = [a.exe, '--log', 'mpr.log', '--max-seconds', str(a.seconds), '--link', 'rtld']

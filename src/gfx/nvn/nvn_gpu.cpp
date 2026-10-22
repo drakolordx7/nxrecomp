@@ -626,6 +626,9 @@ bool install_backend(const BackendDesc& desc) {
 
 void shutdown_backend() { be::gpu::tear_down(); }
 bool backend_installed() { return be::gpu::active(); }
+void backend_flush_caches() {
+    if (be::gpu::active()) be::gpu::flush_caches();
+}
 
 BackendStats backend_stats() {
     BackendStats s;
