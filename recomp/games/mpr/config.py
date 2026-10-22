@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Per-game configuration of Metroid Prime Remastered (Nintendo Switch, title 010012101468C000, v1.0.0).
 
-PLACEHOLDER: the game binary has not been dumped yet, so nothing here is measured. The values below are the ones the
-project's CLAUDE.md fixes (title, version, build id, image base 0x7100000000); everything else is empty on purpose.
-Fill in when the dump exists (Phase 2 gate of docs/PLAN.md): module list and bases, overrides for functions the runtime
-replaces (nn:: imports, hook sites), instruction patches, extra entries the discovery cannot see.
+Holds the title, version and build id (the setup tool checks the build id) and the module list. main is at 0x7100000000
+with sdk, subsdk0 and rtld at the bases listed in docs/S1b.md.
+Also the extra entry point for rtld, and the override and patch settings, which are empty for now.
 """
 import os
 import sys
@@ -18,7 +17,7 @@ class Config(GameConfig):
     title_id = '010012101468C000'
     version = '1.0.0'
     build_id = '67C9CA1428222752F951021464A7B3597EB98FEC'      # of main; checked by the setup tool, not by the lifter
-    # main is mapped at 0x7100000000 (docs/PLAN.md); the other modules' bases are the runtime's choice: PLACEHOLDERS
+    # main is mapped at 0x7100000000; the other modules' bases are the ones the runtime maps them at (docs/S1b.md)
     modules = [
         ModuleSpec('main', 0x7100000000, 'main'),
         ModuleSpec('sdk', 0x7500000000, 'sdk'),

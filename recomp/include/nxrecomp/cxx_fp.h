@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Helpers for tier-2 code of one worker stream (see nxrecomp/lift/tier2/x_*.py). Included at the end of cxx.h.
+// Helpers for tier-2 code of one instruction family (see nxrecomp/lift/tier2/x_*.py). Included at the end of cxx.h.
 #pragma once
 namespace nx {
 
-// Bit-level IEEE 754 helpers for the fp worker (FMULX, FRECPX, FMAXV/FMINV, FCVTXN). Everything works on the raw
+// Bit-level IEEE 754 helpers for the fp handlers (FMULX, FRECPX, FMAXV/FMINV, FCVTXN). Everything works on the raw
 // bit pattern, so NaN payloads, signs of zero and signalling/quiet state are exact. FPCR.DN = 0 (NaNs propagate),
 // round to nearest even, no flush-to-zero.
 
