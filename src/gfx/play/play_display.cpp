@@ -68,15 +68,18 @@ bool hud_perspective(float* aspect, double display_aspect) {
 
 bool hud_ortho(float* left, float* right, float* bottom, float* top, double display_aspect) {
     if (!left || !right || !bottom || !top || !(display_aspect > 0)) return false;
-    const double w = static_cast<double>(*right) - *left;
+    // The retail ball HUD stores left = 8 and right = -8 (reversed): the width is the absolute difference and the order is kept.
+    const double span = static_cast<double>(*right) - *left;
+    const double w = std::fabs(span);
     const double h = std::fabs(static_cast<double>(*top) - *bottom);
     if (!(w > 0) || !(h > 0)) return false;
     const double own = w / h;
     if (!near_ratio(own, kHudAspect) && !near_ratio(own, display_aspect)) return false;
     const double cx = (static_cast<double>(*left) + *right) * 0.5;
     const double nw = h * display_aspect;
-    *left = static_cast<float>(cx - nw * 0.5);
-    *right = static_cast<float>(cx + nw * 0.5);
+    const double dir = span >= 0 ? 1.0 : -1.0;
+    *left = static_cast<float>(cx - dir * nw * 0.5);
+    *right = static_cast<float>(cx + dir * nw * 0.5);
     return true;
 }
 
@@ -96,6 +99,7 @@ constexpr uint64_t kGetResolutionScale = 0x3c08a0;
 constexpr uint64_t kUpdateCameraNodes = 0xafe41c;
 constexpr uint64_t kGuiProjectionState = 0xbd52fc;
 constexpr uint64_t kGetVerticalFov = 0x4c2998;
+constexpr uint64_t kUiUpdateCameraNodes = 0xb0e5ec;       // CUIDisplayManager::UpdateCameraNodes
 constexpr uint64_t kBloomRender = 0x3a450c;
 constexpr uint64_t kChromaticRender = 0x3a69b0;
 constexpr uint64_t kDefaultAspectGlobal = 0x20e7a7c;      // CCameraManagerMP1's cached aspect (written by CreateCameras)
@@ -103,6 +107,9 @@ constexpr uint64_t kDefaultAspectGlobal = 0x20e7a7c;      // CCameraManagerMP1's
 constexpr size_t kProxyAspect = 152;       // [CDisplayManager + 16] + 152
 constexpr size_t kGuiCamType = 264, kGuiCamA = 268, kGuiCamB = 272, kGuiCamC = 276, kGuiCamD = 280;   // CGuiCamera
 constexpr size_t kCameraVerticalFov = 1120;               // CGameCamera, radians
+// CUIDisplayManager: [+312] the "UIOrthoCamera" scene node proxy, [+320] set once the level's UI camera was registered. The proxy keeps its
+// SProjectionState at +144: [0] kind (0 perspective, 1 frustum, 2 orthographic), [4] fov, [8] aspect, then right, left, bottom, top, near, far.
+constexpr size_t kUiProxy = 312, kUiRegistered = 320, kProxyState = 144;
 
 struct State {
     uint64_t base = 0;
@@ -114,7 +121,7 @@ struct State {
     std::vector<uint32_t> hooks;
     bool installed = false;
     std::mutex mu;
-    int gui_logged = 0;
+    int gui_logged = 0, ui_logged = 0;
 };
 
 State& st() {
@@ -160,6 +167,40 @@ int hook_camera_nodes(::Ctx* c, uint64_t, void*) {
     if (s.base) *reinterpret_cast<float*>(s.base + kDefaultAspectGlobal) = a;
     s.calls.fetch_add(1, std::memory_order_relaxed);
     return 0;                                                    // the game's function runs with the aspect in place
+}
+
+int hook_ui_camera_nodes(::Ctx* c, uint64_t, void*) {
+    State& s = st();
+    const uint64_t mgr = c->x[0];
+    if (!mgr || !mem::is_mapped(mgr, kUiRegistered + 1)) return 0;
+    if (*reinterpret_cast<const uint8_t*>(mgr + kUiRegistered) == 0) return 0;
+    const uint64_t proxy = *reinterpret_cast<const uint64_t*>(mgr + kUiProxy);
+    if (!proxy || !mem::is_mapped(proxy + kProxyState, 36)) return 0;
+    float* p = reinterpret_cast<float*>(proxy + kProxyState);
+    const int kind = *reinterpret_cast<const int*>(p);
+    const double disp = current_aspect();
+    bool changed = false;
+    if (kind == 2) {
+        changed = hud_ortho(&p[4], &p[3], &p[5], &p[6], disp);                // left, right, bottom, top
+    } else if (kind == 0) {
+        const float old = p[2];
+        if (hud_perspective(&p[2], disp) && old > 0) {
+            const float f = p[2] / old;
+            p[3] *= f;                                                        // the frustum's right and left follow the aspect
+            p[4] *= f;
+            changed = true;
+        }
+    }
+    if (changed) s.calls.fetch_add(1, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (s.ui_logged < 6) {
+            ++s.ui_logged;
+            NXLOG_I(kTag, "UI camera %llx: kind %d, fov %.4f aspect %.4f right %.3f left %.3f bottom %.3f top %.3f near %.3f far %.3f, display aspect %.4f%s",
+                    static_cast<unsigned long long>(proxy), kind, p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], disp, changed ? " (adjusted)" : "");
+        }
+    }
+    return 0;
 }
 
 int hook_gui_projection(::Ctx* c, uint64_t, void*) {
@@ -245,7 +286,7 @@ void display_install(uint64_t module_base, const DisplaySettings& d, int window_
     const struct { uint64_t off; SiteHookFn fn; } table[] = {
         {kGetScreenWidth, hook_width},           {kGetScreenHeight, hook_height},       {kGetResolutionScale, hook_resolution_scale},
         {kUpdateCameraNodes, hook_camera_nodes}, {kGuiProjectionState, hook_gui_projection}, {kGetVerticalFov, hook_vertical_fov},
-        {kBloomRender, hook_bloom},              {kChromaticRender, hook_chromatic},
+        {kBloomRender, hook_bloom},              {kChromaticRender, hook_chromatic},    {kUiUpdateCameraNodes, hook_ui_camera_nodes},
     };
     for (const auto& t : table) s.hooks.push_back(hook_add_entry(module_base + t.off, t.fn));
     s.installed = true;

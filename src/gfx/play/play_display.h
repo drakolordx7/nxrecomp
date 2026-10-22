@@ -13,6 +13,8 @@
 //   CDisplayManager::UpdateCameraNodes             0xafe41c          builds the world projection from the aspect stored at +152 of the
 //        camera scene node proxy ([this + 16]); the hook writes the aspect there (and into CCameraManagerMP1's cached default aspect,
 //        0x20e7a7c) before the original runs. The game's field of view is vertical, so a wider aspect widens the view (Hor+)
+//   CUIDisplayManager::UpdateCameraNodes           0xb0e5ec          the front end (title, menus) draws its 2D UI through the "UIOrthoCamera"
+//        proxy of this manager, authored for 16:9; the hook widens the proxy's projection state to the display aspect
 //   CGuiCamera::GetProjectionState                 0xbd52fc          every GUIF frame (HUD, menus, title) goes through this camera; the
 //        hook widens a 16:9 camera to the display aspect so the frame keeps its proportions and sits centred
 //   CGameCamera::GetVerticalFOV                    0x4c2998          returns [this + 0x460] in radians; the hook adds the FOV offset
@@ -40,9 +42,9 @@ double display_aspect(const DisplaySettings& d, int w, int h);
 
 // A GUI perspective camera's aspect: returns true and sets *aspect when it was the authored 16:9 (or already the display aspect).
 bool hud_perspective(float* aspect, double display_aspect);
-// A GUI orthographic camera's extents (left, right, bottom, top as the game stores them: either order of bottom and top): widens the
-// width around its centre so width / height = display aspect. Only cameras whose own ratio is 16:9 (or already the display aspect)
-// are touched.
+// A GUI orthographic camera's extents (left, right, bottom, top as the game stores them: either order of each pair; the retail ball HUD has
+// left 8, right -8): widens the width around its centre so |width| / |height| = display aspect, keeping the order. Only cameras whose own
+// ratio is 16:9 (or already the display aspect) are touched.
 bool hud_ortho(float* left, float* right, float* bottom, float* top, double display_aspect);
 
 // Vertical field of view in radians plus an offset in degrees, kept between 10 and 170 degrees.
