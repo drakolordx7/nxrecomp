@@ -14,11 +14,6 @@ using namespace nxrt;
 using namespace nxrt::nvn;
 using namespace nxrt::nvn::be;
 
-// The real ~Texture belongs to the GPU texture unit, which this unit test does not link. Texture objects are only created
-// here to be held by records, so an empty destructor is enough.
-namespace nxrt::nvn::be {
-Texture::~Texture() {}
-}  // namespace nxrt::nvn::be
 
 #define CB_PROC(UP, name) abi::proc<PFNNVNCOMMANDBUFFER##UP##PROC>(#name)
 #define NEXT_OR_RETURN(w, OP) \
