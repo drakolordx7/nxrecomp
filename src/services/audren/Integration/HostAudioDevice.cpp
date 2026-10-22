@@ -82,6 +82,17 @@ void HostAudioDevice::AppendBuffer(Span<const int16_t> data, uint32_t channelCou
     sink->write(out.data(), static_cast<uint32_t>(frames));
 }
 
+int64_t HostAudioDevice::GetQueuedNanoseconds() {
+    // Under the mutex AppendBuffer holds while it opens, closes and writes the sink: the sink cannot be reopened under this call.
+    std::lock_guard<std::mutex> guard(gSinkMutex);
+
+    if (gOpenSink == nullptr || !gOpenSink->has_device_clock() || _sampleRate == 0) {
+        return -1;   // nothing written yet, or a sink without a clock (the renderer paces itself by the host clock)
+    }
+
+    return static_cast<int64_t>(gOpenSink->queued_frames()) * 1000000000ll / static_cast<int64_t>(_sampleRate);
+}
+
 HostAudioDeviceDriver::HostAudioDeviceDriver()
     : _configuredChannels(::nxrt::config_get_int("audio", "channels", 2) == 6 ? 6u : 2u) {}
 

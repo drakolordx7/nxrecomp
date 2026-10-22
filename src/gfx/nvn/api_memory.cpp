@@ -173,9 +173,27 @@ NVNbufferAddress nvnMemoryPoolGetBufferAddress(const NVNmemoryPool* pool) {
     return p ? p->gpu_base : 0;
 }
 
-NVNboolean nvnMemoryPoolMapVirtual(NVNmemoryPool*, int, const NVNmappingRequest*) {
-    NVN_WARN_ONCE("nvnMemoryPoolMapVirtual: virtual mapping is not supported; the requests are ignored");
-    return 0;
+// A request of nvnMemoryPoolMapVirtual: 40 bytes in the game's layout (MapVirtualTiles builds them): the physical pool, its offset,
+// the virtual offset, the size and the storage class.
+struct MappingRequest {
+    uint64_t physical_pool;
+    int64_t physical_offset, virtual_offset;
+    uint64_t size;
+    int32_t storage_class, pad;
+};
+static_assert(sizeof(MappingRequest) == 40, "NVNmappingRequest is 40 bytes");
+
+// Sparse (virtual) textures are backed by ordinary images that exist completely (the console fills tiles through copy commands, which
+// the images take as they are); the mapping of tiles to physical memory therefore needs no action. The call succeeds.
+NVNboolean nvnMemoryPoolMapVirtual(NVNmemoryPool* pool, int count, const NVNmappingRequest* requests) {
+    if (!pool_of_guest(pool) || count < 0 || (count > 0 && !requests)) return 0;
+    static std::atomic<int> logged{0};
+    const MappingRequest* r = reinterpret_cast<const MappingRequest*>(requests);
+    for (int i = 0; i < count && logged.load() < 8; ++i, logged.fetch_add(1))
+        NXLOG_I("nvn", "nvnMemoryPoolMapVirtual: virtual 0x%llx + 0x%llx <- physical pool %p + 0x%llx (storage class %d): no action, sparse textures are resident",
+                static_cast<unsigned long long>(r[i].virtual_offset), static_cast<unsigned long long>(r[i].size),
+                reinterpret_cast<void*>(static_cast<uintptr_t>(r[i].physical_pool)), static_cast<unsigned long long>(r[i].physical_offset), r[i].storage_class);
+    return 1;
 }
 
 size_t nvnMemoryPoolGetSize(const NVNmemoryPool* pool) {

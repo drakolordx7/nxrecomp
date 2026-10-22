@@ -266,6 +266,9 @@ NVNboolean nvnTextureViewCompare(const NVNtextureView* a, const NVNtextureView* 
     return std::memcmp(a, b, sizeof(ViewPacked)) == 0 ? 1 : 0;
 }
 
+// NVN 55 name the game asks for and never calls (signature assumed, like nvnTextureGetViewOffset): views do not move the storage.
+ptrdiff_t nvnTextureBuilderGetViewOffset(const NVNtextureBuilder*, const NVNtextureView*) { return 0; }
+
 }  // namespace
 
 // ---- decode ----------------------------------------------------------------------------------------------------------------
@@ -340,6 +343,7 @@ void register_api_texture_builder() {
     NVN_REG(nvnTextureBuilderGetWidth);
     NVN_REG(nvnTextureBuilderGetHeight);
     NVN_REG(nvnTextureBuilderGetDepth);
+    NVN_REG(nvnTextureBuilderGetViewOffset);
     NVN_REG(nvnTextureBuilderGetLevels);
     NVN_REG(nvnTextureBuilderGetFormat);
     NVN_REG(nvnTextureBuilderGetSamples);

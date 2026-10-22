@@ -15,6 +15,9 @@ class IHardwareDevice {
     virtual uint32_t GetChannelCount() = 0;
     // Appends new PCM16 samples (interleaved, `channelCount` channels).
     virtual void AppendBuffer(Span<const int16_t> data, uint32_t channelCount) = 0;
+    // Nanoseconds of audio the device holds queued, measured on the device's own clock; -1 when the device has no clock (the renderer
+    // then paces itself by the host clock). Not in the Ryujinx interface: the C# devices block in AppendBuffer instead.
+    virtual int64_t GetQueuedNanoseconds() { return -1; }
     // True if the audio renderer must downmix to this device's channel count (anything but 6 channels).
     bool NeedDownmixing() {
         const uint32_t channelCount = GetChannelCount();

@@ -11,6 +11,7 @@
 //   * C# CommandList.Dispose() becomes destroying the std::unique_ptr<CommandList> that Send() received.
 //   * C# `IHardwareDeviceDriver.GetRealDeviceDriver()` (compat layer) does not exist here; the driver passed is used directly.
 #pragma once
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -22,6 +23,7 @@
 #include "../Dsp/Command/CommandList.h"
 #include "../Integration/IHardwareDevice.h"
 #include "../Integration/IHardwareDeviceDriver.h"
+#include "../Integration/ThreadBoost.h"
 #include "../Utils/Mailbox.h"
 #include "../audren_common.h"
 #include "nxrt/log.h"
@@ -32,6 +34,8 @@ class AudioProcessor {
   private:
     static constexpr int32_t MaxBufferedFrames = 5;
     static constexpr int32_t TargetBufferedFrames = 3;
+    // Queue level the renderer keeps on a device that has a clock (see Wait): eight frames of 5 ms.
+    static constexpr int64_t TargetQueuedNanoseconds = 40000000;
 
     enum class MailboxMessage : uint32_t {
         Start,
@@ -82,6 +86,8 @@ class AudioProcessor {
     }
 
     void Work() {
+        BoostAudioThread();
+
         if (_mailbox.ReceiveMessage() != MailboxMessage::Start) {
             NXAUDREN_FATAL("Audio Processor Start message was invalid!");
         }
@@ -90,6 +96,8 @@ class AudioProcessor {
         _mailbox.SendResponse(MailboxMessage::RenderEnd);
 
         NXLOG_I("AudioRenderer", "Starting audio processor");
+
+        int slowLogs = 0;
 
         while (true) {
             MailboxMessage message = _mailbox.ReceiveMessage();
@@ -117,6 +125,11 @@ class AudioProcessor {
 
                 if (Constants::AudioProcessorMaxUpdateTime < elapsedTime) {
                     NXLOG_D("AudioRenderer", "DSP too slow (exceeded by %lldns)", static_cast<long long>(elapsedTime - Constants::AudioProcessorMaxUpdateTime));
+                }
+
+                if (elapsedTime > 15000000 && slowLogs < 40) {
+                    slowLogs++;
+                    NXLOG_W("AudioRenderer", "slow DSP frame: %.1f ms", static_cast<double>(elapsedTime) / 1e6);
                 }
 
                 _mailbox.SendResponse(MailboxMessage::RenderEnd);
@@ -214,13 +227,52 @@ class AudioProcessor {
     // Ask the worker to process the queued CommandLists (C# Signal). Pair every Signal with a Wait.
     void Signal() { _mailbox.SendMessage(MailboxMessage::RenderStart); }
 
+    // How much audio the output devices hold queued, in ns, measured on the device clock (the fullest device); -1 when no device has a clock.
+    int64_t DeviceQueuedNanoseconds() {
+        int64_t queued = -1;
+
+        for (auto& device : OutputDevices) {
+            if (device != nullptr) {
+                queued = std::max(queued, device->GetQueuedNanoseconds());
+            }
+        }
+
+        return queued;
+    }
+
     // Wait for the end of the processing and pace the caller to the 5 ms frame clock (C# Wait).
+    //
+    // Deviation from the C#: when the output device has a clock of its own (XAudio2, or the paced sink) the device sets the pace. The
+    // renderer keeps about TargetQueuedNanoseconds of audio queued: it waits while the queue holds more and renders at once when it
+    // holds less. A host clock and a sound card never run at exactly the same rate; pacing by the host clock alone slowly fills the queue
+    // (frames are dropped) or empties it (a click). The Ryujinx devices get this for free because their AppendBuffer blocks.
     void Wait() {
         if (_mailbox.ReceiveResponse() != MailboxMessage::RenderEnd) {
             NXAUDREN_FATAL("Audio Processor Wait response was invalid!");
         }
 
         int64_t increment = Constants::AudioProcessorMaxUpdateTimeTarget;
+
+        const int64_t queued = DeviceQueuedNanoseconds();
+
+        if (queued >= 0) {
+            int64_t level = queued;
+
+            // Longest wait is a few frames' worth, so a stuck device (the voice stopped, the queue never drains) cannot stall the guest.
+            const int64_t giveUp = ElapsedNanoseconds() + 8 * increment;
+
+            while (level > TargetQueuedNanoseconds && ElapsedNanoseconds() < giveUp) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+                level = DeviceQueuedNanoseconds();
+            }
+
+            // Keep the host-clock bookkeeping current for the moment the device goes away.
+            _lastTime = ElapsedNanoseconds();
+            _playbackEnds = _lastTime;
+
+            return;
+        }
 
         int64_t timeNow = ElapsedNanoseconds();
 
