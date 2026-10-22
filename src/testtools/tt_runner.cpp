@@ -187,6 +187,10 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 else if (now_ms >= next_mash_ms_) { pressing_ = st.buttons; remaining_ = 1; mash_release_ms_ = now_ms + 250; next_mash_ms_ = now_ms + static_cast<uint64_t>(st.x); }
                 return;
             }
+            case StepKind::Rate:
+                set_clock_rate(st.x);
+                advance();
+                continue;
             case StepKind::Give:
                 if (!detail::give_item(static_cast<int>(st.x), static_cast<int>(st.y))) { fail(st, "@give: the player state is not readable yet"); return; }
                 advance();

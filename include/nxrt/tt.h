@@ -115,6 +115,11 @@ PadFrame current_pad();                    // the pad of the frame that just beg
 void set_live_pad(const PadFrame& p);      // the live pad for recording when no hid source is installed (tests; also used by the hid adapter)
 // ---- the virtual clock and the RNG (deterministic mode) ----------------------------------------------------------------------
 // Used by kernel::system_tick / sleep_ns. Return false when deterministic mode is off (the caller uses the host clock).
+// Switches the virtual clock while a run is going (the script step `@rate <hz>`): hz > 0 = deterministic time at that many frames per game second,
+// continuing from the real clock; 0 = back to the real clock, continuing from where the virtual one stopped. Lets a scripted run load areas in
+// real time and measure in virtual time.
+void set_clock_rate(double hz);
+int64_t tick_offset();                     // added to the real tick by kernel::system_tick (what a switch back to real time leaves behind)
 bool virtual_tick(uint64_t* ticks);
 bool virtual_sleep(int64_t ns);
 void rng_fill(void* p, size_t n);          // seeded stream in deterministic mode, OS entropy otherwise
