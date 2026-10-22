@@ -1,6 +1,6 @@
 # S3c: boot-path OS services (IPC level)
 
-Part S3c of the Metroid Prime Remastered recompilation. The recompiled SDK (`sdk`, `subsdk0`, `main`) talks to Horizon through SVCs and IPC sessions. The SVC layer is in `src/kernel`; this work answers the IPC services a Switch application needs at boot and while it runs. Everything lives in `src/services/` and is registered by `nxrt::services::register_all()` (called from `nxrt::init`, switched off with `InitOptions.services = false`). The full command-by-command table is generated: `docs/S3c_commands.md` (`python -I scripts\svc_table.py --out docs\S3c_commands.md`).
+S3c, in the Metroid Prime Remastered recompilation, is the IPC service layer for the recompiled SDK (`sdk`, `subsdk0`, `main`). The SDK talks to Horizon through SVCs and IPC sessions, and the SVC layer is in `src/kernel`. This milestone answers the IPC services a Switch application needs at boot and while it runs. Everything lives in `src/services/` and is registered by `nxrt::services::register_all()` (called from `nxrt::init`, switched off with `InitOptions.services = false`). The full command-by-command table is generated: `docs/S3c_commands.md` (`python -I scripts\svc_table.py --out docs\S3c_commands.md`).
 
 ## Which services
 
@@ -17,17 +17,17 @@ control.nacp facts (also the defaults of `TitleProfile`, section `[title]`): 13 
 | System | `set`, `set:sys`, `time:u/a/s/r` (+ time zone rules from the host zone), `apm`, `apm:sys`, `psm`, `lm` (guest log into the runtime log), `fatal:u/p` (crash report file) | real |
 | Applet | `appletOE` (+ `appletAE` proxy): message queue with focus / operation mode / performance mode events, launch parameters, EnsureSaveData, desired language; host-side control in `services_api.h` (`amctl::set_docked`, `set_focus`) | real |
 | Account | `acc:u0`, `acc:u1`: one local user | real |
-| Input | `hid`: applet resource shared memory (npad, touch, keyboard, mouse, debug pad), 200 Hz sampling from `hid::InputSource` (`include/nxrt/input_source.h`), vibration and six-axis commands accepted | real; the real input source comes from the input stream |
+| Input | `hid`: applet resource shared memory (npad, touch, keyboard, mouse, debug pad), 200 Hz sampling from `hid::InputSource` (`include/nxrt/input_source.h`), vibration and six-axis commands accepted | real; the real input source is still to come |
 | Fonts | `pl:u/s` with the shared-font memory (DejaVu Sans stands in for the console fonts, documented below) | real |
-| Display and GPU init | `vi:u/m/s` (display, layer, binder parcels), `nvdrv` (+ `:a/:s/:t`) with the nvmap / ctrl / ctrl-gpu / as-gpu / gpu ioctls the graphics init issues | answers with plausible values; no GPU channel submission (the graphics stream replaces NVN) |
+| Display and GPU init | `vi:u/m/s` (display, layer, binder parcels), `nvdrv` (+ `:a/:s/:t`) with the nvmap / ctrl / ctrl-gpu / as-gpu / gpu ioctls the graphics init issues | answers with plausible values; no GPU channel submission (the graphics work replaces NVN) |
 | Audio | `audren:u` (renderer ported from Ryujinx.Audio: session, update protocol, DSP, mix, host sink), `audout:u`, `audin:u` | real |
 | Offline | `nifm`, `bsd`, `bsdcfg`, `ssl`, `nim:eca`, `friend`, `prepo`, `pctl`, `bcat`, `ldn:u`, `nsd:u`, `sfdnsres`, `ntc`, `ngct:u`, `notif:a` | a console without a connection, friends or BCAT |
 | Misc | `csrng`, `ldr:ro`, `mm:u`, `hwopus`, `aoc:u`, `caps:u/su`, `mii:u`, `irs`, `nfc:*`, `nfp:user`, `ectx:aw`, `pcm`, `banana`, `htc*` | small real answers; devices that are not there report so |
 
-## Hooks for the other streams
+## Hooks for other components
 
 * `services::amctl::set_docked / set_focus` (window focus, handheld switch), `services::profile()` (language, region, user, save sizes), `nxrt::hid::set_input_source`, `nxrt::audio::set_sink` (`[audio] sink = xaudio2` selects the XAudio2 sink), `[fs] romfs`, `[fs] save_dir`. Keys are in `docs/CONFIG.md`.
-* The input stream may override `nn::hid::GetNpadState*` at the import: the shared memory is kept up to date either way.
+* The real input source may override `nn::hid::GetNpadState*` at the import: the shared memory is kept up to date either way.
 * A loose-file mod folder over RomFS is not implemented: `RomfsImage::build` takes one folder; layering several folders is a change inside `fs_romfs.cpp`.
 
 ## Tests
@@ -54,6 +54,6 @@ CTest groups `svc_*` (one per service unit) plus `svc_fs_volume`, `svc_fs_romfs`
 | Fonts | the real console fonts are not in the dump; DejaVu Sans fills every slot (no CJK glyphs); a folder `[pl] font_dir` with the plain `.bfttf` files replaces slots |
 | `nfc:mf:u` IUser, `pcm` | no command table in any reference |
 | Journal size limit of save data | not enforced |
-| hid: real input | arrives with the input stream (`InputSource`); six-axis and vibration are accepted and ignored |
-| Uncertain result codes | listed in the worker notes of each service file header; they come from one source only (ScarletNX or Ryujinx) |
+| hid: real input | arrives later, with the real input source (`InputSource`); six-axis and vibration are accepted and ignored |
+| Uncertain result codes | listed in the header of each service file; they come from one source only (ScarletNX or Ryujinx) |
 | Nothing was run against a console | all answers come from Switchbrew, ScarletNX, Ryujinx and Wonder; the real game was booted against them up to the first graphics call (debug note 018) |
