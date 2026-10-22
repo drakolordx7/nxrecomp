@@ -71,6 +71,23 @@ struct GraphicsKey {
 
 // The pipeline for a key, created on first use (logged; counters). Null on failure (the draw is skipped).
 VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout);
+// The creation itself: no lookup, no bookkeeping; safe to call from any thread (the prewarm workers). Null on failure.
+VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout);
+
+// Pipeline cache on disk ([nvn] pipeline_cache): written by a background thread while new pipelines appear and at shutdown.
+bool pipeline_cache_dirty();
+void pipeline_cache_save();
+
+// ---- prewarm (nvn_prewarm.cpp) ----------------------------------------------------------------------------------------------
+// Every pipeline that had to be created at a draw is recorded in a key file ([nvn] pipeline_keys). The next run compiles the recorded
+// pipelines of a program on worker threads as soon as the game sets the program's shaders, long before its first draw.
+void prewarm_init();                                                      // loads the key file, starts the cache saver (idempotent)
+void prewarm_record(const GraphicsKey& key);                              // a pipeline was created for this key at draw time
+void prewarm_program(const ShaderInfo* const stages[6]);                  // a program got its shaders: queue its recorded pipelines
+bool prewarm_take(const GraphicsKey& key, VkPipeline* out);               // true when a prewarm job owns the key; waits for a running one
+void prewarm_shutdown();                                                  // stops the workers (before the device is torn down)
+struct PrewarmStats { uint64_t recorded = 0, loaded = 0, queued = 0, built = 0, taken = 0, waited = 0, claimed = 0; double wait_ms = 0; };
+PrewarmStats prewarm_stats();
 VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout);
 VkShaderModule shader_module(const ShaderInfo* s);
 // Bytes of one captured vertex of the vertex shader's transform feedback variant (0: none could be made).

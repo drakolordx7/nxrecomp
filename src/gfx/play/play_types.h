@@ -127,6 +127,17 @@ struct DisplaySettings {
     int fps_cap = 60;              // 0 = unlimited; with vsync on, the cap only applies when it is below the refresh rate
     int width = 1280, height = 720;    // windowed client size, remembered
     bool keep_aspect = true;       // letterbox instead of stretching
+    // ---- S10 display options (play_display.h). The first four only apply at the next start: the game builds its render targets once.
+    int render_scale = 100;        // percent of the window's client size used as the internal resolution (25..400); ignored with a fixed size
+    int render_width = 0, render_height = 0;   // fixed internal resolution (both > 0 and both within 320..16384), 0 = follow the window
+    double aspect = 0;             // 0 = the ratio of the internal resolution; otherwise the forced ratio of the 3D view and the HUD (1.0 .. 5.0)
+    // live:
+    double fov_offset = 0;         // degrees added to the vertical field of view of every game camera (-30 .. 40), 0 = the game's own
+    bool dynamic_resolution = false;   // the game's own dynamic resolution (it lowers the render size when the GPU is late)
+    int anisotropy = 0;            // 0 = what the game's samplers ask for; 2, 4, 8 or 16 = at least that on every filtering sampler
+    double lod_bias = 0;           // texture LOD bias added to every sampler (-2.0 .. 2.0; negative is sharper)
+    bool bloom = true;
+    bool chromatic_aberration = true;
 };
 
 struct Settings {
@@ -149,7 +160,8 @@ const char* default_settings_text();
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
 //   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
-//   [display]  window_mode vsync fps_cap width height keep_aspect
+//   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
+//              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration
 //   [switch]   <action> = <output>      e.g.  fire = ZR    beam_1 = X+UP    (missing actions keep the default)
 //   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = fire    Left Ctrl = morph hold 250    Space = jump toggle
 //                      ctx is one of all gameplay morph map menu scan. The same input may appear several times in a section.

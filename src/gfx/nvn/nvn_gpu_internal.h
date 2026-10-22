@@ -28,6 +28,7 @@ class FrameLimiter;
 namespace nxrt::nvn::be::gpu {
 
 bool on_render_thread();
+void flush_caches();              // writes the pipeline cache to disk now (the key file is appended as pipelines are created)
 gfx::Device& device();
 VkDevice vkdev();
 

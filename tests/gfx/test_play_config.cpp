@@ -101,6 +101,11 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(da.window_mode == db.window_mode && da.vsync == db.vsync && da.fps_cap == db.fps_cap && da.width == db.width &&
           da.height == db.height && da.keep_aspect == db.keep_aspect))
         return false;
+    if (!(da.render_scale == db.render_scale && da.render_width == db.render_width && da.render_height == db.render_height &&
+          da.aspect == db.aspect && da.fov_offset == db.fov_offset && da.dynamic_resolution == db.dynamic_resolution &&
+          da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.bloom == db.bloom &&
+          da.chromatic_aberration == db.chromatic_aberration))
+        return false;
     for (int i = 0; i < kActCount; ++i) {
         if (!(a.out[i] == b.out[i])) return false;
     }
@@ -658,4 +663,144 @@ NXTEST(save_then_load_round_trip) {
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+// ---- S10 display options -----------------------------------------------------------------------------------------------------
+
+NXTEST(display_render_keys_defaults) {
+    const DisplaySettings d = default_settings().display;
+    CHECK_EQ(d.render_scale, 100);
+    CHECK_EQ(d.render_width, 0);
+    CHECK_EQ(d.render_height, 0);
+    CHECK(d.aspect == 0.0);
+    CHECK(d.fov_offset == 0.0);
+    CHECK(!d.dynamic_resolution);
+    CHECK_EQ(d.anisotropy, 0);
+    CHECK(d.lod_bias == 0.0);
+    CHECK(d.bloom);
+    CHECK(d.chromatic_aberration);
+}
+
+NXTEST(default_settings_text_has_display_keys) {
+    const std::string text = default_settings_text();
+    const char* lines[] = {"render_scale = 100", "render_width = 0",  "render_height = 0", "aspect = 0",        "fov_offset = 0",
+                           "dynamic_resolution = 0", "anisotropy = 0", "lod_bias = 0",    "bloom = 1",       "chromatic_aberration = 1"};
+    for (const char* l : lines) CHECK_MSG(text.find(std::string("\n") + l + "\n") != std::string::npos, l);
+    // The four that only apply at the next start say so next to their key.
+    size_t restart_notes = 0;
+    for (size_t p = text.find("applies at the next start"); p != std::string::npos; p = text.find("applies at the next start", p + 1))
+        ++restart_notes;
+    CHECK(restart_notes >= 4u);
+}
+
+NXTEST(display_render_keys_parse) {
+    Settings s;
+    std::string err;
+    const char* text =
+        "[display]\nrender_scale = 150\nrender_width = 1600\nrender_height = 900\naspect = 1.6\nfov_offset = -12.5\n"
+        "dynamic_resolution = yes\nanisotropy = 8\nlod_bias = -0.75\nbloom = 0\nchromatic_aberration = off\n";
+    REQUIRE_MSG(parse_settings(text, &s, &err), err);
+    CHECK_EQ(s.display.render_scale, 150);
+    CHECK_EQ(s.display.render_width, 1600);
+    CHECK_EQ(s.display.render_height, 900);
+    CHECK(s.display.aspect == 1.6);
+    CHECK(s.display.fov_offset == -12.5);
+    CHECK(s.display.dynamic_resolution);
+    CHECK_EQ(s.display.anisotropy, 8);
+    CHECK(s.display.lod_bias == -0.75);
+    CHECK(!s.display.bloom);
+    CHECK(!s.display.chromatic_aberration);
+}
+
+NXTEST(display_render_keys_range_errors) {
+    const struct {
+        const char* text;
+        const char* expect;
+    } cases[] = {
+        {"[display]\nrender_scale = 24\n", "line 2: render_scale must be 25..400, got 24"},
+        {"[display]\nrender_scale = 401\n", "line 2: render_scale must be 25..400, got 401"},
+        {"[display]\nrender_scale = 1.5\n", "line 2: render_scale must be a whole number"},
+        {"[display]\nrender_width = 100\n", "line 2: render_width must be 0 or 320..16384, got 100"},
+        {"[display]\nrender_height = 16385\n", "line 2: render_height must be 0 or 320..16384, got 16385"},
+        {"[display]\nrender_height = wide\n", "line 2: render_height must be a whole number"},
+        {"[display]\naspect = 0.5\n", "line 2: aspect must be 0 (auto) or 1.0..5.0, got 0.5"},
+        {"[display]\naspect = 5.5\n", "line 2: aspect must be 0 (auto) or 1.0..5.0, got 5.5"},
+        {"[display]\nfov_offset = 41\n", "line 2: fov_offset must be -30..40, got 41"},
+        {"[display]\nfov_offset = -31\n", "line 2: fov_offset must be -30..40, got -31"},
+        {"[display]\nfov_offset = abc\n", "line 2: fov_offset must be a number"},
+        {"[display]\ndynamic_resolution = maybe\n", "line 2: dynamic_resolution must be 1/0"},
+        {"[display]\nanisotropy = 3\n", "line 2: anisotropy must be 0, 2, 4, 8 or 16, got 3"},
+        {"[display]\nanisotropy = 32\n", "line 2: anisotropy must be 0, 2, 4, 8 or 16, got 32"},
+        {"[display]\nlod_bias = 2.5\n", "line 2: lod_bias must be -2..2, got 2.5"},
+        {"[display]\nbloom = 2\n", "line 2: bloom must be 1/0"},
+        {"[display]\nchromatic_aberration = sometimes\n", "line 2: chromatic_aberration must be 1/0"},
+    };
+    for (const auto& c : cases) {
+        Settings s;
+        std::string err;
+        CHECK(!parse_settings(c.text, &s, &err));
+        CHECK_MSG(starts_with(err, c.expect), err);
+    }
+}
+
+NXTEST(display_render_keys_boundaries_accepted) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[display]\nrender_scale = 25\nrender_width = 320\nrender_height = 16384\naspect = 1.0\nfov_offset = -30\n"
+                               "anisotropy = 16\nlod_bias = -2\n",
+                               &s, &err),
+                err);
+    CHECK_EQ(s.display.render_scale, 25);
+    CHECK_EQ(s.display.render_width, 320);
+    CHECK_EQ(s.display.render_height, 16384);
+    CHECK(s.display.aspect == 1.0);
+    CHECK(s.display.fov_offset == -30.0);
+    CHECK_EQ(s.display.anisotropy, 16);
+    CHECK(s.display.lod_bias == -2.0);
+
+    REQUIRE_MSG(parse_settings("[display]\nrender_scale = 400\nrender_width = 0\nrender_height = 0\naspect = 5\nfov_offset = 40\n"
+                               "anisotropy = 0\nlod_bias = 2\n",
+                               &s, &err),
+                err);
+    CHECK_EQ(s.display.render_scale, 400);
+    CHECK_EQ(s.display.render_width, 0);
+    CHECK(s.display.aspect == 5.0);
+    CHECK(s.display.fov_offset == 40.0);
+    CHECK_EQ(s.display.anisotropy, 0);
+    CHECK(s.display.lod_bias == 2.0);
+
+    for (int a : {2, 4, 8}) {
+        REQUIRE_MSG(parse_settings("[display]\nanisotropy = " + std::to_string(a) + "\n", &s, &err), err);
+        CHECK_EQ(s.display.anisotropy, a);
+    }
+}
+
+NXTEST(display_render_keys_round_trip) {
+    Settings s = default_settings();
+    s.display.render_scale = 150;
+    s.display.render_width = 1600;
+    s.display.render_height = 900;
+    s.display.aspect = 16.0 / 9.0;            // 1.7777... needs 17 digits to read back exactly
+    s.display.fov_offset = -12.3456789;
+    s.display.dynamic_resolution = true;
+    s.display.anisotropy = 16;
+    s.display.lod_bias = -0.7;
+    s.display.bloom = false;
+    s.display.chromatic_aberration = false;
+
+    const std::string text = format_settings(s);
+    Settings r;
+    std::string err;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(same_settings(s, r));
+    CHECK(r.display.aspect == 16.0 / 9.0);
+    CHECK_EQ(format_settings(r), text);
+
+    // The other presets, and the Auto and fixed-size defaults, also come back exactly.
+    const double presets[] = {1.6, 21.0 / 9.0, 32.0 / 9.0, 0.0};
+    for (double a : presets) {
+        s.display.aspect = a;
+        REQUIRE_MSG(parse_settings(format_settings(s), &r, &err), err);
+        CHECK(r.display.aspect == a);
+    }
 }
