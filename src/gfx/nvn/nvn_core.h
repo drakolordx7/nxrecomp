@@ -1,0 +1,249 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Host objects of the NVN back end (S4d). Design (see docs/S4d.md):
+//   * The game allocates every NVN object. "Heavy" objects (device, queue, command buffer, memory pool, texture, program, sync,
+//     event, window, texture pool, sampler pool) keep a pointer to a host object in their first 16 bytes (GuestHeader); the
+//     plain-data objects (builders, state objects, samplers, views, buffers) live entirely in guest memory (api_*.cpp).
+//   * GPU addresses ARE host addresses: a memory pool's storage is the game's own memory, so an NVNbufferAddress is a host
+//     pointer. The back end imports each pool as Vulkan memory (VK_EXT_external_memory_host), which makes buffers zero-copy
+//     and GPU writes visible to the CPU without a copy.
+//   * Game threads only record (command buffers, pool and texture bookkeeping). Everything that calls Vulkan runs on the
+//     render thread (nvn_gpu.h): a submit is replayed there while the submitting game thread waits for the recording, not for
+//     the GPU.
+#pragma once
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <shared_mutex>
+#include <string>
+#include <vector>
+
+#include <nvn/nvn.h>
+
+#include "nvn_decoded.h"
+#include "nvn_format.h"
+
+namespace nxrt::nvn::be {
+
+// ---- reference counted host objects -----------------------------------------------------------------------------------
+enum class Kind : uint32_t {
+    None = 0, Device, Queue, CommandBuffer, MemoryPool, Texture, Program, Sync, Event, Window, TexturePool, SamplerPool, CmdList
+};
+
+struct Obj {
+    explicit Obj(Kind k) : kind(k) {}
+    Obj(const Obj&) = delete;
+    Obj& operator=(const Obj&) = delete;
+    virtual ~Obj() = default;
+    const Kind kind;
+    std::atomic<int> refs{1};
+    void ref() { refs.fetch_add(1, std::memory_order_relaxed); }
+    void unref() {
+        if (refs.fetch_sub(1, std::memory_order_acq_rel) == 1) delete this;
+    }
+};
+
+template <class T>
+class Ref {
+public:
+    Ref() = default;
+    Ref(std::nullptr_t) {}
+    explicit Ref(T* adopt) : p_(adopt) {}                 // takes over one reference
+    static Ref share(T* p) { if (p) p->ref(); return Ref(p); }
+    Ref(const Ref& o) : p_(o.p_) { if (p_) p_->ref(); }
+    Ref(Ref&& o) noexcept : p_(o.p_) { o.p_ = nullptr; }
+    Ref& operator=(Ref o) noexcept { std::swap(p_, o.p_); return *this; }
+    ~Ref() { if (p_) p_->unref(); }
+    T* get() const { return p_; }
+    T* operator->() const { return p_; }
+    T& operator*() const { return *p_; }
+    explicit operator bool() const { return p_ != nullptr; }
+    T* release() { T* p = p_; p_ = nullptr; return p; }
+private:
+    T* p_ = nullptr;
+};
+
+// ---- the guest side of a heavy object ------------------------------------------------------------------------------------
+constexpr uint32_t kGuestMagic = 0x4e585433;   // "NXT3"
+struct GuestHeader {
+    Obj* host;
+    uint32_t magic;
+    uint32_t kind;
+};
+static_assert(sizeof(GuestHeader) == 16, "header layout");
+
+// The host object behind a guest object, or null when the guest memory does not hold one of this kind.
+template <class T>
+inline T* host_of(const void* guest) {
+    if (!guest) return nullptr;
+    const GuestHeader* h = static_cast<const GuestHeader*>(guest);
+    if (h->magic != kGuestMagic || h->kind != static_cast<uint32_t>(T::kKind) || !h->host) return nullptr;
+    return static_cast<T*>(h->host);
+}
+// Installs obj (one reference is handed over to the guest object). An object that was there is released first.
+void bind_guest(void* guest, Obj* obj);
+// Finalize: the guest object stops naming its host object (which lives on while commands still refer to it).
+void unbind_guest(void* guest);
+
+// ---- memory ----------------------------------------------------------------------------------------------------------------
+struct PoolGpu;   // Vulkan side of a pool (nvn_gpu_pool.cpp): imported memory and buffer(s)
+
+struct MemoryPool : Obj {
+    static constexpr Kind kKind = Kind::MemoryPool;
+    MemoryPool() : Obj(kKind) {}
+    ~MemoryPool() override;
+    uint8_t* base = nullptr;        // storage (host address); null for a virtual pool
+    uint64_t size = 0;
+    int flags = 0;                  // NVNmemoryPoolFlags
+    uint64_t gpu_base = 0;          // GPU virtual address of byte 0: the host address, or a synthetic address for a virtual pool
+    bool is_virtual = false;
+    bool is_shader_code = false;
+    std::atomic<bool> dead{false};
+    PoolGpu* gpu = nullptr;         // render thread only
+};
+
+// A GPU address resolved to its pool.
+struct PoolHit {
+    MemoryPool* pool = nullptr;
+    uint64_t offset = 0;
+};
+void pool_register(MemoryPool* p);
+void pool_unregister(MemoryPool* p);
+PoolHit pool_lookup(uint64_t gpu_address);          // pool is null when the address is in no pool
+inline uint8_t* host_ptr(uint64_t gpu_address) { return reinterpret_cast<uint8_t*>(static_cast<uintptr_t>(gpu_address)); }
+
+// The data of an NVNbuffer (0x30 bytes in the game's memory).
+struct BufferData {
+    uint64_t address;               // GPU address
+    uint64_t size;
+    uint64_t pool;                  // NVNmemoryPool*
+    uint64_t magic;
+};
+static_assert(sizeof(BufferData) <= sizeof(NVNbuffer), "buffer layout fits NVNbuffer");
+
+// ---- textures --------------------------------------------------------------------------------------------------------------
+struct TexGpu;    // Vulkan side of a texture (nvn_gpu_texture.cpp)
+
+struct Texture : Obj {
+    static constexpr Kind kKind = Kind::Texture;
+    Texture() : Obj(kKind) {}
+    ~Texture() override;
+    TextureBuilderInfo b;                   // as built
+    const FormatInfo* fmt = nullptr;
+    uint8_t* mem = nullptr;                 // storage in the game's memory (null: no storage, e.g. a render target the game never reads)
+    uint64_t storage_size = 0;
+    uint32_t block_height_gobs = 0;         // level-0 block height in GOBs (block-linear layouts)
+    bool block_linear = true;               // false: pitch-linear (NVN_TEXTURE_FLAGS_LINEAR)
+    bool is_display = false;                // window texture
+    uint32_t levels = 1, layers = 1;        // levels clamped to the size; layers = array size / cube faces * count
+    uint32_t id = 0;                        // unique, for logs
+    std::atomic<bool> cpu_dirty{true};      // the CPU may have written the storage since the last upload
+    std::atomic<bool> destroyed{false};     // finalized by the game
+    TexGpu* gpu = nullptr;                  // render thread only
+};
+
+struct TexturePool : Obj {
+    static constexpr Kind kKind = Kind::TexturePool;
+    TexturePool() : Obj(kKind) {}
+    struct Entry {
+        Ref<Texture> tex;
+        TextureViewInfo view;
+        bool has_view = false;
+        bool used = false;
+    };
+    MemoryPool* mem = nullptr;
+    int64_t offset = 0;
+    int count = 0;
+    std::vector<Entry> entries;             // index = texture id
+    std::shared_mutex lock;
+};
+
+struct SamplerPool : Obj {
+    static constexpr Kind kKind = Kind::SamplerPool;
+    SamplerPool() : Obj(kKind) {}
+    MemoryPool* mem = nullptr;
+    int64_t offset = 0;
+    int count = 0;
+    std::vector<SamplerInfo> entries;
+    std::vector<uint8_t> used;
+    std::shared_mutex lock;
+};
+
+// Every initialized texture is in a registry keyed by its storage range, so a flush of pool memory can mark the textures
+// that live there as CPU-written (nvn_texture_registry.cpp).
+void texture_registry_add(Texture* t);
+void texture_registry_remove(Texture* t);
+void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
+size_t texture_registry_size();
+
+// NVNtextureHandle = (sampler id << 20) | texture id
+constexpr uint64_t make_texture_handle(uint32_t tex_id, uint32_t sampler_id) { return (static_cast<uint64_t>(sampler_id) << 20) | (tex_id & 0xfffffu); }
+constexpr uint32_t handle_texture_id(uint64_t h) { return static_cast<uint32_t>(h & 0xfffffu); }
+constexpr uint32_t handle_sampler_id(uint64_t h) { return static_cast<uint32_t>((h >> 20) & 0xfffu); }
+
+// ---- programs --------------------------------------------------------------------------------------------------------------
+struct ShaderInfo;   // translated shader (nvn_shaders.h)
+
+struct Program : Obj {
+    static constexpr Kind kKind = Kind::Program;
+    Program() : Obj(kKind) {}
+    // stages indexed by the NVNshaderStage value: 0 vertex, 1 fragment, 2 geometry, 3 tess control, 4 tess eval, 5 compute
+    const ShaderInfo* stage[6] = {};
+    uint64_t code_hash[6] = {};
+    bool linked = false;
+    uint32_t serial = 0;
+    std::string label;
+};
+
+// ---- synchronisation -----------------------------------------------------------------------------------------------------
+struct Sync : Obj {
+    static constexpr Kind kKind = Kind::Sync;
+    Sync() : Obj(kKind) {}
+    std::atomic<uint64_t> serial{0};        // the GPU timeline value that signals it (0: not armed)
+    std::atomic<bool> armed{false};
+};
+
+struct Event : Obj {
+    static constexpr Kind kKind = Kind::Event;
+    Event() : Obj(kKind) {}
+    MemoryPool* pool = nullptr;
+    int64_t offset = 0;                     // the 32-bit event value lives in pool memory at this offset
+    std::atomic<uint32_t> shadow{0};        // the value after every GPU signal recorded so far (replay thread)
+    std::atomic<bool> shadow_valid{false};
+};
+
+// ---- window ----------------------------------------------------------------------------------------------------------------
+struct Window : Obj {
+    static constexpr Kind kKind = Kind::Window;
+    Window() : Obj(kKind) {}
+    std::vector<Ref<Texture>> textures;
+    int present_interval = 1;
+    int active = 0;                         // textures in use (SetNumActiveTextures)
+    int next_acquire = 0;                   // round robin
+    int crop[4] = {0, 0, 0, 0};             // x, y, w, h of the part shown (w == 0: all)
+    void* native_window = nullptr;
+    std::mutex lock;
+};
+
+// ---- device and queue ------------------------------------------------------------------------------------------------
+struct Device : Obj {
+    static constexpr Kind kKind = Kind::Device;
+    Device() : Obj(kKind) {}
+    int flags = 0;
+    int window_origin = NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT;
+    int depth_mode = NVN_DEPTH_MODE_NEAR_IS_MINUS_W;
+    std::atomic<uint32_t> next_texture_id{1};
+    std::atomic<uint32_t> debug_domain{1};
+};
+
+struct Queue : Obj {
+    static constexpr Kind kKind = Kind::Queue;
+    Queue() : Obj(kKind) {}
+    Device* device = nullptr;
+    int flags = 0;
+    size_t command_memory = 0, compute_memory = 0, control_memory = 0;
+};
+
+}  // namespace nxrt::nvn::be

@@ -41,6 +41,10 @@ Rules:
 | `gfx` | `screenshot_frame` | `60` | `NXRT_GFX_SCREENSHOT_FRAME` | `src/gfx/scene_runner.cpp` | Frame number captured when `screenshot` is set. |
 | `nvn` | `log_first_calls` | `3` | `NXRT_NVN_LOG_FIRST_CALLS` | `src/gfx/nvn/nvn_loader.cpp` | Calls of each unimplemented NVN entry point logged at Info; later calls are counted and logged at Trace. |
 | `nvn` | `unknown` | `stub` | `NXRT_NVN_UNKNOWN` | `src/gfx/nvn/nvn_loader.cpp` | Answer to an NVN name that is not in the table: `stub` hands out a logging stub (logged as UNKNOWN NVN PROC), `null` returns null. |
+| `nvn` | `shader_cache` | `` | `NXRT_NVN_SHADER_CACHE` | `src/gfx/nvn/nvn_shaders.cpp` | Folder with `<code hash>.spv` and `results.tsv` (translated shaders). Empty: `./shader_cache/spirv`, then `C:/mpr/work/shader_cache/spirv`. |
+| `nvn` | `bc7_cache` | `bc7_cache` | `NXRT_NVN_BC7_CACHE` | `src/gfx/nvn/nvn_texdata.cpp` | Folder of ASTC to BC7 transcodes, keyed by a hash of the source bytes. Empty disables. |
+| `nvn` | `bc7_quality` | `3` | `NXRT_NVN_BC7_QUALITY` | `src/gfx/nvn/nvn_texdata.cpp` | bc7e preset 0-6 for transcodes done at run time (the setup tool uses 5). |
+| `nvn` | `pipeline_cache` | `pipeline_cache.bin` | `NXRT_NVN_PIPELINE_CACHE` | `src/gfx/nvn/nvn_pipeline.cpp` | VkPipelineCache file, loaded with the first pipeline and saved at shutdown. Empty disables. |
 | `am` | `resolution` | empty (docked 1920x1080, handheld 1280x720) | `NXRT_AM_RESOLUTION` | `src/services/am.cpp` | Output size as `WIDTHxHEIGHT`, e.g. `1280x720`. Empty or not parseable: the default for the operation mode. |
 | `am` | `operation_mode` | `docked` | `NXRT_AM_OPERATION_MODE` | `src/services/common.cpp` | `handheld` sets handheld mode. Any other value is docked. |
 | `audio` | `sink` | `null` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `xaudio2` plays through XAudio2. Any other value keeps the null sink (no output). |

@@ -1,0 +1,645 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// NVN texture GPU module (src/gfx/nvn/nvn_gpu_texture.cpp) on a headless device with validation: upload and readback of every level
+// (bit exact), BC and ASTC (ASTC to BC7 when the GPU has no ASTC), views (cube, array, 3D, cache), depth and colour targets,
+// layout transitions, samplers and border colours, CPU and GPU write rules, the download of a render target, the failure path and
+// the dummy views. Each case builds its own device and textures and checks that validation reports nothing and that no VMA
+// allocation is left after shutdown.
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <random>
+#include <set>
+#include <string>
+#include <vector>
+
+#include <nxrt/config.h>
+
+#include "nvn_core.h"
+#include "nvn_enums.h"
+#include "nvn_format.h"
+#include "nvn_gpu.h"
+#include "nvn_gpu_internal.h"
+#include "nvn_texdata.h"
+#include "nvn_texture_layout.h"
+#include "nxrt/gfx.h"
+#include "tegra_tiling.h"
+#include "test_framework.h"
+NXTEST_GROUP(gfx_nvn_texgpu)
+
+namespace nxrt::nvn::be::gpu {
+// Frees the samplers, dummy views and dummy images (defined in nvn_gpu_texture.cpp). Render thread, no texture alive.
+void tex_shutdown();
+}  // namespace nxrt::nvn::be::gpu
+
+using namespace nxrt;
+using namespace nxrt::gfx;
+using namespace nxrt::nvn;
+using nxrt::nvn::be::Ref;
+using nxrt::nvn::be::Texture;
+using nxrt::nvn::be::TexLayout;
+using nxrt::nvn::be::compute_texture_layout;
+using nxrt::nvn::be::gpu::Frame;
+using nxrt::nvn::be::gpu::ViewRequest;
+namespace gpu = nxrt::nvn::be::gpu;
+
+namespace {
+
+uint32_t g_next_id = 100;
+
+// Texture data is cached on disk by prepare_texture: the tests keep the cache off (the env var wins over the config).
+void no_cache() {
+#ifdef _WIN32
+    _putenv_s("NXRT_NVN_BC7_CACHE", "");
+#else
+    unsetenv("NXRT_NVN_BC7_CACHE");
+#endif
+    config_set("nvn", "bc7_cache", "");
+}
+
+TextureBuilderInfo info(int target, int w, int h, int depth, int levels, int format, int flags = 0) {
+    TextureBuilderInfo b;
+    b.target = target;
+    b.width = w;
+    b.height = h;
+    b.depth = depth;
+    b.levels = levels;
+    b.format = format;
+    b.flags = flags;
+    return b;
+}
+
+// A texture built by hand: its layout, the linear image (ground truth, levels back to back) and the tiled storage the game holds.
+struct Tex {
+    Ref<Texture> t;
+    TexLayout L;
+    std::vector<uint8_t> lin;
+    std::vector<uint8_t> mem;
+};
+
+bool make_tex(Tex& x, const TextureBuilderInfo& b) {
+    x.L = compute_texture_layout(b);
+    if (!x.L.valid || !x.L.block_linear) {
+        std::printf("    layout of the test texture is invalid\n");
+        return false;
+    }
+    x.lin.assign(static_cast<size_t>(x.L.layout.linear_size), 0);
+    x.mem.assign(static_cast<size_t>(x.L.storage_size), 0);
+    x.t = Ref<Texture>(new Texture());
+    Texture& t = *x.t;
+    t.b = b;
+    t.fmt = x.L.fmt;
+    t.mem = x.mem.data();
+    t.storage_size = x.L.storage_size;
+    t.block_linear = true;
+    t.block_height_gobs = x.L.layout.levels[0].gob_blocks_y;
+    t.levels = x.L.levels;
+    t.layers = x.L.layers;
+    t.id = g_next_id++;
+    t.is_display = (b.flags & NVN_TEXTURE_FLAGS_DISPLAY) != 0;
+    return true;
+}
+
+void fill_random(std::vector<uint8_t>& v, uint32_t seed) {
+    std::mt19937 rng(seed);
+    for (uint8_t& b : v) b = static_cast<uint8_t>(rng());
+}
+
+// Writes the linear image into the tiled storage (what the game does with its memory).
+void tile_into_storage(Tex& x) { tegra::tile(x.L.desc, x.L.layout, x.lin.data(), x.mem.data()); }
+
+// Copies every level and layer of the image into a host buffer (tight rows: the same layout as the linear image). The image is moved
+// to TRANSFER_SRC and back to the layout it had.
+bool read_back(Device& dev, Texture* t, const TexLayout& L, std::vector<uint8_t>& out) {
+    const uint64_t size = L.layout.linear_size;
+    out.assign(static_cast<size_t>(size), 0);
+    gfx::Buffer rb;
+    gpu::finish();
+    gpu::run_frame_sync([&](Frame& f) {
+        if (dev.create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUse::Readback, &rb, "test readback") != VK_SUCCESS) return;
+        const VkImageLayout prev = gpu::tex_layout(t);
+        gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        std::vector<VkBufferImageCopy> regions;
+        for (uint32_t l = 0; l < L.levels; ++l) {
+            const tegra::LevelLayout& lv = L.layout.levels[l];
+            VkBufferImageCopy r = {};
+            r.bufferOffset = lv.linear_offset;
+            r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, L.layers};
+            r.imageExtent = {lv.width, lv.height, lv.depth};
+            regions.push_back(r);
+        }
+        vkCmdCopyImageToBuffer(f.cb, gpu::tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.buffer, static_cast<uint32_t>(regions.size()),
+                               regions.data());
+        if (prev != VK_IMAGE_LAYOUT_UNDEFINED) gpu::tex_transition(t, f, prev);
+    });
+    if (!rb) return false;
+    dev.invalidate_buffer(rb);
+    std::memcpy(out.data(), rb.mapped, static_cast<size_t>(size));
+    dev.destroy_buffer(rb);
+    return true;
+}
+
+// Index of the first differing byte, or -1 when equal.
+long first_diff(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b) {
+    if (a.size() != b.size()) return 0;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (a[i] != b[i]) return static_cast<long>(i);
+    return -1;
+}
+
+// Upload through the module and read the image back: must equal the source bytes exactly.
+bool roundtrip(Device& dev, const char* what, const TextureBuilderInfo& b, uint32_t seed) {
+    Tex x;
+    if (!make_tex(x, b)) {
+        CHECK_MSG(false, what);
+        return false;
+    }
+    fill_random(x.lin, seed);
+    tile_into_storage(x);
+    Texture* t = x.t.get();
+    gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(t, f); });
+    std::vector<uint8_t> got;
+    const bool read = read_back(dev, t, x.L, got);
+    CHECK_MSG(read, what);
+    const long diff = read ? first_diff(got, x.lin) : 0;
+    CHECK_MSG(diff < 0, (std::string(what) + ": first differing byte " + std::to_string(diff)).c_str());
+    std::printf("    %s: %zu bytes, %s\n", what, x.lin.size(), diff < 0 ? "bit exact" : "DIFFERS");
+    return read && diff < 0;
+}
+
+// Per-case device: created with validation, torn down after every texture of the case is gone.
+struct Rig {
+    std::unique_ptr<Device> dev;
+    uint64_t baseline_allocs = 0;
+};
+
+bool bring_up(Rig& r) {
+    no_cache();
+    DeviceDesc dd;
+    dd.validation = 1;
+    dd.headless = 1;
+    std::string err;
+    r.dev = Device::create(dd, &err);
+    if (!r.dev) {
+        std::printf("    device: %s\n", err.c_str());
+        return false;
+    }
+    CHECK(r.dev->validation_enabled());
+    r.baseline_allocs = r.dev->memory_stats().allocations;
+    if (!gpu::init_for_test(*r.dev, nullptr)) {
+        std::printf("    back end did not start\n");
+        return false;
+    }
+    return true;
+}
+
+// Frees what the module keeps, shuts the back end down, then checks validation and the allocation count.
+void teardown(Rig& r) {
+    if (!r.dev) return;
+    gpu::finish();
+    gpu::run_on_render_thread([] { gpu::tex_shutdown(); });
+    gpu::shutdown_for_test();
+    const ValidationStats v = r.dev->validation_stats();
+    std::printf("    validation: %llu errors, %llu warnings\n", static_cast<unsigned long long>(v.errors), static_cast<unsigned long long>(v.warnings));
+    if (!v.first_error.empty()) std::printf("      first error: %s\n", v.first_error.c_str());
+    CHECK_EQ(v.errors, 0ull);
+    CHECK_EQ(v.warnings, 0ull);
+    CHECK_EQ(r.dev->memory_stats().allocations, r.baseline_allocs);
+    r.dev.reset();
+}
+
+}  // namespace
+
+// ---- 1: RGBA8, four levels, every level bit exact -----------------------------------------------------------------------
+NXTEST(upload_readback_rgba8_levels) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        const bool ok = roundtrip(*r.dev, "RGBA8 64x64, 4 levels", info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 4, NVN_FORMAT_RGBA8), 1);
+        CHECK(ok);
+    }
+    teardown(r);
+}
+
+// ---- 2: other uncompressed and block formats, bit exact ------------------------------------------------------------------
+NXTEST(upload_readback_formats) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        CHECK(roundtrip(*r.dev, "R8 32x16, 3 levels", info(NVN_TEXTURE_TARGET_2D, 32, 16, 1, 3, NVN_FORMAT_R8), 2));
+        CHECK(roundtrip(*r.dev, "RGBA16F 40x24, 3 levels", info(NVN_TEXTURE_TARGET_2D, 40, 24, 1, 3, NVN_FORMAT_RGBA16F), 3));
+        if (!r.dev->features().bc) {
+            nxtest::skip("textureCompressionBC is not available on this GPU");
+        } else {
+            CHECK(roundtrip(*r.dev, "BC1 64x48, 3 levels", info(NVN_TEXTURE_TARGET_2D, 64, 48, 1, 3, NVN_FORMAT_RGBA_DXT1), 4));
+            CHECK(roundtrip(*r.dev, "BC7 64x64, 4 levels", info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 4, NVN_FORMAT_BPTC_UNORM), 5));
+        }
+    }
+    teardown(r);
+}
+
+// ---- 3: ASTC 5x4 becomes BC7 when the GPU has no ASTC -----------------------------------------------------------------------
+NXTEST(astc_becomes_bc7) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    if (!r.dev->features().bc && !r.dev->features().astc_ldr) {
+        nxtest::skip("neither BC nor ASTC is available on this GPU");
+    } else {
+        Tex x;
+        if (make_tex(x, info(NVN_TEXTURE_TARGET_2D, 40, 32, 1, 1, NVN_FORMAT_RGBA_ASTC_5x4))) {
+            // Constant-colour void-extent blocks (valid ASTC of every footprint, with a known colour).
+            const tegra::LevelLayout& lv = x.L.layout.levels[0];
+            std::mt19937 rng(7);
+            for (uint32_t y = 0; y < lv.blocks_y; ++y)
+                for (uint32_t bx = 0; bx < lv.blocks_x; ++bx) {
+                    uint8_t* blk = x.lin.data() + lv.linear_offset + y * lv.linear_row_stride + bx * 16;
+                    blk[0] = 0xFC;
+                    blk[1] = 0xFD;
+                    std::memset(blk + 2, 0xFF, 6);
+                    uint16_t c[4];
+                    for (uint16_t& v : c) v = static_cast<uint16_t>(rng());
+                    std::memcpy(blk + 8, c, 8);
+                }
+            tile_into_storage(x);
+            Texture* t = x.t.get();
+            uint64_t uploads0 = 0, transcodes0 = 0, uploads1 = 0, transcodes1 = 0;
+            VkFormat vk = VK_FORMAT_UNDEFINED;
+            gpu::run_on_render_thread([&] {
+                uploads0 = gpu::tex_stats().uploads;
+                transcodes0 = gpu::tex_stats().transcodes;
+            });
+            gpu::run_frame_sync([&](Frame& f) {
+                gpu::tex_ensure_current(t, f);
+                vk = gpu::tex_vk_format(t);
+            });
+            gpu::run_on_render_thread([&] {
+                uploads1 = gpu::tex_stats().uploads;
+                transcodes1 = gpu::tex_stats().transcodes;
+            });
+            CHECK_EQ(uploads1 - uploads0, 1ull);
+            if (r.dev->features().astc_ldr) {
+                std::printf("    this GPU has ASTC: the image is native ASTC\n");
+                CHECK_EQ(vk, VK_FORMAT_ASTC_5x4_UNORM_BLOCK);
+                CHECK_EQ(transcodes1 - transcodes0, 0ull);
+            } else {
+                std::printf("    image format %d (BC7 UNORM is %d), transcodes %llu\n", static_cast<int>(vk), static_cast<int>(VK_FORMAT_BC7_UNORM_BLOCK),
+                            static_cast<unsigned long long>(transcodes1 - transcodes0));
+                CHECK(vk == VK_FORMAT_BC7_UNORM_BLOCK || vk == VK_FORMAT_BC7_SRGB_BLOCK);
+                CHECK_EQ(transcodes1 - transcodes0, 1ull);
+            }
+        } else {
+            CHECK(false);
+        }
+    }
+    teardown(r);
+}
+
+// ---- 4: cube, 2D array and 3D views ------------------------------------------------------------------------------------------
+NXTEST(views_cube_array_3d) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex cube, arr, plain;
+        CHECK(make_tex(cube, info(NVN_TEXTURE_TARGET_CUBEMAP, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        CHECK(make_tex(arr, info(NVN_TEXTURE_TARGET_2D_ARRAY, 16, 16, 4, 1, NVN_FORMAT_RGBA8)));
+        CHECK(make_tex(plain, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        Texture* tc = cube.t.get();
+        Texture* ta = arr.t.get();
+        Texture* tp = plain.t.get();
+        gpu::run_on_render_thread([&] {
+            ViewRequest q;
+            q.type = VK_IMAGE_VIEW_TYPE_CUBE;
+            CHECK(gpu::tex_sampled_view(tc, q) != VK_NULL_HANDLE);
+            q.type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            CHECK(gpu::tex_sampled_view(tc, q) != VK_NULL_HANDLE);
+            CHECK(gpu::tex_sampled_view(ta, q) != VK_NULL_HANDLE);
+            q.base_layer = 2;
+            q.layer_count = 2;
+            CHECK(gpu::tex_sampled_view(ta, q) != VK_NULL_HANDLE);
+            q = ViewRequest();
+            q.type = VK_IMAGE_VIEW_TYPE_2D;
+            q.base_layer = 2;
+            CHECK(gpu::tex_sampled_view(ta, q) != VK_NULL_HANDLE);
+            q = ViewRequest();
+            q.type = VK_IMAGE_VIEW_TYPE_3D;
+            CHECK(gpu::tex_sampled_view(tp, q) == VK_NULL_HANDLE);
+            q.type = VK_IMAGE_VIEW_TYPE_CUBE;
+            CHECK(gpu::tex_sampled_view(tp, q) == VK_NULL_HANDLE);
+            q.type = VK_IMAGE_VIEW_TYPE_2D;
+            CHECK(gpu::tex_sampled_view(tp, q) != VK_NULL_HANDLE);
+        });
+    }
+    {
+        // A real 3D image: a 3D view and a 2D view of one slice.
+        Tex vol;
+        CHECK(make_tex(vol, info(NVN_TEXTURE_TARGET_3D, 8, 8, 4, 1, NVN_FORMAT_RGBA8)));
+        Texture* tv = vol.t.get();
+        gpu::run_on_render_thread([&] {
+            ViewRequest q;
+            q.type = VK_IMAGE_VIEW_TYPE_3D;
+            CHECK(gpu::tex_sampled_view(tv, q) != VK_NULL_HANDLE);
+            q.type = VK_IMAGE_VIEW_TYPE_2D;
+            CHECK(gpu::tex_sampled_view(tv, q) != VK_NULL_HANDLE);
+        });
+    }
+    teardown(r);
+}
+
+// ---- 5: the sampled view cache -------------------------------------------------------------------------------------------------
+NXTEST(sampled_view_cache) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex x;
+        CHECK(make_tex(x, info(NVN_TEXTURE_TARGET_2D, 32, 32, 1, 3, NVN_FORMAT_RGBA8)));
+        Texture* t = x.t.get();
+        gpu::run_on_render_thread([&] {
+            ViewRequest q;
+            q.type = VK_IMAGE_VIEW_TYPE_2D;
+            const VkImageView a = gpu::tex_sampled_view(t, q);
+            const VkImageView b = gpu::tex_sampled_view(t, q);
+            CHECK(a != VK_NULL_HANDLE);
+            CHECK(a == b);
+            q.base_level = 1;
+            q.level_count = 2;
+            const VkImageView c = gpu::tex_sampled_view(t, q);
+            CHECK(c != VK_NULL_HANDLE);
+            CHECK(c != a);
+            CHECK(gpu::tex_sampled_view(t, q) == c);
+        });
+    }
+    teardown(r);
+}
+
+// ---- 6: depth and depth-stencil textures: no upload, attachment views -------------------------------------------------------------
+NXTEST(depth_textures) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex d32, d24s8;
+        CHECK(make_tex(d32, info(NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_DEPTH32F)));
+        CHECK(make_tex(d24s8, info(NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_DEPTH24_STENCIL8)));
+        Texture* td = d32.t.get();
+        Texture* ts = d24s8.t.get();
+        uint64_t uploads0 = 0, uploads1 = 0;
+        gpu::run_on_render_thread([&] { uploads0 = gpu::tex_stats().uploads; });
+        gpu::run_frame_sync([&](Frame& f) {
+            gpu::tex_ensure_current(td, f);
+            gpu::tex_ensure_current(ts, f);
+        });
+        gpu::run_on_render_thread([&] {
+            uploads1 = gpu::tex_stats().uploads;
+            CHECK(gpu::tex_is_depth(td));
+            CHECK_EQ(gpu::tex_vk_format(td), VK_FORMAT_D32_SFLOAT);
+            CHECK_EQ(gpu::tex_aspect(td), VK_IMAGE_ASPECT_DEPTH_BIT);
+            CHECK(gpu::tex_attachment_view(td, 0, 0, 1, VK_FORMAT_UNDEFINED) != VK_NULL_HANDLE);
+            const VkFormat f24 = gpu::tex_vk_format(ts);
+            CHECK(f24 == VK_FORMAT_D24_UNORM_S8_UINT || f24 == VK_FORMAT_D32_SFLOAT_S8_UINT);
+            CHECK_EQ(gpu::tex_aspect(ts), VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
+            CHECK(gpu::tex_attachment_view(ts, 0, 0, 1, VK_FORMAT_UNDEFINED) != VK_NULL_HANDLE);
+            ViewRequest q;
+            q.type = VK_IMAGE_VIEW_TYPE_2D;
+            q.depth_aspect = true;
+            CHECK(gpu::tex_sampled_view(ts, q) != VK_NULL_HANDLE);
+            q.depth_aspect = false;
+            CHECK(gpu::tex_sampled_view(ts, q) != VK_NULL_HANDLE);
+        });
+        CHECK_EQ(uploads1 - uploads0, 0ull);
+    }
+    teardown(r);
+}
+
+// ---- 7: colour target transitions -----------------------------------------------------------------------------------------------
+NXTEST(color_target_transitions) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex x;
+        CHECK(make_tex(x, info(NVN_TEXTURE_TARGET_2D, 64, 32, 1, 1, NVN_FORMAT_RGBA8, NVN_TEXTURE_FLAGS_DISPLAY)));
+        Texture* t = x.t.get();
+        VkImageLayout after_first = VK_IMAGE_LAYOUT_UNDEFINED, after_back = VK_IMAGE_LAYOUT_UNDEFINED;
+        gpu::run_frame_sync([&](Frame& f) {
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            after_first = gpu::tex_layout(t);
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            after_back = gpu::tex_layout(t);
+        });
+        CHECK_EQ(after_first, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        CHECK_EQ(after_back, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    teardown(r);
+}
+
+// ---- 8: samplers: distinct states, equal states share, border colours and anisotropy --------------------------------------------
+NXTEST(samplers) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    gpu::run_on_render_thread([&] {
+        std::set<VkSampler> distinct;
+        for (int i = 0; i < 10; ++i) {
+            SamplerInfo s;
+            s.min_filter = i % 6;
+            s.wrap_s = i < 6 ? NVN_WRAP_MODE_REPEAT : NVN_WRAP_MODE_CLAMP;
+            distinct.insert(gpu::sampler_for(s));
+        }
+        CHECK_EQ(distinct.size(), 10u);
+        SamplerInfo a, b;
+        a.min_filter = NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR;
+        b = a;
+        CHECK(gpu::sampler_for(a) == gpu::sampler_for(b));
+        CHECK(gpu::sampler_for(a) != VK_NULL_HANDLE);
+
+        // Border colours: transparent black, opaque white, custom floats, and an integer border.
+        SamplerInfo tb;
+        tb.wrap_s = NVN_WRAP_MODE_CLAMP_TO_BORDER;
+        SamplerInfo ow = tb;
+        for (float& c : ow.border_color) c = 1.0f;
+        SamplerInfo custom[4];
+        const float vals[4] = {0.25f, 0.5f, 0.75f, 1.0f};
+        for (int i = 0; i < 4; ++i) {
+            custom[i] = tb;
+            for (float& c : custom[i].border_color) c = vals[i];
+        }
+        SamplerInfo ints = tb;
+        const int32_t iv[4] = {1, 2, 3, 4};
+        std::memcpy(ints.border_color, iv, sizeof iv);
+        ints.border_kind = 1;
+        SamplerInfo aniso = tb;
+        aniso.max_anisotropy = 16.0f;
+        aniso.min_filter = NVN_MIN_FILTER_LINEAR;
+        aniso.mag_filter = 1;
+
+        const VkSampler dummy = gpu::dummy_sampler();
+        CHECK(dummy != VK_NULL_HANDLE);
+        std::set<VkSampler> bords;
+        bords.insert(gpu::sampler_for(tb));
+        bords.insert(gpu::sampler_for(ow));
+        for (int i = 0; i < 4; ++i) bords.insert(gpu::sampler_for(custom[i]));
+        bords.insert(gpu::sampler_for(ints));
+        CHECK(bords.count(VK_NULL_HANDLE) == 0);
+        CHECK(gpu::sampler_for(aniso) != VK_NULL_HANDLE);
+        CHECK(gpu::sampler_for(aniso) == gpu::sampler_for(aniso));
+    });
+    teardown(r);
+}
+
+// ---- 9: CPU rewrites are uploaded; a GPU write suppresses uploads until the CPU writes again ----------------------------------
+NXTEST(cpu_dirty_and_gpu_written) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex x;
+        CHECK(make_tex(x, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        Texture* t = x.t.get();
+        fill_random(x.lin, 11);
+        tile_into_storage(x);
+        gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(t, f); });
+        std::vector<uint8_t> got;
+        CHECK(read_back(*r.dev, t, x.L, got));
+        CHECK(first_diff(got, x.lin) < 0);
+        uint64_t u0 = 0, u1 = 0, u2 = 0;
+        gpu::run_on_render_thread([&] { u0 = gpu::tex_stats().uploads; });
+
+        // The CPU writes new data and marks it: the next use uploads it.
+        fill_random(x.lin, 12);
+        tile_into_storage(x);
+        gpu::mark_texture_cpu_dirty(t);
+        gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(t, f); });
+        gpu::run_on_render_thread([&] { u1 = gpu::tex_stats().uploads; });
+        CHECK_EQ(u1 - u0, 1ull);
+        CHECK(read_back(*r.dev, t, x.L, got));
+        CHECK(first_diff(got, x.lin) < 0);
+
+        // The GPU writes (marked as written): new CPU data without a mark is not uploaded, the GPU content stays.
+        std::vector<uint8_t> gpu_content = x.lin;
+        gpu::run_on_render_thread([&] { gpu::tex_mark_gpu_written(t); });
+        fill_random(x.lin, 13);
+        tile_into_storage(x);
+        gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(t, f); });
+        gpu::run_on_render_thread([&] { u2 = gpu::tex_stats().uploads; });
+        CHECK_EQ(u2 - u1, 0ull);
+        CHECK(read_back(*r.dev, t, x.L, got));
+        CHECK(first_diff(got, gpu_content) < 0);
+        std::printf("    uploads: first %llu, after CPU write %llu, after GPU write %llu\n", static_cast<unsigned long long>(u0),
+                    static_cast<unsigned long long>(u1), static_cast<unsigned long long>(u2));
+    }
+    teardown(r);
+}
+
+// ---- 10: download of a render target after a clear, untiled back to the clear colour ---------------------------------------------
+NXTEST(download_render_target_after_clear) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex x;
+        CHECK(make_tex(x, info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 1, NVN_FORMAT_RGBA8)));
+        Texture* t = x.t.get();
+        const float rgba[4] = {64.0f / 255.0f, 128.0f / 255.0f, 200.0f / 255.0f, 1.0f};
+        bool downloaded = false;
+        gpu::run_frame_sync([&](Frame& f) {
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            VkClearColorValue c = {};
+            std::memcpy(c.float32, rgba, sizeof rgba);
+            const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(f.cb, gpu::tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &c, 1, &range);
+            gpu::tex_transition(t, f, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            gpu::tex_mark_gpu_written(t);
+        });
+        downloaded = gpu::download_texture(t);
+        CHECK(downloaded);
+        if (downloaded) {
+            std::vector<uint8_t> lin(static_cast<size_t>(x.L.layout.linear_size), 0);
+            tegra::untile(x.L.desc, x.L.layout, x.mem.data(), lin.data());
+            const uint8_t want[4] = {64, 128, 200, 255};
+            size_t bad = 0;
+            for (size_t i = 0; i + 4 <= static_cast<size_t>(64 * 64 * 4); i += 4)
+                if (std::memcmp(&lin[i], want, 4) != 0) ++bad;
+            CHECK_MSG(bad == 0, (std::to_string(bad) + " texels differ from the clear colour").c_str());
+            std::printf("    downloaded: %s\n", bad == 0 ? "every texel is the clear colour" : "DIFFERS");
+        }
+    }
+    teardown(r);
+}
+
+// ---- 11: a format the device cannot make: null, counted once --------------------------------------------------------------------
+NXTEST(failure_no_format) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    {
+        Tex x;
+        CHECK(make_tex(x, info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8)));
+        static FormatInfo bad;
+        bad = *format_info(NVN_FORMAT_RGBA8);
+        bad.vk = VK_FORMAT_UNDEFINED;
+        bad.vk_fallback = VK_FORMAT_UNDEFINED;
+        x.t->fmt = &bad;
+        Texture* t = x.t.get();
+        gpu::run_on_render_thread([&] {
+            const uint64_t f0 = gpu::tex_stats().failed;
+            const uint64_t c0 = gpu::tex_stats().images;
+            CHECK(gpu::tex_gpu(t) == nullptr);
+            CHECK(gpu::tex_gpu(t) == nullptr);
+            ViewRequest q;
+            CHECK(gpu::tex_sampled_view(t, q) == VK_NULL_HANDLE);
+            CHECK_EQ(gpu::tex_stats().failed - f0, 1ull);
+            CHECK_EQ(gpu::tex_stats().images - c0, 0ull);
+        });
+        gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(t, f); });
+    }
+    teardown(r);
+}
+
+// ---- 12: dummy views and the dummy sampler exist and are stable -------------------------------------------------------------------
+NXTEST(dummy_views_and_sampler) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    gpu::run_on_render_thread([&] {
+        const VkImageViewType types[] = {VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_VIEW_TYPE_2D_ARRAY, VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY,
+                                         VK_IMAGE_VIEW_TYPE_3D};
+        for (VkImageViewType ty : types) {
+            const VkImageView v = gpu::dummy_view(ty, false);
+            CHECK(v != VK_NULL_HANDLE);
+            CHECK(gpu::dummy_view(ty, false) == v);
+        }
+        CHECK(gpu::dummy_view(VK_IMAGE_VIEW_TYPE_2D, true) != VK_NULL_HANDLE);
+        CHECK(gpu::dummy_sampler() != VK_NULL_HANDLE);
+        CHECK(gpu::dummy_sampler() == gpu::dummy_sampler());
+    });
+    teardown(r);
+}

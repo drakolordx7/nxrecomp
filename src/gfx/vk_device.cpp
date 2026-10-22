@@ -368,25 +368,57 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     NXLOG_I(kTag, "using GPU %zu: %s%s", pick, gpus_[pick].name.c_str(), gpu_want.empty() ? " (default rule)" : " (override)");
     vkGetPhysicalDeviceProperties(physical_, &props_);
 
-    // features: enable what the device has of the set the NVN back end will want, and what Vulkan 1.3 rendering needs
+    // features: the NVN back end wants everything the GPU offers (translated Maxwell shaders use Float64, subgroup operations,
+    // DrawParameters, image gather, non-uniform indexing, geometry stages ...), so the device is created with every core 1.0
+    // to 1.3 feature that is available (except robustBufferAccess) plus the extension features below.
+    uint32_t next = 0;
+    vkEnumerateDeviceExtensionProperties(physical_, nullptr, &next, nullptr);
+    std::vector<VkExtensionProperties> dexts(next);
+    vkEnumerateDeviceExtensionProperties(physical_, nullptr, &next, dexts.data());
+    auto has_dext = [&](const char* name) {
+        for (auto& e : dexts) if (!std::strcmp(e.extensionName, name)) return true;
+        return false;
+    };
+    VkPhysicalDeviceVulkan11Features a11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
+    VkPhysicalDeviceVulkan12Features a12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceVulkan13Features a13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    VkPhysicalDeviceVulkan12Features a12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &a13};
-    VkPhysicalDeviceFeatures2 avail = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &a12};
+    VkPhysicalDeviceFragmentShaderInterlockFeaturesEXT afsi = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT};
+    VkPhysicalDeviceDepthClipControlFeaturesEXT adcc = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_CONTROL_FEATURES_EXT};
+    VkPhysicalDeviceDepthClipEnableFeaturesEXT adce = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT};
+    VkPhysicalDeviceCustomBorderColorFeaturesEXT acbc = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT};
+    VkPhysicalDeviceExtendedDynamicState3FeaturesEXT aeds3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
+    VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT avids = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT};
+    std::vector<const char*> dev_exts;
+    void* chain = nullptr;
+    auto add_ext = [&](const char* name, void* feat_struct) {
+        if (!has_dext(name)) return false;
+        dev_exts.push_back(name);
+        // every extension feature struct is { sType, pNext, ... }: link it into the chain
+        struct Base { VkStructureType s; void* n; };
+        static_cast<Base*>(feat_struct)->n = chain;
+        chain = feat_struct;
+        return true;
+    };
+    const bool x_fsi = add_ext(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, &afsi);
+    const bool x_dcc = add_ext(VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME, &adcc);
+    const bool x_dce = add_ext(VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, &adce);
+    const bool x_cbc = add_ext(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, &acbc);
+    const bool x_eds3 = add_ext(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &aeds3);
+    const bool x_vids = add_ext(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, &avids);
+    features_.external_memory_host = has_dext(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    if (features_.external_memory_host) dev_exts.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    if (has_dext(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) { dev_exts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME); features_.push_descriptor = true; }
+    // availability query: one chain holding all the structs
+    a11.pNext = &a12; a12.pNext = &a13; a13.pNext = chain;
+    VkPhysicalDeviceFeatures2 avail = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &a11};
     vkGetPhysicalDeviceFeatures2(physical_, &avail);
-    VkPhysicalDeviceVulkan13Features e13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    VkPhysicalDeviceVulkan12Features e12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &e13};
-    VkPhysicalDeviceFeatures2 en = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &e12};
-    e13.dynamicRendering = VK_TRUE;
-    e13.synchronization2 = VK_TRUE;
-    e12.timelineSemaphore = a12.timelineSemaphore;
+    // the same chain, as it was filled in, enables everything that is available (minus robustness, which costs speed)
+    a13.dynamicRendering = VK_TRUE;
+    a13.synchronization2 = VK_TRUE;
+    a13.robustImageAccess = VK_FALSE;
+    avail.features.robustBufferAccess = VK_FALSE;
+    VkPhysicalDeviceFeatures2& en = avail;
     const VkPhysicalDeviceFeatures& af = avail.features;
-    en.features.samplerAnisotropy = af.samplerAnisotropy;
-    en.features.independentBlend = af.independentBlend;
-    en.features.depthClamp = af.depthClamp;
-    en.features.fillModeNonSolid = af.fillModeNonSolid;
-    en.features.textureCompressionBC = af.textureCompressionBC;
-    en.features.textureCompressionASTC_LDR = af.textureCompressionASTC_LDR;
-    en.features.textureCompressionETC2 = af.textureCompressionETC2;
     features_.bc = af.textureCompressionBC;
     features_.astc_ldr = af.textureCompressionASTC_LDR;
     features_.etc2 = af.textureCompressionETC2;
@@ -397,10 +429,46 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.timeline_semaphore = a12.timelineSemaphore;
     features_.dynamic_rendering = true;
     features_.synchronization2 = true;
+    features_.geometry_shader = af.geometryShader;
+    features_.shader_float64 = af.shaderFloat64;
+    features_.shader_int64 = af.shaderInt64;
+    features_.dual_src_blend = af.dualSrcBlend;
+    features_.logic_op = af.logicOp;
+    features_.multi_viewport = af.multiViewport;
+    features_.depth_bounds = af.depthBounds;
+    features_.depth_bias_clamp = af.depthBiasClamp;
+    features_.wide_lines = af.wideLines;
+    features_.large_points = af.largePoints;
+    features_.image_cube_array = af.imageCubeArray;
+    features_.shader_draw_parameters = a11.shaderDrawParameters;
+    features_.sampler_mirror_clamp_to_edge = a12.samplerMirrorClampToEdge;
+    features_.descriptor_indexing = a12.descriptorIndexing && a12.shaderSampledImageArrayNonUniformIndexing;
+    features_.host_query_reset = a12.hostQueryReset;
+    features_.fragment_shader_interlock = x_fsi && afsi.fragmentShaderPixelInterlock;
+    features_.depth_clip_control = x_dcc && adcc.depthClipControl;
+    features_.depth_clip_enable = x_dce && adce.depthClipEnable;
+    features_.custom_border_color = x_cbc && acbc.customBorderColors && acbc.customBorderColorWithoutFormat;
+    features_.extended_dynamic_state3 = x_eds3;
+    features_.vertex_input_dynamic_state = x_vids && avids.vertexInputDynamicState;
     NXLOG_I(kTag, "texture compression on this GPU: BC %s, ASTC-LDR %s, ETC2 %s", features_.bc ? "yes" : "no",
             features_.astc_ldr ? "yes" : "no", features_.etc2 ? "yes" : "no");
-
-    std::vector<const char*> dev_exts;
+    NXLOG_I(kTag, "features: geometry %d float64 %d int64 %d dualSrc %d logicOp %d multiViewport %d drawParams %d descIndexing %d interlock %d depthClipControl %d customBorder %d hostMemImport %d pushDesc %d",
+            features_.geometry_shader, features_.shader_float64, features_.shader_int64, features_.dual_src_blend, features_.logic_op,
+            features_.multi_viewport, features_.shader_draw_parameters, features_.descriptor_indexing, features_.fragment_shader_interlock,
+            features_.depth_clip_control, features_.custom_border_color, features_.external_memory_host, features_.push_descriptor);
+    {
+        VkPhysicalDeviceExternalMemoryHostPropertiesEXT xh = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
+        VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, features_.external_memory_host ? &xh : nullptr};
+        VkPhysicalDeviceVulkan13Properties p13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
+        p13.pNext = &p11;
+        VkPhysicalDeviceProperties2 pp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &p13};
+        vkGetPhysicalDeviceProperties2(physical_, &pp);
+        limits_.min_imported_host_alignment = features_.external_memory_host ? xh.minImportedHostPointerAlignment : 0;
+        limits_.max_buffer_size = p13.maxBufferSize;
+        limits_.subgroup_size = p11.subgroupSize;
+        limits_.subgroup_ops = p11.subgroupSupportedOperations;
+        limits_.max_memory_allocation_count = props_.limits.maxMemoryAllocationCount;
+    }
     if (!headless) dev_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     float prio = 1.0f;
     VkDeviceQueueCreateInfo qci = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
