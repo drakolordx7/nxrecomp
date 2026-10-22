@@ -41,3 +41,5 @@ entryhook 0x71004c2998
 #   CRenderPass_Bloom::Render (skipped when bloom is off) and CRenderPass_ChromaticAberration::Render (strength zeroed when off)
 entryhook 0x71003a450c
 entryhook 0x71003a69b0
+#   CUIDisplayManager::UpdateCameraNodes: the front end (title, menus) draws its 2D UI through the "UIOrthoCamera" scene node of this manager, authored for 16:9
+entryhook 0x7100b0e5ec
