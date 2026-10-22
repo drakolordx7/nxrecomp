@@ -70,6 +70,7 @@ def run(a):
     # the run directory is work\run, so point the services at the real RomFS and a disposable save folder
     env.setdefault('NXRT_FS_ROMFS', os.path.join(ROOT, 'game', 'romfs'))
     env.setdefault('NXRT_FS_SAVE_DIR', os.path.join(RUN, 'save'))
+    env.setdefault('NXRT_BOOT_GFX', 'headless')   # mpr.exe opens a play-mode window by default; the boot loop stays headless (override with --env NXRT_BOOT_GFX=window)
     if a.level:
         env['NXRT_LOG_LEVEL'] = a.level
     if a.probe: env['NXRT_BOOT_PROBE'] = a.probe
