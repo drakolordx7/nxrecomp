@@ -944,6 +944,20 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_dirty & (kDesc | kPipe)) {
         g_want_depth_ro = samples_depth_target(*pl);
         prepare_textures(*pl);
+        if (g_trace) {   // [nvn] trace_dump_tex: also the block-compressed level 0 as the GPU holds it, to compare with the prepared data
+            static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
+            static std::unordered_map<uint32_t, bool> raw_done;
+            if (!dump_dir.empty()) {
+                for (const BindingDesc& d : pl->bindings) {
+                    if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+                    const TexResolved r = resolve_texture(d);
+                    if (!r.tex || !raw_done.emplace(r.tex->id, true).second) continue;
+                    end_pass();
+                    const int ri = snapshot_record_raw(r.tex, *F);
+                    if (ri >= 0) g_trace_snaps.push_back({ri, g_trace_n, dump_dir + "/gpu_t" + std::to_string(r.tex->id) + ".bin", "raw"});
+                }
+            }
+        }
     }
     if (!ensure_pass(g_want_depth_ro)) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
     const VkPrimitiveTopology topo = vk_topology(mode);
@@ -993,6 +1007,10 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
             const TexResolved r = d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? resolve_image(d) : resolve_texture(d);
             if (r.tex) g_trace_sampled.push_back(r.tex);
+            if (r.tex) {
+                static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
+                if (!dump_dir.empty()) trace_dump_prepared(r.tex, dump_dir);
+            }
             TRACE("    %s set%u b%u %s -> %s%s mem %d%%%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
                   d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
                   r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "");
