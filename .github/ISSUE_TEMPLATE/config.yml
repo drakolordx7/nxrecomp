@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Game problems
+    url: https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/issues/new/choose
+    about: Bugs in Metroid Prime Remastered itself go to the game repository.
+  - name: Security problem
+    url: https://github.com/drakolordx7/nxrecomp/security/advisories/new
+    about: Report a security problem privately.

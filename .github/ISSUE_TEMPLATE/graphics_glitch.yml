@@ -1,0 +1,90 @@
+name: Graphics glitch
+description: Something looks wrong on screen in a running build.
+title: "[Graphics] "
+labels: ["graphics"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach or paste game files, extracted game data, keys (prod.keys, title.keys) or dumps. Screenshots of a bug in a running build are fine.
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type of glitch
+      options:
+        - Wrong colours
+        - Black or missing textures
+        - Misplaced effects
+        - Wrong geometry
+        - Flicker or noise
+        - Validation layer error
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is wrong on screen, and where in the game or tool it happens.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Commit hash or release tag.
+      placeholder: e.g. 1a2b3c4 or v0.3.0
+    validations:
+      required: false
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+      placeholder: e.g. RTX 4070
+    validations:
+      required: false
+
+  - type: input
+    id: driver
+    attributes:
+      label: Driver version
+      placeholder: e.g. 566.36
+    validations:
+      required: false
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: e.g. Windows 11 23H2
+    validations:
+      required: false
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Vulkan validation
+      description: Does it also show with validation on (NXRT_GFX_VALIDATION=1)? Paste any validation messages.
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: Paste the relevant part of nxrt.log.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot
+      description: Screenshots of a bug in a running build are fine. Do not attach game files, dumps or keys.
+    validations:
+      required: true

@@ -1,0 +1,108 @@
+name: Bug report
+description: Something in the recompiler, runtime, tools or build does not work as it should.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach or paste game files, extracted game data, keys (prod.keys, title.keys) or dumps. Screenshots of a bug in a running build are fine.
+
+        Bugs that only show up in Metroid Prime Remastered gameplay usually belong in the game repo: https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/issues
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues and did not find this problem.
+          required: true
+        - label: I am not attaching game data or keys.
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Pick the part of the project where the problem happens. If unsure, choose "not sure".
+      options:
+        - recomp (recompiler)
+        - runtime (loader, kernel, services)
+        - runtime graphics (NVN on Vulkan)
+        - tools (shaders, textures, tiling, setup)
+        - build system or docs
+        - not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Commit hash or release tag.
+      placeholder: e.g. 1a2b3c4 or v0.3.0
+    validations:
+      required: false
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: e.g. Windows 11 23H2
+    validations:
+      required: false
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      description: Needed for graphics bugs.
+      placeholder: e.g. RTX 4070, driver 566.36
+    validations:
+      required: false
+
+  - type: input
+    id: toolchain
+    attributes:
+      label: Toolchain
+      description: Versions of clang-cl, CMake, Ninja and VS Build Tools.
+      placeholder: e.g. clang-cl 18.1, CMake 3.29, Ninja 1.12, VS Build Tools 2022 17.10
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact command you ran.
+      placeholder: |
+        1. Run `...`
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected and actual behaviour
+      description: What you expected to happen, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: |
+        Paste the relevant part of nxrt.log. For more detail, set `[log] level = trace` in nxrt.ini, or set NXRT_LOG_LEVEL=trace, then run it again.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: attachments
+    attributes:
+      label: Screenshots or other attachments
+      description: Screenshots of a bug in a running build are fine. Do not attach game files, dumps or keys.
+    validations:
+      required: false
