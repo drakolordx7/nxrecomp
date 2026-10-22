@@ -219,6 +219,38 @@ a2b_status a2b_decode_astc_rgba8(const a2b_input* in, const void* data, size_t d
     return failed ? A2B_ERR_DECODE : A2B_OK;
 }
 
+// Sets bits [pos, pos+len) of the 128-bit block (lo = bits 0..63, hi = bits 64..127), least significant bit first.
+static void put_bits(uint64_t& lo, uint64_t& hi, int pos, int len, uint32_t v) {
+    for (int i = 0; i < len; i++) {
+        const int b = pos + i;
+        uint64_t& w = b < 64 ? lo : hi;
+        const uint64_t m = 1ull << (b & 63);
+        if ((v >> i) & 1) w |= m; else w &= ~m;
+    }
+}
+
+// Makes a BC7 block of an opaque source decode to alpha exactly 255 without touching any data channel.
+//   modes 0..3 have no alpha (always 255). Mode 4 (rotation r, 5-bit colour, 6-bit alpha endpoints) and mode 5 (7-bit colour,
+//   8-bit alpha endpoints): the original alpha lives in the alpha slot when r = 0, else in colour slot r (the data channel went
+//   to the alpha slot); that slot's two endpoints are set to all ones, which decodes to 255 whatever the indices say. Mode 6:
+//   A0 = A1 = 127 and both p-bits 1. Mode 7 (alpha 5 bits + p-bit) does not occur for opaque blocks in bc7e; treated like mode 6
+//   would be wrong, so it is left alone (the caller's tests check alpha).
+static void pin_opaque_alpha(uint64_t& lo, uint64_t& hi) {
+    if ((lo & 0x1f) == 0x10) {   // mode 4
+        const int rot = (int)((lo >> 5) & 3);
+        if (rot == 0) { put_bits(lo, hi, 38, 6, 63); put_bits(lo, hi, 44, 6, 63); }
+        else { put_bits(lo, hi, 8 + (rot - 1) * 10, 5, 31); put_bits(lo, hi, 13 + (rot - 1) * 10, 5, 31); }
+    } else if ((lo & 0x3f) == 0x20) {   // mode 5
+        const int rot = (int)((lo >> 6) & 3);
+        if (rot == 0) { put_bits(lo, hi, 50, 8, 255); put_bits(lo, hi, 58, 8, 255); }
+        else { put_bits(lo, hi, 8 + (rot - 1) * 14, 7, 127); put_bits(lo, hi, 15 + (rot - 1) * 14, 7, 127); }
+    } else if ((lo & 0x7f) == 0x40) {   // mode 6
+        put_bits(lo, hi, 49, 14, (127u << 7) | 127u);
+        put_bits(lo, hi, 63, 1, 1);
+        put_bits(lo, hi, 64, 1, 1);
+    }
+}
+
 a2b_status a2b_encode_bc7(uint32_t width, uint32_t height, const uint8_t* rgba, const a2b_options* opt, void* out,
                           size_t out_capacity, a2b_stats* stats) {
     if (!width || !height || !rgba || !out) return A2B_ERR_ARGS;
@@ -240,18 +272,25 @@ a2b_status a2b_encode_bc7(uint32_t width, uint32_t height, const uint8_t* rgba, 
         default: ispc::bc7e_compress_block_params_init_slowest(&params, perceptual); break;
     }
 
-    // Opaque source blocks must keep alpha exactly 255. bc7e would otherwise (a) store opaque mode-6 alpha in the shared
-    // p-bit (decodes as 254 half the time) and (b) use mode 4/5 channel rotation, which moves a colour channel into the
-    // alpha slot (alpha 244..253 on normal maps). Opaque blocks are therefore compressed with mode 6 and rotations off;
-    // blocks with real alpha use the full preset. Costs about 2 dB of RGB PSNR on opaque content; allow_opaque_mode6 undoes it.
-    const bool exact_opaque = !(opt && opt->allow_opaque_mode6);
+    // Opaque source blocks must keep alpha exactly 255. Left alone, bc7e (a) stores opaque mode-6 alpha in the shared p-bit
+    // (decodes as 254 half the time) and (b) uses mode 4/5 channel rotation, which swaps a colour channel with alpha, and does
+    // not pin the swapped-in original alpha (alpha 244..253 on normal maps). The first version of this library therefore turned
+    // mode 6 and rotation off for opaque blocks, which costs 2 to 12 dB on two-channel (RG, B = 0) normal maps: rotation is what
+    // gives the data channel in the alpha slot its own index set, i.e. a BC5-like encoding. Now opaque blocks are encoded with
+    // mode 6 off (pinning it costs more RGB PSNR than the mode gains) and the preset's rotations, and pin_opaque_alpha then
+    // fixes the alpha of the result exactly. Rotation on every opaque block costs about 45% more encode time at quality 3 than
+    // the first version; limiting it to blocks with a flat channel saved only a fifth of that and lost up to 1.3 dB on
+    // colour textures.
+    // allow_opaque_mode6: 0 (default) that; 1 raw bc7e output (alpha may drift); 2 the first version (no mode 6, no rotation).
+    const int m6 = opt ? opt->allow_opaque_mode6 : 0;
+    const bool exact_opaque = m6 != 1;
     ispc::bc7e_compress_block_params opaque_params = params;
-    if (exact_opaque) {
-        opaque_params.m_opaque_settings.m_use_mode[6] = false;
+    if (m6 != 1) opaque_params.m_opaque_settings.m_use_mode[6] = false;
+    if (m6 == 2) {
         opaque_params.m_mode4_rotation_mask = 1;
         opaque_params.m_mode5_rotation_mask = 1;
     }
-    const bool mode6_only = params.m_mode6_only;  // preset 0 ignores m_use_mode: pin alpha afterwards
+    const bool pin_alpha = m6 == 0 || (m6 == 2 && params.m_mode6_only);   // preset 0 ignores m_use_mode: pin afterwards
 
     const double t0 = now_s();
     constexpr uint32_t kChunk = 64;  // blocks per bc7e call
@@ -290,10 +329,7 @@ a2b_status a2b_encode_bc7(uint32_t width, uint32_t height, const uint8_t* rgba, 
             const int list = slot[b];
             uint64_t lo = res[list][next[list] * 2], hi = res[list][next[list] * 2 + 1];
             next[list]++;
-            if (list == 0 && mode6_only && (lo & 0x7f) == 0x40) {  // mode 6: A0 = A1 = 127, P0 = P1 = 1
-                lo |= (((1ull << 14) - 1) << 49) | (1ull << 63);
-                hi |= 1;
-            }
+            if (list == 0 && pin_alpha) pin_opaque_alpha(lo, hi);
             dst[b * 2] = lo;
             dst[b * 2 + 1] = hi;
         }

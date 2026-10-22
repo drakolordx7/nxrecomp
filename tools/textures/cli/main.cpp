@@ -1,6 +1,6 @@
 // astc2bc7 command line. GPL-3.0-or-later.
 //
-//   astc2bc7 <in.astc|in.dds> <out.dds> [--srgb|--linear] [--quality 0..6] [--threads N] [--perceptual] [--allow-opaque-mode6]
+//   astc2bc7 <in.astc|in.dds> <out.dds> [--srgb|--linear] [--quality 0..6] [--threads N] [--perceptual] [--allow-opaque-mode6 | --no-opaque-mode6]
 //            [--dll-dir DIR] [--dump-rgba FILE] [--bench N] [--raw WxH:BWxBH] [--raw-out]
 //
 //   .astc   astcenc's file format (16-byte header, LDR only); sRGB is not stored in it, so say --srgb (default linear)
@@ -65,7 +65,8 @@ int main(int argc, char** argv) {
         else if (a == "--quality") opt.quality = atoi(next());
         else if (a == "--threads") opt.threads = atoi(next());
         else if (a == "--perceptual") opt.perceptual = 1;
-        else if (a == "--allow-opaque-mode6") opt.allow_opaque_mode6 = 1;
+        else if (a == "--allow-opaque-mode6") opt.allow_opaque_mode6 = 1;      // raw bc7e: alpha may drift
+        else if (a == "--no-opaque-mode6") opt.allow_opaque_mode6 = 2;       // legacy: mode 6 off for opaque blocks
         else if (a == "--dll-dir") dll_dir = next();
         else if (a == "--dump-rgba") dump_path = next();
         else if (a == "--bench") bench = atoi(next());

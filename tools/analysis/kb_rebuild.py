@@ -3,7 +3,7 @@
 
   kb_rebuild.py                                  # rebuild docs/mpr from the fragments, no binary
   kb_rebuild.py --elf work/elf/main.elf          # ... and validate + write verification blocks back into the JSON
-Fragments written by hand/workers (port_pairs_*, rando_*, practice_mod) are inputs and are never touched here.
+Fragments written by hand (port_pairs_*, rando_*, practice_mod) are inputs and are never touched here.
 """
 import argparse, pathlib, subprocess, sys
 
