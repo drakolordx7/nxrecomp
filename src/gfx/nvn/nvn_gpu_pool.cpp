@@ -12,6 +12,7 @@
 #include <new>
 #include <unordered_set>
 
+#include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
@@ -156,7 +157,8 @@ void make_dummy() {
 }  // namespace
 
 void prefetch_pool(MemoryPool* p) {
-    if (!p || p->is_virtual || !p->base || !p->size || !active()) return;
+    static const bool enabled = config_get_bool("nvn", "pool_prefetch", true);   // [nvn] pool_prefetch = false: import on first use only
+    if (!enabled || !p || p->is_virtual || !p->base || !p->size || !active()) return;
     std::lock_guard<std::mutex> lk(g_pf_mu);
     if (g_pf_stop) return;
     int expect = 0;

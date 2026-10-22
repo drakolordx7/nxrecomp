@@ -458,6 +458,7 @@ void pipeline_shutdown() {
     g_cache = VK_NULL_HANDLE;
     g_cache_tried = false;
     g_cache_ready.store(false);
+    g_cache_dirty.store(false);
     g_pipeline_count = 0;
 }
 

@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -104,6 +105,9 @@ void load_file() {
     f.read(reinterpret_cast<char*>(&pad), 4);
     if (!f || std::memcmp(magic, kMagic, 8) != 0 || size != kRestBytes) {
         NXLOG_W(kTag, "%s is not a key file of this build (the record layout changed): ignored, a new one is started", g_path.c_str());
+        f.close();
+        std::error_code ec;
+        std::filesystem::remove(g_path, ec);                 // so the next record writes a fresh header
         return;
     }
     Rec r;
@@ -312,6 +316,7 @@ void prewarm_shutdown() {
             static_cast<unsigned long long>(g_stats.built), static_cast<unsigned long long>(g_stats.taken), static_cast<unsigned long long>(g_stats.waited),
             g_stats.wait_ms, static_cast<unsigned long long>(g_stats.claimed));
     g_inited = false;
+    g_stats = PrewarmStats{};
     g_recs.clear();
     g_by_vs.clear();
     g_digests.clear();
