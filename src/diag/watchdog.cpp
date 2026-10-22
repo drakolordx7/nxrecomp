@@ -260,8 +260,11 @@ void run_loop(Control* c) {
             last_change = now;
             fired = false;  // a tick re-arms the watchdog
         }
-        if (GetFileAttributesA(c->request_path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            DeleteFileA(c->request_path.c_str());
+        // <exe dir>\dump_threads (whichever process sees it first) or <exe dir>\dump_threads.<pid> (this process only)
+        const std::string own_request = c->request_path + "." + std::to_string(GetCurrentProcessId());
+        const bool own = GetFileAttributesA(own_request.c_str()) != INVALID_FILE_ATTRIBUTES;
+        if (own || GetFileAttributesA(c->request_path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileA(own ? own_request.c_str() : c->request_path.c_str());
             std::string header;
             appendf(header, "THREAD DUMP REQUESTED (frame count %llu)", static_cast<unsigned long long>(frames));
             emit_dump(c->report_path, header);
@@ -272,7 +275,17 @@ void run_loop(Control* c) {
             std::string header;
             appendf(header, "FREEZE: no frame tick for %.1f s (frame count %llu)", idle_s,
                     static_cast<unsigned long long>(frames));
-            const std::string text = emit_dump(c->report_path, header);
+            std::string text = emit_dump(c->report_path, header);
+            // [diag] freeze_resample_s: a second dump after that many seconds, so a stalled thread (same place) can be told from a busy one
+            const double resample = config_get_double("diag", "freeze_resample_s", 0.0);
+            if (resample > 0 && g_frames.load(std::memory_order_relaxed) == frames) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int64_t>(resample * 1000)));
+                if (g_frames.load(std::memory_order_relaxed) == frames) {
+                    std::string h2;
+                    appendf(h2, "FREEZE SECOND SAMPLE: still no frame tick %.1f s later (frame count %llu)", resample, static_cast<unsigned long long>(frames));
+                    text += emit_dump(c->report_path, h2);
+                }
+            }
             if (c->on_fire) c->on_fire(text.c_str(), c->user);
             g_fires.fetch_add(1, std::memory_order_relaxed);
         }

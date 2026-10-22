@@ -15,6 +15,7 @@
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/log.h"
+#include "nxrt/runtime.h"
 #include "nxrt/module.h"
 #include "nxrt/tt.h"
 #include "tt_internal.h"
@@ -605,6 +606,8 @@ void end_run(int code, const char* verdict, const std::string& message) {
         s.message = message;
         s.stop_wall = true;
         NXLOG_I("tt", "run ended: %s (exit code %d) %s", verdict, code, message.c_str());
+        // the unknown-call tally of the whole run (SVCs, IPC commands, HLE stubs), for the sweep report; not on a freeze, where a lock may be held
+        if (code == 0 || code == 1) NXLOG_I("tt", "state at the end of the run:\n%s", nxrt::summary().c_str());
         release_held_keys(s);
         write_result(s, code, verdict, message);
         flush_files(s);

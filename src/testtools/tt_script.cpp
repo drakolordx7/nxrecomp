@@ -223,6 +223,64 @@ bool take_timeout(const std::vector<std::string>& t, std::size_t from, std::vect
     return true;
 }
 
+// EItemType (CPlayerStateMP1::EItemType, docs/mpr/enums.json): name (case and underscores ignored) or number -> id; -1 when unknown.
+int64_t item_id(const std::string& tok) {
+    static const char* const names[] = {"powerbeam", "icebeam", "wavebeam", "plasmabeam", "missiles", "scanvisor", "morphballbombs", "powerbombs",
+                                        "flamethrower", "thermalvisor", "chargebeam", "supermissile", "grapplebeam", "xrayvisor", "icespreader",
+                                        "spacejumpboots", "morphball", "combatvisor", "boostball", "spiderball", "powersuit", "gravitysuit",
+                                        "variasuit", "phazonsuit", "energytanks"};
+    std::string k;
+    for (char c : tok) if (c != '_') k.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++) if (k == names[i]) return static_cast<int64_t>(i);
+    if (k == "wavebuster") return 0x1c;
+    if (k == "bombs") return 6;
+    if (k == "spacejump") return 0xf;
+    if (!k.empty() && std::isdigit(static_cast<unsigned char>(k[0]))) {
+        char* end = nullptr;
+        const long v = std::strtol(k.c_str(), &end, 0);
+        if (end && *end == 0 && v >= 0 && v < 0x29) return v;
+    }
+    return -1;
+}
+
+// Parses "<field> <op> <value>" at t[i..i+2] into s.field / s.op / s.x / s.id / s.text (shared by @assert and @mash).
+bool parse_condition(const std::vector<std::string>& t, std::size_t i, const RegionTable* rt, Step* sp, std::string& msg) {
+    Step& s = *sp;
+    std::string field_name = lower(t[i]);
+    const FieldName* field = nullptr;
+    for (const FieldName& f : kFields) {
+        if (field_name == f.name) {
+            field = &f;
+            break;
+        }
+    }
+    if (!field) return fail_with(msg, "unknown assert field '" + t[i] + "'");
+    const OpName* op = nullptr;
+    for (const OpName& o : kOps) {
+        if (t[i + 1] == o.text) {
+            op = &o;
+            break;
+        }
+    }
+    if (!op) return fail_with(msg, "unknown operator '" + t[i + 1] + "'");
+    s.field = field->field;
+    s.op = op->op;
+    s.text = t[i + 2];
+    if (s.field == AssertField::Area || s.field == AssertField::World) {
+        if (s.op != AssertOp::Eq && s.op != AssertOp::Ne)
+            return fail_with(msg, "@assert " + t[i] + " allows only == and !=");
+        if (!resolve_id(t[i + 2], rt, s.field == AssertField::Area, s.id, msg)) return false;
+        s.name1 = t[i + 2];
+    } else if (s.field == AssertField::Frame) {
+        int64_t frame = 0;
+        if (!count_arg(t[i + 2], &frame, msg)) return false;
+        s.x = static_cast<double>(frame);
+    } else {
+        if (!real_arg(t[i + 2], &s.x, msg)) return false;
+    }
+    return true;
+}
+
 // Parses one logical line (comment already removed, trimmed) into zero or more steps.
 // `body` is the trimmed line, `t` its whitespace-separated tokens (t is never empty).
 bool parse_stmt(const std::string& body, const std::vector<std::string>& t, const RegionTable* rt,
@@ -412,6 +470,48 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    if (kw == "@grant") {
+        if (n < 2 || n > 4) return usage(msg, "@grant <item|all> [<amount> [<capacity>]]");
+        Step s = make(StepKind::Grant);
+        s.text = t[1];
+        s.count = -1;
+        if (lower(t[1]) != "all") {
+            s.count = item_id(t[1]);
+            if (s.count < 0) return fail_with(msg, "unknown item '" + t[1] + "' (an EItemType name or a number)");
+        }
+        s.x = 1;
+        if (n >= 3 && !real_arg(t[2], &s.x, msg)) return false;
+        s.y = s.x;
+        if (n == 4 && !real_arg(t[3], &s.y, msg)) return false;
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@call") {
+        if (n < 2 || n > 8) return usage(msg, "@call <offset> [<arg>...] (up to 6 arguments)");
+        Step s = make(StepKind::Call);
+        if (!count_arg(t[1], &s.count, msg)) return false;
+        s.text = rest_after_first_word(rest_after_first_word(body));
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@play") {
+        std::vector<std::string> pos;
+        int64_t timeout = -1;
+        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
+        bool soft = false;
+        if (pos.size() == 2 && lower(pos[1]) == "soft") { soft = true; pos.pop_back(); }
+        if (pos.size() != 1) return usage(msg, "@play <seconds> [timeout=<n>] [soft]");
+        Step s = make(StepKind::PlayTime);
+        s.soft = soft;
+        if (!real_arg(pos[0], &s.x, msg)) return false;
+        if (s.x < 0.0) return fail_with(msg, "@play seconds must be >= 0, got '" + pos[0] + "'");
+        s.timeout = timeout;
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "@warp") {
         if (n != 3) return usage(msg, "@warp <world> <area>");
         Step s = make(StepKind::Warp);
@@ -469,40 +569,25 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
 
     if (kw == "@assert") {
         if (n != 4) return usage(msg, "@assert <field> <op> <value>");
-        std::string field_name = lower(t[1]);
-        const FieldName* field = nullptr;
-        for (const FieldName& f : kFields) {
-            if (field_name == f.name) {
-                field = &f;
-                break;
-            }
-        }
-        if (!field) return fail_with(msg, "unknown assert field '" + t[1] + "'");
-        const OpName* op = nullptr;
-        for (const OpName& o : kOps) {
-            if (t[2] == o.text) {
-                op = &o;
-                break;
-            }
-        }
-        if (!op) return fail_with(msg, "unknown operator '" + t[2] + "'");
-
         Step s = make(StepKind::Assert);
-        s.field = field->field;
-        s.op = op->op;
-        s.text = t[3];
-        if (s.field == AssertField::Area || s.field == AssertField::World) {
-            if (s.op != AssertOp::Eq && s.op != AssertOp::Ne)
-                return fail_with(msg, "@assert " + t[1] + " allows only == and !=");
-            if (!resolve_id(t[3], rt, s.field == AssertField::Area, s.id, msg)) return false;
-            s.name1 = t[3];
-        } else if (s.field == AssertField::Frame) {
-            int64_t frame = 0;
-            if (!count_arg(t[3], &frame, msg)) return false;
-            s.x = static_cast<double>(frame);
-        } else {
-            if (!real_arg(t[3], &s.x, msg)) return false;
-        }
+        if (!parse_condition(t, 1, rt, &s, msg)) return false;
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@mash") {
+        // @mash <keys> every <n> until <field> <op> <value> [timeout=<n>]: press the keys for 4 frames every n frames until the condition holds
+        std::vector<std::string> pos;
+        int64_t timeout = -1;
+        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
+        if (pos.size() != 7 || lower(pos[1]) != "every" || lower(pos[3]) != "until")
+            return usage(msg, "@mash <keys> every <n> until <field> <op> <value> [timeout=<n>]");
+        Step s = make(StepKind::Mash);
+        if (!keys_mask(pos[0], &s.buttons, msg)) return false;
+        if (!count_arg(pos[2], &s.count, msg)) return false;
+        if (s.count < 5) return fail_with(msg, "@mash interval must be at least 5 frames");
+        if (!parse_condition(pos, 4, rt, &s, msg)) return false;
+        s.timeout = timeout;
         out.push_back(s);
         return true;
     }
