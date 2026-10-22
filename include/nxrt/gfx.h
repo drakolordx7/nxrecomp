@@ -104,6 +104,21 @@ struct DeviceFeatures {
     bool bc = false, astc_ldr = false, etc2 = false;          // textureCompression*: enabled on the device
     bool sampler_anisotropy = false, independent_blend = false, depth_clamp = false, fill_mode_non_solid = false;
     bool timeline_semaphore = false, dynamic_rendering = false, synchronization2 = false;
+    // Enabled for the NVN back end (everything the GPU offers is enabled; these flags say what is there).
+    bool geometry_shader = false, shader_float64 = false, shader_int64 = false, dual_src_blend = false, logic_op = false;
+    bool multi_viewport = false, depth_bounds = false, depth_bias_clamp = false, wide_lines = false, large_points = false;
+    bool image_cube_array = false, shader_draw_parameters = false, sampler_mirror_clamp_to_edge = false;
+    bool descriptor_indexing = false, host_query_reset = false;
+    bool fragment_shader_interlock = false, depth_clip_control = false, depth_clip_enable = false, custom_border_color = false;
+    bool extended_dynamic_state3 = false, vertex_input_dynamic_state = false;
+    bool external_memory_host = false, push_descriptor = false;
+};
+
+struct DeviceLimitsExt {
+    uint64_t min_imported_host_alignment = 0;   // VK_EXT_external_memory_host (0: not available)
+    uint64_t max_buffer_size = 0;
+    uint32_t subgroup_size = 0, subgroup_ops = 0;
+    uint32_t max_memory_allocation_count = 0;
 };
 
 class Device {
@@ -126,6 +141,7 @@ public:
     bool headless() const { return surface_ == VK_NULL_HANDLE; }
     const VkPhysicalDeviceProperties& properties() const { return props_; }
     const DeviceFeatures& features() const { return features_; }
+    const DeviceLimitsExt& limits_ext() const { return limits_; }
     const std::vector<GpuInfo>& gpus() const { return gpus_; }
     const GpuInfo& gpu() const { return gpus_[gpu_index_]; }       // the one in use
     bool gpu_override_matched() const { return gpu_override_matched_; }
@@ -178,6 +194,7 @@ private:
     VmaAllocator vma_ = nullptr;
     VkPhysicalDeviceProperties props_ = {};
     DeviceFeatures features_;
+    DeviceLimitsExt limits_;
     std::vector<GpuInfo> gpus_;
     size_t gpu_index_ = 0;
     bool gpu_override_matched_ = true;
