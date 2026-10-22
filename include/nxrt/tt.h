@@ -65,6 +65,8 @@ struct GameState {
     int32_t cam_state = -1;        // EPlayerCameraState (0 first person)
     int32_t morph_state = -1;      // morph transition state word (0 = unmorphed)
     int32_t orbit_state = -1;      // EPlayerOrbitState (0 = not locked on)
+    bool have_cam = false;         // the first-person camera object's heading and pitch (what the player sees; differs from yaw/pitch under free look)
+    float cam_yaw = 0, cam_pitch = 0;
     bool have_ps = false;
     int32_t beam = -1;             // current beam, game numbering 0 power 1 ice 2 wave 3 plasma
     int32_t visor = -1;            // 0 combat 1 x-ray 2 scan 3 thermal

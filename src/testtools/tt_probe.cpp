@@ -19,6 +19,7 @@
 // CStateManager::GameState(), SInitialState{area, -1}); CGameInstanceState::QuitGame(7) with the instance state from CStateManager::GameInstanceState().
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -141,6 +142,18 @@ bool read_state(GameState* out) {
             g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is -Z at 0; + = turn left)
             rd(player + 0x3f0, &g.move_state);
             g.have_player = std::isfinite(g.pos[0]) && std::isfinite(g.pos[1]) && std::isfinite(g.pos[2]);
+        }
+        if (g.have_player && mgr) {            // the first-person camera: [[[mgr + 0x4e0150] + 0x30] + 0x80]
+            const uint64_t logic = rd64(mgr + 0x4e0150);
+            const uint64_t cm = logic ? rd64(logic + 0x30) : 0;
+            const uint64_t fp = cm ? rd64(cm + 0x80) : 0;
+            float cx[12];
+            const uint64_t xfp = fp ? rd64(rd64(rd64(fp + 8) + 0x20) + 0x40) : 0;
+            if (xfp && rd(xfp, &cx) && std::isfinite(cx[2]) && std::isfinite(cx[0])) {
+                g.cam_yaw = std::atan2(cx[2], cx[0]);
+                g.cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, -cx[6])));
+                g.have_cam = true;
+            }
         }
         if (g.have_player) {
             float pitch = 0;

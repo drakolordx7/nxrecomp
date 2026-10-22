@@ -210,6 +210,8 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Mouse:
             if (k == "yaw") return set_num(&s->mouse.yaw_rad);
             if (k == "pitch") return set_num(&s->mouse.pitch_rad);
+            if (k == "morph_yaw") return set_num(&s->mouse.morph_yaw_rad);
+            if (k == "morph_pitch") return set_num(&s->mouse.morph_pitch_rad);
             if (k == "yaw_source" || k == "pitch_source") {   // Source scale, converted to radians per count
                 double x = 0;
                 if (!set_num(&x)) return false;
@@ -457,6 +459,8 @@ std::string format_settings(const Settings& s) {
     o += "\n[mouse]\n";
     kv("yaw", num(s.mouse.yaw_rad));
     kv("pitch", num(s.mouse.pitch_rad));
+    kv("morph_yaw", num(s.mouse.morph_yaw_rad));
+    kv("morph_pitch", num(s.mouse.morph_pitch_rad));
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_touch", flag(s.mouse.menu_touch));

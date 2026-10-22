@@ -195,13 +195,26 @@ void mouse_tab(Page& p) {
     ImGui::Checkbox("Link vertical to horizontal", &p.link_pitch);
 
     ImGui::Spacing();
+    ImGui::TextUnformatted("Morph ball camera (mouse orbits the camera around the ball)");
+    src = source_sens(m.morph_yaw_rad);
+    if (slider("Ball camera horizontal", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+        m.morph_yaw_rad = rad_per_count(src);
+        mark(p);
+    }
+    src = source_sens(m.morph_pitch_rad);
+    if (slider("Ball camera vertical", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+        m.morph_pitch_rad = rad_per_count(src);
+        mark(p);
+    }
+
+    ImGui::Spacing();
     if (ImGui::Checkbox("Invert vertical", &m.invert_y)) mark(p);
     if (ImGui::Checkbox("Invert horizontal", &m.invert_x)) mark(p);
     if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_beams)) mark(p);
     if (ImGui::Checkbox("Left click is a touch in menus and the map", &m.menu_touch)) mark(p);
 
     ImGui::Spacing();
-    ImGui::TextWrapped("Raw mouse input, no acceleration. Aim only applies in the first-person view when not locked on, not in the morph ball and not in a cutscene.");
+    ImGui::TextWrapped("Raw mouse input, no acceleration. Aim only applies in the first-person view when not locked on, not in the morph ball and not in a cutscene. Holding the free look key (Alt) turns the view without turning Samus.");
 }
 
 // ---- Controller ---------------------------------------------------------------------------------------------------------------------

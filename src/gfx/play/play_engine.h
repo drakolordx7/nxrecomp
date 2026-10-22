@@ -88,7 +88,9 @@ private:
     std::vector<BindRt> rt_;
     std::vector<int> cur_;                                // indices of the bindings that apply in ctx_
     std::map<InputId, InState> in_;
-    struct Sel { Act act; uint64_t start, end; };
+    // `seen` = a poll of output() has reported it: a pulse always lasts until the first poll at or after its end, so a slow game frame (100 ms or more)
+    // cannot miss it, and only the head of the queue is ever reported (two selects never show in one poll).
+    struct Sel { Act act; uint64_t start, end; bool seen = false; };
     std::vector<Sel> sels_;                               // select pulses, queued so that two selects never overlap
     uint64_t acts_[kActCount] = {};
     Act last_ = Act::None;
