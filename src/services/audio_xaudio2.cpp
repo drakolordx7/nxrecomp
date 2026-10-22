@@ -83,6 +83,7 @@ public:
     void close() override;
     uint32_t write(const int16_t* pcm, uint32_t frames) override;
     uint32_t queued_frames() override;
+    bool has_device_clock() const override { return true; }   // SamplesPlayed is the device's own clock
     const char* name() const override { return "xaudio2"; }
     SinkStats stats() override;
 
@@ -115,6 +116,8 @@ private:
     void release_slot(uint32_t idx);
     void on_pass_start(UINT32 bytes_required) noexcept;
     void note_queued(uint32_t buffers) noexcept;
+    uint32_t queued_now() noexcept;                  // submitted frames minus the frames the device has played
+    void note_queue_frames(bool playing) noexcept;   // peak and low water marks of queued_now()
     uint32_t submit(const int16_t* pcm, uint32_t frames);
     void teardown();   // destroys the voices and the engine and undoes our COM initialisation; safe when nothing is open
 
@@ -125,6 +128,7 @@ private:
     bool com_owned_ = false;          // this sink called CoInitializeEx successfully and must balance it
     DWORD com_thread_ = 0;            // the thread that did, so CoUninitialize runs there
     uint32_t channels_ = 0;
+    uint32_t rate_ = 48000;
     float applied_volume_ = 1.0f;     // the volume last set on the source voice (write thread)
 
     std::mutex mu_;                   // guards slots_ (write, queued_frames and the callback)
@@ -136,6 +140,9 @@ private:
     std::atomic<uint64_t> frames_dropped_{0};
     std::atomic<uint64_t> underruns_{0};
     std::atomic<uint32_t> queued_peak_{0};
+    std::atomic<uint64_t> submitted_frames_{0};          // frames handed to the voice since open()
+    std::atomic<uint32_t> queue_peak_frames_{0};
+    std::atomic<uint32_t> queue_low_frames_{0xffffffffu};
     std::atomic<bool> started_{false};   // a buffer has been submitted since open()
     std::atomic<bool> starved_{false};   // the device is out of buffers now; an underrun is counted once per such stretch
 };
@@ -205,6 +212,7 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
 
     started_.store(false);
     starved_.store(false);
+    submitted_frames_.store(0);
     callback_.owner = this;
     hr = engine_->CreateSourceVoice(&source_, &wfx.Format, 0, XAUDIO2_DEFAULT_FREQ_RATIO, &callback_, nullptr, nullptr);
     if (FAILED(hr)) {
@@ -231,6 +239,7 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         }
     }
     channels_ = channels;
+    rate_ = sample_rate;
     NXLOG_I("audio", "xaudio2: opened %u Hz, %u channels, volume %.2f", sample_rate, channels, applied_volume_);
     return true;
 }
@@ -320,7 +329,9 @@ uint32_t XAudio2Sink::submit(const int16_t* pcm, uint32_t frames) {
         }
         started_.store(true);
         starved_.store(false);
+        submitted_frames_.fetch_add(n, std::memory_order_relaxed);
         note_queued(state.BuffersQueued + 1);
+        note_queue_frames(false);
         accepted += n;
     }
     return accepted;
@@ -332,6 +343,7 @@ void XAudio2Sink::on_pass_start(UINT32 bytes_required) noexcept {
     XAUDIO2_VOICE_STATE state{};
     source_->GetState(&state);
     note_queued(state.BuffersQueued);
+    note_queue_frames(true);
     if (state.BuffersQueued == 0) {
         if (!starved_.exchange(true)) underruns_.fetch_add(1, std::memory_order_relaxed);
     } else {
@@ -345,7 +357,31 @@ void XAudio2Sink::note_queued(uint32_t buffers) noexcept {
     }
 }
 
+// The device's play position is SamplesPlayed of the source voice: it counts the samples the voice has consumed, so submitted minus played
+// is exact (not rounded to whole buffers). A voice that starved keeps counting only what it really played.
+uint32_t XAudio2Sink::queued_now() noexcept {
+    IXAudio2SourceVoice* v = source_;
+    if (!v) return 0;
+    XAUDIO2_VOICE_STATE state{};
+    v->GetState(&state);
+    const uint64_t submitted = submitted_frames_.load(std::memory_order_relaxed);
+    return submitted > state.SamplesPlayed ? static_cast<uint32_t>(submitted - state.SamplesPlayed) : 0u;
+}
+
+void XAudio2Sink::note_queue_frames(bool playing) noexcept {
+    const uint32_t q = queued_now();
+    uint32_t peak = queue_peak_frames_.load(std::memory_order_relaxed);
+    while (q > peak && !queue_peak_frames_.compare_exchange_weak(peak, q, std::memory_order_relaxed)) {
+    }
+    if (playing && q > 0 && submitted_frames_.load(std::memory_order_relaxed) > rate_ / 2 + q) {   // not the start-up fill: after half a second played
+        uint32_t low = queue_low_frames_.load(std::memory_order_relaxed);
+        while (q < low && !queue_low_frames_.compare_exchange_weak(low, q, std::memory_order_relaxed)) {
+        }
+    }
+}
+
 uint32_t XAudio2Sink::queued_frames() {
+    if (source_) return queued_now();
     std::lock_guard<std::mutex> lk(mu_);
     uint32_t total = 0;
     for (const Slot& s : slots_) {
@@ -361,6 +397,9 @@ SinkStats XAudio2Sink::stats() {
     s.frames_dropped = frames_dropped_.load(std::memory_order_relaxed);
     s.underruns = underruns_.load(std::memory_order_relaxed);
     s.queued_peak = queued_peak_.load(std::memory_order_relaxed);
+    s.queued_peak_frames = queue_peak_frames_.load(std::memory_order_relaxed);
+    const uint32_t low = queue_low_frames_.load(std::memory_order_relaxed);
+    s.queued_low_frames = low == 0xffffffffu ? 0 : low;
     return s;
 }
 

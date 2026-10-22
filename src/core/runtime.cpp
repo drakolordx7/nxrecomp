@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <mutex>
 
+#include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
@@ -64,6 +65,7 @@ std::string summary() {
     std::string s;
     s += svc_summary() + "\n";
     s += ipc::ipc_summary();
+    s += "audio: " + audio::stats_report() + "\n";
     size_t stubs = 0, called_stubs = 0;
     for (auto& h : hle_list()) {
         stubs += h.stub;

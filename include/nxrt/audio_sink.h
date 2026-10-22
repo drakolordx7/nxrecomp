@@ -20,6 +20,8 @@ struct SinkStats {
     uint64_t frames_dropped = 0;    // frames write() could not queue (device queue full)
     uint64_t underruns = 0;         // times the device ran out of queued audio after playback had started
     uint32_t queued_peak = 0;       // most buffers the device held queued at one time
+    uint32_t queued_peak_frames = 0;   // most frames queued at one time (sinks that can measure it)
+    uint32_t queued_low_frames = 0;    // fewest frames queued after playback had started (the margin against an underrun)
 };
 
 class AudioSink {
@@ -33,6 +35,10 @@ public:
     virtual uint32_t write(const int16_t* pcm, uint32_t frames) = 0;
     // Frames queued but not yet played.
     virtual uint32_t queued_frames() = 0;
+    // True when queued_frames() follows a real (or simulated) device clock that drains at the sample rate. The audio renderer then
+    // paces itself by the queue level (it keeps about 40 ms queued) instead of by the host clock, so a device that runs a little fast
+    // or slow never overflows or starves the queue. The null sink has no clock.
+    virtual bool has_device_clock() const { return false; }
     virtual const char* name() const = 0;
     // The counters above. The base class has no write path of its own, so by default it reports zeros.
     virtual SinkStats stats() { return {}; }
@@ -57,10 +63,15 @@ public:
 };
 
 void set_sink(std::shared_ptr<AudioSink> s);          // replaces the active sink (closing the old one)
-// Never null: a NullSink until [audio] sink selects another or set_sink is called. With [audio] wav_dump set, the chosen sink is
-// wrapped in a WAV tee (make_wav_tee).
+// Never null. [audio] sink: auto (default: XAudio2 when it can open the default output device, else the null sink), xaudio2 (the same,
+// but a failure is a warning), paced (a simulated device), null (discard). With [audio] wav_dump set, the chosen sink is wrapped in
+// a WAV tee (make_wav_tee).
 std::shared_ptr<AudioSink> sink();
 std::shared_ptr<AudioSink> make_xaudio2_sink();       // src/services/audio_xaudio2.cpp; nullptr when XAudio2 is unavailable
+// A simulated device: consumes queued frames at the sample rate (times 1 + skew_ppm / 1e6) on the host clock, counts the times it
+// ran dry and the lowest and highest queue level. No output. [audio] sink = paced ([audio] paced_ppm sets the skew); what the tests and
+// the underrun checks run on when no audio device is present. src/services/audio_paced.cpp.
+std::shared_ptr<AudioSink> make_paced_sink(double skew_ppm = 0.0);
 
 // A sink that forwards everything to `inner` and also writes every frame passed to write() into a 16-bit PCM WAV file at `path`.
 // The file is opened at the rate and channel count of each open(); a later open() with different parameters starts a new file
