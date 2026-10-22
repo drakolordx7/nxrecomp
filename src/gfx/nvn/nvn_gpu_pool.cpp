@@ -9,6 +9,7 @@
 #include <new>
 #include <unordered_set>
 
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 
@@ -41,6 +42,7 @@ std::mutex g_live_mu;
 std::unordered_set<PoolGpu*> g_live;
 
 PoolGpu* import_pool(MemoryPool* p) {
+    ft::Scope zs(ft::zone_id("pool.import"), 0, static_cast<uint32_t>(p->size >> 20));
     auto* g = new PoolGpu();
     gfx::Device& dev = device();
     if (!dev.features().external_memory_host || !p->base || !p->size) {

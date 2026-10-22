@@ -127,6 +127,17 @@ struct DisplaySettings {
     int fps_cap = 60;              // 0 = unlimited; with vsync on, the cap only applies when it is below the refresh rate
     int width = 1280, height = 720;    // windowed client size, remembered
     bool keep_aspect = true;       // letterbox instead of stretching
+    // ---- S10 display options (play_display.h). The first four only apply at the next start: the game builds its render targets once.
+    int render_scale = 100;        // percent of the window's client size used as the internal resolution (25..400); ignored with a fixed size
+    int render_width = 0, render_height = 0;   // fixed internal resolution (both > 0 and both within 320..16384), 0 = follow the window
+    double aspect = 0;             // 0 = the ratio of the internal resolution; otherwise the forced ratio of the 3D view and the HUD (1.0 .. 5.0)
+    // live:
+    double fov_offset = 0;         // degrees added to the vertical field of view of every game camera (-30 .. 40), 0 = the game's own
+    bool dynamic_resolution = false;   // the game's own dynamic resolution (it lowers the render size when the GPU is late)
+    int anisotropy = 0;            // 0 = what the game's samplers ask for; 2, 4, 8 or 16 = at least that on every filtering sampler
+    double lod_bias = 0;           // texture LOD bias added to every sampler (-2.0 .. 2.0; negative is sharper)
+    bool bloom = true;
+    bool chromatic_aberration = true;
 };
 
 struct Settings {

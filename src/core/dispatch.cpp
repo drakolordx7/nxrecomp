@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "nxrt/ftrace.h"
 #include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
@@ -76,6 +77,7 @@ struct Thunk {
     std::string name;
     HleFn fn = nullptr;       // null: logging stub
     std::atomic<uint64_t> calls{0};
+    std::atomic<int> ft_zone{-1};   // frame trace zone ("hle:<name>"), registered on the first slow call
 };
 std::mutex g_hle_lock;
 std::vector<std::unique_ptr<Thunk>> g_thunks;        // index = (addr - kHleBase) / 16
@@ -279,7 +281,18 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
             for (int i = 0; i < 4; i++) targs[i] = reg(c, i);
         }
         if (t.fn) {
-            t.fn(c);
+            if (ft::on()) {
+                const uint64_t t0 = ft::now_ns();
+                t.fn(c);
+                const uint64_t t1 = ft::now_ns();
+                if (t1 - t0 >= 100000) {       // frame trace: HLE calls (services, NVN entry points) of at least 100 us
+                    int z = t.ft_zone.load(std::memory_order_relaxed);
+                    if (z < 0) { z = ft::zone_id(("hle:" + t.name).c_str()); t.ft_zone.store(z, std::memory_order_relaxed); }
+                    ft::event(static_cast<uint16_t>(z), t0, t1, 0);
+                }
+            } else {
+                t.fn(c);
+            }
         } else {
             // No handler: the console would fault on an unresolved import. A silent 0 is a fake answer, so say so (every
             // call up to 20, then every 1000th) and return 0.

@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "nxrt/config.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 
@@ -194,6 +195,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
             counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
             return e.second;
         }
+    NXFT("pipe.create");
     const auto t0 = std::chrono::steady_clock::now();
 
     VkPipelineShaderStageCreateInfo stages[3] = {};
