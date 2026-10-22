@@ -5,6 +5,7 @@
 // Uploads: prepare_texture (nvn_texdata.cpp) gives the bytes, they go through a staging buffer into one buffer-to-image copy per
 // level. Layouts are tracked per image (all levels and layers share one layout). Samplers are cached by their NVN state.
 // Readback (download_texture) copies a render target back and tiles it into the game's storage.
+#include <mutex>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -27,6 +28,9 @@
 namespace nxrt::nvn::be {
 
 // The Vulkan side of a texture: Texture::gpu points to it (created by gpu::tex_gpu, freed by gpu::tex_destroy).
+static std::mutex g_live_mu;
+static std::set<struct TexGpu*> g_live_set;
+
 struct TexGpu {
     gfx::Image img;                                     // the image; created without a view (views are cached below)
     const FormatInfo* fmt = nullptr;
@@ -187,6 +191,7 @@ VkImageCreateFlags base_flags(const Shape& s, VkFormat fmt) {
 // Makes the image of t (or the failed marker when no format works). Stores the result in t->gpu, which is never null afterwards.
 TexGpu* create_texture_gpu(Texture* t) {
     auto* g = new TexGpu();
+    { std::lock_guard<std::mutex> lk(g_live_mu); g_live_set.insert(g); }
     t->gpu = g;
     const Shape s = shape_of(*t);
     g->fmt = t->fmt;
@@ -723,6 +728,10 @@ VkSampler sampler_for(const SamplerInfo& s) {
 
 void tex_destroy(TexGpu* g) {
     if (!g) return;
+    {
+        std::lock_guard<std::mutex> lk(g_live_mu);
+        if (!g_live_set.erase(g)) return;   // already destroyed by tex_shutdown
+    }
     for (auto& kv : g->views) vkDestroyImageView(vkdev(), kv.second, nullptr);
     g->views.clear();
     if (g->img) g_live_images.fetch_sub(1);
@@ -743,6 +752,12 @@ TexStats tex_stats() {
 // Frees every cached object this module made (samplers, dummy views and images). Render thread, device idle, no texture alive:
 // called by the tests before shutdown_for_test (the back end's teardown does not call it yet).
 void tex_shutdown() {
+    std::vector<TexGpu*> left;
+    {
+        std::lock_guard<std::mutex> lk(g_live_mu);
+        left.assign(g_live_set.begin(), g_live_set.end());
+    }
+    for (TexGpu* g : left) tex_destroy(g);
     for (auto& kv : g_sh.samplers)
         for (auto& e : kv.second) vkDestroySampler(vkdev(), e.second, nullptr);
     g_sh.samplers.clear();

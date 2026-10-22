@@ -459,6 +459,17 @@ void destroy_pool_gpu(PoolGpu* p) {
     defer_destroy([p] { pool_gpu_destroy(p); });
 }
 
+namespace {
+std::atomic<int> g_origin{NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT}, g_depth_mode{NVN_DEPTH_MODE_NEAR_IS_MINUS_W};
+}
+void set_window_modes(int origin_mode, int depth_mode) { g_origin.store(origin_mode); g_depth_mode.store(depth_mode); }
+int window_origin_mode() { return g_origin.load(); }
+int depth_mode() { return g_depth_mode.load(); }
+gfx::Renderer* renderer() { return g ? g->rend : nullptr; }
+FrameLimiter* limiter() { return g ? g->limiter : nullptr; }
+PresentPass* present_pass() { return g && g->present_ok ? &g->present : nullptr; }
+bool keep_aspect() { return g && g->keep_aspect; }
+
 uint64_t timestamp_ns() {
     static const auto t0 = std::chrono::steady_clock::now();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count()) + 1000000000ull;
@@ -526,6 +537,7 @@ void tear_down() {
         retire();
         replay_shutdown();
         tex_shutdown();
+        pool_shutdown();
         while (!gp->deferred.empty()) {
             auto fn = std::move(gp->deferred.front().fn);
             gp->deferred.pop_front();

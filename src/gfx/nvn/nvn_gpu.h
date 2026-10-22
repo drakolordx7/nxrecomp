@@ -42,6 +42,9 @@ void mark_texture_cpu_dirty(Texture* t);
 // texture has no GPU image yet or cannot be read back.
 bool download_texture(Texture* t);
 
+// nvnDeviceSetWindowOriginMode / nvnDeviceSetDepthMode: the replay needs them to place viewports and the depth range.
+void set_window_modes(int origin_mode, int depth_mode);
+
 // ---- device facts for the api files ------------------------------------------------------------------------------------
 uint64_t timestamp_ns();                       // nvnDeviceGetCurrentTimestampInNanoseconds
 
