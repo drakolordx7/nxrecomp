@@ -47,16 +47,10 @@ operand values.
   1 window below 0x10000 and 2 windows that cannot be mapped on Windows. 6 more expectations read FPSR flags (QC) and 5 cases
   need FPCR (both gaps above); they are counted apart, not as passes.
 
-## Not measured yet (needs the game binary)
+## Measured on the game (S1b, docs/S1b.md)
 
-- Coverage of `cover` on the real `main`, `sdk` and `subsdk`: any word the corpus does not contain would show there.
-- Jump tables: the resolver handles clang's compressed and `ldrsw` tables (all 12 switch tables of the end-to-end switch program
-  at -O2); a `br` it cannot resolve falls back to a dispatch over every instruction of the function (correct, large). Only the
-  game says how many fall back.
-- Compile time and size of the generated C++ for ~1.6 M instructions; `optnone_insns` (20,000) and the launcher's time limit are
-  smo's numbers.
-- C++ exceptions with catch clauses of base classes and `catch` through `dynamic_cast` hierarchies: the test unwinder matches
-  typeinfo pointers exactly; hierarchy matching belongs to the runtime's `__cxa_*` implementation.
-- Hook sites (`entryhook`, `midhook`): tested as counters only. `hook_inline_check.py` of ssbu-recomp (a check of compiled
-  objects that a hooked function is still called, not inlined) was not ported; the lifter marks hooked entries `noinline`, which
-  is what that check enforces.
+- `cover` is 100% on `main`, `sdk` and `subsdk0`; code outside every discovered function (hand-written SDK stubs) was found by a separate gap scan and is lifted (debug 008).
+- Jump tables: 881 / 622 / 335 resolved; every other `br` is an indirect tail call (debug 007), 6 keep the dispatch fallback.
+- Compile time and size: 6.5 M instructions lift to 453 MB of C++ and compile cold in about two minutes (docs/S1b.md); no function reaches `optnone_insns`.
+- C++ exceptions: only `sdk` has LSDAs; no typed catch and 13 empty `throw()` specifications. Class-hierarchy matching and the unwinder are the runtime's.
+- Still not covered: hook sites on the real game (none configured), FPCR (3 writes, all in unreferenced SDK stubs), and anything that only a run can show.
