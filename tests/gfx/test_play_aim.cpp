@@ -227,24 +227,25 @@ NXTEST(translation_and_third_row_kept) {
     CHECK_NEAR(w.xf[3], 10, 1e-6);
     CHECK_NEAR(w.xf[7], 20, 1e-6);
     CHECK_NEAR(w.xf[11], 30, 1e-6);
-    CHECK_NEAR(w.xf[8], 0, 1e-6);
-    CHECK_NEAR(w.xf[9], 0, 1e-6);
-    CHECK_NEAR(w.xf[10], 1, 1e-6);
+    CHECK_NEAR(w.xf[4], 0, 1e-6);
+    CHECK_NEAR(w.xf[5], 1, 1e-6);
+    CHECK_NEAR(w.xf[6], 0, 1e-6);
 }
 
 NXTEST(rotate_transform_yaw_quarter_turn) {
     const float in[12] = {1, 0, 0, 10, 0, 1, 0, 20, 0, 0, 1, 30};
     float out[12];
     play::rotate_transform_yaw(in, kPi / 2, out);
-    // forward column (xf[1], xf[5], xf[9]) turns from (0,1,0) into (-1,0,0)
-    CHECK_NEAR(out[1], -1, 1e-5);
-    CHECK_NEAR(out[5], 0, 1e-5);
-    CHECK_NEAR(out[9], 0, 1e-5);
+    // the world is Y up: the quarter turn mixes rows 0 and 2, row 1 stays
+    CHECK_NEAR(out[2], 1, 1e-5);
+    CHECK_NEAR(out[0], 0, 1e-5);
+    CHECK_NEAR(out[8], -1, 1e-5);
+    CHECK_NEAR(out[5], 1, 1e-5);
     // translation and row 3 kept
     CHECK_NEAR(out[3], 10, 1e-6);
     CHECK_NEAR(out[7], 20, 1e-6);
     CHECK_NEAR(out[11], 30, 1e-6);
-    CHECK_NEAR(out[10], 1, 1e-6);
+    CHECK_NEAR(out[10], 0, 1e-5);
 }
 
 NXTEST(pitch_adopts_and_moves_with_dy) {
@@ -404,7 +405,7 @@ NXTEST(gate_no_player_or_manager) {
     CHECK(!d.apply(w.pl(), 0, 100, -100, p, [&] { ++calls; }));
     CHECK(d.last_block() == AimBlock::NoPlayer);
     CHECK_EQ(calls, 2);
-    CHECK_NEAR(w.xf[1], 0, 1e-6);
+    CHECK_NEAR(w.xf[2], 0, 1e-6);
 }
 
 NXTEST(gate_bad_state_when_unreadable) {
@@ -459,8 +460,8 @@ NXTEST(transform_hook_replaces_memory_write) {
     CHECK_EQ(cap.player, w.pl());
     CHECK_NEAR(play::yaw_of_transform(cap.xf), -100 * kYawRad, 1e-5);
     // the hook took the transform: the memory still holds the old one
-    CHECK_NEAR(w.xf[1], 0, 1e-6);
-    CHECK_NEAR(w.xf[5], 1, 1e-6);
+    CHECK_NEAR(w.xf[2], 0, 1e-6);
+    CHECK_NEAR(w.xf[0], 1, 1e-6);
 
     // without a hook the memory is written
     World m;

@@ -103,6 +103,8 @@ inline double rad_per_count(double source) { return source * kSourceRadPerCount;
 struct MouseSettings {
     double yaw_rad = 0.000767945;   // radians per count, horizontal
     double pitch_rad = 0.000767945;   // radians per count, vertical (separate)
+    double morph_yaw_rad = 0.000767945;     // the morph ball camera: its own sensitivity, radians per count
+    double morph_pitch_rad = 0.000767945;
     bool invert_y = false;                         // false: mouse up looks up
     bool invert_x = false;
     bool menu_touch = true;                        // in menus the left click is a touch on the Switch touch screen

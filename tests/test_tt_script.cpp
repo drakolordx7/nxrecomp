@@ -582,3 +582,28 @@ NXTEST(guid_malformed_text_rejected) {
     CHECK(!tt_guid_to_bytes("01234567-89ab-cdef-0123-456789abcde", b));   // too short
     CHECK(!tt_guid_to_bytes("", b));
 }
+
+NXTEST(gameplay_steps_sleep_run_mash_give_rate) {
+    Script sc;
+    REQUIRE(parse_ok("@sleep 1500\n@run 2.5 timeout=100\n@give MorphBall 1\n@give charge_beam 1\n@give 4 50\n@rate 144\n@rate 0\n@mash A 5000 area 01234567-89ab-cdef-0123-456789abcdef timeout=1000\n", sc));
+    REQUIRE(sc.steps.size() == 8);
+    CHECK_EQ(sc.steps[0].kind, StepKind::WaitMs);
+    CHECK_EQ(sc.steps[0].x, 1500.0);
+    CHECK_EQ(sc.steps[1].kind, StepKind::WaitRun);
+    CHECK_EQ(sc.steps[1].x, 2.5);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)100);
+    CHECK_EQ(sc.steps[2].kind, StepKind::Give);
+    CHECK_EQ(sc.steps[2].x, 16.0);          // MorphBall
+    CHECK_EQ(sc.steps[3].x, 10.0);          // ChargeBeam
+    CHECK_EQ(sc.steps[4].x, 4.0);
+    CHECK_EQ(sc.steps[4].y, 50.0);
+    CHECK_EQ(sc.steps[5].kind, StepKind::Rate);
+    CHECK_EQ(sc.steps[5].x, 144.0);
+    CHECK_EQ(sc.steps[6].x, 0.0);
+    CHECK_EQ(sc.steps[7].kind, StepKind::Mash);
+    CHECK_EQ(sc.steps[7].x, 5000.0);
+    CHECK_EQ(sc.steps[7].timeout, (int64_t)1000);
+    expect_err("@rate -1\n", 1, "@rate hz");
+    expect_err("@give Nonsense 1\n", 1, "unknown item");
+    expect_err("@mash A 5000 room x\n", 1, "@mash");
+}

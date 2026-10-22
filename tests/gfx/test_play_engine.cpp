@@ -467,3 +467,38 @@ NXTEST(default_settings_smoke) {
     CHECK(has(e.output(ms(3050)), hid::kBtnL));      // Q = btn_l
     e.key(SDL_SCANCODE_Q, false, ms(3100));
 }
+
+NXTEST(select_pulse_survives_a_slow_game_frame) {
+    // The game polls once per frame and a frame can take 100 ms or more: a pulse that started and ended between two polls must still be
+    // reported once, and two selects must never show in the same poll.
+    Engine e(settings_from("[bindings.all]\n1 = beam_1\n2 = beam_2\n"));
+    to_gameplay(e);
+    e.key(SDL_SCANCODE_1, true, ms(1000));
+    e.key(SDL_SCANCODE_1, false, ms(1010));
+    e.key(SDL_SCANCODE_2, true, ms(1020));
+    e.key(SDL_SCANCODE_2, false, ms(1030));
+    const EngineOut first = e.output(ms(1400));                   // first poll, long after both pulses should have ended
+    CHECK(first.buttons == (hid::btn(hid::kBtnX) | hid::btn(hid::kBtnUp)));
+    const EngineOut gap = e.output(ms(1500));                     // the poll that retires it shows nothing
+    CHECK(idle(gap));
+    const EngineOut second = e.output(ms(1600));
+    CHECK(second.buttons != 0);
+    CHECK(second.buttons != first.buttons);
+    CHECK(idle(e.output(ms(1700))));
+    CHECK(idle(e.output(ms(1800))));
+}
+
+NXTEST(select_pulse_holds_for_frame_boundaries_once_they_are_counted) {
+    Engine e(settings_from("[bindings.all]\n2 = beam_2\n"));
+    to_gameplay(e);
+    e.frame_tick();
+    e.key(SDL_SCANCODE_2, true, ms(1000));
+    e.key(SDL_SCANCODE_2, false, ms(1010));
+    const uint64_t want = hid::btn(hid::kBtnX) | hid::btn(hid::kBtnRight);
+    CHECK(e.output(ms(1010)).buttons == want);          // a poll that is not the game's tick (first poll)
+    CHECK(e.output(ms(1500)).buttons == want);          // past the pulse's end but no frame boundary yet: still on
+    e.frame_tick();
+    CHECK(e.output(ms(1600)).buttons == want);          // one boundary after the first poll: still on
+    e.frame_tick();
+    CHECK(idle(e.output(ms(1700))));                    // two boundaries: retired (this poll shows nothing)
+}

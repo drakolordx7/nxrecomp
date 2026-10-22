@@ -19,6 +19,9 @@ const char* default_settings_text() {
 # (yaw_source = 2.0 is 2.0 * 0.022 degrees per count).
 yaw = 0.000767945
 pitch = 0.000767945
+# The morph ball camera (the mouse orbits the camera around the ball) has its own sensitivity, same unit.
+morph_yaw = 0.000767945
+morph_pitch = 0.000767945
 invert_y = 0
 invert_x = 0
 menu_touch = 1

@@ -6,7 +6,7 @@
 //
 // How it hooks in (play.cpp): an entry hook on CPlayerMP1::ProcessInput (x0 player, x2 CStateManager). AimDriver::apply() does, in order:
 //   1. read the gate (first person, not morphed, not locked on, not in a cinematic, alive); if closed, forget the pitch and just run the game;
-//   2. yaw: rotate the player's transform about Z by dx * yaw_rad and hand it to CActorMP1::SetTransform (the game's own function, so the
+//   2. yaw: rotate the player's transform about Y (the world is Y up) by dx * yaw_rad and hand it to CActorMP1::SetTransform (the game's own function, so the
 //      entity's change notification runs);
 //   3. pitch: our own accumulated angle (adopted from the game's value when aim becomes allowed), clamped to the tweak's free-look limit;
 //   4. run the game's ProcessInput (it reads the new transform; its free-look code may pull the pitch back toward level);
@@ -31,6 +31,7 @@ struct AimLayout {
     uint32_t morph_state = 0x4d4;            // 0 = unmorphed (GetMorphBallTransitionState 0xc686fc)
     uint32_t orbit_state = 0x4e0;            // EPlayerOrbitState, 0 = none (SetOrbitState 0xc77e5c)
     uint32_t free_look_pitch = 0x5cc;        // float radians, + = up
+    uint32_t free_look_target = 0x5d0;       // float radians: the pitch CPlayerMP1::UpdateFreeLook (every Think) eases free_look_pitch toward; the input code sets it from the stick
     // CStateManager -> CStateManagerGameLogicMP1 -> CCameraManagerMP1
     uint32_t mgr_logic = 0x4e0150, logic_camera_mgr = 0x30;
     uint32_t cam_current_id = 0x00, cam_cinematic = 0x08, cam_cinematic2 = 0x18, cam_fp_object = 0x80, fp_object_id = 0x10;   // IsInFPCamera 0xc8c95c, IsInCinematicCamera 0xc8c974
@@ -97,8 +98,8 @@ private:
 };
 
 // The transform maths (row-major 3x4: three rows of {r0, r1, r2, translation}); public for the tests.
-double yaw_of_transform(const float xf[12]);                               // atan2(-xf[1], xf[5])
-void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Rz(dyaw) * rotation, translation kept
+double yaw_of_transform(const float xf[12]);                               // atan2(xf[2], xf[0]): heading about Y (the world is Y up, forward is +Z at 0, + = turn left)
+void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Ry(dyaw) * rotation, translation kept
 
 // Guest memory access used by the driver and the probes (ReadProcessMemory on this process: a bad pointer gives false, never a fault).
 bool guest_read(uint64_t addr, void* out, size_t n);

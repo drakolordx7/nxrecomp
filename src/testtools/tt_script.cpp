@@ -412,6 +412,72 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    if (kw == "@run") {
+        std::vector<std::string> pos;
+        int64_t timeout = -1;
+        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
+        if (pos.size() != 1) return usage(msg, "@run <seconds> [timeout=<n>]");
+        Step s = make(StepKind::WaitRun);
+        if (!real_arg(pos[0], &s.x, msg)) return false;
+        if (s.x < 0.0) return fail_with(msg, "@run seconds must be >= 0, got '" + pos[0] + "'");
+        s.timeout = timeout;
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@mash") {
+        std::vector<std::string> pos;
+        int64_t timeout = -1;
+        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
+        if (pos.size() != 4) return usage(msg, "@mash <keys> <period_ms> area|world <id> [timeout=<ms>]");
+        Step s = make(StepKind::Mash);
+        if (!keys_mask(pos[0], &s.buttons, msg)) return false;
+        if (!real_arg(pos[1], &s.x, msg)) return false;
+        const std::string what = lower(pos[2]);
+        if (what != "area" && what != "world") return usage(msg, "@mash <keys> <period_ms> area|world <id> [timeout=<ms>]");
+        s.text = what;
+        if (!resolve_id(pos[3], rt, what == "area", s.id, msg)) return false;
+        s.name1 = pos[3];
+        s.timeout = timeout;
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@rate") {
+        if (n != 2) return usage(msg, "@rate <hz>");
+        Step s = make(StepKind::Rate);
+        if (!real_arg(t[1], &s.x, msg)) return false;
+        if (s.x < 0.0 || s.x > 10000.0) return fail_with(msg, "@rate hz must be 0 (real clock) or 1..10000, got '" + t[1] + "'");
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@give") {
+        if (n != 3) return usage(msg, "@give <item> <amount>");
+        static const char* const names[] = {"powerbeam", "icebeam", "wavebeam", "plasmabeam", "missiles", "scanvisor", "morphballbombs", "powerbombs", "flamethrower",
+            "thermalvisor", "chargebeam", "supermissile", "grapplebeam", "xrayvisor", "icespreader", "spacejumpboots", "morphball", "combatvisor", "boostball", "spiderball",
+            "powersuit", "gravitysuit", "variasuit", "phazonsuit", "energytanks"};
+        std::string nm;
+        for (char ch : t[1]) if (ch != '_' && ch != ' ') nm += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        Step s = make(StepKind::Give);
+        s.x = -1;
+        for (int i = 0; i < 25; i++) if (nm == names[i]) s.x = i;
+        if (s.x < 0 && std::isdigit(static_cast<unsigned char>(t[1][0])) && !real_arg(t[1], &s.x, msg)) return false;
+        if (s.x < 0 || s.x > 40) return fail_with(msg, "@give: unknown item '" + t[1] + "'");
+        if (!real_arg(t[2], &s.y, msg)) return false;
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@sleep") {
+        if (n != 2) return usage(msg, "@sleep <ms>");
+        Step s = make(StepKind::WaitMs);
+        if (!real_arg(t[1], &s.x, msg)) return false;
+        if (s.x < 0.0) return fail_with(msg, "@sleep ms must be >= 0, got '" + t[1] + "'");
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "@warp") {
         if (n != 3) return usage(msg, "@warp <world> <area>");
         Step s = make(StepKind::Warp);
