@@ -18,7 +18,7 @@ target_include_directories(nxrt_tiling PUBLIC "${NXRT_TOOLS_DIR}/tiling/include"
 
 file(GLOB_RECURSE NXRT_GFX_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/*.cpp")
 add_library(nxrt_gfx STATIC ${NXRT_GFX_SOURCES})
-target_include_directories(nxrt_gfx PUBLIC include PRIVATE src/gfx)
+target_include_directories(nxrt_gfx PUBLIC include src/gfx/nvn/third_party PRIVATE src/gfx src/gfx/nvn)
 target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling SDL3::SDL3-static)
 target_compile_definitions(nxrt_gfx PUBLIC VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
 
@@ -29,7 +29,7 @@ target_link_options(nxrt_gfx_demo PRIVATE /MAP /DEBUG /STACK:8388608)
 if(NXRT_BUILD_TESTS)
     file(GLOB_RECURSE NXRT_GFX_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gfx/*.cpp")
     add_executable(nxrt_gfx_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp" ${NXRT_GFX_TEST_SOURCES})
-    target_include_directories(nxrt_gfx_tests PRIVATE tests src/gfx)
+    target_include_directories(nxrt_gfx_tests PRIVATE tests src/gfx src/gfx/nvn)
     target_link_libraries(nxrt_gfx_tests PRIVATE nxrt_gfx)
     target_compile_definitions(nxrt_gfx_tests PRIVATE NXRT_GFX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/gfx")
     target_link_options(nxrt_gfx_tests PRIVATE /MAP /STACK:8388608 /DEBUG)
