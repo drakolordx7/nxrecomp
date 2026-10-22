@@ -104,7 +104,7 @@ cheat_facts = [
  {'what': 'code caves', 'detail': 'cheat caves at main+0x102a390..0x102a47c (end of text segment, text ends at 0x102a390); 120FPS patch caves at 0x3c0430..0x3c0900 and 0xc32890..0xc328dc replace existing code', 'status': 'source claim'},
 ]
 out = {'meta': {'build_id': '67C9CA1428222752F951021464A7B3597EB98FEC', 'offset_note': 'offsets are main-relative (== main.elf vaddr). pchtxt "bytes" are memory byte order; cheats use numeric words (converted to bytes here).',
-                'transcription_note': 'fl4sh_* sets were retyped by a worker from fetched pages; validate_kb decodes each entry and compares with its own comment to catch typos.'},
+                'transcription_note': 'fl4sh_* sets were retyped by hand from fetched pages; validate_kb decodes each entry and compares with its own comment to catch typos.'},
        'sets': sets, 'facts': cheat_facts}
 json.dump(out, open(ROOT / 'docs/mpr/patches.json', 'w', encoding='utf-8'), indent=1)
 
