@@ -8,6 +8,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <string>
 #include <atomic>
 #include <vector>
 
@@ -117,6 +119,28 @@ void sync_reset() {
 }  // namespace detail
 
 using namespace detail;
+
+std::string sync_wait_report() {
+    // Called from the watchdog thread while the process may be frozen: never block on the kernel lock.
+    if (!TryAcquireSRWLockExclusive(&g_k)) return "kernel sync report: the kernel lock is held (a thread is inside a sync call)\n";
+    struct Release { ~Release() { ReleaseSRWLockExclusive(&g_k); } } release;
+    std::string out = "kernel sync waiters:\n";
+    char b[256];
+    auto list = [&](const char* kind, const std::vector<KThread*>& v, uint64_t KThread::*field) {
+        for (KThread* t : v) {
+            const uint64_t a = t->*field;
+            std::snprintf(b, sizeof b, "  %-18s %s (guest %llu) address 0x%llx value 0x%08x tag 0x%x wake %d\n", kind, t->name.c_str(),
+                          static_cast<unsigned long long>(t->id), static_cast<unsigned long long>(a), a ? load32(a) : 0u, t->wait_tag, t->wake ? 1 : 0);
+            out += b;
+        }
+    };
+    list("WaitForAddress", g_addr_waiters, &KThread::wait_addr);
+    list("process-wide key", g_cv_waiters, &KThread::wait_key);
+    list("mutex hand-over", g_mutex_waiters, &KThread::wait_mutex);
+    std::snprintf(b, sizeof b, "  WaitSynchronization waiters: %zu\n", g_sync_waiters.size());
+    out += b;
+    return out;
+}
 
 uint32_t arbitrate_lock(uint32_t owner, uint64_t addr, uint32_t tag) {
     if (addr & 3) return kInvalidAddress;
