@@ -5,3 +5,39 @@
 #   0xc70334  CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): player input (state probes, mouse aim)
 entryhook 0x71003c81c8
 entryhook 0x7100c70334
+# S11 (high refresh rate, branch hifps; runtime src/timestep, docs/S11.md): real-time dt for the game step.
+#   Update() hard-codes 1/60 in four places and a 14 ms background-work budget in four more; the runtime sets those registers from the
+#   frame time (entry hook above: measures the frame; these mid hooks load the value into the register the next instruction reads).
+midhook 0x71003c8238     # Update: w8 = 1/60, elapsed-time clamp (fmov s0,w8)
+midhook 0x71003c830c     # Update: w27 = 1/60 for the whole loop (tick, accumulator compare, input dt, TimerTick dt, render-state sum)
+midhook 0x71003c8354     # Update: w8 = -1/60, accumulator floor (fmov s1,w8 follows)
+midhook 0x71003c8634     # Update: w8 = 0.014, extra-processing budget, first compare
+midhook 0x71003c8648     # Update: w8 = 0.014, budget remaining for ExtraProcessingTick
+midhook 0x71003c86f4     # Update: w8 = 0.014, second compare
+midhook 0x71003c8708     # Update: w8 = 0.014, budget for ProcessGraveyard
+#   per-tick friction constant of the in-air walk branch (the community 120/240 fps patch rewrites the same fmov): s1 = 3.5 per 1/60 s
+midhook 0x7100cee3ec     # CPlayerMP1::GetDampedClampedVelocityWR: s1 = 3.5, fmul s8,s0,s1 follows
+#   render timings: a frame counter / 60 (texture scroll, UV animation, water); advanced by the frame time instead of by 1
+entryhook 0x7100c32890   # NRenderUtilMPT::TickRenderTimings (handled by the runtime)
+#   texture streaming ages entries by a per-frame 1/60 (1/30 on the 30 fps path)
+midhook 0x71000fe268     # CGraphicsServerDevice::BeginTargetFrame: w8 = 1/60 (fmov s0,w8)
+midhook 0x71000fe274     # ... w8 = 1/30 (fmov s1,w8)
+midhook 0x71000ff2fc     # CGraphicsServerDevice::TickMainThreadMaintenance: w9 = 1/60 (fmov s0,w9)
+midhook 0x71000ff308     # ... w9 = 1/30 (fmov s1,w9)
+#   movies: the clock of the movie player is the delta of CMovieList::Update(float); give it real elapsed time (audio plays in real time)
+entryhook 0x71003669ec   # CMovieList::Update(float): s0 = delta seconds
+# S10 (display options, branch display; runtime src/gfx/play/play_display.cpp, docs/S10.md): resolution, aspect ratio, HUD proportions, FOV, post effects.
+#   COsContext::GetScreenWidth / GetScreenHeight (docked render size; the handheld getters stay: the touch screen maps through them)
+entryhook 0x7100001248
+entryhook 0x7100001250
+#   CDynamicResolutionControl::GetResolutionScale (called once per frame by CGameRenderJob::RenderGamePass): 1.0 = dynamic resolution off
+entryhook 0x71003c08a0
+#   CDisplayManager::UpdateCameraNodes: the world projection takes its aspect from [[this + 16] + 152]; written before the original runs
+entryhook 0x7100afe41c
+#   CGuiCamera::GetProjectionState: every GUIF frame (HUD, menus, title) goes through it; a 16:9 camera is widened to the display aspect
+entryhook 0x7100bd52fc
+#   CGameCamera::GetVerticalFOV: the vertical field of view in radians; the FOV offset is added
+entryhook 0x71004c2998
+#   CRenderPass_Bloom::Render (skipped when bloom is off) and CRenderPass_ChromaticAberration::Render (strength zeroed when off)
+entryhook 0x71003a450c
+entryhook 0x71003a69b0
