@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "nxrt/ftrace.h"
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 
@@ -75,12 +77,31 @@ struct Thunk {
     std::string name;
     HleFn fn = nullptr;       // null: logging stub
     std::atomic<uint64_t> calls{0};
+    std::atomic<int> ft_zone{-1};   // frame trace zone ("hle:<name>"), registered on the first slow call
 };
 std::mutex g_hle_lock;
 std::vector<std::unique_ptr<Thunk>> g_thunks;        // index = (addr - kHleBase) / 16
 std::atomic<size_t> g_thunk_count{0};                // published size (thunks are never removed outside hle_clear)
 std::unordered_map<std::string, size_t> g_thunk_by_name;
 thread_local const char* t_hle_name = nullptr;
+
+// [hle] trace = <name prefix> (env NXRT_HLE_TRACE): every call of an HLE thunk whose name starts with the prefix is logged in order
+// ("hle-trace #seq name(x0..x3) lr"), up to [hle] trace_limit calls (default 20000). Diagnostics for the boot: the order in which a
+// game calls an API (NVN).
+struct HleTrace {
+    std::string prefix;
+    int64_t limit = 0;
+    std::atomic<int64_t> seq{0};
+};
+HleTrace& hle_trace() {
+    static HleTrace* t = [] {
+        auto* h = new HleTrace;
+        h->prefix = config_get_str("hle", "trace", "");
+        h->limit = config_get_int("hle", "trace_limit", 20000);
+        return h;
+    }();
+    return *t;
+}
 
 constexpr size_t kMaxThunks = mem::kHleSize / 16;
 
@@ -250,8 +271,28 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
         t.calls.fetch_add(1, std::memory_order_relaxed);
         const char* saved = t_hle_name;
         t_hle_name = t.name.c_str();
+        // [hle] trace: the line is written after the handler ran, so it carries the result (x0) next to the arguments
+        const HleTrace& tr = hle_trace();
+        const bool traced = !tr.prefix.empty() && t.name.compare(0, tr.prefix.size(), tr.prefix) == 0;
+        uint64_t targs[4] = {};
+        int64_t tseq = 0;
+        if (traced) {
+            tseq = const_cast<HleTrace&>(tr).seq.fetch_add(1, std::memory_order_relaxed) + 1;
+            for (int i = 0; i < 4; i++) targs[i] = reg(c, i);
+        }
         if (t.fn) {
-            t.fn(c);
+            if (ft::on()) {
+                const uint64_t t0 = ft::now_ns();
+                t.fn(c);
+                const uint64_t t1 = ft::now_ns();
+                if (t1 - t0 >= 100000) {       // frame trace: HLE calls (services, NVN entry points) of at least 100 us
+                    int z = t.ft_zone.load(std::memory_order_relaxed);
+                    if (z < 0) { z = ft::zone_id(("hle:" + t.name).c_str()); t.ft_zone.store(z, std::memory_order_relaxed); }
+                    ft::event(static_cast<uint16_t>(z), t0, t1, 0);
+                }
+            } else {
+                t.fn(c);
+            }
         } else {
             // No handler: the console would fault on an unresolved import. A silent 0 is a fake answer, so say so (every
             // call up to 20, then every 1000th) and return 0.
@@ -262,6 +303,10 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
                         static_cast<unsigned long long>(reg(c, 0)), static_cast<unsigned long long>(reg(c, 1)));
             reg(c, 0) = 0;
         }
+        if (traced && tseq <= tr.limit)
+            NXLOG_I("hle-trace", "#%lld %s(x0=0x%llx x1=0x%llx x2=0x%llx x3=0x%llx) lr=0x%llx -> 0x%llx", static_cast<long long>(tseq), t.name.c_str(),
+                    static_cast<unsigned long long>(targs[0]), static_cast<unsigned long long>(targs[1]), static_cast<unsigned long long>(targs[2]),
+                    static_cast<unsigned long long>(targs[3]), static_cast<unsigned long long>(lr(c)), static_cast<unsigned long long>(reg(c, 0)));
         t_hle_name = saved;
         return;
     }

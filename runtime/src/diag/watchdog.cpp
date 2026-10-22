@@ -320,7 +320,15 @@ void watchdog_stop() {
 
 bool watchdog_running() { return g_running.load(); }
 
-void diag_frame_tick() { g_frames.fetch_add(1, std::memory_order_relaxed); }
+namespace {
+std::atomic<void (*)()> g_frame_listener{nullptr};
+}
+void diag_set_frame_listener(void (*fn)()) { g_frame_listener.store(fn); }
+void diag_frame_tick_nolisten() { g_frames.fetch_add(1, std::memory_order_relaxed); }
+void diag_frame_tick() {
+    g_frames.fetch_add(1, std::memory_order_relaxed);
+    if (auto fn = g_frame_listener.load(std::memory_order_acquire)) fn();
+}
 
 uint64_t diag_frame_count() { return g_frames.load(std::memory_order_relaxed); }
 

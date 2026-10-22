@@ -4,11 +4,16 @@
 // (buffer, offset) with no copy, and anything the GPU writes (compute, copies, queries, events) is visible to the CPU through
 // the same pages. Measured on the RTX 3080 and the UHD 770 with MapViewOfFile views: imports work with 4096-byte alignment,
 // and GPU writes are visible through every view of the section.
+#include <condition_variable>
+#include <deque>
 #include <mutex>
+#include <thread>
 #include <vector>
 #include <new>
 #include <unordered_set>
 
+#include "nxrt/config.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 
@@ -25,6 +30,7 @@ struct PoolGpu {
 MemoryPool::~MemoryPool() {
     if (gpu) gpu::destroy_pool_gpu(gpu);
     gpu = nullptr;
+    if (PoolGpu* pf = prefetched.exchange(nullptr)) gpu::destroy_pool_gpu(pf);   // imported in the background and never used
 }
 
 namespace gpu {
@@ -41,6 +47,7 @@ std::mutex g_live_mu;
 std::unordered_set<PoolGpu*> g_live;
 
 PoolGpu* import_pool(MemoryPool* p) {
+    ft::Scope zs(ft::zone_id("pool.import"), 0, static_cast<uint32_t>(p->flags) << 16 | static_cast<uint32_t>(std::min<uint64_t>(p->size >> 20, 0xffff)));
     auto* g = new PoolGpu();
     gfx::Device& dev = device();
     if (!dev.features().external_memory_host || !p->base || !p->size) {
@@ -62,7 +69,8 @@ PoolGpu* import_pool(MemoryPool* p) {
     g->size = size;
 
     VkMemoryHostPointerPropertiesEXT hp = {VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
-    VkResult r = vkGetMemoryHostPointerPropertiesEXT(dev.device(), VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, g->base, &hp);
+    VkResult r;
+    { NXFT("pool.hostprops"); r = vkGetMemoryHostPointerPropertiesEXT(dev.device(), VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, g->base, &hp); }
     if (r != VK_SUCCESS || !hp.memoryTypeBits) {
         NXLOG_E(kTag, "vkGetMemoryHostPointerPropertiesEXT failed (%d) for %p", static_cast<int>(r), static_cast<void*>(g->base));
         g->failed = true;
@@ -76,7 +84,7 @@ PoolGpu* import_pool(MemoryPool* p) {
     VkMemoryAllocateInfo mai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &imp};
     mai.allocationSize = size;
     mai.memoryTypeIndex = ty;
-    r = vkAllocateMemory(dev.device(), &mai, nullptr, &g->mem);
+    { NXFT("pool.alloc"); r = vkAllocateMemory(dev.device(), &mai, nullptr, &g->mem); }
     if (r != VK_SUCCESS) {
         NXLOG_E(kTag, "importing pool %p (0x%llx bytes) failed (%d)", static_cast<void*>(g->base), static_cast<unsigned long long>(size), static_cast<int>(r));
         g->failed = true;
@@ -88,7 +96,8 @@ PoolGpu* import_pool(MemoryPool* p) {
     bci.size = size;
     bci.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
+                (device().features().transform_feedback ? VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT : 0u);
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     r = vkCreateBuffer(dev.device(), &bci, nullptr, &g->buffer);
     if (r == VK_SUCCESS) r = vkBindBufferMemory(dev.device(), g->buffer, g->mem, 0);
@@ -103,17 +112,68 @@ PoolGpu* import_pool(MemoryPool* p) {
     return g;
 }
 
+// ---- background import --------------------------------------------------------------------------------------------------
+// One worker thread imports pools as they are created. The pool is kept alive by a reference while it is queued or running; the render
+// thread, when it needs a pool that is still in flight, waits for it instead of importing a second time.
+std::mutex g_pf_mu;
+std::condition_variable g_pf_cv;
+std::deque<Ref<MemoryPool>> g_pf_queue;
+std::thread g_pf_thread;
+bool g_pf_stop = false;
+
+void prefetch_loop() {
+    log_set_thread_name("nvn-pool-import");
+    for (;;) {
+        Ref<MemoryPool> p;
+        {
+            std::unique_lock<std::mutex> lk(g_pf_mu);
+            g_pf_cv.wait(lk, [] { return g_pf_stop || !g_pf_queue.empty(); });
+            if (g_pf_stop) return;
+            p = std::move(g_pf_queue.front());
+            g_pf_queue.pop_front();
+        }
+        int expect = 1;
+        if (!p->prefetch.compare_exchange_strong(expect, 3)) continue;   // the render thread needed it first and imports it itself
+        PoolGpu* g = nullptr;
+        if (!p->dead.load()) g = import_pool(p.get());
+        {
+            std::lock_guard<std::mutex> lk(g_pf_mu);
+            p->prefetched.store(g);
+            p->prefetch.store(2);
+        }
+        g_pf_cv.notify_all();
+    }
+}
+
 void make_dummy() {
     gfx::Device& dev = device();
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+                                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                                     VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
     if (dev.create_buffer(65536, usage, gfx::MemoryUse::Upload, &g_dummy_buf, "nvn dummy buffer") == VK_SUCCESS) {
         std::memset(g_dummy_buf.mapped, 0, 65536);
+        // What the console delivers for a vertex attribute the game did not set up: (0, 0, 0, 1) in the shader's own type.
+        const float f1[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const uint32_t i1[4] = {0, 0, 0, 1};
+        std::memcpy(static_cast<uint8_t*>(g_dummy_buf.mapped) + kDummyAttrFloatOffset, f1, 16);
+        std::memcpy(static_cast<uint8_t*>(g_dummy_buf.mapped) + kDummyAttrIntOffset, i1, 16);
         g_dummy = g_dummy_buf.buffer;
     }
 }
 
 }  // namespace
+
+void prefetch_pool(MemoryPool* p) {
+    static const bool enabled = config_get_bool("nvn", "pool_prefetch", true);   // [nvn] pool_prefetch = false: import on first use only
+    if (!enabled || !p || p->is_virtual || !p->base || !p->size || !active()) return;
+    std::lock_guard<std::mutex> lk(g_pf_mu);
+    if (g_pf_stop) return;
+    int expect = 0;
+    if (!p->prefetch.compare_exchange_strong(expect, 1)) return;
+    if (!g_pf_thread.joinable()) g_pf_thread = std::thread(prefetch_loop);
+    g_pf_queue.push_back(Ref<MemoryPool>::share(p));
+    g_pf_cv.notify_all();
+}
 
 VkBuffer dummy_buffer() {
     std::call_once(g_dummy_once, make_dummy);
@@ -125,7 +185,20 @@ BufRef resolve_buffer(uint64_t gpu_address, uint64_t size) {
     const PoolHit hit = pool_lookup(gpu_address);
     PoolGpu* pg = nullptr;
     if (hit.pool) {
-        if (!hit.pool->gpu) hit.pool->gpu = import_pool(hit.pool);
+        if (!hit.pool->gpu) {
+            MemoryPool* mp = hit.pool;
+            int expect = 1;
+            if (mp->prefetch.load() == 1 && mp->prefetch.compare_exchange_strong(expect, 4)) {
+                // still queued: import it here and now rather than behind the pools queued before it
+            } else if (mp->prefetch.load() == 3) {
+                NXFT("pool.wait");
+                std::unique_lock<std::mutex> lk(g_pf_mu);
+                g_pf_cv.wait(lk, [mp] { return mp->prefetch.load() == 2 || g_pf_stop; });
+            }
+            if (mp->prefetch.load() == 2) mp->gpu = mp->prefetched.exchange(nullptr);
+            if (!mp->gpu) mp->gpu = import_pool(mp);
+            ft::mark("pool.used", static_cast<uint32_t>(mp->flags) << 16 | static_cast<uint32_t>(std::min<uint64_t>(mp->size >> 20, 0xffff)));
+        }
         pg = hit.pool->gpu;
     }
     if (!pg || pg->failed || !pg->buffer) {
@@ -154,6 +227,17 @@ BufRef resolve_buffer(uint64_t gpu_address, uint64_t size) {
 }
 
 void pool_shutdown() {
+    {   // stop the importer first: a pool it is working on finishes, queued ones are dropped
+        std::unique_lock<std::mutex> lk(g_pf_mu);
+        g_pf_stop = true;
+        g_pf_queue.clear();
+    }
+    g_pf_cv.notify_all();
+    if (g_pf_thread.joinable()) g_pf_thread.join();
+    {
+        std::lock_guard<std::mutex> lk(g_pf_mu);
+        g_pf_stop = false;           // a later back end (tests bring it up and down) starts clean
+    }
     std::vector<PoolGpu*> left;
     {
         std::lock_guard<std::mutex> lk(g_live_mu);

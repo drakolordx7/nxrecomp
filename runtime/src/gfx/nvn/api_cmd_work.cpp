@@ -215,10 +215,18 @@ void nvnCommandBufferMultiDrawElementsIndirectCount(NVNcommandBuffer* cmd, NVNdr
 
 // ---- transform feedback (not supported) -------------------------------------------------------------------------------------
 void nvnCommandBufferDrawTransformFeedback(NVNcommandBuffer*, NVNdrawPrimitive, NVNbufferAddress) { tf_unsupported(); }
-void nvnCommandBufferBeginTransformFeedback(NVNcommandBuffer*, NVNbufferAddress) { tf_unsupported(); }
-void nvnCommandBufferEndTransformFeedback(NVNcommandBuffer*, NVNbufferAddress) { tf_unsupported(); }
-void nvnCommandBufferPauseTransformFeedback(NVNcommandBuffer*, NVNbufferAddress) { tf_unsupported(); }
-void nvnCommandBufferResumeTransformFeedback(NVNcommandBuffer*, NVNbufferAddress) { tf_unsupported(); }
+void record_xfb(NVNcommandBuffer* cmd, Op op, NVNbufferAddress control) {
+    std::unique_lock<std::mutex> lk;
+    CommandBuffer* cb = begin_record(cmd, lk);
+    if (!cb) return;
+    P_Counter p = zeroed<P_Counter>();
+    p.address = control;
+    cb->rec->emit(op, p);
+}
+void nvnCommandBufferBeginTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddress control) { record_xfb(cmd, Op::BeginXfb, control); }
+void nvnCommandBufferEndTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddress control) { record_xfb(cmd, Op::EndXfb, control); }
+void nvnCommandBufferPauseTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddress control) { record_xfb(cmd, Op::PauseXfb, control); }
+void nvnCommandBufferResumeTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddress control) { record_xfb(cmd, Op::ResumeXfb, control); }
 
 // ---- clears ------------------------------------------------------------------------------------------------------------------
 // kind: 0 float, 1 int, 2 uint (the colour words are the bit patterns of the four values).
@@ -585,6 +593,10 @@ void nvnCommandBufferPopDebugGroupId(NVNcommandBuffer*, uint32_t) {}
 void nvnCommandBufferInsertDebugMarkerStatic(NVNcommandBuffer*, uint32_t, const char*) {}
 void nvnCommandBufferInsertDebugMarkerDynamic(NVNcommandBuffer*, uint32_t, const char*) {}
 void nvnCommandBufferInsertDebugMarker(NVNcommandBuffer*, const char*) {}
+// NVN 55 names the game asks for and never calls (signatures assumed): accepted, nothing to do.
+void nvnCommandBufferInsertCheckpointStatic(NVNcommandBuffer*, uint32_t, const char*) {}
+void nvnCommandBufferInsertCheckpointDynamic(NVNcommandBuffer*, uint32_t, const char*) {}
+void nvnCommandBufferOverrideSubtileSize(NVNcommandBuffer*, int, int) {}
 
 }  // namespace
 
@@ -644,6 +656,9 @@ void register_api_cmd_work() {
     NVN_REG(nvnCommandBufferInsertDebugMarkerStatic);
     NVN_REG(nvnCommandBufferInsertDebugMarkerDynamic);
     NVN_REG(nvnCommandBufferInsertDebugMarker);
+    NVN_REG(nvnCommandBufferInsertCheckpointStatic);
+    NVN_REG(nvnCommandBufferInsertCheckpointDynamic);
+    NVN_REG(nvnCommandBufferOverrideSubtileSize);
 }
 
 }  // namespace nxrt::nvn

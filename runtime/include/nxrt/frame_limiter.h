@@ -21,6 +21,11 @@ public:
     void set_target_fps(double fps);
     double target_fps() const;
 
+    // A function that runs at the very start of every begin_frame(), on the thread that calls it (the presenting thread). Play mode uses it to
+    // apply present-mode changes at a point where nothing else touches the swapchain. nullptr removes it. Safe to call from any thread.
+    using PreFrameFn = void (*)(void* user);
+    void set_pre_frame_hook(PreFrameFn fn, void* user);
+
     // Call at the top of every frame, before polling input. Blocks until the scheduled start, returns the frame start time
     // in nanoseconds of the monotonic clock now_ns().
     uint64_t begin_frame();
@@ -41,6 +46,7 @@ public:
         uint64_t waited = 0, overran = 0;
         double overran_fraction = 0;    // overran / (waited + overran)
         double late_p99_ms = 0, late_max_ms = 0;   // lateness of waited frames
+        double late_over_half_ms = 0;   // fraction of the waited frames that started more than 0.5 ms late (a robust accuracy measure with few frames, unlike p99)
     };
     Stats stats() const;                // over the intervals since reset_stats() (at most the last 8192)
     void reset_stats();

@@ -186,7 +186,14 @@ NXTEST(virtual_pools_get_distinct_synthetic_ranges) {
 
     CHECK(map(&a) == nullptr);                                // nothing is mapped for a virtual pool
     flush(&a, 0, 4096);                                       // no storage: nothing to mark, no crash
-    CHECK_EQ(map_virtual(&a, 0, nullptr), 0);                 // virtual mapping is not supported
+    CHECK_EQ(map_virtual(&a, 0, nullptr), 1);                 // nothing to map: succeeds (sparse textures are resident, mappings need no action)
+    {
+        // two 40-byte requests (physical pool, physical offset, virtual offset, size, storage class): accepted
+        uint64_t req[10] = {reinterpret_cast<uint64_t>(&c), 0x10000, 0x20000, 0x10000, 0, 0, 0x20000, 0x30000, 0x10000, 0};
+        CHECK_EQ(map_virtual(&a, 2, reinterpret_cast<const NVNmappingRequest*>(req)), 1);
+        CHECK_EQ(map_virtual(&a, 2, nullptr), 0);              // requests missing
+        CHECK_EQ(map_virtual(nullptr, 2, reinterpret_cast<const NVNmappingRequest*>(req)), 0);   // not a pool
+    }
 
     fin(&a);
     fin(&c);

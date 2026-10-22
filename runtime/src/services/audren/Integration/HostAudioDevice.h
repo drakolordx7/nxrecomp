@@ -30,6 +30,9 @@ class HostAudioDevice : public IHardwareDevice {
     // When it differs from this device's channel count, the channels present are copied and the rest are silence.
     void AppendBuffer(Span<const int16_t> data, uint32_t channelCount) override;
 
+    // The host sink's queue level when the sink has a device clock (XAudio2, paced), else -1.
+    int64_t GetQueuedNanoseconds() override;
+
   private:
     uint32_t _sampleRate;
     uint32_t _channelCount;

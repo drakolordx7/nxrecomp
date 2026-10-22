@@ -27,7 +27,7 @@ constexpr uint32_t kNpadCount = 10;
 
 // Ring lifo (Ryujinx RingLifo): a 0x20-byte header, then 17 entries of (u64 sampling number, state). The header is
 // {unused u64, buffer_count u64 (= 17), index u64 (latest written entry), count u64}. Ryujinx's Write caps count at 16
-// (MaxEntries - 1); ScarletNX and the task brief say 17. The Ryujinx cap is used.
+// (MaxEntries - 1); ScarletNX says 17. The Ryujinx cap is used.
 constexpr uint32_t kRingEntries = 17;
 constexpr uint64_t kRingMaxCount = 16;
 

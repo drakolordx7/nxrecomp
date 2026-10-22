@@ -29,6 +29,8 @@ constexpr std::size_t kRing = 8192;         // frame intervals kept for stats()
 
 struct FrameLimiter::Impl {
     std::atomic<double> target_fps{0.0};
+    std::atomic<FrameLimiter::PreFrameFn> pre_fn{nullptr};
+    std::atomic<void*> pre_user{nullptr};
     HANDLE timer = nullptr;  // high-resolution waitable timer; null means the Sleep(1) coarse wait
 
     // Guards the state below. begin_frame holds it only for bookkeeping, never during the wait.
@@ -112,7 +114,13 @@ void FrameLimiter::set_target_fps(double fps) { impl_->target_fps.store(fps > 0.
 
 double FrameLimiter::target_fps() const { return impl_->target_fps.load(); }
 
+void FrameLimiter::set_pre_frame_hook(PreFrameFn fn, void* user) {
+    impl_->pre_user.store(user, std::memory_order_relaxed);
+    impl_->pre_fn.store(fn, std::memory_order_release);
+}
+
 uint64_t FrameLimiter::begin_frame() {
+    if (PreFrameFn fn = impl_->pre_fn.load(std::memory_order_acquire)) fn(impl_->pre_user.load(std::memory_order_relaxed));
     Impl& s = *impl_;
     const uint64_t entry = now_ns();
     const double fps = s.target_fps.load();
@@ -187,6 +195,7 @@ FrameLimiter::Stats FrameLimiter::stats() const {
     if (!late.empty()) {
         std::sort(late.begin(), late.end());
         st.late_max_ms = late.back();
+        st.late_over_half_ms = static_cast<double>(late.end() - std::upper_bound(late.begin(), late.end(), 0.5)) / static_cast<double>(late.size());
         st.late_p99_ms = late[std::min(late.size() - 1, static_cast<std::size_t>(0.99 * static_cast<double>(late.size())))];
     }
     const std::size_t n = ms.size();

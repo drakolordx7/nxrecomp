@@ -167,10 +167,8 @@ std::shared_ptr<ipc::Service> tracked(const char* name, std::function<void()> re
     return s;
 }
 
-// Copy handles of the request's transfer memory are closed by the server (the guest copied them in for us).
-void close_copied(const ipc::Request& req) {
-    for (uint32_t h : req.in_copy) kernel::handle_close(h);
-}
+// Copy handles belong to the client (HIPC copies them: the guest closes its own afterwards), so there is nothing to close here (debug note 122).
+void close_copied(const ipc::Request&) {}
 
 // Event pairs held by the object that hands them out.
 struct TwoEvents {

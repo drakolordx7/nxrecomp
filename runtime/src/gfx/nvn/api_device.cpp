@@ -70,6 +70,14 @@ void nvnDeviceFinalize(NVNdevice* device) {
 
 void nvnDeviceSetDebugLabel(NVNdevice*, const char*) {}
 
+// NVN 55 debugging calls the game asks for by name and never makes (signatures assumed from their names): accepted, nothing to do.
+void nvnDeviceSetAutomaticCheckpointsEnable(NVNdevice*, NVNboolean) {}
+void nvnDeviceSetAutomaticCheckpointsMask(NVNdevice*, uint32_t) {}
+void nvnDeviceSetAutomaticCheckpointsSamplingInterval(NVNdevice*, uint32_t) {}
+void nvnDeviceSetAutomaticCheckpointsByDebugGroup(NVNdevice*, NVNboolean) {}
+void nvnDeviceSetCheckpointCallStacksEnable(NVNdevice*, NVNboolean) {}
+void nvnDeviceSetCheckpointMaxCallStacksDepth(NVNdevice*, int) {}
+
 void nvnDeviceGetInteger(const NVNdevice* device, NVNdeviceInfo info, int* out) {
     if (!out) return;
     (void)device;   // the values do not depend on the device (the game asks before and after nvnDeviceInitialize)
@@ -431,6 +439,12 @@ void register_api_device() {
     NVN_REG(nvnDeviceInitialize);
     NVN_REG(nvnDeviceFinalize);
     NVN_REG(nvnDeviceSetDebugLabel);
+    NVN_REG(nvnDeviceSetAutomaticCheckpointsEnable);
+    NVN_REG(nvnDeviceSetAutomaticCheckpointsMask);
+    NVN_REG(nvnDeviceSetAutomaticCheckpointsSamplingInterval);
+    NVN_REG(nvnDeviceSetAutomaticCheckpointsByDebugGroup);
+    NVN_REG(nvnDeviceSetCheckpointCallStacksEnable);
+    NVN_REG(nvnDeviceSetCheckpointMaxCallStacksDepth);
     NVN_REG(nvnDeviceGetInteger);
     NVN_REG(nvnDeviceGetCurrentTimestampInNanoseconds);
     NVN_REG(nvnDeviceSetIntermediateShaderCache);

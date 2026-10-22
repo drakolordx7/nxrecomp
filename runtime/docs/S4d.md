@@ -46,7 +46,7 @@ S4d, part of the Metroid Prime Remastered recompilation, implements the NVN API 
 | Translation of all 67,506, unpatched Ryujinx | 67,506 valid, 0 invalid, 0 exceptions, 0 timeouts: 39,082 first try, 28,424 after the DebugMode retry; 900 s with 12 jobs |
 | Translation of all 67,506, patched (final) | 67,506 valid, 0 invalid, 0 exceptions, 0 timeouts (39,082 first try, 28,424 after the retry; 980 s with 12 jobs); no block reports the Pixld message; the SPIR-V of all 67,506 blocks is byte-identical to the code-keyed cache, and the 9,750 multi-control groups all agree (`make_code_corpus.py --verify`) |
 | Cache the runtime reads | `work/shader_cache/spirv`: 13,016 `.spv` (1,008 MB) and `results.tsv`; 13,016 of 13,016 valid |
-| Size options (268-module sample, extrapolated) | raw 1,008 MB; `spirv-opt --strip-debug -O` removes 43 % and still validates (0 failures), 0.09 s per module; with zstd -19 the whole cache would be about 80 MB (the study's 0.37 GB figure is for the 67,506 keyed blocks). The lead decides the packaging. |
+| Size options (268-module sample, extrapolated) | raw 1,008 MB; `spirv-opt --strip-debug -O` removes 43 % and still validates (0 failures), 0.09 s per module; with zstd -19 the whole cache would be about 80 MB (the study's 0.37 GB figure is for the 67,506 keyed blocks). |
 
 Rebuild: `python tools\shaders\scripts\make_code_corpus.py work\survey\shaders\corpus --out work\shader_cache\corpus_code`, then `dotnet tools\shaders\build\bin\Release\net10.0\spirv_harness.dll --batch work\shader_cache\corpus_code --out work\shader_cache\spirv --jobs 16 --spirv-val C:\VulkanSDK\1.4.363.0\Bin\spirv-val.exe --target-env vulkan1.3`.
 
