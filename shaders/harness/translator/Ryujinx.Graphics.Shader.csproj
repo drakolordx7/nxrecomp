@@ -28,13 +28,24 @@
   <ItemGroup>
     <ShaderPatch Include="spirv-else-if.patch" File="CodeGen/Spirv/SpirvGenerator.cs" />
     <ShaderPatch Include="spirv-fmz.patch" File="Instructions/InstEmitFloatArithmetic.cs" />
+    <!-- PIXLD (stream S4d): PIXLD.MY_INDEX reads gl_SampleID, the other modes write 0 (was: not implemented, result undefined). -->
+    <ShaderPatch Include="spirv-pixld-iovariable.patch" File="IntermediateRepresentation/IoVariable.cs" />
+    <ShaderPatch Include="spirv-pixld-iomap-spirv.patch" File="CodeGen/Spirv/IoMap.cs" />
+    <ShaderPatch Include="spirv-pixld-iomap-glsl.patch" File="CodeGen/Glsl/Instructions/IoMap.cs" />
+    <ShaderPatch Include="spirv-pixld-declarations-spirv.patch" File="CodeGen/Spirv/Declarations.cs" />
+    <ShaderPatch Include="spirv-pixld-instemit.patch" File="Instructions/InstEmit.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Include="$(ShaderSrc)**/*.cs"
-             Exclude="$(ShaderSrc)bin/**;$(ShaderSrc)obj/**;$(ShaderSrc)CodeGen/Spirv/SpirvGenerator.cs;$(ShaderSrc)Instructions/InstEmitFloatArithmetic.cs" />
+             Exclude="$(ShaderSrc)bin/**;$(ShaderSrc)obj/**;$(ShaderSrc)CodeGen/Spirv/SpirvGenerator.cs;$(ShaderSrc)Instructions/InstEmitFloatArithmetic.cs;$(ShaderSrc)IntermediateRepresentation/IoVariable.cs;$(ShaderSrc)CodeGen/Spirv/IoMap.cs;$(ShaderSrc)CodeGen/Glsl/Instructions/IoMap.cs;$(ShaderSrc)CodeGen/Spirv/Declarations.cs;$(ShaderSrc)Instructions/InstEmit.cs" />
     <Compile Include="$(PatchedDir)CodeGen/Spirv/SpirvGenerator.cs" />
     <Compile Include="$(PatchedDir)Instructions/InstEmitFloatArithmetic.cs" />
+    <Compile Include="$(PatchedDir)IntermediateRepresentation/IoVariable.cs" />
+    <Compile Include="$(PatchedDir)CodeGen/Spirv/IoMap.cs" />
+    <Compile Include="$(PatchedDir)CodeGen/Glsl/Instructions/IoMap.cs" />
+    <Compile Include="$(PatchedDir)CodeGen/Spirv/Declarations.cs" />
+    <Compile Include="$(PatchedDir)Instructions/InstEmit.cs" />
     <EmbeddedResource Include="$(ShaderSrc)CodeGen/Glsl/HelperFunctions/*.glsl"
                       LogicalName="Ryujinx.Graphics.Shader.CodeGen.Glsl.HelperFunctions.%(Filename)%(Extension)" />
   </ItemGroup>
