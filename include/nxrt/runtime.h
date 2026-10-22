@@ -14,6 +14,7 @@ struct InitOptions {
     bool memguard = true;               // start the memory guard ([memory] limit_gb, default 8)
     bool memory_init = true;            // reserve the stack and kernel regions
     bool load_symbols = true;           // load the linker map next to the exe
+    bool services = true;               // register the Horizon system services (services.h) in the ipc registry
 };
 
 // Idempotent. Logs the effective configuration. Returns false when a mandatory piece (the address-space layout) failed.

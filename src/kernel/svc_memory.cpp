@@ -56,26 +56,46 @@ bool within(uint64_t addr, uint64_t size, uint64_t base, uint64_t len) {
     return size <= len && addr >= base && addr - base <= len - size;
 }
 bool in_stack(uint64_t addr, uint64_t size) { return within(addr, size, mem::kStackBase, mem::kStackSize); }
-bool in_alias(uint64_t addr, uint64_t size) { return within(addr, size, mem::kAliasBase, mem::kAliasSize); }
 bool in_heap(uint64_t addr, uint64_t size, uint64_t heap) { return within(addr, size, mem::kHeapBase, heap); }
 
-// Reserves and commits [addr, addr+size) at exactly addr in the alias region. False when the address is taken or the
-// kernel rounds the request to another base (MEM_RESERVE rounds down to 64 KiB, so a page-aligned but not 64 KiB aligned
-// address can come back moved).
+// The map region: where MapSharedMemory / MapTransferMemory / MapPhysicalMemory destinations may be, the ASLR region GetInfo reports
+// (svc_info.cpp: 0x8000000 + 0x7FF8000000). The SDK picks random free addresses in it (StackGuardManager::MapAtRandomAddress) and retries
+// on a refusal, so any address the host can give out exactly is accepted.
+constexpr uint64_t kMapRegionBase = 0x0008000000ull, kMapRegionSize = 0x7FF8000000ull;
+// The guest layout owns [kMainBase, kKernelBase + kKernelSize) (images, HLE thunks, heap view, stacks, kernel region): only the alias
+// region of that span and everything below the main image is open for map calls.
+bool in_map_region(uint64_t addr, uint64_t size) {
+    return within(addr, size, kMapRegionBase, mem::kMainBase - kMapRegionBase) || within(addr, size, mem::kAliasBase, mem::kAliasSize);
+}
+
+std::map<uint64_t, uint64_t> g_reserve_base;   // window address -> base of its host reservation (differs when addr is not 64 KiB aligned)
+
+// Reserves and commits [addr, addr+size) at exactly addr. A host reservation starts on a 64 KiB boundary, so a page-aligned address is
+// served by reserving the enclosing 64 KiB range and committing the pages. False when any of it is taken by something else.
 bool alias_alloc(uint64_t addr, uint64_t size) {
-    void* p = VirtualAlloc(reinterpret_cast<void*>(addr), static_cast<SIZE_T>(size), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    const uint64_t base = addr & ~(mem::kAllocGranularity - 1);
+    const uint64_t end = (addr + size + mem::kAllocGranularity - 1) & ~(mem::kAllocGranularity - 1);
+    void* p = VirtualAlloc(reinterpret_cast<void*>(base), static_cast<SIZE_T>(end - base), MEM_RESERVE, PAGE_READWRITE);
     if (!p) return false;
-    if (reinterpret_cast<uint64_t>(p) != addr) {
+    if (reinterpret_cast<uint64_t>(p) != base ||
+        !VirtualAlloc(reinterpret_cast<void*>(addr), static_cast<SIZE_T>(size), MEM_COMMIT, PAGE_READWRITE)) {
         VirtualFree(p, 0, MEM_RELEASE);
         return false;
     }
+    g_reserve_base[addr] = base;
     return true;
 }
 
 // Releases a window made by alias_alloc (its base address, whole allocation).
 void alias_free(uint64_t addr) {
-    if (!VirtualFree(reinterpret_cast<void*>(addr), 0, MEM_RELEASE)) {
-        NXLOG_E(kTag, "VirtualFree(%llx) failed, error %lu", U(addr), static_cast<unsigned long>(GetLastError()));
+    uint64_t base = addr;
+    auto it = g_reserve_base.find(addr);
+    if (it != g_reserve_base.end()) {
+        base = it->second;
+        g_reserve_base.erase(it);
+    }
+    if (!VirtualFree(reinterpret_cast<void*>(base), 0, MEM_RELEASE)) {
+        NXLOG_E(kTag, "VirtualFree(%llx) failed, error %lu", U(base), static_cast<unsigned long>(GetLastError()));
     }
 }
 
@@ -195,7 +215,11 @@ void map_memory(::Ctx* c) {
         return;
     }
     std::lock_guard lk(g_mu);
-    if (!in_stack(dst, size) || !in_heap(src, size, heap_now()) || !mem::is_mapped(src, size)) {
+    // The source is heap memory or the .data/.bss of a loaded module (state CodeData): the SDK maps thread stacks that live in its
+    // own static data (MapAliasStack of a static buffer), which the console allows.
+    const mem::VmInfo sv = mem::vm_query(src);
+    const bool src_code_data = sv.state == mem::kMemCodeData && src >= sv.addr && src + size <= sv.addr + sv.size;
+    if (!in_stack(dst, size) || !(in_heap(src, size, heap_now()) || src_code_data) || !mem::is_mapped(src, size)) {
         fail(c, "MapMemory (range)", kernel::kInvalidMemoryState, dst, src, size);
         return;
     }
@@ -315,7 +339,7 @@ void map_shared_memory(::Ctx* c) {
         return;
     }
     std::lock_guard lk(g_mu);
-    if (!in_alias(addr, size) || !alias_alloc(addr, size)) {
+    if (!in_map_region(addr, size) || !alias_alloc(addr, size)) {
         fail(c, "MapSharedMemory (address)", kernel::kInvalidMemoryState, addr, size, h);
         return;
     }
@@ -426,7 +450,7 @@ void map_transfer_memory(::Ctx* c) {
         return;
     }
     std::lock_guard lk(g_mu);
-    if (!in_alias(addr, size) || !mem::is_mapped(tm->addr, size) || !alias_alloc(addr, size)) {
+    if (!in_map_region(addr, size) || !mem::is_mapped(tm->addr, size) || !alias_alloc(addr, size)) {
         fail(c, "MapTransferMemory (address or owner)", kernel::kInvalidMemoryState, addr, tm->addr, size);
         return;
     }
@@ -485,7 +509,7 @@ void map_physical_memory(::Ctx* c) {
         return;
     }
     std::lock_guard lk(g_mu);
-    if (!in_alias(addr, size) || !alias_alloc(addr, size)) {
+    if (!in_map_region(addr, size) || !alias_alloc(addr, size)) {
         fail(c, "MapPhysicalMemory (address range or already mapped)", kernel::kInvalidMemoryState, addr, size, 0);
         return;
     }
