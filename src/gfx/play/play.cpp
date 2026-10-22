@@ -146,6 +146,7 @@ struct G {
     uint64_t base = 0x7100000000ull;
     uint32_t hook_update = 0, hook_input = 0;
     bool capture_mouse = true, quit_on_close = true, log_status = false;
+    bool late_sample = true;           // pump the window's events again right before the mouse counts are taken (S11: the counts are as new as ProcessInput)
     double pitch_limit_deg = 0;
 
     // frame state (main thread)
@@ -593,6 +594,10 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     double dx = 0, dy = 0;
     if (st.update_seq != st.aim_seq) {                // the first ProcessInput since the frame boundary takes the mouse counts
         st.aim_seq = st.update_seq;
+        // Late sample: the frame boundary pumped the events at the start of Update; the tick that reaches ProcessInput is a little later (the
+        // whole Update body runs first). Pump again so the counts include whatever the mouse did in between. Main thread only, like the pump
+        // in the frame-boundary hook; the key and button events it queues are handled at the next boundary.
+        if (st.late_sample && st.window && std::this_thread::get_id() == st.pump_thread) platform::pump_events();
         const input::MouseDelta d = input::mouse_delta_take();
         dx = d.dx;
         dy = d.dy;
@@ -742,6 +747,7 @@ bool load() {
         NXLOG_I(kTag, "settings loaded from %s (%zu bindings)", st.path.c_str(), st.settings.bindings.size());
     }
     st.capture_mouse = config_get_bool("play", "capture_mouse", true);
+    st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);
     st.log_status = config_get_bool("play", "log_status", false);
     st.pitch_limit_deg = config_get_double("play", "pitch_limit_deg", 0.0);
