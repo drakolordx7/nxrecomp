@@ -1,11 +1,11 @@
 # Make a sibling git worktree of this checkout on a new branch and configure its build (graphics shell off: fast, no network).
 #   pwsh scripts\wt_setup.ps1 svc-time          -> ..\svc-time on branch svc-time, build dir build\release configured
-# The recompiler ABI header is read from runtime-wt\_abi2\include (a snapshot of the ABI v2 header the runtime is written against).
+# The recompiler ABI header is read from ..\..ecomp\include (ABI 3).
 param([Parameter(Mandatory = $true)][string]$Name, [string]$AbiInclude = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $parent = Split-Path -Parent $root
-if (-not $AbiInclude) { $AbiInclude = Join-Path $parent "_abi2\include" }
+if (-not $AbiInclude) { $AbiInclude = Join-Path (Split-Path -Parent $parent) "recomp\include" }
 $dir = Join-Path $parent $Name
 git -C $root worktree add -b $Name $dir HEAD
 $bd = Join-Path $dir "build\release"
