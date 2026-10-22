@@ -240,6 +240,11 @@ struct Renderer::Impl {
                 NXLOG_I(kTag, "HDR: surface offers HDR10 %s, scRGB %s; display %s: hdr %s, peak %.0f nits, SDR white %.0f nits (%s)", o10 ? "yes" : "no", osc ? "yes" : "no",
                         di.monitor, di.hdr_enabled ? "on" : "off", di.max_nits, di.sdr_white_nits, di.how);
             }
+            if (!headless && es.hdr.mode == extras::HdrMode::Auto && !(di.valid && di.hdr_enabled)) {
+                // the NVIDIA driver lists HDR10 and scRGB surface formats whether or not Windows HDR is on for the monitor, so "auto" needs Windows' own answer
+                if (o10 || osc) NXLOG_I(kTag, "HDR: the surface lists HDR formats but Windows does not report HDR on for this monitor (%s): SDR output (set [hdr] mode = on to force HDR)", di.how);
+                o10 = osc = false;
+            }
             const bool pick10 = es.hdr.format == extras::HdrFormat::Hdr10 ? o10 : es.hdr.format == extras::HdrFormat::ScRgb ? false : o10;
             const bool pickSc = es.hdr.format == extras::HdrFormat::ScRgb ? osc : es.hdr.format == extras::HdrFormat::Hdr10 ? false : (!o10 && osc);
             if (pick10) wanted = extras::OutputKind::Hdr10;
@@ -698,6 +703,18 @@ void Renderer::end_frame() {
     }
     s.st.frames++;
     s.frame_number++;
+    {   // [gfx] log_fps = 1: one line per second with the presented frame rate and the GPU time of the present command buffer (output pass, FSR 1)
+        static const bool log_fps = config_get_bool("gfx", "log_fps", false);
+        static uint64_t last_ns = 0, last_frames = 0;
+        if (log_fps) {
+            const uint64_t now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (now - last_ns >= 1000000000ull) {
+                if (last_ns) NXLOG_I(kTag, "fps %.1f, present pass GPU %.3f ms avg", static_cast<double>(s.st.frames - last_frames) * 1e9 / static_cast<double>(now - last_ns), s.st.gpu_ms_avg);
+                last_ns = now;
+                last_frames = s.st.frames;
+            }
+        }
+    }
     s.cur_slot = (s.cur_slot + 1) % static_cast<uint32_t>(s.slots.size());
 
     if (cap) {

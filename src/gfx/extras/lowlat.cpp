@@ -57,17 +57,20 @@ struct LowLatency::Impl {
         if (!swapchain) return;
         if (backend_reflex()) {
             VkLatencySleepModeInfoNV mi = {VK_STRUCTURE_TYPE_LATENCY_SLEEP_MODE_INFO_NV};
-            mi.lowLatencyMode = VK_TRUE;
+            mi.lowLatencyMode = live_on ? VK_TRUE : VK_FALSE;
             mi.lowLatencyBoost = cfg.mode == LatencyMode::Boost ? VK_TRUE : VK_FALSE;
             mi.minimumIntervalUs = cap_fps > 0 ? static_cast<uint32_t>(1e6 / cap_fps) : 0;
             const VkResult r = vkSetLatencySleepModeNV(dev->device(), swapchain, &mi);
             mode_set = r == VK_SUCCESS;
             if (!mode_set) NXLOG_W(kTag, "vkSetLatencySleepModeNV failed (%d)", static_cast<int>(r));
-            else NXLOG_I(kTag, "Reflex sleep mode set: low latency on, boost %s, interval %u us", mi.lowLatencyBoost ? "on" : "off", mi.minimumIntervalUs);
+            else NXLOG_I(kTag, "Reflex sleep mode set: low latency %s, boost %s, interval %u us", live_on ? "on" : "off", mi.lowLatencyBoost ? "on" : "off", mi.minimumIntervalUs);
         }
     }
     bool backend_reflex() const { return reflex; }
     bool reflex = false, antilag = false;
+    bool live_on = true;                      // [latency] ab_toggle_s: the mode is switched on and off while running, to compare both states in one run
+    double ab_period_s = 0;
+    uint64_t ab_next_ns = 0, ab_since_ns = 0;
     bool paced = false;                       // the mode is on: the frames_ahead wait runs (also on GPUs with neither extension)
     bool active = false;                      // markers and the host measurement run (enabled, or log_timings asks for the numbers)
 
@@ -141,6 +144,8 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
     // Boost is a Reflex setting; with Anti-Lag it behaves as On. Auto and On both use whichever backend exists.
     enabled_ = backend_ != Backend::None;
     s.paced = s.cfg.mode != LatencyMode::Off;
+    s.ab_period_s = config_get_double("latency", "ab_toggle_s", 0.0);     // test aid, not a user setting
+    if (s.ab_period_s > 0) s.ab_next_ns = FrameLimiter::now_ns() + static_cast<uint64_t>(s.ab_period_s * 1e9);
     s.active = enabled_ || s.paced || s.cfg.log_timings;
     if (enabled_) {
         s.sci.latencyModeEnable = s.reflex ? VK_TRUE : VK_FALSE;
@@ -214,20 +219,28 @@ void LowLatency::sim_begin() {
     Impl& s = *impl_;
     const uint64_t id = s.sim_id.fetch_add(1) + 1;
     const uint64_t t0 = FrameLimiter::now_ns();
+    if (s.ab_period_s > 0 && t0 >= s.ab_next_ns) {       // A/B test mode: flip the mode, forget the averages
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.live_on = !s.live_on;
+        s.ab_next_ns = t0 + static_cast<uint64_t>(s.ab_period_s * 1e9);
+        s.ab_since_ns = t0;
+        s.have_ema = s.have_gpu_ema = false;
+        s.set_mode_locked();
+    }
     VkSwapchainKHR sc;
     bool ready;
     {
         std::unique_lock<std::mutex> lk(s.mu);
         // frames_ahead: the simulation of a frame starts only when at most that many earlier frames are still on their way to the screen. The game
         // queues several frames between its main thread and the GPU; this is what keeps that queue short (and so the input sample close to the picture).
-        if (s.paced && s.cfg.frames_ahead >= 0) {
+        if (s.paced && s.live_on && s.cfg.frames_ahead >= 0) {
             const size_t limit = static_cast<size_t>(s.cfg.frames_ahead);
             s.cv.wait_for(lk, std::chrono::milliseconds(100), [&] { return s.pending.size() <= limit; });
         }
         sc = s.swapchain;
         ready = s.mode_set;
     }
-    if (s.reflex && sc && ready) {
+    if (s.reflex && sc && ready && s.live_on) {
         VkLatencySleepInfoNV si = {VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV};
         si.signalSemaphore = s.sleep_sem;
         si.value = ++s.sleep_value;
@@ -238,7 +251,7 @@ void LowLatency::sim_begin() {
             wi.pValues = &si.value;
             vkWaitSemaphores(s.dev->device(), &wi, 100ull * 1000 * 1000);   // never longer than 100 ms, whatever the driver does
         }
-    } else if (s.antilag) {
+    } else if (s.antilag && s.live_on) {
         s.antilag_update(VK_ANTI_LAG_STAGE_INPUT_AMD, id);
     }
     const double slept = ms_since(t0);
@@ -320,8 +333,9 @@ void LowLatency::present_end() {
         const uint64_t n = FrameLimiter::now_ns();
         if (n - s.last_log_ns > 1000000000ull) {
             s.last_log_ns = n;
-            NXLOG_I(kTag, "%s: input->present %.2f ms, sleep %.2f ms, input->gpu end %.2f ms, sim->present %.2f ms (%llu driver reports)", backend_name(), s.in2present_ema,
-                    s.sleep_ms_avg, s.in2gpu_ema, s.sim2present_ema, static_cast<unsigned long long>(s.reports.load()));
+            NXLOG_I(kTag, "%s: state %s since %.1f s: input->present %.2f ms, sleep %.2f ms, input->gpu end %.2f ms, sim->present %.2f ms (%llu driver reports)", backend_name(),
+                    s.live_on ? "on" : "off", s.ab_since_ns ? static_cast<double>(n - s.ab_since_ns) * 1e-9 : 0.0, s.in2present_ema, s.sleep_ms_avg, s.in2gpu_ema, s.sim2present_ema,
+                    static_cast<unsigned long long>(s.reports.load()));
         }
     }
 }
