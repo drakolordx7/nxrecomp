@@ -216,6 +216,8 @@ class Fn:
                 if tg:                                   # a resolved jump table: a switch over exactly its targets
                     return 'switch (%s) { %s default: call_indirect(c, %s); return; }' % (
                         X(rn), ' '.join('case 0x%xULL: %s' % (t, self.jump(t)) for t in tg), X(rn))
+                if pc in self.env.tailbr:                # an indirect tail call (vtable / function pointer): no dispatch
+                    return '{ call_indirect(c, %s); return; }' % X(rn)
                 self.has_br_fallback = True
                 return '{ jt = %s; goto L_dispatch; }' % X(rn)
             raise Unimpl('br%d' % opc)

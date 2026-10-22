@@ -191,9 +191,58 @@ def _jump_table(img, f, br):
     return sorted(found) if found else None
 
 
+def _is_tail_br(img, f, br, depth=0):
+    """True when the target of the unresolved `br` is a pointer taken from memory or passed in a register: an indirect
+    tail call (virtual call through a vtable, function pointer, member-pointer thunk), never a computed jump inside the
+    function. Compiled code computes in-function targets with `add anchor, entry << n` (jump tables), which is the
+    pattern _jump_table resolves; a target produced by `add`/`adr` and not resolved stays a dispatch fallback.
+    A load from a static table (adrp-based) counts only when no table entry points into this function."""
+    reg = _regno(f.insns[br][1])
+    d = _find_def(f, br, reg)
+    if not d:
+        return True                                        # parameter / caller-supplied register
+    a, mn, ops = d
+    if mn == 'mov' and len(ops) == 2 and ops[1][:1] in ('x', 'w') and depth < 4:
+        src = _regno(ops[1])
+        if isinstance(src, int):
+            sub = _Fn(f.start, f.end, f.insns)
+            d2 = _find_def(sub, a, src)
+            return True if not d2 else _is_tail_br_def(img, sub, d2)
+        return False
+    return _is_tail_br_def(img, f, d)
+
+
+def _is_tail_br_def(img, f, d):
+    a, mn, ops = d
+    if mn in ('ldp', 'ldpsw', 'ldur') and len(ops) > 2 and re.match(r'\[(sp|x29|fp)[,\]]', ops[-1] if mn != 'ldur' else ops[1]):
+        return False                                       # a reload from the stack frame: may be a spilled jump-table target (-O0)
+    if mn in ('ldp', 'ldpsw') or mn.startswith('ldur'):
+        return True
+    if mn.startswith('ldr') and len(ops) > 1 and re.match(r'\[(sp|x29|fp)[,\]]', ops[1]):
+        return False                                       # same: `ldr x8, [sp, #n]` before `br x8` at -O0
+    if mn.startswith('ldr') and len(ops) > 1 and '[' in ops[1]:
+        m = re.match(r'\[(\w+), ([xw]\d+)(?:, lsl #(\d+))?\]', ops[1])
+        if m:                                               # indexed load: a static table of pointers?
+            base = _const(f, a, _regno(m.group(1)))
+            if base is not None and img.base <= base < img.base + len(img.mem):
+                for k in range(0, 256):
+                    p = base + 8 * k
+                    if p + 8 > img.base + len(img.mem):
+                        break
+                    v = img.ptr_at(p - img.base)
+                    if f.start <= v < f.end:
+                        return False                       # the table points into this function: a computed jump
+        return True
+    if mn == 'mov':
+        return True
+    return False
+
+
 def resolve(env):
-    """Fill env.jt for every `br xN` (not x16 PLT stubs, not `ret`) of every listed function."""
+    """Fill env.jt for every `br xN` (not x16 PLT stubs, not `ret`) of every listed function, and env.tailbr with the
+    unresolved ones that are indirect tail calls."""
     env.jt = {}
+    env.tailbr = set()
     img = env.img
     cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
     words = img.words()
@@ -230,3 +279,9 @@ def resolve(env):
             tg = None
         if tg:
             env.jt[b] = tg
+        else:
+            try:
+                if _is_tail_br(img, f, b):
+                    env.tailbr.add(b)
+            except (KeyError, IndexError, ValueError, AttributeError, TypeError):
+                pass

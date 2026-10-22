@@ -23,7 +23,12 @@ class Config(GameConfig):
         ModuleSpec('main', 0x7100000000, 'main'),
         ModuleSpec('sdk', 0x7500000000, 'sdk'),
         ModuleSpec('subsdk0', 0x7600000000, 'subsdk0'),
+        ModuleSpec('rtld', 0x7700000000, 'rtld'),      # lifted for completeness; the runtime's loader does rtld's job (docs/S1b.md)
     ]
     overrides = {}          # {guest address: handler name}: the runtime's h_<name>(Ctx *c) replaces that function
-    extra_entries = {}      # {module name: [module-relative offsets]}
+    # {module name: [module-relative offsets]}. rtld's process entry (0x0) has no FDE, symbol or direct branch, so
+    # discovery never roots it (runtime/docs/S6.md). rtld+0x138c is deliberately NOT rooted: it does `mov x0, x30;
+    # bl 0x1398` and 0x1398 restores x30 from x0 and returns to the original caller, which a C call model cannot
+    # express; game-build/src/mpr_main.cpp supplies the equivalent host function.
+    extra_entries = {'rtld': [0x0]}
     patches = None
