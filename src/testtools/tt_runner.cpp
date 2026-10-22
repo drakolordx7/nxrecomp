@@ -28,6 +28,7 @@ bool Runner::load(const std::string& script_file, const RegionTable* regions, st
     stick_override_ = false;
     mouse_x_ = mouse_y_ = 0;
     fail_line_ = 0;
+    igt_base_ = -1;
     has_keys_ = false;
     const bool ok = parse_script_file(script_file, regions, &script_, err);
     for (const Step& st : script_.steps) {
@@ -166,13 +167,24 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             }
             case StepKind::WaitIgt: r = wait_cond(valid && s.have_igt && s.igt >= st.x, "the in-game time"); break;
             case StepKind::WaitRun: {
-                if (first) start_igt_ = -1;
+                if (first) igt_base_ = -1;
+                bool met = false;
                 if (valid && s.have_igt) {
-                    if (start_igt_ < 0) start_igt_ = s.igt;
-                    r = wait_cond(s.igt - start_igt_ >= st.x, "the game to run for the given time");
-                } else {
-                    r = wait_cond(false, "the in-game time (not readable)");
+                    if (igt_base_ < 0 || s.igt < igt_base_) igt_base_ = s.igt;     // (re)baseline: a new game state restarts the clock
+                    met = s.igt - igt_base_ >= st.x;
                 }
+                char b[64];
+                std::snprintf(b, sizeof b, "%.1f s of play time", st.x);
+                if (st.soft && !met) {
+                    const int64_t to = timeout_of();
+                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) {
+                        NXLOG_W("script", "SOFT-TIMEOUT line %d: no %s within %lld frames, going on", st.line, b, static_cast<long long>(to));
+                        advance();
+                        continue;
+                    }
+                    return;
+                }
+                r = wait_cond(met, b);
                 break;
             }
             case StepKind::Mash: {
@@ -217,6 +229,39 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 if (met) { warped_ = false; advance(); continue; }
                 const int64_t to = timeout_of();
                 if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "timeout waiting for the warp target area to become current"); return; }
+                return;
+            }
+            case StepKind::Grant:
+                if (!detail::grant(st.count, static_cast<int32_t>(st.x), static_cast<int32_t>(st.y))) {
+                    const int64_t to = timeout_of();
+                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "@grant: the player state is not available"); return; }
+                    return;                       // retry next frame (the game may not have a player state yet)
+                }
+                NXLOG_I("tt", "grant %s: amount %d capacity %d", st.text.c_str(), static_cast<int>(st.x), static_cast<int>(st.y));
+                advance();
+                continue;
+            case StepKind::Call: {
+                uint64_t res = 0;
+                std::string why;
+                if (!detail::call_guest(c, static_cast<uint64_t>(st.count), st.text, &res, &why)) {
+                    const int64_t to = timeout_of();
+                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "@call: " + why); return; }
+                    return;
+                }
+                NXLOG_I("tt", "call main+0x%llx(%s) = 0x%llx", static_cast<unsigned long long>(st.count), st.text.c_str(), static_cast<unsigned long long>(res));
+                advance();
+                continue;
+            }
+            case StepKind::PressUntil: {
+                std::string d;
+                if (valid && eval_assert(st, s, valid, &d)) { pressing_ = 0; advance(); continue; }
+                const int64_t to = timeout_of();
+                if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) {
+                    pressing_ = 0;
+                    fail(st, "timeout after " + std::to_string(to) + " frames waiting for the @mashuntil condition (" + d + ")");
+                    return;
+                }
+                pressing_ = ((k - start_frame_) % static_cast<uint64_t>(st.count)) < 4 ? st.buttons : 0;
                 return;
             }
             case StepKind::Shot: {
