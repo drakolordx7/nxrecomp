@@ -2,6 +2,8 @@
 // The scripted-run executor (S5): runs the steps of a parsed script (tt_script.h) one frame boundary at a time.
 // Each call to Runner::frame is one frame; a step that blocks consumes the frame, a step that does not lets the next one run in the
 // same call. Failure and pass call tt::end_run (exit code 1 / 0).
+#include <windows.h>
+
 #include <cmath>
 #include <cstring>
 
@@ -163,6 +165,42 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 break;
             }
             case StepKind::WaitIgt: r = wait_cond(valid && s.have_igt && s.igt >= st.x, "the in-game time"); break;
+            case StepKind::WaitRun: {
+                if (first) start_igt_ = -1;
+                if (valid && s.have_igt) {
+                    if (start_igt_ < 0) start_igt_ = s.igt;
+                    r = wait_cond(s.igt - start_igt_ >= st.x, "the game to run for the given time");
+                } else {
+                    r = wait_cond(false, "the in-game time (not readable)");
+                }
+                break;
+            }
+            case StepKind::Mash: {
+                const uint64_t now_ms = GetTickCount64();
+                if (first) { start_ms_ = now_ms; next_mash_ms_ = now_ms; remaining_ = 0; }
+                const bool met = valid && s.have_world && std::memcmp(st.text == "area" ? s.area : s.world, st.id, 16) == 0;
+                if (met) { pressing_ = 0; advance(); continue; }
+                const int64_t to_ms = st.timeout < 0 ? 600000 : st.timeout;
+                if (to_ms > 0 && static_cast<int64_t>(now_ms - start_ms_) >= to_ms) { pressing_ = 0; fail(st, "timeout waiting for " + st.text + " " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1)); return; }
+                // The press lasts 250 ms of host time: in deterministic mode a frame is a tiny slice of host time and the front end runs on the host clock.
+                if (remaining_ > 0) { if (now_ms >= mash_release_ms_) { remaining_ = 0; pressing_ = 0; } }
+                else if (now_ms >= next_mash_ms_) { pressing_ = st.buttons; remaining_ = 1; mash_release_ms_ = now_ms + 250; next_mash_ms_ = now_ms + static_cast<uint64_t>(st.x); }
+                return;
+            }
+            case StepKind::Rate:
+                set_clock_rate(st.x);
+                advance();
+                continue;
+            case StepKind::Give:
+                if (!detail::give_item(static_cast<int>(st.x), static_cast<int>(st.y))) { fail(st, "@give: the player state is not readable yet"); return; }
+                advance();
+                continue;
+            case StepKind::WaitMs: {
+                const uint64_t now_ms = GetTickCount64();
+                if (first) start_ms_ = now_ms;
+                if (static_cast<double>(now_ms - start_ms_) >= st.x) { advance(); continue; }
+                return;
+            }
             case StepKind::Warp: {
                 if (!warped_) {
                     if (detail::warp(c, st.id2, st.id)) {

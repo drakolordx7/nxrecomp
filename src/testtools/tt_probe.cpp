@@ -19,6 +19,7 @@
 // CStateManager::GameState(), SInitialState{area, -1}); CGameInstanceState::QuitGame(7) with the instance state from CStateManager::GameInstanceState().
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -62,7 +63,9 @@ constexpr uint64_t kFnUpdate = 0x3c81c8;                // CGameArchitectureSupp
 constexpr uint64_t kFnProcessInput = 0xc70334;          // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 player, x2 state manager
 constexpr int kQuitReasonWarp = 7;
 
-std::atomic<uint64_t> g_player{0}, g_mgr{0};
+std::atomic<uint64_t> g_player{0}, g_mgr{0}, g_pi_stamp{0};
+std::atomic<::Ctx*> g_call_ctx{nullptr};
+constexpr uint64_t kFnGetVelocityWR = 0xc577c4;        // CPhysicsActorMP1::GetVelocityWR(player, CStateManager const&) -> CVector3f*
 ProbeLayout g_layout;
 
 template <class T>
@@ -80,12 +83,13 @@ uint64_t guest_call(::Ctx* c, uint64_t addr, uint64_t a0 = 0, uint64_t a1 = 0, u
 }
 
 int frame_hook(::Ctx* c, uint64_t, void*) { frame_boundary(c); return 0; }
-int input_hook(::Ctx* c, uint64_t, void*) { set_player_pointers(c->x[0], c->x[2]); return 0; }
+int input_hook(::Ctx* c, uint64_t, void*) { set_player_pointers(c->x[0], c->x[2]); g_pi_stamp.store(frame()); return 0; }
 
 }  // namespace
 
 void set_probe_layout(const ProbeLayout& l) { g_layout = l; }
 void set_player_pointers(uint64_t player, uint64_t mgr) { g_player.store(player); g_mgr.store(mgr); }
+void set_call_context(::Ctx* c) { g_call_ctx.store(c); }
 
 namespace detail {
 bool have_state_manager() { return (g_layout.state_manager ? g_layout.state_manager : g_mgr.load()) != 0; }
@@ -113,6 +117,10 @@ bool read_state(GameState* out) {
         const uint64_t ps = rd64(gs + 0x20);
         float hp;
         if (ps && rd(ps + 0xc, &hp)) { g.hp = hp; g.have_hp = true; }
+        int32_t beam = -1, visor = -1, missiles = -1;
+        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x30 + 8 * 4, &missiles)) {
+            g.beam = beam; g.visor = visor; g.missiles = missiles; g.have_ps = true;
+        }
     }
     const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
     uint64_t player = g_layout.player ? g_layout.player : 0;
@@ -131,9 +139,41 @@ bool read_state(GameState* out) {
         float m[12];
         if (xf && rd(xf, &m)) {
             g.pos[0] = m[3]; g.pos[1] = m[7]; g.pos[2] = m[11];
-            g.yaw = std::atan2(-m[1], m[5]);
+            g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is +Z at 0; + = turn left)
             rd(player + 0x3f0, &g.move_state);
             g.have_player = std::isfinite(g.pos[0]) && std::isfinite(g.pos[1]) && std::isfinite(g.pos[2]);
+        }
+        if (g.have_player && mgr) {            // the first-person camera: [[[mgr + 0x4e0150] + 0x30] + 0x80]
+            const uint64_t logic = rd64(mgr + 0x4e0150);
+            const uint64_t cm = logic ? rd64(logic + 0x30) : 0;
+            const uint64_t fp = cm ? rd64(cm + 0x80) : 0;
+            float cx[12];
+            const uint64_t xfp = fp ? rd64(rd64(rd64(fp + 8) + 0x20) + 0x40) : 0;
+            if (xfp && rd(xfp, &cx) && std::isfinite(cx[2]) && std::isfinite(cx[0])) {
+                g.cam_yaw = std::atan2(cx[2], cx[0]);
+                g.cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, cx[6])));
+                g.have_cam = true;
+            }
+        }
+        if (g.have_player) {
+            float pitch = 0;
+            int32_t cs = 0, ms = 0, os = 0;
+            if (rd(player + 0x5cc, &pitch) && rd(player + 0x4d0, &cs) && rd(player + 0x4d4, &ms) && rd(player + 0x4e0, &os)) {
+                g.pitch = pitch; g.cam_state = cs; g.morph_state = ms; g.orbit_state = os; g.have_aim = true;
+            }
+            // The physics velocity needs a guest call, so only from inside the frame hook and only while the game is calling ProcessInput
+            // (the player pointer is then live; during loads it is stale).
+            ::Ctx* c = g_call_ctx.load();
+            const uint64_t mgr_now = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+            if (c && mgr_now && frame() - g_pi_stamp.load() <= 2 && fn_lookup(detail::game_base() + kFnGetVelocityWR)) {
+                const uint64_t vp = guest_call(c, detail::game_base() + kFnGetVelocityWR, player, mgr_now);
+                float v[3];
+                if (vp && rd(vp, &v) && std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])) {
+                    for (int i = 0; i < 3; i++) g.vel[i] = v[i];
+                    g.speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                    g.have_phys = true;
+                }
+            }
         }
     }
     *out = g;
@@ -149,6 +189,16 @@ void install_game_hooks() {
 }
 
 namespace detail {
+
+bool give_item(int item, int amount) {
+    if (item < 0 || item > 40) return false;
+    const uint64_t gp = g_layout.game_state_global ? g_layout.game_state_global : game_base() + kGpGameState;
+    const uint64_t gs = rd64(gp);
+    const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
+    if (!ps) return false;
+    const int32_t v[2] = {amount, amount};
+    return write_mem(ps + 0x30 + 8 * static_cast<uint64_t>(item), v, sizeof v);
+}
 
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
     const uint64_t base = game_base();

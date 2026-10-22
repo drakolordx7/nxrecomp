@@ -24,6 +24,17 @@
 //   @world <id> [timeout=<n>]         the same for the world id
 //   @pos <x> <y> <z> [<r>] [timeout=<n>]   wait until the player is within r (default 1.0) world units of the point
 //   @igt <seconds> [timeout=<n>]      wait until the in-game play time is >= seconds
+//   @run <seconds> [timeout=<n>]      wait until the in-game play time has advanced by <seconds> since this step began (the game clock stands
+//                                     still while an area loads, so this is "the game ran for that long")
+//   @mash <keys> <period_ms> area|world <id> [timeout=<ms>]
+//                                     press the buttons for 250 ms of host time every <period_ms> until the area (or world) becomes current: gets
+//                                     through the front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
+//   @give <item> <amount>             set an item of the player state (CPlayerStateMP1 item table): amount and capacity. <item> is a number or the game's
+//                                     name without case or underscores (MorphBall, ChargeBeam, Missiles, XRayVisor, WaveBeam ...)
+//   @rate <hz>                        the game step is exactly 1/hz for every frame from here on (hz > 0), 0 = the configured mode again; the clock
+//                                     itself stays real, so areas load at full speed
+//   @sleep <ms>                       wait <ms> of host wall-clock time (not game time: loading and fade-outs run on the host clock even in
+//                                     deterministic mode); frames keep being delivered meanwhile
 //   @warp <world> <area>              warp to the area (practice-mod sequence, done by the runner); then waits until that area is current
 //   @shot <name>                      save a screenshot <shot_dir>/<name>.png at this frame (does not block)
 //   @hash [<label>]                   write a labelled hash line into the trace and the result file (does not block)
@@ -57,6 +68,11 @@ enum class StepKind : uint8_t {
     WaitWorld,   // id (16 bytes), timeout
     WaitPos,     // x, y, z, r, timeout
     WaitIgt,     // x = seconds, timeout
+    WaitMs,      // x = milliseconds of host time
+    Give,        // x = item id, y = amount
+    Rate,        // x = hz (0 = real clock)
+    Mash,        // buttons every x ms until area (text "area") / world (text "world") id; timeout in host ms (-1 = 600000)
+    WaitRun,     // x = seconds of in-game play time from the step start, timeout
     Warp,        // id = area, id2 = world
     Shot,        // text = name
     Hash,        // text = label (may be empty)
