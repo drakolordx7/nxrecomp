@@ -524,6 +524,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
         for (size_t i = 0; i < got; ++i) handle_event(buf[i], now);
     }
     poll_pads(now);
+    if (st.engine) st.engine->frame_tick();
 
     // what the game is doing: the context, the beam, the pointer
     const uint64_t pi = st.last_pi_ns.load();
