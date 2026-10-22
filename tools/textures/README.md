@@ -10,11 +10,11 @@ bc7e's ISPC object carries sse4, avx2 and avx512 paths with its own dispatch.
 
 ## Behaviour that matters
 
-- **sRGB**: ASTC sRGB data is decoded with astcenc's sRGB profile (RGB stays sRGB-encoded, alpha linear), BC7 is encoded on those 8-bit values, and the output is tagged `BC7_UNORM_SRGB` (DXGI 99). Linear ASTC gives `BC7_UNORM` (98). The `.astc` file format does not store the profile, so the CLI takes `--srgb`.
-- **Alpha**: opaque source blocks keep alpha exactly 255. bc7e otherwise lets mode 6 and channel rotation disturb it (`docs/debug/002.md`); the price is about 2 dB of RGB PSNR on opaque content. `--allow-opaque-mode6` turns this off.
-- **Partial blocks**: image sizes that are not multiples of 4 (or of the ASTC footprint) are handled; edge pixels are replicated into partial BC7 blocks.
-- **Passthrough**: DDS files with BC1 to BC7 (DX10 or legacy FourCC headers) are copied byte for byte, same format.
-- **Presets**: `--quality 0..6` = bc7e ultrafast, veryfast, fast, basic, slow, veryslow, slowest; default 5 (veryslow). Chosen from the sweep below: 5 has the best mean PSNR per unit time; 6 is 2x slower for no mean gain.
+- sRGB: ASTC sRGB data is decoded with astcenc's sRGB profile (RGB stays sRGB-encoded, alpha linear), BC7 is encoded on those 8-bit values, and the output is tagged `BC7_UNORM_SRGB` (DXGI 99). Linear ASTC gives `BC7_UNORM` (98). The `.astc` file format does not store the profile, so the CLI takes `--srgb`.
+- Alpha: opaque source blocks keep alpha exactly 255. bc7e otherwise lets mode 6 and channel rotation disturb it (`docs/debug/002.md`); the price is about 2 dB of RGB PSNR on opaque content. `--allow-opaque-mode6` turns this off.
+- Partial blocks: image sizes that are not multiples of 4 (or of the ASTC footprint) are handled; edge pixels are replicated into partial BC7 blocks.
+- Passthrough: DDS files with BC1 to BC7 (DX10 or legacy FourCC headers) are copied byte for byte, same format.
+- Presets: `--quality 0..6` = bc7e ultrafast, veryfast, fast, basic, slow, veryslow, slowest; default 5 (veryslow). Chosen from the sweep below: 5 has the best mean PSNR per unit time; 6 is 2x slower for no mean gain.
 - Not handled: ASTC HDR, 3D ASTC, texture arrays and mip chains inside one call (call once per level), non-Windows hosts (`LoadLibrary`).
 
 ## Build and use

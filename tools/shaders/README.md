@@ -2,7 +2,7 @@
 
 Offline harness that turns Maxwell (SM 5.3) shader machine code into SPIR-V with two independent translators, validates
 every output with `spirv-val`, and compares them. Written to run on the game's shader blobs once the dump exists; until
-then it is proven on a stand-in corpus of real Maxwell binaries.
+then it is tested on a stand-in corpus of real Maxwell binaries.
 
 | Translator | Source | Output | Role |
 |---|---|---|---|
@@ -62,14 +62,14 @@ Stand-in corpus to translator input: `scripts\dksh_to_corpus.py <dksh dir> --out
 
 ## Stand-in corpus
 
-Real Maxwell binaries, legally: Sascha Willems' Vulkan GLSL samples (MIT, commit `1cbc8d87`) rewritten by
+Real Maxwell binaries, made from freely licensed sources: Sascha Willems' Vulkan GLSL samples (MIT, commit `1cbc8d87`) rewritten by
 `scripts\build_corpus.py` into the GLSL dialect of devkitPro's `uam` (set numbers removed, push constants to a uniform
 block, `gl_VertexIndex` to `gl_VertexID`, and so on) and compiled by `uam` 1.0.0 (built from the official release
 tarball in WSL) to `.dksh` modules. 289 of 300 shaders compile (138 vertex, 138 fragment, 10 compute, 3 geometry); the
 222 distinct code blocks are what the oracle counts. Caveat: deko3d's driver constant buffer layout differs from NVN's
 (`uam` README: "Internal deko3d constbuf layout"), so texture handles sit at different words than in an NVN shader. That
 is why smo's translator, which hard-codes NVN's `c[2]` handle table, fails 72 of 222 blocks on this corpus
-("texture handle"); Ryujinx resolves them. The corpus proves the plumbing and instruction coverage; the pass-rate
+("texture handle"); Ryujinx resolves them. The corpus shows that the plumbing and instruction coverage work; the pass-rate
 comparison that decides the translator must be redone on the real game shaders.
 
 ## Oracle
@@ -93,5 +93,11 @@ DebugMode retry); smo 135 valid (87 not translated, 72 of them texture handles, 
 | `smo/mx_translate.c`, `mx_translate.h`, `mx_ops.h` | smo-recomp `runtime/gfx/` | GPL-3.0 (`licenses/LICENSE.smo-recomp.GPL-3.0`), unmodified |
 | `smo/mx_batch.c`, `scripts/corpus_to_mxs.py` | derived from smo-recomp `tests/mx_all.c`, `tests/check_all_shaders.py` | GPL-3.0 |
 | `corpus/sascha_dksh/*.dksh` | compiled from SaschaWillems/Vulkan GLSL by `uam` 1.0.0 | sources MIT (Sascha Willems); `uam` is zlib-style plus Mesa MIT; output carries the source licence |
+
+## Changes for the NVN back end (S4d)
+
+- `harness/translator/spirv-pixld-*.patch` (five files): PIXLD.MY_INDEX reads `gl_SampleID` (new `IoVariable.SampleId`), `gl_PerVertex` declares `ClipDistance[7]`. Before the patch 33,361 of 33,744 pixel blocks hit "Shader instruction Pixld is not implemented"; after it none do.
+- `StaticGpuAccessor.cs`: the host profile reports no fragment shader interlock, so no module needs `SPV_EXT_fragment_shader_interlock`.
+- `scripts/make_code_corpus.py <corpus> --out <dir> [--verify <results dir>]`: collapses the 67,506-block survey corpus to the 13,016 distinct code blocks, keyed by the first 16 hex digits of sha1(code). `--verify` checks that blocks sharing code gave identical SPIR-V (9,750 groups, 0 differ).
 
 `spirv-nan.patch` is carried from Wonder but not applied (Wonder's published numbers were built without it).
