@@ -94,4 +94,10 @@ DebugMode retry); smo 135 valid (87 not translated, 72 of them texture handles, 
 | `smo/mx_batch.c`, `scripts/corpus_to_mxs.py` | derived from smo-recomp `tests/mx_all.c`, `tests/check_all_shaders.py` | GPL-3.0 |
 | `corpus/sascha_dksh/*.dksh` | compiled from SaschaWillems/Vulkan GLSL by `uam` 1.0.0 | sources MIT (Sascha Willems); `uam` is zlib-style plus Mesa MIT; output carries the source licence |
 
+## Changes for the NVN back end (stream S4d)
+
+- `harness/translator/spirv-pixld-*.patch` (five files): PIXLD.MY_INDEX reads `gl_SampleID` (new `IoVariable.SampleId`), `gl_PerVertex` declares `ClipDistance[7]`. Before the patch 33,361 of 33,744 pixel blocks hit "Shader instruction Pixld is not implemented"; after it none do.
+- `StaticGpuAccessor.cs`: the host profile reports no fragment shader interlock, so no module needs `SPV_EXT_fragment_shader_interlock`.
+- `scripts/make_code_corpus.py <corpus> --out <dir> [--verify <results dir>]`: collapses the 67,506-block survey corpus to the 13,016 distinct code blocks, keyed by the first 16 hex digits of sha1(code). `--verify` checks that blocks sharing code gave identical SPIR-V (9,750 groups, 0 differ).
+
 `spirv-nan.patch` is carried from Wonder but not applied (Wonder's published numbers were built without it).
