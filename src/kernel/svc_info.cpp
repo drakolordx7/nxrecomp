@@ -8,6 +8,7 @@
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/services.h"
 #include "nxrt/svc.h"
 
 namespace nxrt {
@@ -66,7 +67,7 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
         case 16: out = static_cast<uint64_t>(config_get_int("process", "system_resource_size", 0)); return kernel::kOk;
         case 17: out = 0; return kernel::kOk;                                 // SystemResourceSizeUsed
         case 18:                                                              // ProgramId: set by the game layer ([process] program_id)
-            out = static_cast<uint64_t>(config_get_int("process", "program_id", 0));
+            out = services::program_id_now();   // [process] program_id, else [title] program_id (default: the title the profile describes)
             return kernel::kOk;
         case 20:                                                              // UserExceptionContextAddress
             out = user_exception_context();
