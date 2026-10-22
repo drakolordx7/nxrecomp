@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Helpers for tier-2 code of one worker stream (see nxrecomp/lift/tier2/x_*.py). Included at the end of cxx.h.
+// Helpers for tier-2 code of one instruction family (see nxrecomp/lift/tier2/x_*.py). Included at the end of cxx.h.
 // Byte order: the host is little-endian, so lane k of a V128 is the bytes at offset k*ES of the union's u8 view.
 #pragma once
 namespace nx {
