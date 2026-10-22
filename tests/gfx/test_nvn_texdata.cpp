@@ -514,6 +514,286 @@ NXTEST(bc7_disk_cache_hit_and_truncated_file) {
     no_cache();
 }
 
+// ---- disk cache entries of other formats ------------------------------------------------------------------------------------
+// An entry the setup tool makes has the layout of the runtime's BC7 entry, with another VkFormat (nvn_texdata.cpp). These tests
+// replace the BC7 entry of a texture with a hand-made one and check which entries prepare_texture uses.
+
+namespace {
+
+void put32(std::vector<uint8_t>& v, uint32_t x) {
+    for (int i = 0; i < 4; ++i) v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+}
+void put64(std::vector<uint8_t>& v, uint64_t x) {
+    for (int i = 0; i < 8; ++i) v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+}
+uint64_t get64(const uint8_t* p) {
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; --i) v = (v << 8) | p[i];
+    return v;
+}
+
+// A new cache folder for one test, set as the [nvn] bc7_cache folder (the env var wins over the config).
+fs::path new_cache_dir(const char* tag) {
+    const fs::path dir = fs::temp_directory_path() /
+                         (std::string("nxrt_texdata_") + tag + "_" +
+                          std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    set_env("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    return dir;
+}
+
+// Level table of a tight entry: RGBA8 texels (4 bytes each) or 4x4 blocks (16 bytes each); all layers of a level back to back.
+std::vector<PreparedLevel> tight_table(const TexLayout& L, bool rgba8) {
+    std::vector<PreparedLevel> v;
+    uint64_t off = 0;
+    for (const tegra::LevelLayout& lv : L.layout.levels) {
+        PreparedLevel p{};
+        p.width = lv.width;
+        p.height = lv.height;
+        p.depth = lv.depth;
+        const uint64_t per_slice = rgba8 ? static_cast<uint64_t>(lv.width) * lv.height * 4
+                                         : div_up(lv.width, 4) * div_up(lv.height, 4) * 16;
+        p.offset = off;
+        p.size = per_slice * lv.depth * L.layers;
+        off += p.size;
+        v.push_back(p);
+    }
+    return v;
+}
+
+// The RGBA8 image of a 2D texture (one layer, one slice): texel (x, y) of level i is (x, y, i, 255).
+std::vector<uint8_t> rgba8_pattern(const TexLayout& L) {
+    const std::vector<PreparedLevel> t = tight_table(L, true);
+    std::vector<uint8_t> v(static_cast<size_t>(t.back().offset + t.back().size));
+    for (size_t i = 0; i < t.size(); ++i)
+        for (uint32_t y = 0; y < t[i].height; ++y)
+            for (uint32_t x = 0; x < t[i].width; ++x) {
+                uint8_t* px = v.data() + t[i].offset + (static_cast<uint64_t>(y) * t[i].width + x) * 4;
+                px[0] = static_cast<uint8_t>(x);
+                px[1] = static_cast<uint8_t>(y);
+                px[2] = static_cast<uint8_t>(i);
+                px[3] = 255;
+            }
+    return v;
+}
+
+// Overwrites a cache file with an entry in the layout cache_write uses: magic, version 1, key, VkFormat, level and layer counts,
+// the level table, then the data.
+void write_entry(const fs::path& file, uint64_t key, VkFormat format, const std::vector<PreparedLevel>& level, uint32_t layers,
+                 const std::vector<uint8_t>& data) {
+    std::vector<uint8_t> head;
+    const uint8_t magic[4] = {'N', 'X', 'B', '7'};
+    head.insert(head.end(), magic, magic + 4);
+    put32(head, 1);
+    put64(head, key);
+    put32(head, static_cast<uint32_t>(format));
+    put32(head, static_cast<uint32_t>(level.size()));
+    put32(head, layers);
+    for (const PreparedLevel& l : level) {
+        put32(head, l.width);
+        put32(head, l.height);
+        put32(head, l.depth);
+        put64(head, l.offset);
+        put64(head, l.size);
+    }
+    std::ofstream f(file, std::ios::binary | std::ios::trunc);
+    f.write(reinterpret_cast<const char*>(head.data()), static_cast<std::streamsize>(head.size()));
+    f.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+}
+
+// The one cache file of a folder and its key (read from the header). False when the folder does not hold exactly one file.
+bool single_entry(const fs::path& dir, fs::path& file, uint64_t& key) {
+    const std::vector<fs::path> files = cache_files(dir);
+    if (files.size() != 1) return false;
+    file = files[0];
+    std::ifstream f(file, std::ios::binary);
+    uint8_t head[16];
+    if (!f.read(reinterpret_cast<char*>(head), sizeof head)) return false;
+    key = get64(head + 8);
+    return true;
+}
+
+// An ASTC texture of `info` with constant-colour void-extent blocks in every level; the image is tiled into the storage.
+void build_astc(Built& bt, const TextureBuilderInfo& info, uint32_t seed) {
+    CHECK_MSG(begin_block_linear(bt, info), "layout");
+    std::vector<uint16_t> scratch;
+    for (uint32_t i = 0; i < bt.L.layout.levels.size(); ++i) fill_astc_void_level(bt, i, 0, scratch, seed + i);
+    finish_block_linear(bt, info);
+}
+
+}  // namespace
+
+// ASTC 4x4 UNORM with a hand-made RGBA8 entry: the entry is used (format, from_cache, data); caps that want BC7 ignore it.
+NXTEST(cache_entry_rgba8_is_used) {
+    std::error_code ec;
+    const fs::path dir = new_cache_dir("rgba8");
+    const TextureBuilderInfo info = make_info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 3, NVN_FORMAT_RGBA_ASTC_4x4);
+    Built bt;
+    build_astc(bt, info, 400);
+    CHECK_EQ(bt.L.layers, 1u);
+
+    // the default caps write the BC7 entry of this texture
+    PreparedTexture a;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), a), a.error);
+    CHECK_EQ(a.format, VK_FORMAT_BC7_UNORM_BLOCK);
+    fs::path file;
+    uint64_t key = 0;
+    REQUIRE(single_entry(dir, file, key));
+
+    // the hand-made RGBA8 entry replaces it
+    const std::vector<PreparedLevel> table = tight_table(bt.L, true);
+    const std::vector<uint8_t> pattern = rgba8_pattern(bt.L);
+    write_entry(file, key, VK_FORMAT_R8G8B8A8_UNORM, table, bt.L.layers, pattern);
+    CHECK_EQ(cache_entry_format(*bt.tex), VK_FORMAT_R8G8B8A8_UNORM);
+
+    PreparedTexture r;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), r), r.error);
+    CHECK(r.from_cache);
+    CHECK_EQ(r.format, VK_FORMAT_R8G8B8A8_UNORM);
+    CHECK_EQ(r.block_w, 1u);
+    CHECK_EQ(r.block_bytes, 4u);
+    CHECK_EQ(r.levels, 3u);
+    REQUIRE(r.level.size() == table.size());
+    for (size_t i = 0; i < table.size(); ++i) {
+        CHECK_EQ(r.level[i].width, table[i].width);
+        CHECK_EQ(r.level[i].height, table[i].height);
+        CHECK_EQ(r.level[i].offset, table[i].offset);
+        CHECK_EQ(r.level[i].size, static_cast<uint64_t>(table[i].width) * table[i].height * 4 * bt.L.layers);
+    }
+    CHECK_MSG(r.data == pattern, "RGBA8 entry data differs from the entry");
+
+    // caps that want a BC7 image do not use the RGBA8 entry: the ASTC is transcoded (and the file is rewritten as BC7)
+    TexCaps want_bc7;
+    want_bc7.image_format = VK_FORMAT_BC7_UNORM_BLOCK;
+    PreparedTexture t7;
+    CHECK_MSG(prepare_texture(*bt.tex, want_bc7, t7), t7.error);
+    CHECK_EQ(t7.format, VK_FORMAT_BC7_UNORM_BLOCK);
+    CHECK(!t7.from_cache);
+    CHECK(t7.transcoded);
+    expect_bc7_matches_library(bt, t7);
+
+    fs::remove_all(dir, ec);
+    no_cache();
+}
+
+// ASTC 4x4 UNORM with a hand-made BC5 entry: used for default caps and for a BC5 image; not for an RGBA8 image (decoded instead).
+// An sRGB texture does not use a BC5 entry (BC5 is for non-sRGB data only): it stays BC7.
+NXTEST(cache_entry_bc5_is_used) {
+    std::error_code ec;
+    const fs::path dir = new_cache_dir("bc5");
+    const TextureBuilderInfo info = make_info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 3, NVN_FORMAT_RGBA_ASTC_4x4);
+    Built bt;
+    build_astc(bt, info, 500);
+    PreparedTexture a;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), a), a.error);
+    fs::path file;
+    uint64_t key = 0;
+    REQUIRE(single_entry(dir, file, key));
+
+    // a BC5 entry: 16-byte blocks with the level geometry of BC7; the data is any bytes
+    const std::vector<PreparedLevel> table = tight_table(bt.L, false);
+    std::vector<uint8_t> data(static_cast<size_t>(table.back().offset + table.back().size));
+    fill_random(data, 501);
+    write_entry(file, key, VK_FORMAT_BC5_UNORM_BLOCK, table, bt.L.layers, data);
+    CHECK_EQ(cache_entry_format(*bt.tex), VK_FORMAT_BC5_UNORM_BLOCK);
+
+    PreparedTexture r;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), r), r.error);
+    CHECK(r.from_cache);
+    CHECK_EQ(r.format, VK_FORMAT_BC5_UNORM_BLOCK);
+    CHECK_EQ(r.block_w, 4u);
+    CHECK_EQ(r.block_h, 4u);
+    CHECK_EQ(r.block_bytes, 16u);
+    REQUIRE(r.level.size() == table.size());
+    for (size_t i = 0; i < table.size(); ++i) {
+        CHECK_EQ(r.level[i].width, table[i].width);
+        CHECK_EQ(r.level[i].offset, table[i].offset);
+        CHECK_EQ(r.level[i].size, div_up(table[i].width, 4) * div_up(table[i].height, 4) * 16 * bt.L.layers);
+    }
+    CHECK_MSG(r.data == data, "BC5 entry data differs from the entry");
+
+    // a BC5 image uses the entry too
+    TexCaps want_bc5;
+    want_bc5.image_format = VK_FORMAT_BC5_UNORM_BLOCK;
+    PreparedTexture r5;
+    CHECK_MSG(prepare_texture(*bt.tex, want_bc5, r5), r5.error);
+    CHECK(r5.from_cache);
+    CHECK_EQ(r5.format, VK_FORMAT_BC5_UNORM_BLOCK);
+    CHECK_MSG(r5.data == data, "BC5 entry data differs from the entry (BC5 image)");
+
+    // an RGBA8 image does not use the BC5 entry: the ASTC is decoded to RGBA8, and the entry is left in place
+    TexCaps want_rgba8;
+    want_rgba8.image_format = VK_FORMAT_R8G8B8A8_UNORM;
+    PreparedTexture d;
+    CHECK_MSG(prepare_texture(*bt.tex, want_rgba8, d), d.error);
+    CHECK(!d.from_cache);
+    CHECK_EQ(d.format, VK_FORMAT_R8G8B8A8_UNORM);
+    expect_decode_matches_library(bt, d);
+    PreparedTexture still;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), still), still.error);
+    CHECK(still.from_cache);
+    CHECK_MSG(still.data == data, "BC5 entry was changed by the RGBA8 decode");
+    fs::remove_all(dir, ec);
+
+    // an sRGB texture with a BC5 entry: the entry is not used, the texture is transcoded to BC7_SRGB
+    const fs::path sdir = new_cache_dir("bc5_srgb");
+    Built sb;
+    build_astc(sb, make_info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 3, NVN_FORMAT_RGBA_ASTC_4x4_SRGB), 600);
+    PreparedTexture s0;
+    CHECK_MSG(prepare_texture(*sb.tex, TexCaps(), s0), s0.error);
+    fs::path sfile;
+    uint64_t skey = 0;
+    REQUIRE(single_entry(sdir, sfile, skey));
+    const std::vector<PreparedLevel> stable = tight_table(sb.L, false);
+    std::vector<uint8_t> sdata(static_cast<size_t>(stable.back().offset + stable.back().size));
+    fill_random(sdata, 601);
+    write_entry(sfile, skey, VK_FORMAT_BC5_UNORM_BLOCK, stable, sb.L.layers, sdata);
+    CHECK_EQ(cache_entry_format(*sb.tex), VK_FORMAT_UNDEFINED);
+    PreparedTexture s;
+    CHECK_MSG(prepare_texture(*sb.tex, TexCaps(), s), s.error);
+    CHECK(!s.from_cache);
+    CHECK_EQ(s.format, VK_FORMAT_BC7_SRGB_BLOCK);
+    fs::remove_all(sdir, ec);
+    no_cache();
+}
+
+// The RGBA8 entry of an sRGB texture is the _SRGB variant: an entry declared UNORM is not used, the _SRGB one is.
+NXTEST(cache_entry_srgb_rgba8) {
+    std::error_code ec;
+    const fs::path dir = new_cache_dir("srgb");
+    Built bt;
+    build_astc(bt, make_info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 3, NVN_FORMAT_RGBA_ASTC_4x4_SRGB), 700);
+    PreparedTexture a;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), a), a.error);
+    CHECK_EQ(a.format, VK_FORMAT_BC7_SRGB_BLOCK);
+    fs::path file;
+    uint64_t key = 0;
+    REQUIRE(single_entry(dir, file, key));
+    const std::vector<PreparedLevel> table = tight_table(bt.L, true);
+    const std::vector<uint8_t> pattern = rgba8_pattern(bt.L);
+
+    // UNORM entry: not the entry of an sRGB texture
+    write_entry(file, key, VK_FORMAT_R8G8B8A8_UNORM, table, bt.L.layers, pattern);
+    CHECK_EQ(cache_entry_format(*bt.tex), VK_FORMAT_UNDEFINED);
+    PreparedTexture u;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), u), u.error);
+    CHECK(!u.from_cache);
+    CHECK_EQ(u.format, VK_FORMAT_BC7_SRGB_BLOCK);
+
+    // _SRGB entry: used
+    write_entry(file, key, VK_FORMAT_R8G8B8A8_SRGB, table, bt.L.layers, pattern);
+    CHECK_EQ(cache_entry_format(*bt.tex), VK_FORMAT_R8G8B8A8_SRGB);
+    PreparedTexture s;
+    CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), s), s.error);
+    CHECK(s.from_cache);
+    CHECK_EQ(s.format, VK_FORMAT_R8G8B8A8_SRGB);
+    CHECK_MSG(s.data == pattern, "sRGB RGBA8 entry data differs from the entry");
+
+    fs::remove_all(dir, ec);
+    no_cache();
+}
+
 // ---- hash -------------------------------------------------------------------------------------------------------------------
 
 NXTEST(hash_bytes_separates_inputs) {
