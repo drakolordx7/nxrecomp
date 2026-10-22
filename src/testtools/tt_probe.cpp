@@ -152,7 +152,7 @@ bool read_state(GameState* out) {
             // (the player pointer is then live; during loads it is stale).
             ::Ctx* c = g_call_ctx.load();
             const uint64_t mgr_now = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
-            if (c && mgr_now && frame() - g_pi_stamp.load() <= 2) {
+            if (c && mgr_now && frame() - g_pi_stamp.load() <= 2 && fn_lookup(detail::game_base() + kFnGetVelocityWR)) {
                 const uint64_t vp = guest_call(c, detail::game_base() + kFnGetVelocityWR, player, mgr_now);
                 float v[3];
                 if (vp && rd(vp, &v) && std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])) {
