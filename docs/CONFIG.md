@@ -244,7 +244,7 @@ offline = true
 zone = host
 ```
 
-## Test tooling keys (`[test]`, S5)
+## Test tooling keys (`[test]`, work area S5)
 
 All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment variable = `NXRT_TEST_<KEY>`.
 

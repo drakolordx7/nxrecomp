@@ -155,7 +155,7 @@ def _recv_entry(addr, size):
 class HipcMessage:
     """One HIPC message, written the way libnx's hipcMakeRequest lays it out.
 
-    The ipc* methods use the names from the plan. In the current libnx the same work is
+    The ipc* methods use the names from the older libnx API. In the current libnx the same work is
     done by hipcMakeRequest (header and descriptor layout) and the cmif*/tipc* helpers.
     Message start is 16-byte aligned; raw data starts at the next 16-byte boundary.
     """

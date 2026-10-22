@@ -21,7 +21,7 @@ uint32_t StubService::handle(Request& req, Response&) {
     const uint64_t n = detail::note_unhandled(*this, req.cmd);
     // The first 20 calls per (service, command) are logged, then every 1000th.
     if (n <= 20 || n % 1000 == 0) {
-        char hex[2 * 32 + 1] = "";                              // the first 32 bytes of the raw arguments: what the maintainer needs to name the command
+        char hex[2 * 32 + 1] = "";                              // the first 32 bytes of the raw arguments: what is needed to name the command
         for (size_t i = 0; i < req.in_size && i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", req.in[i]);
         NXLOG_W("ipc",
                 "STUB SERVICE %s cmd %u (in %zu bytes [%s], %zu copy, %zu move handles, buffers a%zu b%zu x%zu c%zu w%zu) -> 0x%x",
