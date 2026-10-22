@@ -67,6 +67,9 @@ def run(a):
     os.makedirs(RUN, exist_ok=True)
     log = os.path.join(RUN, 'mpr.log')
     env = dict(os.environ)
+    # the run directory is work\run, so point the services at the real RomFS and a disposable save folder
+    env.setdefault('NXRT_FS_ROMFS', os.path.join(ROOT, 'game', 'romfs'))
+    env.setdefault('NXRT_FS_SAVE_DIR', os.path.join(RUN, 'save'))
     if a.level:
         env['NXRT_LOG_LEVEL'] = a.level
     if a.probe: env['NXRT_BOOT_PROBE'] = a.probe
