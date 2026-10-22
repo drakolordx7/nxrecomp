@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The generated-code ABI as the runtime sees it. Stream S1 owns the header (recomp/include/nxrecomp/ctx.h: Ctx, V128, FnEntry,
-// DynSym, NxModule and the declarations of the functions this runtime provides: call_indirect, host_import, guest_trap,
-// guest_unimpl, guest_svc, guest_mrs, guest_msr, stx_diag, nx_catch_call; their definitions are src/core/abi_glue.cpp).
+// DynSym, NxModule, NxEh and the declarations of the functions this runtime provides: call_indirect, host_import(c, import_id),
+// guest_trap, guest_unimpl, guest_svc, guest_mrs, guest_msr, stx_diag, nx_catch_call, nx_site_inline, nx_site_midhook,
+// nx_hook_entry; their definitions are src/core/abi_glue.cpp, src/core/hooks.cpp and src/eh/catch_call.cpp).
 // Everything else in nxrt reaches the guest CPU state through the small accessors below.
 #pragma once
 
 #include <nxrecomp/ctx.h>
 
-static_assert(NXRECOMP_ABI_VERSION == 1, "nxrt was written against nxrecomp ABI version 1: review src/core/abi_glue.cpp and diag/ before bumping");
+static_assert(NXRECOMP_ABI_VERSION == 3,
+              "nxrt was written against nxrecomp ABI version 3: review src/core/abi_glue.cpp, nxmodule.cpp, hooks.cpp, eh/ and diag/ before bumping");
 
 namespace nxrt {
+
+// The ABI version this runtime implements. A lifted module built against another version is refused (nxmodule.h).
+constexpr uint32_t kAbiVersion = 3;
 
 using GuestFn = void (*)(::Ctx*);   // a lifted function (or an HLE handler): guest registers in, guest registers out
 using HleFn = GuestFn;

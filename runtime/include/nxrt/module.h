@@ -12,7 +12,9 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "nxrt/abi.h"
@@ -99,18 +101,30 @@ private:
     std::vector<uint64_t> init_rel_, fini_rel_;                       // module-relative init/fini entries read before relocation
     uint64_t init_arr_ = 0, init_arr_sz_ = 0, fini_arr_ = 0, fini_arr_sz_ = 0;
     uint64_t init_fn_ = 0, fini_fn_ = 0;                              // DT_INIT / DT_FINI
+    mutable std::once_flag index_once_;                               // name -> first global/weak definition, built on the first find_symbol
+    mutable std::unordered_map<std::string, uint32_t> index_;
 };
 
 // Phase 1: map and parse. Returns null (with *err) on a malformed image, an occupied address range or an oversize image.
 Module* module_load_file(const char* path, const LoadOptions& opt = {}, std::string* err = nullptr);
 Module* module_load_memory(const void* data, size_t size, const LoadOptions& opt = {}, std::string* err = nullptr);
+// An NSO (the ExeFS container of main, rtld, sdk, subsdk*): LZ4 segments are expanded and mapped like an ELF module at opt.base
+// (src/loader/nso.cpp). The module's addresses stay module relative, exactly as in the lifter's input.
+Module* module_load_nso_file(const char* path, const LoadOptions& opt = {}, std::string* err = nullptr);
+Module* module_load_nso_memory(const void* data, size_t size, const LoadOptions& opt = {}, std::string* err = nullptr);
 // Phase 2: apply relocations of every module that is mapped but not yet linked, then protect segments. False when a module failed.
 bool module_link_all();
+// For a title that carries its own dynamic linker (Horizon's rtld relocates every module itself): applies only the page protections and
+// the Horizon memory-state records (svcQueryMemory sees the modules as code / code data), leaving the images exactly as the NSO has
+// them. Do not combine with module_link_all() on the same modules.
+bool module_protect_all();
 // Lifted code: registers each entry in the call_indirect table. Entries outside the module's image are rejected (counted, logged).
 size_t module_register_functions(Module* m, const FuncEntry* table, size_t count);
 size_t module_register_functions(Module* m, const ::FnEntry* table, size_t count);   // the lifter's FnEntry (same layout)
-// Registers everything a lifted module's tables say (NxModule from nxrecomp/ctx.h): its functions, and its dynamic symbol table so that
-// host_import(c, sym) can name the import. `m` is the mapped image (null: the NxModule's own base/text_end range is trusted).
+// Registers a lifted module's tables (NxModule from nxrecomp/ctx.h, ABI 2) with the ABI version this runtime implements: its functions
+// go to the call table and its tables to the registry (nxmodule.h: import resolution, unwinder). Returns the number of functions
+// registered, 0 when the module is refused. `m` is the mapped image (null: the NxModule's own base/text_end range is trusted).
+// nxmodule_register() reports why a module was refused.
 size_t module_register_nxmodule(Module* m, const NxModule* nx);
 // Runs DT_INIT then every init_array entry on `ctx` through dispatch_call (entries must be registered functions or HLE thunks).
 bool module_run_init(Module* m, ::Ctx* ctx);
@@ -125,6 +139,7 @@ std::string module_describe(uint64_t addr);        // "name+0xoff (symbol+0x10)"
 // Forces every relocation against `sym` (defined anywhere or not) to the HLE thunk of that name: the replacement of a recompiled
 // function by host code ("nn:: import replacement where hot"). Register the handler with hle_register first. Set before module_link_all.
 void module_override_symbol(const char* sym);
+bool module_symbol_overridden(const char* sym);    // was module_override_symbol(sym) called
 // Host-provided data for imported data symbols: the symbol resolves to `addr` (set before module_link_all).
 void module_provide_data(const char* sym, uint64_t addr);
 // The TLS template of the first loaded module with a PT_TLS segment; threads copy it into their TLS block (kernel.h).
