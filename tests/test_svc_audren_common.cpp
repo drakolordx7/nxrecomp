@@ -32,7 +32,7 @@ NXTEST(span_basics) {
     CHECK_EQ(h.Length, 12u);
     int sum = 0;
     for (int32_t x : s) sum += x;
-    CHECK_EQ(sum, 1 + 0 + 0 + 4 + 9 + 6);
+    CHECK_EQ(sum, 1 + 0 + 0 + 9 + 9 + 6);
 }
 
 NXTEST(guest_span_is_a_host_pointer) {

@@ -1,6 +1,6 @@
 # Make a sibling git worktree of this checkout on a new branch and configure its build (graphics shell off: fast, no network).
 #   pwsh scripts\wt_setup.ps1 svc-time          -> ..\svc-time on branch svc-time, build dir build\release configured
-# The recompiler ABI header is read from ..\..ecomp\include (ABI 3).
+# The recompiler ABI header is read from the recomp include folder two levels up (ABI 3).
 param([Parameter(Mandatory = $true)][string]$Name, [string]$AbiInclude = "")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
