@@ -22,7 +22,7 @@ version is `NXRECOMP_ABI_VERSION` (3).
 
 ## Use
 
-Python is `D:\AI\Active\Metroid-Prime\tools\.venv\Scripts\python.exe` (3.13; packages in `requirements.txt`). Build tools: LLVM
+Python is `tools\.venv\Scripts\python.exe` at the repository root (3.13; packages in `requirements.txt`). Build tools: LLVM
 23 clang-cl, CMake, Ninja, sccache; `scripts\nx_env.cmd <command>` runs a command with the MSVC environment set up.
 
     python -m nxrecomp lift  <module.nso|prog.elf> <outdir> [--game mpr] [--base 0x7100000000] [--name main] [--index N]
@@ -57,4 +57,4 @@ lifts as a build step and builds the result as a static library (flags: C++20, `
 | Corpus | `python oracle/difftest/gen_corpus.py` | regenerates `corpus.json` (deterministic) |
 
 Lifting and compiling the game itself (`scripts\build_mpr.cmd`) is described in `docs/S1b.md`. Gaps that remain are listed with numbers in `docs/GAPS.md`. The S1 log is `docs/S1.md`, numbered bug notes are in
-`docs/debug/`, and `docs/worker-loop.md` is the developer guide for adding an instruction family.
+`docs/debug/`, and `docs/worker-loop.md` is the developer guide for adding an instruction family (the file name is historical).
