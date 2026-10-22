@@ -163,7 +163,7 @@ static_assert(sizeof(ViewData) == 36, "no padding in ViewData");
 // +0x58 and +0x60 (the descriptor id), so on this NVN version a view is at most 16 bytes wide and a SetDefaults that clears the 0x28 bytes
 // of the practice mod's header zeroes the token's id (debug note 121).
 struct ViewPacked {
-    uint16_t min_level, num_levels, min_layer, num_layers;
+    int16_t min_level, num_levels, min_layer, num_layers;     // 16 bits each: levels and layers are small; -1 round trips
     uint16_t format;
     uint16_t swizzle;        // four 3-bit values (NVN swizzle values are 0..5)
     uint8_t target, depth_stencil_mode, set, pad;
@@ -181,8 +181,8 @@ ViewData load_v(const NVNtextureView* v) {
 }
 void store_v(NVNtextureView* v, const ViewData& d) {
     ViewPacked p{};
-    p.min_level = static_cast<uint16_t>(d.min_level); p.num_levels = static_cast<uint16_t>(d.num_levels);
-    p.min_layer = static_cast<uint16_t>(d.min_layer); p.num_layers = static_cast<uint16_t>(d.num_layers);
+    p.min_level = static_cast<int16_t>(d.min_level); p.num_levels = static_cast<int16_t>(d.num_levels);
+    p.min_layer = static_cast<int16_t>(d.min_layer); p.num_layers = static_cast<int16_t>(d.num_layers);
     p.format = static_cast<uint16_t>(d.format); p.target = static_cast<uint8_t>(d.target);
     p.depth_stencil_mode = static_cast<uint8_t>(d.depth_stencil_mode); p.set = static_cast<uint8_t>(d.set);
     for (int k = 0; k < 4; ++k) p.swizzle = static_cast<uint16_t>(p.swizzle | ((d.swizzle[k] & 7) << (3 * k)));

@@ -39,7 +39,8 @@ Attempt run_attempt(bool windowed, double fps, uint32_t frames, int n) {
     const auto& p = a.r.pacing;
     a.err = std::fabs(p.fps - fps) / fps;
     a.contended = p.overran_fraction > 0.005;
-    a.accurate = p.late_p99_ms < 0.5 && p.late_max_ms < 3.0 && p.min_ms >= a.period - p.late_max_ms - 0.1 * a.period - 0.1;
+    // at most 2 % of the waited frames may start more than 0.5 ms late (p99 over ~140 frames is one or two samples: a single late wake-up decided it)
+    a.accurate = p.late_over_half_ms <= 0.02 && p.late_max_ms < 3.0 && p.min_ms >= a.period - p.late_max_ms - 0.1 * a.period - 0.1;
     std::printf("    %s %3.0f fps, attempt %d: %.4f fps (%.3f %%), p99 %.3f ms, min %.3f, max %.3f ms | waited %llu, overran %.1f %%, late p99 %.3f ms max %.3f ms%s%s\n",
                 windowed ? "window" : "offscreen", fps, n, p.fps, a.err * 100, p.p99_ms, p.min_ms, p.max_ms, static_cast<unsigned long long>(p.waited),
                 p.overran_fraction * 100, p.late_p99_ms, p.late_max_ms, a.contended ? "  [machine busy]" : "", a.accurate ? "" : "  [INACCURATE]");

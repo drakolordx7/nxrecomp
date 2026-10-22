@@ -187,6 +187,7 @@ FrameLimiter::Stats FrameLimiter::stats() const {
     if (!late.empty()) {
         std::sort(late.begin(), late.end());
         st.late_max_ms = late.back();
+        st.late_over_half_ms = static_cast<double>(late.end() - std::upper_bound(late.begin(), late.end(), 0.5)) / static_cast<double>(late.size());
         st.late_p99_ms = late[std::min(late.size() - 1, static_cast<std::size_t>(0.99 * static_cast<double>(late.size())))];
     }
     const std::size_t n = ms.size();

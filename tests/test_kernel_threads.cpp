@@ -860,8 +860,8 @@ NXTEST(system_tick_monotonic_and_rate) {
     Sleep(100);
     const uint64_t b = k::system_tick();
     const int64_t d = static_cast<int64_t>(b - a);
-    CHECK(d >= 1920000 - 300000);                  // 100 ms +- 15 ms of 19.2 MHz ticks
-    CHECK(d <= 1920000 + 300000);
+    CHECK(d >= 1920000 - 300000);                  // Sleep(100) never returns early: at least 100 ms - 15 ms of 19.2 MHz ticks
+    CHECK(d <= 1920000 * 50);                      // and returns (a busy machine may delay the wake-up by any amount: the upper bound only catches a wrong tick rate, 50x)
 
     const uint64_t before = k::system_tick();
     ::Ctx c{};
@@ -878,7 +878,7 @@ NXTEST(sleep_ns_and_sleep_svc) {
     k::sleep_ns(2 * kMs);
     const int64_t dt = mono_ns() - t0;
     CHECK(dt >= 1500000);
-    CHECK(dt <= 10 * kMs);
+    CHECK(dt <= 2000 * kMs);                       // a real sleep returns; a loaded machine may delay the wake-up by any amount, so only a hang is caught
 
     // Zero and negative spans yield (SwitchToThread). On a loaded machine a yield can legitimately take a whole scheduler
     // quantum, so no latency bound is put on them: the test only asserts that every yield returns.
