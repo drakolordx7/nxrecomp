@@ -264,10 +264,15 @@ Target make_target(Texture* t, const TextureViewInfo& v, bool has_view) {
             tg.layer = static_cast<uint32_t>(v.min_layer);
             tg.layers = std::max(1, v.num_layers);
         }
+        else if (t && t->layers > 1 && t->b.target != NVN_TEXTURE_TARGET_3D) tg.layers = t->layers;   // a view without layers
         if (v.has_format) {
             const FormatInfo* fi = format_info(v.format);
             if (fi && fi->vk != VK_FORMAT_UNDEFINED) tg.view_format = fi->vk;
         }
+    } else if (t && t->layers > 1 && t->b.target != NVN_TEXTURE_TARGET_3D) {
+        // no view: an array or cube map target is attached with all its layers (layered rendering: a geometry shader picks the layer with
+        // gl_Layer; without it the shaders draw to layer 0)
+        tg.layers = t->layers;
     }
     return tg;
 }
@@ -346,7 +351,11 @@ bool ensure_pass(bool depth_ro = false) {
     if (P.samples == 0) P.samples = 1;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, extent};
-    ri.layerCount = 1;
+    uint32_t layer_count = UINT32_MAX;     // layered rendering: the layers every attachment has in common
+    for (uint32_t i = 0; i < S.ncolor; ++i)
+        if (colors[i].imageView) layer_count = std::min(layer_count, std::max<uint32_t>(1, P.color[i].layers));
+    if (have_depth) layer_count = std::min(layer_count, std::max<uint32_t>(1, P.depth.layers));
+    ri.layerCount = layer_count == UINT32_MAX ? 1 : layer_count;
     uint32_t last = 0;
     for (uint32_t i = 0; i < S.ncolor; ++i)
         if (colors[i].imageView) last = i + 1;
@@ -1005,6 +1014,10 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             }
             TRACE("    %s ubo%u %llx/%llu%s:%s", stg == kVertex ? "vs" : "fs", slot, static_cast<unsigned long long>(ub.addr), static_cast<unsigned long long>(ub.size), ur.ok ? "" : " (outside every pool)", words.c_str());
         }
+        for (uint32_t i = 0; i < P.ncolor; ++i)
+            if (Texture* ct = S.color_tex[i].get())
+                TRACE("    rt%u t%u mem %p storage %llu cpu-dirty %d view level %u layer %u layers %u", i, ct->id, static_cast<void*>(ct->mem), static_cast<unsigned long long>(ct->storage_size),
+                      ct->cpu_dirty.load() ? 1 : 0, S.color_level[i], S.color_layer[i], S.color_layers[i]);
         g_trace_sampled.clear();
         for (const BindingDesc& d : pl->bindings) {
             if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
@@ -1014,9 +1027,16 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
                 static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
                 if (!dump_dir.empty()) trace_dump_prepared(r.tex, dump_dir);
             }
-            TRACE("    %s set%u b%u %s -> %s%s mem %d%%%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
+            char smp[200] = "", vw[120] = "";
+            if (r.has_sampler)
+                std::snprintf(smp, sizeof smp, " | sampler min %d mag %d wrap %d,%d,%d lod %g..%g bias %g aniso %g cmp %d", r.smp.min_filter, r.smp.mag_filter, r.smp.wrap_s, r.smp.wrap_t,
+                              r.smp.wrap_r, r.smp.lod_min, r.smp.lod_max, r.smp.lod_bias, r.smp.max_anisotropy, r.smp.compare_mode);
+            if (r.has_view)
+                std::snprintf(vw, sizeof vw, " | view levels %d+%d layers %d+%d%s", r.view.has_levels ? r.view.min_level : -1, r.view.has_levels ? r.view.num_levels : -1,
+                              r.view.has_layers ? r.view.min_layer : -1, r.view.has_layers ? r.view.num_layers : -1, r.view.has_format ? " format" : "");
+            TRACE("    %s set%u b%u %s -> %s%s mem %d%%%s%s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
                   d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
-                  r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "");
+                  r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "", smp, vw);
         }
     }
     if (g_xfb_active) {
@@ -1184,6 +1204,27 @@ void do_draw_elements(const P_DrawElements& p) {
     count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), true, static_cast<int>(p.type), &topo)) { counters().draws_skipped.fetch_add(1); return; }
+    if (g_trace) {   // the indices and the first attributes of the first vertices
+        const uint32_t isz0 = index_size_bytes(static_cast<int>(p.type));
+        const uint8_t* ix = host_ptr(p.index_address);
+        TRACE("    indexed: count %u type %d instances %u base_vertex %d base_instance %u index address %llx", p.count, static_cast<int>(p.type), p.instance_count, static_cast<int>(p.base_vertex),
+              p.base_instance, static_cast<unsigned long long>(p.index_address));
+        for (uint32_t i = 0; ix && i < std::min<uint32_t>(p.count, 12); ++i) {
+            uint32_t v = 0;
+            if (isz0 == 1) v = ix[i]; else if (isz0 == 2) { uint16_t t; std::memcpy(&t, ix + i * 2, 2); v = t; } else std::memcpy(&v, ix + i * 4, 4);
+            std::string a;
+            for (uint32_t k = 0; k < S.attr_count && k < 3; ++k) {
+                const VertexAttribInfo& at = S.attr[k];
+                const auto& st = S.stream[at.stream];
+                const GState::Bind& vb = S.vtx[at.stream];
+                if (!vb.addr) continue;
+                const float* f = reinterpret_cast<const float*>(vb.addr + static_cast<uint64_t>(static_cast<int64_t>(v) + p.base_vertex) * st.stride + at.relative_offset);
+                char t[96]; std::snprintf(t, sizeof t, " a%u(fmt %d)=(%g %g %g)", k, at.format, f[0], f[1], f[2]);
+                a += t;
+            }
+            TRACE("      index %u:%s", v, a.c_str());
+        }
+    }
     const uint32_t isz = index_size_bytes(static_cast<int>(p.type));
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
     const uint8_t* src = host_ptr(p.index_address);
@@ -1424,6 +1465,7 @@ void do_copy_buffer_texture(const P_CopyBufTex& p, bool to_texture) {
     if (to_texture) {
         tex_ensure_current(t, *F);
         tex_transition(t, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        tev(t, "copy_buffer_to_texture", p.address, p.has_view ? 1 : 0);
         tex_mark_gpu_written(t);
         vkCmdCopyBufferToImage(F->cb, br.buffer, tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
     } else {
@@ -1448,6 +1490,7 @@ void do_copy_texture_texture(const P_CopyTexTex& p) {
     const bool same = s == d;
     tex_transition(s, *F, same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     if (!same) tex_transition(d, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    tev(d, "copy_texture_to_texture", reinterpret_cast<uint64_t>(s), 0);
     tex_mark_gpu_written(d);
     const VkImageLayout sl = same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     const VkImageLayout dl = same ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;

@@ -181,6 +181,8 @@ void texture_registry_add(Texture* t);
 void texture_registry_remove(Texture* t);
 void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
 size_t texture_registry_size();
+// [nvn] trace_tex_events = 1: logs the life of block-compressed 128x128 cube textures (init, writes by the CPU, copies, uploads) as nvn.tev lines.
+void tev(const Texture* t, const char* what, uint64_t a = 0, uint64_t b = 0);
 
 // NVNtextureHandle = (sampler id << 20) | texture id
 constexpr uint64_t make_texture_handle(uint32_t tex_id, uint32_t sampler_id) { return (static_cast<uint64_t>(sampler_id) << 20) | (tex_id & 0xfffffu); }

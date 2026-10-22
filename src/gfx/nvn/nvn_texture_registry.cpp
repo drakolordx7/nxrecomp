@@ -5,6 +5,9 @@
 #include <mutex>
 #include <vector>
 
+#include "nxrt/config.h"
+#include "nxrt/log.h"
+#include "nvn_format.h"
 #include "nvn_gpu.h"
 
 namespace nxrt::nvn::be {
@@ -27,6 +30,13 @@ void texture_registry_remove(Texture* t) {
         if (it->second == t) { g_by_start.erase(it); break; }
 }
 
+void tev(const Texture* t, const char* what, uint64_t a, uint64_t b) {
+    static const bool on = nxrt::config_get_int("nvn", "trace_tex_events", 0) != 0;
+    if (!on || !t || !t->fmt || t->b.width != 128 || t->layers != 6 || t->levels != 8) return;
+    NXLOG_I("nvn.tev", "t%u %s mem %p size %llu: %llx %llx", t->id, what, static_cast<const void*>(t->mem), static_cast<unsigned long long>(t->storage_size),
+            static_cast<unsigned long long>(a), static_cast<unsigned long long>(b));
+}
+
 void textures_cpu_wrote(const void* lo, uint64_t size) {
     const uint64_t a = reinterpret_cast<uint64_t>(lo), b = a + size;
     std::vector<Ref<Texture>> hit;
@@ -43,6 +53,7 @@ void textures_cpu_wrote(const void* lo, uint64_t size) {
         }
     }
     for (auto& t : hit) {
+        tev(t.get(), "cpu_wrote", reinterpret_cast<uint64_t>(lo), size);
         t->cpu_dirty.store(true);
         gpu::mark_texture_cpu_dirty(t.get());
     }

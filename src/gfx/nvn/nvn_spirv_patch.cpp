@@ -332,3 +332,85 @@ bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint3
 }
 
 }  // namespace nxrt::nvn::be::gpu
+
+namespace nxrt::nvn::be::gpu {
+
+bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<SpvOutputSlot>& slots, std::vector<uint32_t>& out) {
+    enum : uint32_t { OpExecutionModeOp = 16, OpConstantOp = 43, OpLoadOp = 61, OpStoreOp = 62, OpAccessChainOp = 65, OpEmitVertexOp = 218,
+                      OpTypeArrayOp = 28, StorageInput = 1, ExecInputTriangles = 22 };
+    for (const SpvOutputSlot& s : slots)
+        if (s.type != SpvScalar::Float) return false;
+    std::vector<uint32_t> tmp;
+    if (!spirv_add_outputs(in, slots, tmp)) return false;       // the outputs (never written yet) and the interface entries
+
+    std::vector<Inst> insts;
+    for (size_t i = 5; i < tmp.size();) {
+        const uint32_t len = tmp[i] >> 16;
+        if (!len || i + len > tmp.size()) return false;
+        insts.push_back({i, tmp[i] & 0xffff, len});
+        i += len;
+    }
+    uint32_t bound = tmp[3];
+    uint32_t f32 = 0, int32 = 0, v4 = 0, ptr_in_v4 = 0, first_function = 0, input_triangles = 0;
+    std::map<uint32_t, uint32_t> location, var_type, array_elem, array_len_id, int_const;   // var -> Location / pointer type; array type -> element / length id; value -> id
+    std::map<uint32_t, uint32_t> ptr_pointee, const_value;
+    std::map<uint32_t, uint32_t> input_var, output_var;                                     // Location -> variable id
+    for (const Inst& n : insts) {
+        const uint32_t* w = &tmp[n.at];
+        if (!first_function && n.op == OpFunction) first_function = static_cast<uint32_t>(n.at);
+        if (n.op == OpExecutionModeOp && n.len >= 3 && w[2] == ExecInputTriangles) input_triangles = 1;
+        if (n.op == OpTypeFloat && n.len >= 3 && w[2] == 32) f32 = w[1];
+        else if (n.op == OpTypeInt && n.len == 4 && w[2] == 32 && w[3] == 1) int32 = w[1];
+        else if (n.op == OpTypeVector && n.len == 4 && w[3] == 4 && f32 && w[2] == f32) v4 = w[1];
+        else if (n.op == OpTypePointer && n.len == 4) { ptr_pointee[w[1]] = w[3]; if (w[2] == StorageInput && w[3] == v4) ptr_in_v4 = w[1]; }
+        else if (n.op == OpTypeArrayOp && n.len == 4) { array_elem[w[1]] = w[2]; array_len_id[w[1]] = w[3]; }
+        else if (n.op == OpConstantOp && n.len == 4) { const_value[w[2]] = w[3]; if (w[1] == int32) int_const[w[3]] = w[2]; }
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariable && n.len >= 4) var_type[w[2]] = w[1];
+    }
+    if (!input_triangles || !f32 || !v4 || !int32 || !first_function) return false;
+    for (const Inst& n : insts) {
+        const uint32_t* w = &tmp[n.at];
+        if (n.op != OpVariable || n.len < 4 || !location.count(w[2])) continue;
+        (w[3] == StorageInput ? input_var : output_var)[location[w[2]]] = w[2];
+    }
+    // every slot: an Input array [3] of vec4 and the Output variable spirv_add_outputs made
+    std::vector<std::pair<uint32_t, uint32_t>> copies;   // (input var, output var)
+    for (const SpvOutputSlot& s : slots) {
+        if (!input_var.count(s.location) || !output_var.count(s.location)) return false;
+        const uint32_t ptr = var_type[input_var[s.location]];
+        const uint32_t arr = ptr_pointee.count(ptr) ? ptr_pointee[ptr] : 0;
+        if (!arr || !array_elem.count(arr) || array_elem[arr] != v4 || !const_value.count(array_len_id[arr]) || const_value[array_len_id[arr]] != 3) return false;
+        copies.emplace_back(input_var[s.location], output_var[s.location]);
+    }
+    uint32_t emits = 0;
+    for (const Inst& n : insts) emits += n.op == OpEmitVertexOp;
+    if (emits != 3) return false;
+
+    std::vector<uint32_t> decls;
+    if (!ptr_in_v4) { ptr_in_v4 = bound++; decls.insert(decls.end(), {(4u << 16) | OpTypePointer, ptr_in_v4, StorageInput, v4}); }
+    for (uint32_t k = 0; k < 3; ++k)
+        if (!int_const.count(k)) { const uint32_t id = bound++; int_const[k] = id; decls.insert(decls.end(), {(4u << 16) | OpConstantOp, int32, id, k}); }
+
+    out.clear();
+    out.reserve(tmp.size() + decls.size() + 12 * copies.size() + 8);
+    out.insert(out.end(), tmp.begin(), tmp.begin() + 5);
+    uint32_t emit_index = 0;
+    for (const Inst& n : insts) {
+        if (n.at == first_function) out.insert(out.end(), decls.begin(), decls.end());
+        if (n.op == OpEmitVertexOp) {
+            for (const auto& c : copies) {
+                const uint32_t chain = bound++, val = bound++;
+                out.insert(out.end(), {(5u << 16) | OpAccessChainOp, ptr_in_v4, chain, c.first, int_const[emit_index]});
+                out.insert(out.end(), {(4u << 16) | OpLoadOp, v4, val, chain});
+                out.insert(out.end(), {(3u << 16) | OpStoreOp, c.second, val});
+            }
+            ++emit_index;
+        }
+        out.insert(out.end(), tmp.begin() + static_cast<std::ptrdiff_t>(n.at), tmp.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
+    }
+    out[3] = bound;
+    return true;
+}
+
+}  // namespace nxrt::nvn::be::gpu

@@ -248,9 +248,11 @@ static VkShaderModule producer_module(const ShaderInfo* producer, const ShaderIn
     if (it != g_variants.end()) return it->second;
     VkShaderModule m = VK_NULL_HANDLE;
     std::vector<uint32_t> patched;
-    if (spirv_add_outputs(producer->spirv, missing, patched)) {
+    // a passthrough geometry shader: the hardware forwards the attributes of the input vertices, the translation has no code for it
+    const bool pass = producer->stage == ShaderStage::Geometry && spirv_gs_passthrough(producer->spirv, missing, patched);
+    if (pass || spirv_add_outputs(producer->spirv, missing, patched)) {
         m = create_module(patched, producer->hash.c_str());
-        NXLOG_D(kTag, "%s: %zu outputs added for the next stage", producer->hash.c_str(), missing.size());
+        NXLOG_D(kTag, "%s: %zu outputs added for the next stage%s", producer->hash.c_str(), missing.size(), pass ? " (copied from the input vertices)" : "");
     } else {
         NXLOG_W(kTag, "%s: the %zu varyings the next stage reads could not be added; the unpatched module is used", producer->hash.c_str(), missing.size());
         m = shader_module(producer);

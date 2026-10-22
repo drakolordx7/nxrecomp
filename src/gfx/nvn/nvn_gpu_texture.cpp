@@ -657,6 +657,11 @@ void tex_ensure_current(Texture* t, Frame& f) {
         return;
     }
 
+    {
+        uint64_t w0 = 0;
+        if (!prep.data.empty()) std::memcpy(&w0, prep.data.data(), std::min<size_t>(8, prep.data.size()));
+        tev(t, "upload", w0, dirty ? 1 : 0);
+    }
     const uint64_t bytes = prep.data.size();
     UploadAlloc st = f.staging(bytes);
     if (!st) {
@@ -1071,7 +1076,7 @@ int snapshot_record(Texture* t, Frame& fr) {
     return static_cast<int>(g_snaps.size()) - 1;
 }
 
-// A block-compressed image: level 0, every layer, copied as blocks (for comparing what the GPU holds with trace_dump_prepared's data).
+// A block-compressed image: every level and layer, copied as blocks (for comparing what the GPU holds with trace_dump_prepared's data).
 int snapshot_record_raw(Texture* t, Frame& fr) {
     TexGpu* g = t ? t->gpu : nullptr;
     if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED || g->depth) return -1;
@@ -1079,8 +1084,18 @@ int snapshot_record_raw(Texture* t, Frame& fr) {
     if (g->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && g->format <= VK_FORMAT_BC7_SRGB_BLOCK)
         bytes = (g->format <= VK_FORMAT_BC1_RGBA_SRGB_BLOCK || g->format == VK_FORMAT_BC4_UNORM_BLOCK || g->format == VK_FORMAT_BC4_SNORM_BLOCK) ? 8 : 16;
     if (!bytes) return -1;
-    const VkExtent3D full = level_extent(g->base, 0);
-    const uint64_t size = static_cast<uint64_t>((full.width + 3) / 4) * ((full.height + 3) / 4) * bytes * g->layers;
+    // every level, tight, level after level with all layers: the layout prepare_texture produces for block formats
+    std::vector<VkBufferImageCopy> regions;
+    uint64_t size = 0;
+    for (uint32_t l = 0; l < g->levels; ++l) {
+        const VkExtent3D e = level_extent(g->base, l);
+        VkBufferImageCopy r = {};
+        r.bufferOffset = size;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, g->layers};
+        r.imageExtent = {e.width, e.height, 1};
+        regions.push_back(r);
+        size += static_cast<uint64_t>((e.width + 3) / 4) * ((e.height + 3) / 4) * bytes * g->layers;
+    }
     Snapshot s;
     s.raw = true;
     s.format = g->format;
@@ -1088,10 +1103,7 @@ int snapshot_record_raw(Texture* t, Frame& fr) {
     if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &s.buf, "nvn raw snapshot") != VK_SUCCESS) return -1;
     const VkImageLayout prev = g->layout;
     move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    VkBufferImageCopy r = {};
-    r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, g->layers};
-    r.imageExtent = {full.width, full.height, 1};
-    vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, 1, &r);
+    vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, static_cast<uint32_t>(regions.size()), regions.data());
     move_layout(fr, *g, prev);
     g_snaps.push_back(std::move(s));
     return static_cast<int>(g_snaps.size()) - 1;
