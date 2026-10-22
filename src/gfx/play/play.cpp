@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -156,6 +157,7 @@ struct G {
     // frame state (main thread)
     uint64_t update_seq = 0, aim_seq = 0;
     std::atomic<uint64_t> last_pi_ns{0};
+    std::atomic<uint64_t> last_pi_frame{0};       // value of `frames` at the last ProcessInput (the game is playing while it keeps being called)
     std::atomic<uint64_t> player{0};
     uint64_t map_acts_seen = 0;
     bool map_hint = false;
@@ -521,7 +523,9 @@ int update_hook(::Ctx*, uint64_t, void*) {
 
     // what the game is doing: the context, the beam, the pointer
     const uint64_t pi = st.last_pi_ns.load();
-    const bool in_game = pi != 0 && now - pi < 300 * kMs;
+    // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
+    // can take 100 ms or more per frame under load) must not read as a menu.
+    const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
     st.hints = st.aim->hints(st.player.load());
     if (st.hints.valid) {
         static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma
@@ -594,6 +598,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     G& st = g();
     const uint64_t now = now_ns();
     st.last_pi_ns.store(now);
+    st.last_pi_frame.store(st.frames.load());
     st.pi_calls++;
     const uint64_t player = c->x[0], mgr = c->x[2];
     st.player.store(player);
@@ -618,6 +623,24 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         p.invert_y = m.invert_y;
         p.pitch_limit_rad = st.pitch_limit_deg * kPi / 180.0;
     }
+    const bool dbg = std::getenv("NXRT_AIM_DEBUG") != nullptr;
+    auto dump_phys = [&](const char* tag) {
+        if (!dbg) return;
+        ::Ctx saved = *c;
+        c->x[0] = player; c->x[1] = mgr;
+        dispatch_call(c, st.base + 0xc556c4);        // CPhysicsActorMP1::GetPhysicsObject
+        const uint64_t obj = c->x[0];
+        *c = saved;
+        FILE* df = std::fopen("aim_debug.txt", "a");
+        if (!df) return;
+        std::fprintf(df, "%s obj=%llx:", tag, static_cast<unsigned long long>(obj));
+        float f[64];
+        if (obj && guest_read(obj + 0x10, f, sizeof f))
+            for (int i = 0; i < 64; i++) std::fprintf(df, " %g", f[i]);
+        std::fputc(10, df);
+        std::fclose(df);
+    };
+    dump_phys("PRE ");
     XfCall xc{c};
     st.aim->set_transform_fn(&guest_set_transform, &xc);
     const bool applied = st.aim->apply(player, mgr, dx, dy, p, [&] {
@@ -627,6 +650,9 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         t_in_process_input = false;
         *c = saved;
     });
+    dump_phys("POST");
+    if (st.log_status && (dx != 0 || dy != 0))
+        NXLOG_I(kTag, "aim: dx=%.1f dy=%.1f block=%s applied=%d pitch=%.4f", dx, dy, aim_block_name(st.aim->last_block()), applied ? 1 : 0, st.aim->pitch());
     if (applied) {
         st.aim_frames++;
         st.counts += static_cast<uint64_t>(std::fabs(dx) + std::fabs(dy));
