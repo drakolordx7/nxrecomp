@@ -9,8 +9,17 @@
 
 namespace nxrt::nvn::be::gpu {
 
+namespace {
+struct CaptureEnd {
+    ~CaptureEnd() {
+        trace_dump_targets();
+    }
+};
+}  // namespace
+
 void present_on_render_thread(Window* w, int index) {
     NXFT("present");
+    CaptureEnd capture_end;
     gfx::Renderer* rend = renderer();
     PresentPass* pp = present_pass();
     if (!w || index < 0 || static_cast<size_t>(index) >= w->textures.size()) return;

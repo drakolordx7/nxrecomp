@@ -544,6 +544,83 @@ class AudioRenderSystem {
         _isActive = false;
     }
 
+    // What the guest actually asks of the renderer (not in the C#): the most voices playing at once, the sample formats, rates and
+    // channel counts of the voices, the effect types in use. One log line per ~30 s of updates and one when the renderer is destroyed;
+    // it tells which parts of the port the game really exercises (docs/S9.md).
+    struct UsageStats {
+        uint64_t updates = 0;
+        uint32_t max_active_voices = 0, max_active_effects = 0;
+        uint64_t format_voice_updates[8] = {};            // by SampleFormat value: Invalid, PcmInt8, PcmInt16, PcmInt24, PcmInt32, PcmFloat, Adpcm
+        uint64_t rate_counts[9] = {};                      // 8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, other
+        uint32_t channel_mask = 0;                         // bit n set: a voice with n channels was playing
+        uint32_t effect_type_mask = 0;                     // bit n set: an enabled effect of EffectType n
+        uint64_t drop_flag_voices = 0;
+    } _usage;
+
+    void TrackUsage() {
+        _usage.updates++;
+        uint32_t active = 0;
+        for (uint32_t i = 0; i < _voiceContext.GetCount(); i++) {
+            VoiceInfo& v = _voiceContext.GetState(static_cast<int32_t>(i));
+            if (!v.InUse || v.PlayState != server::PlayState::Started || v.WaveBuffersCount == 0) {
+                continue;
+            }
+            active++;
+            const uint32_t fmt = static_cast<uint32_t>(v.SampleFormat);
+            if (fmt < 8) {
+                _usage.format_voice_updates[fmt]++;
+            }
+            static const uint32_t kRates[8] = {8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000};
+            size_t ri = 8;
+            for (size_t k = 0; k < 8; k++) {
+                if (v.SampleRate == kRates[k]) {
+                    ri = k;
+                    break;
+                }
+            }
+            _usage.rate_counts[ri]++;
+            if (v.ChannelsCount < 32) {
+                _usage.channel_mask |= 1u << v.ChannelsCount;
+            }
+            if (v.VoiceDropFlag) {
+                _usage.drop_flag_voices++;
+            }
+        }
+        uint32_t effects = 0;
+        for (uint32_t i = 0; i < _effectContext.GetCount(); i++) {
+            const std::unique_ptr<BaseEffect>& e = _effectContext.GetEffect(static_cast<int>(i));
+            if (e != nullptr && e->IsEnabled) {
+                effects++;
+                _usage.effect_type_mask |= 1u << static_cast<uint32_t>(e->Type);
+            }
+        }
+        _usage.max_active_voices = std::max(_usage.max_active_voices, active);
+        _usage.max_active_effects = std::max(_usage.max_active_effects, effects);
+        if (_usage.updates % 2000 == 0) {
+            LogUsage();
+        }
+    }
+
+    void LogUsage() const {
+        char rates[160];
+        int n = 0;
+        static const char* kNames[9] = {"8k", "11.025k", "16k", "22.05k", "24k", "32k", "44.1k", "48k", "other"};
+        rates[0] = 0;
+        for (size_t k = 0; k < 9 && n < 140; k++) {
+            if (_usage.rate_counts[k]) {
+                n += std::snprintf(rates + n, sizeof rates - static_cast<size_t>(n), " %s=%llu", kNames[k], static_cast<unsigned long long>(_usage.rate_counts[k]));
+            }
+        }
+        NXLOG_I("audren-use",
+                "updates %llu: max playing voices %u (of %u), voice-updates by format pcm8=%llu pcm16=%llu pcm24/32=%llu float=%llu adpcm=%llu, by rate:%s, channel counts mask 0x%x, "
+                "max enabled effects %u, effect type mask 0x%x (1 BufferMix 2 Aux 3 Delay 4 Reverb 5 Reverb3d 6 Biquad 7 Limiter 8 Capture 9 Compressor), dropped voices %llu",
+                static_cast<unsigned long long>(_usage.updates), _usage.max_active_voices, _voiceContext.GetCount(),
+                static_cast<unsigned long long>(_usage.format_voice_updates[1]), static_cast<unsigned long long>(_usage.format_voice_updates[2]),
+                static_cast<unsigned long long>(_usage.format_voice_updates[3] + _usage.format_voice_updates[4]),
+                static_cast<unsigned long long>(_usage.format_voice_updates[5]), static_cast<unsigned long long>(_usage.format_voice_updates[6]), rates, _usage.channel_mask, _usage.max_active_effects,
+                _usage.effect_type_mask >> 1, static_cast<unsigned long long>(_usage.drop_flag_voices));
+    }
+
     // C# Update(output, performanceOutput, input). Applies the user's request, in the C# order.
     ResultCode Update(Span<uint8_t> output, Span<uint8_t> performanceOutput, Span<const uint8_t> input) {
         std::lock_guard<std::mutex> guard(_lock);
@@ -641,6 +718,8 @@ class AudioRenderSystem {
         if (_systemEvent != nullptr) {
             _systemEvent->Clear();
         }
+
+        TrackUsage();
 
         uint64_t updateEndTicks = GetSystemTicks();
 
@@ -760,6 +839,9 @@ class AudioRenderSystem {
     // C# Dispose(): idempotent. Stops the session, unmaps its pools and unregisters it from the manager. Defined in AudioRendererManager.h.
     void Dispose() {
         if (_disposeState.exchange(1) == 0) {
+            if (_usage.updates > 0) {
+                LogUsage();
+            }
             DisposeImpl();
         }
     }

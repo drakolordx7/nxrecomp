@@ -56,7 +56,13 @@ Rules:
 | `prof` | `stall_ms` | `0` | `NXRT_PROF_STALL_MS` | `src/diag/ftrace.cpp` | With a trace on: when no frame was presented for this many milliseconds, dump every thread's stack to `<trace>.stacks` (up to four times per stall) and, when the stall ends, the CPU time each thread used in it. Analyse with `scripts/prof/stack_report.py`. |
 | `am` | `resolution` | empty (docked 1920x1080, handheld 1280x720) | `NXRT_AM_RESOLUTION` | `src/services/am.cpp` | Output size as `WIDTHxHEIGHT`, e.g. `1280x720`. Empty or not parseable: the default for the operation mode. |
 | `am` | `operation_mode` | `docked` | `NXRT_AM_OPERATION_MODE` | `src/services/common.cpp` | `handheld` sets handheld mode. Any other value is docked. |
-| `audio` | `sink` | `null` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `xaudio2` plays through XAudio2. Any other value keeps the null sink (no output). |
+| `audio` | `sink` | `auto` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `auto` plays through XAudio2 on the default output device and falls back to the null sink (no sound, a warning in the log) when XAudio2 or a device is missing. `xaudio2` is the same with an explicit name. `paced` is a simulated device: it drains its queue at the sample rate and reports underruns and queue levels, which is how the renderer's timing is checked on a machine without a sound card. `null` discards everything. Tests install their own sink. |
+| `audio` | `paced_ppm` | `0` | `NXRT_AUDIO_PACED_PPM` | `src/services/audio_paced.cpp` | Clock error of the paced sink in parts per million (positive: the simulated device runs fast). Used to check that the renderer follows a device clock that is not exactly the host's. |
+| `media` | `movie` | `mf` | `NXRT_MEDIA_MOVIE` | `src/media/movie_mf.cpp` | `mf`: the game's `movie::` imports (Extractor, Decoder, MediaData, Buffer) are answered on Windows Media Foundation. `off`: the library compiled into subsdk0 runs (it needs the NVDEC/VIC driver, which does not exist here, so no movie plays). |
+| `media` | `movie_log` | `false` | `NXRT_MEDIA_MOVIE_LOG` | `src/media/movie_mf.cpp` | One log line per sample read and per input buffer sent to a decoder. Very verbose. |
+| `audio` | `wav_dump` | empty | `NXRT_AUDIO_WAV_DUMP` | `src/services/audio_sink.cpp`, `src/services/audio_wav.cpp` | Path of a 16-bit PCM WAV file that receives every frame the game sends to the host sink. Empty: no file. See the audio notes below. |
+| `audio` | `volume` | `1.0` | `NXRT_AUDIO_VOLUME` | `src/services/audio_sink.cpp`, `src/services/audio_xaudio2.cpp` | Master volume, from `0.0` (silent) to `1.0`. Values outside that range are clamped. Applied by the XAudio2 sink. |
+| `audio` | `device` | `default` | `NXRT_AUDIO_DEVICE` | `src/services/audio_xaudio2.cpp`, `src/services/audio_devices.cpp` | Output device for the XAudio2 sink: `default`, an endpoint id, or part of a device's name. See the audio notes below. |
 | `title` | `program_id` | `0x010012101468C000` | `NXRT_TITLE_PROGRAM_ID` | `src/services/common.cpp` | Title id of the game. `[process] program_id`, when set, overrides it. Also the default for `save_owner_id`. |
 | `title` | `name` | `Metroid Prime Remastered` | `NXRT_TITLE_NAME` | `src/services/common.cpp` | Title name in the control data. |
 | `title` | `display_version` | `1.0.0` | `NXRT_TITLE_DISPLAY_VERSION` | `src/services/common.cpp` | Display version string in the control data. |
@@ -90,8 +96,37 @@ Rules:
 | `play` | `game_base` | `0x7100000000` | `NXRT_PLAY_GAME_BASE` | `src/gfx/play/play.cpp` | Base of the game's main module (hook addresses). |
 | `play` | `log_status` | `false` | `NXRT_PLAY_LOG_STATUS` | `src/gfx/play/play.cpp` | One status line per second in the log. |
 | `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
+| `play` | `late_sample` | `true` | `NXRT_PLAY_LATE_SAMPLE` | `src/gfx/play/play.cpp` | Pump the window's events again right before the first `ProcessInput` of a frame takes the mouse counts, so the aim includes what the mouse did since the frame boundary. |
+| `time` | `mode` | `real` | `NXRT_TIME_MODE` | `src/timestep/timestep.cpp` | Frame step the game runs: `real` (measured frame time, clamped and smoothed), `fixed` (1/`rate` and the frame is held to it: the 60 Hz lock) or `off` (the game's own 1/60 per call). Needs the lifted game built with the S11 sites in `recomp/games/mpr/main.sites`. |
+| `time` | `rate` | `60` | `NXRT_TIME_RATE` | `src/timestep/timestep.cpp` | Steps per second in `fixed` mode (10 to 1000). |
+| `time` | `max_rate` | `480` | `NXRT_TIME_MAX_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never shorter than 1/max_rate, and with `pace` a frame is held until then. This is also the cap of an unlimited frame rate: the game's logic never runs faster than this. |
+| `time` | `min_rate` | `30` | `NXRT_TIME_MIN_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never longer than 1/min_rate. A slower frame makes the game run in slow motion instead of taking one huge step. |
+| `time` | `smooth` | `4` | `NXRT_TIME_SMOOTH` | `src/timestep/timestep.cpp` | `real` mode: the step is the mean of the last N frame times (1 = raw, 64 at most); a frame more than 50 % away from the mean restarts the window. |
+| `time` | `pace` | `true` | `NXRT_TIME_PACE` | `src/timestep/timestep.cpp` | Hold the frame in the Update hook until the shortest step the mode allows has passed. |
+| `time` | `off_rate` | `0` | `NXRT_TIME_OFF_RATE` | `src/timestep/timestep.cpp` | `off` mode only: hold the frame to this rate and keep the retail 1/60 step. A diagnostic: the game then runs `off_rate / 60` times faster. |
+| `time` | `movie_real` | `true` | `NXRT_TIME_MOVIE_REAL` | `src/timestep/timestep.cpp` | The movie list's clock is real elapsed time (up to `movie_max` per call) instead of the game's step. |
+| `time` | `movie_max` | `0.5` | `NXRT_TIME_MOVIE_MAX` | `src/timestep/timestep.cpp` | Longest delta handed to the movie list in one call, seconds. |
+| `time` | `fix_friction` | `true` | `NXRT_TIME_FIX_FRICTION` | `src/timestep/timestep.cpp` | Scale the in-air walk friction constant (3.5 per 1/60 s) of `CPlayerMP1::GetDampedClampedVelocityWR` by the step. |
+| `time` | `fix_render_timings` | `true` | `NXRT_TIME_FIX_RENDER_TIMINGS` | `src/timestep/timestep.cpp` | `NRenderUtilMPT::TickRenderTimings` (texture scroll, UV animation, water) advances by the step instead of one frame per call. |
+| `time` | `fix_streaming` | `true` | `NXRT_TIME_FIX_STREAMING` | `src/timestep/timestep.cpp` | Texture streaming ages its entries by the step instead of 1/60. |
+| `time` | `fix_budget` | `true` | `NXRT_TIME_FIX_BUDGET` | `src/timestep/timestep.cpp` | The 14 ms background-work budget after the tick scales with the step. |
+| `time` | `log_every` | `0` | `NXRT_TIME_LOG_EVERY` | `src/timestep/timestep.cpp` | One log line of frame statistics every N frames (0 = off). |
+| `time` | `csv` | empty | `NXRT_TIME_CSV` | `src/timestep/timestep.cpp` | Write one line per frame: frame, host time, measured elapsed, step, sum of steps, movie frames delivered, render-timing clock. |
+| `time` | `game_base` | `0x7100000000` | `NXRT_TIME_GAME_BASE` | `src/timestep/timestep.cpp` | Guest address of the main module (the hooks are keyed by it). |
 | `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
+
+### Audio notes
+
+When the sink has a clock of its own (XAudio2, or `paced`), the audio renderer keeps about 40 ms of audio queued on it and renders the next 5 ms frame whenever the queue falls below that, instead of waiting on the host clock. The sound card and the host clock never agree exactly; pacing by the host clock alone would fill the queue slowly (frames dropped) or drain it (a click). With the null sink the renderer keeps its 5 ms host-clock pacing. The pace does not depend on the game's frame rate: the renderer runs on its own thread and the game's audio thread waits for the renderer's frame event.
+
+`wav_dump` is read when the first audio sink is created and works with either sink. `device` and `volume` only affect the XAudio2 sink (the null sink plays nothing). `device` is read each time the XAudio2 sink opens. `volume` is read once, at first use, and can also be changed in code while the program runs.
+
+`wav_dump` writes the game's sound to a WAV file as well as to the output device. Every frame that reaches the sink is written, including frames the device drops because its queue is full. The file header is updated about once a second of audio and again when the sink closes, so a file from a run that was killed is still playable up to the last update. If the sample rate or channel count changes during the run (for example a switch from stereo to 5.1), the next file gets a number before its extension: `dump.wav`, then `dump.1.wav`, and so on.
+
+`device` chooses where the XAudio2 sink plays. `default` (or an empty value) uses the system's default output. Any other text is looked for first as an exact endpoint id, then as part of a device's friendly name, ignoring upper and lower case. The first match wins. If nothing matches, the log gets a warning and the default device is used. Each time the XAudio2 sink opens, the log lists the active output devices with their names and ids, so the text for this key can be copied from there.
+
+When a sink closes, it writes one line to the log with its counters: frames written, accepted, dropped, underruns (times the device ran out of audio after playback had started) and the largest number of buffers queued at once.
 
 ## Environment variables read directly
 
@@ -143,7 +178,12 @@ host_stack_mb = 64
 operation_mode = docked
 
 [audio]
-sink = null
+sink = auto              ; auto (XAudio2, null sink when no device), xaudio2, paced (simulated device), null
+; volume = 1.0           ; master volume 0.0 .. 1.0 (XAudio2)
+; device = default       ; default, an endpoint id, or part of a device name
+; wav_dump = game.wav    ; also write everything the game plays to a WAV file
+[media]
+movie = mf               ; mf: movies on Media Foundation, off: the library in subsdk0 (no movies)
 
 [title]
 program_id = 0x010012101468C000

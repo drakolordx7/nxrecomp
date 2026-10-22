@@ -60,7 +60,11 @@ struct GraphicsKey {
     uint8_t polygon_mode = 0;                   // VkPolygonMode
     uint8_t depth_clamp = 0, alpha_to_coverage = 0, depth_neg_one = 0;
     uint8_t patch_control_points = 0;
-    uint8_t pad[3] = {};
+    uint8_t dummy_binding = 0;                  // 1 + the vertex binding that feeds unset attributes (stride 0, defaults buffer); 0 = none
+    uint8_t xfb = 0;                            // the vertex shader runs with transform feedback (captured outputs, no fragment stage)
+    uint8_t dual_src = 0;                       // a blend factor of an enabled attachment reads the second source (fragment output moved to Location 0, Index 1)
+    uint8_t no_out = 0;                         // the pass has no colour attachment: the fragment shader's outputs become private variables
+    uint8_t pad[0 + 1] = {};
     bool operator==(const GraphicsKey& o) const;
     uint64_t hash() const;
 };
@@ -86,6 +90,8 @@ struct PrewarmStats { uint64_t recorded = 0, loaded = 0, queued = 0, built = 0, 
 PrewarmStats prewarm_stats();
 VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout);
 VkShaderModule shader_module(const ShaderInfo* s);
+// Bytes of one captured vertex of the vertex shader's transform feedback variant (0: none could be made).
+uint32_t xfb_stride(const ShaderInfo* vs);
 
 // Persistent buffers every draw may bind: the driver constants (c[0]) image and a shader's constant data (c[1]).
 VkBuffer constant_data_buffer(const ShaderInfo* s, VkDeviceSize* range);

@@ -1,0 +1,379 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SPIR-V rewrites of the back end (src/gfx/nvn/nvn_spirv_patch.{h,cpp}) on the translated shaders of the shader cache. Each
+// rewritten module must still pass spirv-val (vulkan1.3) and reflect to the declarations the rewrite promises. Cases skip
+// when the cache or the Vulkan SDK's spirv-val is absent.
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <set>
+#include <string>
+#include <vector>
+
+#include "nvn_shaders.h"
+#include "nvn_spirv_patch.h"
+#include "test_framework.h"
+NXTEST_GROUP(gfx_nvn_spirv_patch)
+
+using namespace nxrt::nvn::be;
+namespace gpu = nxrt::nvn::be::gpu;
+namespace fs = std::filesystem;
+
+namespace {
+
+const char* kSpvDir = "C:/mpr/work/shader_cache/spirv";
+const char* kSpirvVal = "C:\\VulkanSDK\\1.4.363.0\\Bin\\spirv-val.exe";
+const char* kVertexHash = "a656883b0cdb8ebc";      // position only, no varyings
+const char* kConstFragHash = "062cfa5657f5388d";   // constant colour fragment shader, no Location 1 output
+
+constexpr uint32_t kOpDecorate = 71;
+constexpr uint32_t kDecorationLocation = 30;
+constexpr uint32_t kDecorationIndex = 32;
+
+// nullptr when the inputs of a case are present, else the reason to skip.
+const char* absent_input() {
+    std::error_code ec;
+    if (!fs::exists(fs::path(kSpvDir) / (std::string(kVertexHash) + ".spv"), ec))
+        return "shader cache absent (a656883b0cdb8ebc.spv not under C:/mpr/work/shader_cache/spirv)";
+    if (!fs::exists(kSpirvVal, ec)) return "spirv-val not found at C:\\VulkanSDK\\1.4.363.0\\Bin";
+    return nullptr;
+}
+
+bool load_words(const fs::path& p, std::vector<uint32_t>& w) {
+    std::ifstream f(p, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    const std::streamsize n = f.tellg();
+    if (n <= 0 || n % 4) return false;
+    f.seekg(0);
+    w.resize(size_t(n) / 4);
+    return bool(f.read(reinterpret_cast<char*>(w.data()), n));
+}
+
+bool load_hash(const std::string& hash, std::vector<uint32_t>& w) { return load_words(fs::path(kSpvDir) / (hash + ".spv"), w); }
+
+bool write_words(const std::string& path, const std::vector<uint32_t>& w) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(w.data()), std::streamsize(w.size() * 4));
+    return bool(f);
+}
+
+// Runs spirv-val --target-env vulkan1.3 on the words (through a temp file in the working directory). Returns its exit code
+// (0 = valid), or -1 when the file could not be written. `log` gets the start of its output.
+int run_spirv_val(const std::vector<uint32_t>& w, const std::string& tag, std::string& log) {
+    const std::string spv = tag + ".spv", txt = tag + ".log";
+    if (!write_words(spv, w)) return -1;
+    const std::string cmd = std::string(kSpirvVal) + " --target-env vulkan1.3 " + spv + " > " + txt + " 2>&1";
+    const int rc = std::system(cmd.c_str());
+    std::ifstream f(txt);
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    log = text.substr(0, 600);
+    std::error_code ec;
+    fs::remove(spv, ec);
+    fs::remove(txt, ec);
+    return rc;
+}
+
+bool reflect(const std::vector<uint32_t>& w, ShaderReflection& r, std::string& err) {
+    err.clear();
+    return reflect_spirv(w.data(), w.size(), r, &err);
+}
+
+const ShaderIo* find_io(const std::vector<ShaderIo>& v, uint32_t location) {
+    for (const ShaderIo& io : v)
+        if (io.location == location) return &io;
+    return nullptr;
+}
+
+const char* type_name(ScalarType t) {
+    switch (t) {
+        case ScalarType::Float: return "Float";
+        case ScalarType::Sint: return "Sint";
+        case ScalarType::Uint: return "Uint";
+        case ScalarType::Bool: return "Bool";
+        default: return "Other";
+    }
+}
+
+struct Deco {
+    uint32_t target, kind, value;
+};
+
+// Every OpDecorate with the 4-word form (target, decoration, one literal) of the module.
+std::vector<Deco> decorations(const std::vector<uint32_t>& w) {
+    std::vector<Deco> out;
+    for (size_t i = 5; i < w.size();) {
+        const uint32_t len = w[i] >> 16;
+        if (!len || i + len > w.size()) break;
+        if ((w[i] & 0xffff) == kOpDecorate && len == 4) out.push_back({w[i + 1], w[i + 2], w[i + 3]});
+        i += len;
+    }
+    return out;
+}
+
+std::set<uint32_t> locations(const std::vector<ShaderIo>& v) {
+    std::set<uint32_t> s;
+    for (const ShaderIo& io : v) s.insert(io.location);
+    return s;
+}
+
+}  // namespace
+
+NXTEST(add_outputs_to_real_vertex_shader) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> in;
+    REQUIRE(load_hash(kVertexHash, in));
+    const std::vector<uint32_t> before = in;
+
+    ShaderReflection r_in;
+    std::string err;
+    CHECK_MSG(reflect(in, r_in, err), err);
+    CHECK(r_in.stage == ShaderStage::Vertex);
+
+    const std::vector<gpu::SpvOutputSlot> slots = {
+        {0, gpu::SpvScalar::Float}, {3, gpu::SpvScalar::Float}, {5, gpu::SpvScalar::Uint}, {6, gpu::SpvScalar::Sint}};
+    std::vector<uint32_t> out;
+    REQUIRE(gpu::spirv_add_outputs(in, slots, out));
+    CHECK(in == before);
+    CHECK(out.size() > in.size());
+    CHECK(out[3] > in[3]);
+
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_vs", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+
+    ShaderReflection r;
+    CHECK_MSG(reflect(out, r, err), err);
+    CHECK_EQ(r.outputs.size(), slots.size());
+    struct Want {
+        uint32_t loc;
+        ScalarType type;
+    };
+    const std::vector<Want> want = {{0, ScalarType::Float}, {3, ScalarType::Float}, {5, ScalarType::Uint}, {6, ScalarType::Sint}};
+    for (const Want& wv : want) {
+        const ShaderIo* io = find_io(r.outputs, wv.loc);
+        CHECK_MSG(io != nullptr, "no output at Location " + std::to_string(wv.loc));
+        if (!io) continue;
+        CHECK_MSG(io->type == wv.type, "Location " + std::to_string(wv.loc) + " is " + type_name(io->type) + ", want " + type_name(wv.type));
+        CHECK_MSG(io->components == 4, "Location " + std::to_string(wv.loc) + " has " + std::to_string(io->components) + " components");
+    }
+}
+
+NXTEST(add_outputs_twice_is_refused) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> in;
+    REQUIRE(load_hash(kVertexHash, in));
+    const std::vector<gpu::SpvOutputSlot> slots = {
+        {0, gpu::SpvScalar::Float}, {3, gpu::SpvScalar::Float}, {5, gpu::SpvScalar::Uint}, {6, gpu::SpvScalar::Sint}};
+    std::vector<uint32_t> once;
+    REQUIRE(gpu::spirv_add_outputs(in, slots, once));
+
+    const std::vector<uint32_t> keep = {0xdeadbeefu, 7u};
+    std::vector<uint32_t> out = keep;
+    CHECK(!gpu::spirv_add_outputs(once, slots, out));
+    CHECK(out == keep);
+}
+
+NXTEST(add_outputs_bad_input) {
+    // The vertex shader when the cache is present, else a header-only stand-in: the checks below need only a module with
+    // one instruction at word 5, so they run without the cache too.
+    std::vector<uint32_t> base;
+    if (!load_hash(kVertexHash, base)) base = {0x07230203u, 0x00010300u, 0u, 5u, 0u, 0u};
+    const std::vector<gpu::SpvOutputSlot> slots = {{0, gpu::SpvScalar::Float}};
+    const std::vector<uint32_t> keep = {0xdeadbeefu, 7u};
+
+    std::vector<uint32_t> out = keep;
+    CHECK(!gpu::spirv_add_outputs(base, {}, out));
+    CHECK(out == keep);
+
+    out = keep;
+    CHECK(!gpu::spirv_add_outputs({}, slots, out));
+    CHECK(out == keep);
+
+    out = keep;
+    CHECK(!gpu::spirv_add_outputs({0x07230203u, 0x00010300u, 0u, 5u}, slots, out));
+    CHECK(out == keep);
+
+    // First instruction word count 0: the word at index 5 keeps its opcode bits and loses its length.
+    std::vector<uint32_t> zero_len = base;
+    zero_len[5] &= 0xffffu;
+    out = keep;
+    CHECK(!gpu::spirv_add_outputs(zero_len, slots, out));
+    CHECK(out == keep);
+}
+
+NXTEST(dual_source_on_real_fragment_shader) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    // Directory order; the first 400 files first, then the rest.
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (fs::directory_iterator it(kSpvDir, ec), end; !ec && it != end; it.increment(ec))
+        if (it->path().extension() == ".spv") files.push_back(it->path());
+
+    std::vector<uint32_t> in;
+    ShaderReflection r_in;
+    fs::path chosen;
+    auto try_file = [&](const fs::path& p) {
+        std::vector<uint32_t> w;
+        if (!load_words(p, w)) return false;
+        ShaderReflection rr;
+        if (!reflect_spirv(w.data(), w.size(), rr, nullptr) || rr.stage != ShaderStage::Fragment) return false;
+        for (const ShaderIo& o : rr.outputs)
+            if (o.location == 1) {
+                in = std::move(w);
+                r_in = std::move(rr);
+                chosen = p;
+                return true;
+            }
+        return false;
+    };
+    const size_t first = std::min<size_t>(400, files.size());
+    for (size_t i = 0; i < first && chosen.empty(); i++) try_file(files[i]);
+    for (size_t i = first; i < files.size() && chosen.empty(); i++) try_file(files[i]);
+    if (chosen.empty()) {
+        nxtest::skip("no fragment shader with a Location 1 output in the shader cache");
+        return;
+    }
+    std::printf("    fragment shader %s: outputs at locations", chosen.filename().string().c_str());
+    for (const ShaderIo& o : r_in.outputs) std::printf(" %u", o.location);
+    std::printf("\n");
+
+    // The variable that carries Location 1 in the input.
+    bool have_t1 = false;
+    uint32_t t1 = 0;
+    for (const Deco& d : decorations(in))
+        if (d.kind == kDecorationLocation && d.value == 1) {
+            t1 = d.target;
+            have_t1 = true;
+        }
+    CHECK_MSG(have_t1, "input has no OpDecorate Location 1 (4-word form)");
+
+    std::vector<uint32_t> out;
+    REQUIRE(gpu::spirv_dual_source_output(in, out));
+
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_ds", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+
+    ShaderReflection r;
+    std::string err;
+    CHECK_MSG(reflect(out, r, err), err);
+    CHECK(!r.outputs.empty());
+    for (const ShaderIo& o : r.outputs)
+        CHECK_MSG(o.location == 0, "output at Location " + std::to_string(o.location) + " after the patch");
+
+    bool loc0 = false, index1 = false, loc1 = false;
+    for (const Deco& d : decorations(out)) {
+        if (d.kind == kDecorationLocation && d.value == 1) loc1 = true;
+        if (d.target == t1 && d.kind == kDecorationLocation && d.value == 0) loc0 = true;
+        if (d.target == t1 && d.kind == kDecorationIndex && d.value == 1) index1 = true;
+    }
+    CHECK_MSG(!loc1, "a Location 1 decoration is left");
+    CHECK_MSG(loc0, "the variable has no Location 0 decoration");
+    CHECK_MSG(index1, "the variable has no OpDecorate Index 1");
+}
+
+NXTEST(dual_source_without_second_output) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> vs, fs_frag;
+    REQUIRE(load_hash(kVertexHash, vs));
+    REQUIRE(load_hash(kConstFragHash, fs_frag));
+
+    // Precondition: the fragment shader really has no Location 1 output.
+    ShaderReflection rf;
+    std::string err;
+    CHECK_MSG(reflect(fs_frag, rf, err), err);
+    CHECK(rf.stage == ShaderStage::Fragment);
+    CHECK_MSG(locations(rf.outputs).count(1) == 0, "fragment shader 062cfa5657f5388d has a Location 1 output");
+
+    const std::vector<uint32_t> keep = {0xdeadbeefu, 7u};
+    for (const std::vector<uint32_t>* m : {&vs, &fs_frag}) {
+        std::vector<uint32_t> out = keep;
+        CHECK(!gpu::spirv_dual_source_output(*m, out));
+        CHECK(out == keep);
+    }
+}
+
+NXTEST(xfb_variant_of_real_stream_out_shader) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    // the stream-out vertex shader of the game's shadow decals: one Location 0 output of which xyz are written
+    std::vector<uint32_t> in;
+    REQUIRE(load_hash("51242c6ad2a045f2", in));
+    const std::vector<uint32_t> before = in;
+    std::vector<uint32_t> out;
+    std::vector<gpu::SpvXfbOutput> lay;
+    uint32_t stride = 0;
+    REQUIRE(gpu::spirv_add_xfb(in, out, &lay, &stride));
+    CHECK(in == before);
+    CHECK_EQ(stride, 12u);
+    REQUIRE(lay.size() == 1);
+    CHECK_EQ(lay[0].location, 0u);
+    CHECK_EQ(lay[0].components, 3u);
+    CHECK_EQ(lay[0].offset, 0u);
+
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_xfb", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+
+    // the decorations the pipeline needs: XfbBuffer 0, XfbStride 12 and Offset 0 on the output variable
+    bool buffer = false, stride_deco = false, offset = false;
+    for (const Deco& dc : decorations(out)) {
+        buffer |= dc.kind == 36 && dc.value == 0;
+        stride_deco |= dc.kind == 37 && dc.value == 12;
+        offset |= dc.kind == 35 && dc.value == 0;
+    }
+    CHECK(buffer);
+    CHECK(stride_deco);
+    CHECK(offset);
+}
+
+NXTEST(xfb_variant_without_outputs_is_refused) {
+    // a module with no Location outputs: the vertex shader of an old test in this group has only a position builtin
+    std::vector<uint32_t> out = {0xdeadbeefu};
+    std::vector<uint32_t> bad = {0x07230203u, 0x10300u, 0, 1, 0};
+    CHECK(!gpu::spirv_add_xfb(bad, out, nullptr, nullptr));
+    CHECK_EQ(out.size(), size_t(1));
+}
+
+NXTEST(outputs_to_private_on_real_fragment_shader) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> in;
+    REQUIRE(load_hash(kConstFragHash, in));
+    const std::vector<uint32_t> before = in;
+    std::vector<uint32_t> out;
+    REQUIRE(gpu::spirv_outputs_to_private(in, out));
+    CHECK(in == before);
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_priv", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+    ShaderReflection r;
+    std::string err;
+    CHECK_MSG(reflect(out, r, err), err);
+    CHECK_MSG(r.outputs.empty(), "the module still has " + std::to_string(r.outputs.size()) + " outputs");
+    // a vertex shader has built-in outputs: refused
+    std::vector<uint32_t> vs, keep = {1u, 2u};
+    REQUIRE(load_hash(kVertexHash, vs));
+    CHECK(!gpu::spirv_outputs_to_private(vs, keep));
+    CHECK(keep.size() == 2);
+}

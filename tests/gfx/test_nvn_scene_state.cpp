@@ -701,7 +701,7 @@ NXTEST(logic_op_xor_on_white) {
 
 // 10. Partial clear mask (KNOWN GAP: the back end clears all four channels, see do_clear_color in nvn_replay.cpp). Background
 // black (0,0,0,1), then ClearColor of (1,1,1,0) with mask R|B, read back from an RGBA8 target. Correct result: (255, 0, 255, 255).
-// This assertion is the correct one and is expected to FAIL until the gap is closed.
+// This assertion is the correct one; the gap is closed (masked clears are a draw with a colour write mask, nvn_mask_clear.cpp).
 NXTEST(clear_color_partial_mask_known_gap) {
     App app;
     App::Opts o;
@@ -727,5 +727,211 @@ NXTEST(clear_color_partial_mask_known_gap) {
     CHECK(ok);
     // this scene is about the unsupported partial mask, so unsupported_ops is allowed to be 1 here
     ok = report(app, s0, 0, true) && ok;
+    app.shutdown();
+}
+
+namespace {
+
+// One clear of the depth/stencil target: the depth value and whether depth is cleared, the stencil value and the stencil write mask.
+struct DsClear {
+    float depth;
+    bool depth_mask;
+    int stencil, stencil_mask;
+};
+
+// One check frame of the partial stencil cases: the window is cleared to black, the case's clears are recorded, then one full-frame
+// quad (red or magenta) is drawn with the given depth test and stencil test. Depth writes and stencil writes are off, colour writes on.
+struct PartialCheck {
+    const char* name;
+    bool depth_test;
+    float z;
+    bool stencil_test;
+    int ref, compare_mask;
+    bool red;
+    Rgba want;
+};
+
+bool partial_stencil_frame(App& app, Progs& sh, NVNtexture* ds, const std::vector<DsClear>& clears, const PartialCheck& ck, std::vector<uint8_t>* px) {
+    const int idx = app.acquire();
+    if (idx < 0) return false;
+    auto cb = begin_frame(app, {app.window_textures[idx]->obj.get()}, ds, kW, kH);
+    if (!cb) return false;
+    NVNcommandBuffer* c = cb->obj.get();
+    auto& api = app.api;
+    const float black[4] = {0, 0, 0, 1};
+    api.nvnCommandBufferClearColor(c, 0, black, NVN_CLEAR_COLOR_MASK_RGBA);
+    for (const DsClear& k : clears) api.nvnCommandBufferClearDepthStencil(c, k.depth, k.depth_mask ? 1 : 0, k.stencil, k.stencil_mask);
+    Gfx g;
+    g.defaults(app);
+    api.nvnDepthStencilStateSetDepthTestEnable(&g.ds, ck.depth_test ? 1 : 0);
+    api.nvnDepthStencilStateSetDepthWriteEnable(&g.ds, 0);
+    api.nvnDepthStencilStateSetDepthFunc(&g.ds, NVN_DEPTH_FUNC_LESS);
+    api.nvnDepthStencilStateSetStencilTestEnable(&g.ds, ck.stencil_test ? 1 : 0);
+    api.nvnDepthStencilStateSetStencilFunc(&g.ds, NVN_FACE_FRONT_AND_BACK, NVN_STENCIL_FUNC_EQUAL);
+    api.nvnDepthStencilStateSetStencilOp(&g.ds, NVN_FACE_FRONT_AND_BACK, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP, NVN_STENCIL_OP_KEEP);
+    g.bind(app, c);
+    api.nvnCommandBufferSetStencilRef(c, NVN_FACE_FRONT_AND_BACK, ck.ref);
+    api.nvnCommandBufferSetStencilValueMask(c, NVN_FACE_FRONT_AND_BACK, ck.compare_mask);
+    api.nvnCommandBufferSetStencilMask(c, NVN_FACE_FRONT_AND_BACK, 0);
+    draw_quads(app, c, ck.red ? sh.p_red.get() : sh.p_mag.get(), quad(-1, 1, -1, 1, ck.z));
+    app.end_and_submit(*cb);
+    if (!app.present_and_capture(idx, px)) return false;
+    app.finish();
+    return true;
+}
+
+}  // namespace
+
+// 11. Partial stencil mask clear. Stencil cleared to 0xF0 everywhere (full mask), then ClearDepthStencil with depth not cleared,
+// stencil value 0x0F and stencil mask 0x03: bits 0..1 become 0x0F & 0x03 = 0x03, the other bits keep 0xF0, so the stencil is 0xF3.
+// Each check is one frame: a stencil EQUAL test against a ref and compare mask, depth test off. Depth/stencil target Depth24/Stencil8.
+NXTEST(clear_depth_stencil_partial_stencil_mask) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    App app;
+    App::Opts o;
+    o.width = kW;
+    o.height = kH;
+    REQUIRE(app.init(o));
+    Progs sh;
+    REQUIRE(sh.load(app));
+    auto stencil = app.make_texture_2d(NVN_FORMAT_DEPTH24_STENCIL8, kW, kH, NVN_TEXTURE_FLAGS_COMPRESSIBLE, 1, false);
+    REQUIRE(stencil != nullptr);
+    const std::vector<DsClear> clears = {{1.0f, true, 0xF0, 0xFF}, {1.0f, false, 0x0F, 0x03}};
+    const PartialCheck checks[] = {
+        {"stencil EQUAL 0xF3 under mask 0xFF: red must cover the frame", false, 0.5f, true, 0xF3, 0xFF, true, KRED},
+        {"stencil EQUAL 0xF0 under mask 0xFF: magenta must not appear", false, 0.5f, true, 0xF0, 0xFF, false, KBLACK},
+        {"stencil EQUAL 0x03 under mask 0x03: magenta must cover the frame", false, 0.5f, true, 0x03, 0x03, false, KMAG},
+    };
+    const auto s0 = nxrt::nvn::backend_stats();
+    bool ok = true;
+    for (const PartialCheck& ck : checks) {
+        std::vector<uint8_t> px;
+        REQUIRE(partial_stencil_frame(app, sh, stencil->obj.get(), clears, ck, &px));
+        const Rgba p = px_at(px, 32, 24);
+        std::printf("    %s: pixel %d %d %d (want %d %d %d)\n", ck.name, p.r, p.g, p.b, ck.want.r, ck.want.g, ck.want.b);
+        ok = region_is(px, 0, kW - 1, 0, kH - 1, ck.want, 0, ck.name) && ok;
+    }
+    CHECK(ok);
+    ok = report(app, s0, std::size(checks), false) && ok;
+    app.shutdown();
+}
+
+// 12. Partial stencil mask clear with depth. Stencil cleared to 0xF0 (full mask), then ClearDepthStencil with depth 0.25 and depth
+// cleared, stencil value 0x0F and stencil mask 0x0C. Stencil expected (0xF0 & ~0x0C) | (0x0F & 0x0C) = 0xFC. Depth expected 0.25.
+// Checks: quad at z 0.5 with depth LESS is rejected everywhere (black), quad at z 0.1 passes everywhere (red); stencil EQUAL 0xFC under
+// mask 0xFF covers the frame, EQUAL 0xF0 under mask 0xFF does not appear, and mask 0x0C ref 0x0C covers the frame.
+NXTEST(clear_depth_stencil_partial_stencil_mask_with_depth) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    App app;
+    App::Opts o;
+    o.width = kW;
+    o.height = kH;
+    REQUIRE(app.init(o));
+    Progs sh;
+    REQUIRE(sh.load(app));
+    auto stencil = app.make_texture_2d(NVN_FORMAT_DEPTH24_STENCIL8, kW, kH, NVN_TEXTURE_FLAGS_COMPRESSIBLE, 1, false);
+    REQUIRE(stencil != nullptr);
+    const std::vector<DsClear> clears = {{1.0f, true, 0xF0, 0xFF}, {0.25f, true, 0x0F, 0x0C}};
+    const PartialCheck checks[] = {
+        {"depth LESS against 0.25, quad at z 0.5 magenta: must be rejected", true, 0.5f, false, 0, 0, false, KBLACK},
+        {"depth LESS against 0.25, quad at z 0.1 red: must pass", true, 0.1f, false, 0, 0, true, KRED},
+        {"stencil EQUAL 0xFC under mask 0xFF: red must cover the frame", false, 0.5f, true, 0xFC, 0xFF, true, KRED},
+        {"stencil EQUAL 0xF0 under mask 0xFF: magenta must not appear", false, 0.5f, true, 0xF0, 0xFF, false, KBLACK},
+        {"stencil EQUAL 0x0C under mask 0x0C: magenta must cover the frame", false, 0.5f, true, 0x0C, 0x0C, false, KMAG},
+    };
+    const auto s0 = nxrt::nvn::backend_stats();
+    bool ok = true;
+    for (const PartialCheck& ck : checks) {
+        std::vector<uint8_t> px;
+        REQUIRE(partial_stencil_frame(app, sh, stencil->obj.get(), clears, ck, &px));
+        const Rgba p = px_at(px, 32, 24);
+        std::printf("    %s: pixel %d %d %d (want %d %d %d)\n", ck.name, p.r, p.g, p.b, ck.want.r, ck.want.g, ck.want.b);
+        ok = region_is(px, 0, kW - 1, 0, kH - 1, ck.want, 0, ck.name) && ok;
+    }
+    CHECK(ok);
+    ok = report(app, s0, std::size(checks), false) && ok;
+    app.shutdown();
+}
+
+// 6. Occlusion counter (NVN_COUNTER_TYPE_SAMPLES_PASSED). Colour target from make_readback, D32F depth, depth test LESS throughout.
+// Depth write is on only for the occluder A (z 0.25, columns 16..31, rows 12..35). Each ResetCounter / ReportCounter pair brackets the
+// draws of one slot in a 16-byte report: the sample count is the first 8 bytes, a timestamp the second 8 bytes. Expected counts:
+//   slot 0: B (z 0.75, columns 19..28, fully behind A, depth write off)                   -> 0
+//   slot 1: C (z 0.5, columns 40..55, rows 12..35, free screen, depth write off)         -> 384 (+-8 accepted)
+//   slot 2: D (z 0.75, columns 24..39, rows 12..35, columns 24..31 behind A)             -> 8 * 24 = 192
+//   slot 3: ResetCounter and ReportCounter with nothing drawn in between                  -> 0
+NXTEST(occlusion_counter_counts_passing_samples) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    App app;
+    App::Opts o;
+    o.width = kW;
+    o.height = kH;
+    REQUIRE(app.init(o));
+    Progs sh;
+    REQUIRE(sh.load(app));
+    Readback rb = make_readback(app);
+    REQUIRE(rb.tex != nullptr);
+    auto depth = app.make_texture_2d(NVN_FORMAT_DEPTH32F, kW, kH, NVN_TEXTURE_FLAGS_COMPRESSIBLE, 1, false);
+    REQUIRE(depth != nullptr);
+    App::Buf rep = app.make_buffer(64);   // four 16-byte reports, slot i at rep.address + 16 * i
+    std::memset(rep.ptr, 0, 64);
+    auto cb = begin_frame(app, {rb.tex->obj.get()}, depth->obj.get(), kW, kH);
+    REQUIRE(cb != nullptr);
+    NVNcommandBuffer* c = cb->obj.get();
+    auto& api = app.api;
+    const float black[4] = {0, 0, 0, 1};
+    api.nvnCommandBufferClearColor(c, 0, black, NVN_CLEAR_COLOR_MASK_RGBA);
+    api.nvnCommandBufferClearDepthStencil(c, 1.0f, 1, 0, 0xFF);
+    const auto s0 = nxrt::nvn::backend_stats();
+
+    // Two state objects, both kept alive for the whole frame: ga writes depth (occluder A), gr does not (the counted draws).
+    Gfx ga, gr;
+    ga.defaults(app);
+    api.nvnDepthStencilStateSetDepthTestEnable(&ga.ds, 1);
+    api.nvnDepthStencilStateSetDepthWriteEnable(&ga.ds, 1);
+    api.nvnDepthStencilStateSetDepthFunc(&ga.ds, NVN_DEPTH_FUNC_LESS);
+    gr.defaults(app);
+    api.nvnDepthStencilStateSetDepthTestEnable(&gr.ds, 1);
+    api.nvnDepthStencilStateSetDepthWriteEnable(&gr.ds, 0);
+    api.nvnDepthStencilStateSetDepthFunc(&gr.ds, NVN_DEPTH_FUNC_LESS);
+
+    // occluder A: depth write on, not counted
+    ga.bind(app, c);
+    draw_quads(app, c, sh.p_mag.get(), quad(-0.5f, 0.0f, -0.5f, 0.5f, 0.25f));
+
+    gr.bind(app, c);
+    // slot 0: B, fully behind A
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    draw_quads(app, c, sh.p_red.get(), quad(-0.4f, -0.1f, -0.4f, 0.4f, 0.75f));
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 0);
+    // slot 1: C, free screen area
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    draw_quads(app, c, sh.p_mag.get(), quad(0.25f, 0.75f, -0.5f, 0.5f, 0.5f));
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 16);
+    // slot 2: D, half hidden by A
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    draw_quads(app, c, sh.p_red.get(), quad(-0.25f, 0.25f, -0.5f, 0.5f, 0.75f));
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 32);
+    // slot 3: nothing drawn
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 48);
+
+    app.end_and_submit(*cb);
+    app.finish();
+    uint64_t cnt[4] = {}, ts[4] = {};
+    for (int i = 0; i < 4; ++i) {
+        std::memcpy(&cnt[i], rep.ptr + 16 * i, 8);
+        std::memcpy(&ts[i], rep.ptr + 16 * i + 8, 8);
+        std::printf("    slot %d: samples passed %llu, timestamp %llu\n", i, static_cast<unsigned long long>(cnt[i]),
+                    static_cast<unsigned long long>(ts[i]));
+    }
+    // slot 1 is accepted within 384 +- 8 (rasterisation rules at the edges); the other slots are exact
+    if (cnt[1] != 384ull) std::printf("    slot 1 is not exactly 384: %llu\n", static_cast<unsigned long long>(cnt[1]));
+    CHECK_EQ(cnt[0], 0ull);
+    CHECK(cnt[1] >= 376ull && cnt[1] <= 392ull);
+    CHECK_EQ(cnt[2], 192ull);
+    CHECK_EQ(cnt[3], 0ull);
+    for (int i = 0; i < 4; ++i) CHECK(ts[i] != 0ull);
+    report(app, s0, 4, false);
     app.shutdown();
 }
