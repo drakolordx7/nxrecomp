@@ -20,7 +20,9 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "nxrt/dispatch.h"
@@ -224,6 +226,60 @@ bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
     const uint64_t gis = guest_call(c, base + kFnGameInstanceState, mgr);
     if (!gis) return false;
     guest_call(c, base + kFnQuitGame, gis, static_cast<uint64_t>(kQuitReasonWarp));
+    return true;
+}
+
+bool grant(int64_t item, int32_t amount, int32_t capacity) {
+    const uint64_t gs = rd64(g_layout.game_state_global ? g_layout.game_state_global : game_base() + kGpGameState);
+    const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
+    if (!ps) return false;
+    auto put = [&](int64_t id, int32_t a, int32_t cap) {
+        const int32_t v[2] = {a, cap};
+        return write_mem(ps + 0x44 + static_cast<uint64_t>(id) * 8, v, sizeof v);
+    };
+    if (item >= 0) return put(item, amount, capacity);
+    bool ok = true;
+    for (int id : {0, 1, 2, 3, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0x1c}) ok &= put(id, 1, 1);
+    ok &= put(4, 250, 250);       // missiles
+    ok &= put(7, 8, 8);           // power bombs
+    ok &= put(0x18, 14, 14);      // energy tanks
+    return ok;
+}
+
+bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err) {
+    if (!c) { *err = "no live context (the frame source is not the game hook)"; return false; }
+    const uint64_t base = game_base();
+    const uint64_t gs = rd64(g_layout.game_state_global ? g_layout.game_state_global : base + kGpGameState);
+    const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+    uint64_t a[6] = {0, 0, 0, 0, 0, 0};
+    size_t n = 0;
+    size_t pos = 0;
+    while (pos < args.size()) {
+        while (pos < args.size() && std::isspace(static_cast<unsigned char>(args[pos]))) pos++;
+        if (pos >= args.size()) break;
+        size_t e = pos;
+        while (e < args.size() && !std::isspace(static_cast<unsigned char>(args[e]))) e++;
+        const std::string tok = args.substr(pos, e - pos);
+        pos = e;
+        if (n >= 6) { *err = "more than 6 arguments"; return false; }
+        uint64_t v = 0;
+        if (tok == "$gs") v = gs;
+        else if (tok == "$ps") v = gs ? rd64(gs + 0x20) : 0;
+        else if (tok == "$mgr") v = mgr;
+        else if (tok == "$player") { const uint64_t logic = mgr ? rd64(mgr + 0x4e0150) : 0; v = g_layout.player ? g_layout.player : (logic ? rd64(logic + 0x18) : g_player.load()); }
+        else {
+            char* end = nullptr;
+            v = std::strtoull(tok.c_str(), &end, 0);
+            if (!end || *end != 0) { *err = "bad argument '" + tok + "'"; return false; }
+        }
+        if ((tok[0] == '$') && v == 0) { *err = "argument " + tok + " is not available yet"; return false; }
+        a[n++] = v;
+    }
+    ::Ctx saved = *c;
+    for (int i = 0; i < 6; i++) c->x[i] = a[i];
+    dispatch_call(c, base + offset);
+    *result = c->x[0];
+    *c = saved;
     return true;
 }
 
