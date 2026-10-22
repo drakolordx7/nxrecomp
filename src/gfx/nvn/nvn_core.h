@@ -102,6 +102,10 @@ struct MemoryPool : Obj {
     bool is_shader_code = false;
     std::atomic<bool> dead{false};
     PoolGpu* gpu = nullptr;         // render thread only
+    // Background import (gpu::prefetch_pool): 0 not started, 1 queued, 3 running on the importer, 2 finished (result in `prefetched`, taken by
+    // the render thread), 4 taken over by the render thread while it was still queued (the importer skips it).
+    std::atomic<int> prefetch{0};
+    std::atomic<PoolGpu*> prefetched{nullptr};
 };
 
 // A GPU address resolved to its pool.

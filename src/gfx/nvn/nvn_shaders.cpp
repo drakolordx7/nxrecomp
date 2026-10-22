@@ -20,6 +20,7 @@
 #include <sstream>
 #include <unordered_set>
 
+#include <nxrt/ftrace.h>
 #include <nxrt/config.h>
 #include <nxrt/log.h>
 
@@ -867,6 +868,7 @@ const ShaderInfo* ShaderCache::load_locked(const std::string& hash, const uint8_
         missing_++;
         return nullptr;
     };
+    NXFT("shader.load");
     std::string bytes;
     if (!read_file(dir_ + "/" + hash + ".spv", bytes) || bytes.empty() || bytes.size() % 4) {
         dump_missing_block(hash, code, control, code_size);

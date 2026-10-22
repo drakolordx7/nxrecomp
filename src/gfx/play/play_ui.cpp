@@ -31,6 +31,14 @@ constexpr int kWindowModeCount = 3;
 constexpr const char* kWindowModeNames[kWindowModeCount] = {"Windowed", "Borderless fullscreen", "Exclusive fullscreen"};
 constexpr const char* kWindowModeKeys[kWindowModeCount] = {"windowed", "borderless", "exclusive"};
 constexpr int kFpsChoices[] = {0, 30, 60, 72, 90, 120, 144, 165, 240, 360};
+// The aspect ratio combo: Auto stores 0, the presets store their ratio, Custom shows a slider (index kAspectCustom, no value of its own).
+constexpr const char* kAspectNames[] = {"Auto", "16:9", "16:10", "21:9", "32:9", "Custom"};
+constexpr double kAspectValues[] = {0.0, 16.0 / 9.0, 1.6, 21.0 / 9.0, 32.0 / 9.0};
+constexpr int kAspectCustom = 5;
+constexpr int kAspectNameCount = static_cast<int>(sizeof kAspectNames / sizeof kAspectNames[0]);
+constexpr const char* kAnisoNames[] = {"Game default", "2x", "4x", "8x", "16x"};
+constexpr int kAnisoValues[] = {0, 2, 4, 8, 16};
+constexpr int kAnisoCount = static_cast<int>(sizeof kAnisoValues / sizeof kAnisoValues[0]);
 constexpr Trig kTrigChoices[] = {Trig::Press, Trig::Tap, Trig::Hold, Trig::Toggle, Trig::DoubleTap};
 
 struct SwitchButton {
@@ -57,6 +65,7 @@ struct Page {
     bool out_tab_open = false;             // the Switch layout tab was open last frame; its fields are refilled when it opens
     char out_text[kActCount][128] = {};    // the text of each output field
     std::string out_err[kActCount];        // parse error of each field; empty when its text is valid
+    bool aspect_custom = false;            // Display tab: the Custom aspect entry is picked (local, not saved)
 };
 
 void mark(Page& p) { p.dirty = true; }
@@ -101,6 +110,9 @@ void sanitize(Settings& s) {
     for (Binding& b : v) b.ms = std::clamp(b.ms, 0, 5000);
     s.display.width = std::clamp(s.display.width, 320, 16384);
     s.display.height = std::clamp(s.display.height, 320, 16384);
+    // A fixed render size is 0 (follow the window) or 320..16384 per side; the settings file rejects anything else.
+    s.display.render_width = s.display.render_width <= 0 ? 0 : std::clamp(s.display.render_width, 320, 16384);
+    s.display.render_height = s.display.render_height <= 0 ? 0 : std::clamp(s.display.render_height, 320, 16384);
 }
 
 void apply_now(UiHost& host, Page& p) {
@@ -137,6 +149,17 @@ bool int_field(const char* label, int* v, int lo, int hi, int step, int step_fas
     bool changed = ImGui::InputInt(label, v, step, step_fast);
     if (ImGui::IsItemDeactivated()) {
         const int c = std::clamp(*v, lo, hi);
+        changed = changed || c != *v;
+        *v = c;
+    }
+    return changed;
+}
+
+// One side of the fixed render size: 0 (follow the window) or 320..16384. A value in between is clamped to 320 when the field is left.
+bool render_size_field(const char* label, int* v) {
+    bool changed = ImGui::InputInt(label, v, 0, 0);
+    if (ImGui::IsItemDeactivated()) {
+        const int c = *v <= 0 ? 0 : std::clamp(*v, 320, 16384);
         changed = changed || c != *v;
         *v = c;
     }
@@ -215,6 +238,15 @@ int window_mode_index(const std::string& mode) {
     return 0;
 }
 
+// The combo entry for an aspect value. Auto wins for 0; Custom is shown when picked or when the value is no preset.
+int aspect_index(double aspect, bool custom) {
+    if (aspect <= 0.0) return 0;
+    if (custom) return kAspectCustom;
+    for (int i = 1; i < kAspectCustom; ++i)
+        if (std::fabs(aspect - kAspectValues[i]) < 1e-6) return i;
+    return kAspectCustom;
+}
+
 void fps_label(int fps, char* buf, std::size_t n) {
     if (fps <= 0) std::snprintf(buf, n, "Unlimited");
     else std::snprintf(buf, n, "%d fps", fps);
@@ -265,6 +297,50 @@ void display_tab(const LiveStatus& live, Page& p) {
     if (int_field("Window width", &d.width, 320, 16384, 1, 100)) mark(p);
     if (int_field("Window height", &d.height, 320, 16384, 1, 100)) mark(p);
     ImGui::TextDisabled("The windowed size applies at the next start.");
+
+    ImGui::SeparatorText("Image");
+    if (ImGui::SliderInt("Render scale (restart)", &d.render_scale, 25, 400, "%d%%")) mark(p);
+    ImGui::TextUnformatted("Fixed render size, 0 = follow the window (restart)");
+    if (render_size_field("Width##render_w", &d.render_width)) mark(p);
+    ImGui::SameLine();
+    if (render_size_field("Height##render_h", &d.render_height)) mark(p);
+
+    const int aspect_sel = aspect_index(d.aspect, p.aspect_custom);
+    if (ImGui::BeginCombo("Aspect ratio (restart)", kAspectNames[aspect_sel])) {
+        for (int i = 0; i < kAspectNameCount; ++i) {
+            if (ImGui::Selectable(kAspectNames[i], i == aspect_sel) && i != aspect_sel) {
+                if (i == kAspectCustom) {
+                    p.aspect_custom = true;
+                    if (d.aspect <= 0.0) d.aspect = kAspectValues[1];   // Custom starts at 16:9
+                } else {
+                    p.aspect_custom = false;
+                    d.aspect = kAspectValues[i];                       // Auto is index 0, value 0
+                }
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (aspect_sel == kAspectCustom && slider("Custom aspect ratio", &d.aspect, 1.0, 5.0, "%.2f")) mark(p);
+    ImGui::TextDisabled("Resolution options apply the next time the game starts.");
+
+    if (slider("FOV offset (degrees, vertical)", &d.fov_offset, -30.0, 40.0, "%.1f")) mark(p);
+    if (ImGui::Checkbox("Dynamic resolution (lowers the render size when the GPU is late)", &d.dynamic_resolution)) mark(p);
+    int aniso_sel = 0;
+    for (int i = 0; i < kAnisoCount; ++i)
+        if (kAnisoValues[i] == d.anisotropy) aniso_sel = i;
+    if (ImGui::BeginCombo("Texture anisotropy", kAnisoNames[aniso_sel])) {
+        for (int i = 0; i < kAnisoCount; ++i) {
+            if (ImGui::Selectable(kAnisoNames[i], i == aniso_sel) && i != aniso_sel) {
+                d.anisotropy = kAnisoValues[i];
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (slider("Texture LOD bias", &d.lod_bias, -2.0, 2.0, "%.2f")) mark(p);
+    if (ImGui::Checkbox("Bloom", &d.bloom)) mark(p);
+    if (ImGui::Checkbox("Chromatic aberration", &d.chromatic_aberration)) mark(p);
 
     ImGui::SeparatorText("Live");
     ImGui::Text("Window: %s, present mode: %s", cstr(live.window_mode), cstr(live.present_mode));
