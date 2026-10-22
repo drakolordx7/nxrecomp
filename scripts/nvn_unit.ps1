@@ -8,7 +8,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "build\unit\$Name"
 New-Item -ItemType Directory -Force $out | Out-Null
 $recomp = "D:/AI/Active/Metroid-Prime/work/recomp_abi2/include"
-$srcs = @($Test) + $Src + @("src\gfx\nvn\nvn_loader.cpp", "src\gfx\nvn\nvn_abi.cpp", "tests\test_main.cpp") | ForEach-Object { Join-Path $root $_ }
+$srcs = @($Test) + $Src + @("src\gfx\nvn\nvn_loader.cpp", "src\gfx\nvn\nvn_abi.cpp", "tests\test_main.cpp") | ForEach-Object { if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $root $_ } }
 $srcList = ($srcs | ForEach-Object { '"' + $_ + '"' }) -join " "
 $lib = Join-Path $root "build\release\nxrt.lib"
 $libs = ($Lib | ForEach-Object { '"' + $_ + '"' }) -join " "
@@ -17,7 +17,7 @@ $env_cmd = Join-Path $PSScriptRoot "env.cmd"
 $cl = "clang-cl /nologo /std:c++20 /O1 /EHsc /MD /W3 -Wno-unused-parameter -Wno-missing-field-initializers -Wno-cast-function-type-mismatch -Wno-cast-function-type-strict -Wno-language-extension-token " +
       "/DNOMINMAX /DWIN32_LEAN_AND_MEAN /D_CRT_SECURE_NO_WARNINGS /D_WIN32_WINNT=0x0A00 " +
       "/I`"$root\include`" /I`"$root\src\gfx`" /I`"$root\src\gfx\nvn`" /I`"$root\src\gfx\nvn\third_party`" /I`"$root\tests`" /I`"$root\build\release\_deps\volk-src`" /I`"$root\build\release\_deps\vulkan_headers-src\include`" /I`"$recomp`" $incs " +
-      "$srcList /Fe`"$out\unit.exe`" /Fo`"$out/`" /link `"$lib`" $libs psapi.lib /STACK:8388608 /HIGHENTROPYVA:NO"
+      "$srcList /Fe`"$out\unit.exe`" /Fo`"$out/`" /link `"$nxrtlib`" $libs psapi.lib /STACK:8388608 /HIGHENTROPYVA:NO"
 cmd /c "call `"$env_cmd`" && $cl"
 if ($LASTEXITCODE -ne 0) { Write-Host "BUILD FAILED"; exit 1 }
 if ($NoRun) { exit 0 }
