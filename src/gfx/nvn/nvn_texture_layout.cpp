@@ -30,6 +30,36 @@ uint64_t align_up(uint64_t a, uint64_t b) { return div_up(a, b) * b; }
 
 }  // namespace
 
+bool sparse_tile_shape(int nvn_target, const FormatInfo* fmt, int out[3]) {
+    if (!fmt || fmt->aspect != kAspectColor || fmt->bytes == 0) return false;
+    if (nvn_target == NVN_TEXTURE_TARGET_BUFFER || nvn_target == NVN_TEXTURE_TARGET_2D_MULTISAMPLE || nvn_target == NVN_TEXTURE_TARGET_2D_MULTISAMPLE_ARRAY)
+        return false;
+    int w = 0, h = 0, d = 1;
+    if (nvn_target == NVN_TEXTURE_TARGET_3D) {
+        switch (fmt->bytes) {
+            case 1: w = 64; h = 32; d = 32; break;
+            case 2: w = 32; h = 32; d = 32; break;
+            case 4: w = 32; h = 32; d = 16; break;
+            case 8: w = 32; h = 16; d = 16; break;
+            case 16: w = 16; h = 16; d = 16; break;
+            default: return false;
+        }
+    } else {
+        switch (fmt->bytes) {
+            case 1: w = 256; h = 256; break;
+            case 2: w = 256; h = 128; break;
+            case 4: w = 128; h = 128; break;
+            case 8: w = 128; h = 64; break;
+            case 16: w = 64; h = 64; break;
+            default: return false;
+        }
+    }
+    out[0] = w * fmt->block_w;
+    out[1] = h * fmt->block_h;
+    out[2] = d;
+    return true;
+}
+
 TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     TexLayout out;
     out.fmt = format_info(b.format);

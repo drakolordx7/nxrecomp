@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <map>
@@ -889,6 +890,119 @@ void tex_shutdown() {
         }
     }
     g_sh = Shared();
+}
+
+namespace {
+float half_to_float(uint16_t h) {
+    const uint32_t s = (h >> 15) & 1, e = (h >> 10) & 31, m = h & 1023;
+    float v;
+    if (e == 0) v = std::ldexp(static_cast<float>(m), -24);
+    else if (e == 31) v = m ? NAN : INFINITY;
+    else v = std::ldexp(static_cast<float>(m + 1024), static_cast<int>(e) - 25);
+    return s ? -v : v;
+}
+float small_float(uint32_t bits, int mant_bits) {   // unsigned 11 / 10 bit float (5 bit exponent)
+    const uint32_t e = bits >> mant_bits, m = bits & ((1u << mant_bits) - 1);
+    if (e == 0) return std::ldexp(static_cast<float>(m), -14 - mant_bits);
+    if (e == 31) return m ? NAN : INFINITY;
+    return std::ldexp(1.0f + static_cast<float>(m) / static_cast<float>(1u << mant_bits), static_cast<int>(e) - 15);
+}
+uint8_t to8(float v, bool hdr) {
+    if (!(v == v)) return 255;
+    if (hdr) v = v / (1.0f + v);          // display of a high dynamic range value
+    return static_cast<uint8_t>(std::min(1.0f, std::max(0.0f, v)) * 255.0f + 0.5f);
+}
+}  // namespace
+
+bool dump_texture(Texture* t, const std::string& path, std::string* stats) {
+    TexGpu* g = t ? t->gpu : nullptr;
+    if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED) return false;
+    const VkFormat f = g->format;
+    uint32_t bpp = 0;
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    switch (f) {
+        case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_B10G11R11_UFLOAT_PACK32: case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            bpp = 4; break;
+        case VK_FORMAT_R16G16B16A16_SFLOAT: case VK_FORMAT_R32G32_SFLOAT: case VK_FORMAT_R32G32_UINT: bpp = 8; break;
+        case VK_FORMAT_R32G32B32A32_SFLOAT: case VK_FORMAT_R32G32B32A32_UINT: bpp = 16; break;
+        case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_SFLOAT: case VK_FORMAT_R16_UNORM: bpp = 2; break;
+        case VK_FORMAT_R8_UNORM: bpp = 1; break;
+        case VK_FORMAT_D16_UNORM: bpp = 2; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
+        case VK_FORMAT_D32_SFLOAT: case VK_FORMAT_D32_SFLOAT_S8_UINT: bpp = 4; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
+        case VK_FORMAT_D24_UNORM_S8_UINT: bpp = 4; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
+        default: return false;
+    }
+    const VkExtent3D e = level_extent(g->base, 0);
+    const uint64_t size = static_cast<uint64_t>(e.width) * e.height * bpp;
+    finish();
+    gfx::Buffer rb;
+    run_frame_sync([&](Frame& fr) {
+        if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &rb, "nvn texture dump") != VK_SUCCESS) return;
+        const VkImageLayout prev = g->layout;
+        move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy r = {};
+        r.imageSubresource = {aspect, 0, 0, 1};
+        r.imageExtent = {e.width, e.height, 1};
+        vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.buffer, 1, &r);
+        move_layout(fr, *g, prev);
+    });
+    if (!rb) return false;
+    device().invalidate_buffer(rb);
+    const uint8_t* src = static_cast<const uint8_t*>(rb.mapped);
+    std::vector<uint8_t> rgba(static_cast<size_t>(e.width) * e.height * 4, 255);
+    double sum[4] = {0, 0, 0, 0};
+    float mn[4] = {1e30f, 1e30f, 1e30f, 1e30f}, mx[4] = {-1e30f, -1e30f, -1e30f, -1e30f};
+    uint64_t nonzero = 0;
+    for (uint32_t i = 0; i < e.width * e.height; ++i) {
+        const uint8_t* p = src + static_cast<size_t>(i) * bpp;
+        float c[4] = {0, 0, 0, 1};
+        bool hdr = false;
+        auto u32 = [&](int k) { uint32_t v; std::memcpy(&v, p + 4 * k, 4); return v; };
+        auto f32 = [&](int k) { float v; std::memcpy(&v, p + 4 * k, 4); return v; };
+        auto u16 = [&](int k) { uint16_t v; std::memcpy(&v, p + 2 * k, 2); return v; };
+        switch (f) {
+            case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: for (int k = 0; k < 4; ++k) c[k] = p[k] / 255.0f; break;
+            case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB: c[0] = p[2] / 255.0f; c[1] = p[1] / 255.0f; c[2] = p[0] / 255.0f; c[3] = p[3] / 255.0f; break;
+            case VK_FORMAT_A2B10G10R10_UNORM_PACK32: { const uint32_t v = u32(0); c[0] = (v & 1023) / 1023.0f; c[1] = ((v >> 10) & 1023) / 1023.0f; c[2] = ((v >> 20) & 1023) / 1023.0f; c[3] = (v >> 30) / 3.0f; break; }
+            case VK_FORMAT_R8G8_UNORM: c[0] = p[0] / 255.0f; c[1] = p[1] / 255.0f; c[2] = 0; break;
+            case VK_FORMAT_R8_UNORM: c[0] = c[1] = c[2] = p[0] / 255.0f; break;
+            case VK_FORMAT_R16_UNORM: c[0] = c[1] = c[2] = u16(0) / 65535.0f; break;
+            case VK_FORMAT_R16_SFLOAT: c[0] = c[1] = c[2] = half_to_float(u16(0)); hdr = true; break;
+            case VK_FORMAT_R16G16B16A16_SFLOAT: for (int k = 0; k < 4; ++k) c[k] = half_to_float(u16(k)); hdr = true; break;
+            case VK_FORMAT_R32_SFLOAT: c[0] = c[1] = c[2] = f32(0); hdr = true; break;
+            case VK_FORMAT_R32G32_SFLOAT: c[0] = f32(0); c[1] = f32(1); c[2] = 0; hdr = true; break;
+            case VK_FORMAT_R32G32B32A32_SFLOAT: for (int k = 0; k < 4; ++k) c[k] = f32(k); hdr = true; break;
+            case VK_FORMAT_B10G11R11_UFLOAT_PACK32: { const uint32_t v = u32(0); c[0] = small_float(v & 2047, 6); c[1] = small_float((v >> 11) & 2047, 6); c[2] = small_float(v >> 22, 5); hdr = true; break; }
+            case VK_FORMAT_R32_UINT: { const uint32_t v = u32(0); c[0] = (v & 255) / 255.0f; c[1] = ((v >> 8) & 255) / 255.0f; c[2] = ((v >> 16) & 255) / 255.0f; c[3] = (v >> 24) / 255.0f; break; }
+            case VK_FORMAT_R32G32_UINT: { const uint32_t v = u32(0), w2 = u32(1); c[0] = (v & 255) / 255.0f; c[1] = ((v >> 8) & 255) / 255.0f; c[2] = (w2 & 255) / 255.0f; c[3] = ((w2 >> 8) & 255) / 255.0f; break; }
+            case VK_FORMAT_R32G32B32A32_UINT: for (int k = 0; k < 4; ++k) c[k] = (u32(k) & 255) / 255.0f; break;
+            case VK_FORMAT_D16_UNORM: c[0] = c[1] = c[2] = u16(0) / 65535.0f; break;
+            case VK_FORMAT_D32_SFLOAT: case VK_FORMAT_D32_SFLOAT_S8_UINT: c[0] = c[1] = c[2] = f32(0); break;
+            case VK_FORMAT_D24_UNORM_S8_UINT: c[0] = c[1] = c[2] = (u32(0) & 0xffffff) / 16777215.0f; break;
+            default: break;
+        }
+        bool any = false;
+        for (int k = 0; k < 4; ++k) {
+            if (c[k] == c[k]) {
+                sum[k] += c[k];
+                mn[k] = std::min(mn[k], c[k]);
+                mx[k] = std::max(mx[k], c[k]);
+            }
+            if (c[k] != 0.0f) any = true;
+            rgba[static_cast<size_t>(i) * 4 + k] = (k == 3 && (aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) ? 255 : to8(c[k], hdr);
+        }
+        if (any) ++nonzero;
+    }
+    device().destroy_buffer(rb);
+    if (stats) {
+        char b[400];
+        const double n = static_cast<double>(e.width) * e.height;
+        std::snprintf(b, sizeof b, "min %g %g %g %g max %g %g %g %g mean %g %g %g %g nonzero %.1f%%", mn[0], mn[1], mn[2], mn[3], mx[0], mx[1], mx[2], mx[3],
+                      sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n, 100.0 * static_cast<double>(nonzero) / n);
+        *stats = b;
+    }
+    return path.empty() || gfx::save_png_rgba(path, rgba.data(), e.width, e.height);
 }
 
 void mark_texture_cpu_dirty(Texture* t) {

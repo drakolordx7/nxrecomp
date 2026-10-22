@@ -396,6 +396,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     VkPhysicalDeviceCustomBorderColorFeaturesEXT acbc = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT};
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT aeds3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT avids = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT};
+    VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT adrua = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT};
     std::vector<const char*> dev_exts;
     void* chain = nullptr;
     auto add_ext = [&](const char* name, void* feat_struct) {
@@ -413,6 +414,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     const bool x_cbc = add_ext(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME, &acbc);
     const bool x_eds3 = add_ext(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME, &aeds3);
     const bool x_vids = add_ext(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, &avids);
+    const bool x_drua = add_ext(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, &adrua);
     features_.external_memory_host = has_dext(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (features_.external_memory_host) dev_exts.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (has_dext(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) { dev_exts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME); features_.push_descriptor = true; }
@@ -448,6 +450,13 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.wide_lines = af.wideLines;
     features_.large_points = af.largePoints;
     features_.image_cube_array = af.imageCubeArray;
+    features_.occlusion_query = true;   // occlusion queries are core
+    features_.occlusion_query_precise = af.occlusionQueryPrecise;
+    features_.pipeline_statistics_query = af.pipelineStatisticsQuery;
+    features_.sparse_binding = af.sparseBinding;
+    features_.sparse_residency_image2d = af.sparseResidencyImage2D;
+    features_.sparse_residency_image3d = af.sparseResidencyImage3D;
+    features_.sparse_residency_aliased = af.sparseResidencyAliased;
     features_.shader_draw_parameters = a11.shaderDrawParameters;
     features_.sampler_mirror_clamp_to_edge = a12.samplerMirrorClampToEdge;
     features_.descriptor_indexing = a12.descriptorIndexing && a12.shaderSampledImageArrayNonUniformIndexing;
@@ -458,6 +467,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.custom_border_color = x_cbc && acbc.customBorderColors && acbc.customBorderColorWithoutFormat;
     features_.extended_dynamic_state3 = x_eds3;
     features_.vertex_input_dynamic_state = x_vids && avids.vertexInputDynamicState;
+    features_.dynamic_rendering_unused_attachments = x_drua && adrua.dynamicRenderingUnusedAttachments;
     NXLOG_I(kTag, "texture compression on this GPU: BC %s, ASTC-LDR %s, ETC2 %s", features_.bc ? "yes" : "no",
             features_.astc_ldr ? "yes" : "no", features_.etc2 ? "yes" : "no");
     NXLOG_I(kTag, "features: geometry %d float64 %d int64 %d dualSrc %d logicOp %d multiViewport %d drawParams %d descIndexing %d interlock %d depthClipControl %d customBorder %d hostMemImport %d pushDesc %d",

@@ -112,6 +112,9 @@ struct DeviceFeatures {
     bool fragment_shader_interlock = false, depth_clip_control = false, depth_clip_enable = false, custom_border_color = false;
     bool extended_dynamic_state3 = false, vertex_input_dynamic_state = false;
     bool external_memory_host = false, push_descriptor = false;
+    bool dynamic_rendering_unused_attachments = false;
+    bool occlusion_query = false, occlusion_query_precise = false, pipeline_statistics_query = false;
+    bool sparse_binding = false, sparse_residency_image2d = false, sparse_residency_image3d = false, sparse_residency_aliased = false;
 };
 
 struct DeviceLimitsExt {
