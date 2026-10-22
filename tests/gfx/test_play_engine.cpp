@@ -487,3 +487,18 @@ NXTEST(select_pulse_survives_a_slow_game_frame) {
     CHECK(idle(e.output(ms(1700))));
     CHECK(idle(e.output(ms(1800))));
 }
+
+NXTEST(select_pulse_holds_for_frame_boundaries_once_they_are_counted) {
+    Engine e(settings_from("[bindings.all]\n2 = beam_2\n"));
+    to_gameplay(e);
+    e.frame_tick();
+    e.key(SDL_SCANCODE_2, true, ms(1000));
+    e.key(SDL_SCANCODE_2, false, ms(1010));
+    const uint64_t want = hid::btn(hid::kBtnX) | hid::btn(hid::kBtnRight);
+    CHECK(e.output(ms(1010)).buttons == want);          // a poll that is not the game's tick (first poll)
+    CHECK(e.output(ms(1500)).buttons == want);          // past the pulse's end but no frame boundary yet: still on
+    e.frame_tick();
+    CHECK(e.output(ms(1600)).buttons == want);          // one boundary after the first poll: still on
+    e.frame_tick();
+    CHECK(idle(e.output(ms(1700))));                    // two boundaries: retired (this poll shows nothing)
+}
