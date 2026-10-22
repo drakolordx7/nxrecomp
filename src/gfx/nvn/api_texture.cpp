@@ -4,7 +4,7 @@
 // object; its storage is the game's memory inside a pool (be::MemoryPool::base + offset), in the block-linear layout of
 // nvn_texture_layout.cpp. Texel access untiles the selected level into a scratch buffer, copies the region and tiles the
 // level back (tegra::untile_level / tile_level). Correct first, not fast.
-// Not implemented here (no NVN signature in sigs.txt, so skipped as the brief says): nvnTextureBuilderGetDevice,
+// Not implemented here (no NVN signature in sigs.txt, so skipped): nvnTextureBuilderGetDevice,
 // nvnTextureBuilderGetPackagedTextureLayout, nvnTextureBuilderGetRawStorageClass, nvnTextureGetRawStorageClass.
 // Debug labels are accepted and dropped (be::Texture has no label field).
 // Packaged layout handling: smo-recomp runtime/gfx/nvn_gl.c (GPL-3.0), layout/defaults checked, no code copied.

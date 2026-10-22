@@ -24,7 +24,7 @@ NXTEST(validation_clean_over_300_frames_offscreen) {
 }
 
 NXTEST(environment_switches_force_headless_and_capture) {
-    // The switches the brief asks for: no visible window for automated runs, a screenshot on request, both without touching code.
+    // The switches this test needs: no visible window for automated runs, a screenshot on request, both without touching code.
     _putenv_s("NXRT_GFX_HEADLESS", "1");
     _putenv_s("NXRT_GFX_SCREENSHOT", "env_shot.png");
     _putenv_s("NXRT_GFX_SCREENSHOT_FRAME", "12");

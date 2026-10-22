@@ -48,7 +48,7 @@ std::vector<uint64_t> run_frames(FrameLimiter& l, int n, double fps) {
 double ns_to_ms(double ns) { return ns / 1e6; }
 
 // The limiter is meant for a game's render thread, which runs at high priority: the timing cases do too, so that other
-// processes on the machine (builds, other agents) do not preempt the measurement for tens of milliseconds.
+// processes on the machine (builds, other programs) do not preempt the measurement for tens of milliseconds.
 struct ScopedBoost {
     DWORD old_class;
     int old_prio;

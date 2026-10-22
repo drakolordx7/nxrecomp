@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// NVNformat -> storage facts and Vulkan formats (stream S4d). Interface owned by the manager; the table is nvn_format.cpp.
+// NVNformat -> storage facts and Vulkan formats (stream S4d). The table is nvn_format.cpp.
 #pragma once
 #include <cstdint>
 
