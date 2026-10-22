@@ -41,6 +41,7 @@ public:
         uint64_t waited = 0, overran = 0;
         double overran_fraction = 0;    // overran / (waited + overran)
         double late_p99_ms = 0, late_max_ms = 0;   // lateness of waited frames
+        double late_over_half_ms = 0;   // fraction of the waited frames that started more than 0.5 ms late (a robust accuracy measure with few frames, unlike p99)
     };
     Stats stats() const;                // over the intervals since reset_stats() (at most the last 8192)
     void reset_stats();
