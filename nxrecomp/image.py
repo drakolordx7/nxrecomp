@@ -79,6 +79,16 @@ class Image:
             return self.base + a
         return struct.unpack_from('<Q', self.mem, off)[0]
 
+    def reloc_map(self):
+        """{offset: (type, symbol index, addend)} of DT_RELA and DT_JMPREL."""
+        if getattr(self, '_relmap', None) is None:
+            m = {}
+            for tbl in (self.relocs(), self.jmprel()):
+                for o, info, a in tbl:
+                    m[o] = (info & 0xffffffff, info >> 32, a)
+            self._relmap = m
+        return self._relmap
+
     def in_text(self, addr):
         o = addr - self.base
         return self.text[0] <= o < self.text[0] + self.text[1]

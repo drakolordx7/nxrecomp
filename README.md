@@ -18,7 +18,7 @@ tables). Output is sharded into a fixed number of translation units for the buil
 **The generated-code ABI is `include/nxrecomp/ctx.h`** (include with `#include <nxrecomp/ctx.h>` and
 `-I recomp/include`). The runtime implements what the header declares as runtime-provided: `call_indirect`, `host_import`,
 `guest_trap`, `guest_unimpl`, `guest_svc`, `guest_mrs/msr`, `stx_diag`, `nx_catch_call`, and the three site hooks. The ABI
-version is `NXRECOMP_ABI_VERSION` (2).
+version is `NXRECOMP_ABI_VERSION` (3).
 
 ## Use
 
@@ -56,5 +56,5 @@ lifts as a build step and builds the result as a static library (flags: C++20, `
 | Known answers | `python oracle/ka/run_ka.py` | 108 cases of the rEden / dynarmic A64 tests (through ScarletNX), no emulator involved: 89 pass, 0 fail, 7 skipped, 6 need FPSR flags and 5 need FPCR (both documented gaps) |
 | Corpus | `python oracle/difftest/gen_corpus.py` | regenerates `corpus.json` (deterministic) |
 
-Gaps that remain are listed with numbers in `docs/GAPS.md`. The stream log is `docs/S1.md`, numbered bug notes are in
+Lifting and compiling the game itself (`scriptsuild_mpr.cmd`) is described in `docs/S1b.md`. Gaps that remain are listed with numbers in `docs/GAPS.md`. The stream log is `docs/S1.md`, numbered bug notes are in
 `docs/debug/`.

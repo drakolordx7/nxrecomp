@@ -19,7 +19,9 @@
 #ifndef NXRECOMP_CTX_H
 #define NXRECOMP_CTX_H
 
-#define NXRECOMP_ABI_VERSION 2   /* 2: host_import takes a globally unique import id; NxModule.index */
+#define NXRECOMP_ABI_VERSION 3   /* 2: host_import takes a globally unique import id; NxModule.index
+                                  * 3: DynSym.value is always a guest address; NxEh.types are final addresses and NxEh.type_syms /
+                                  *    NxEh.specs are new; every module also defines `const uint32_t nxmod_<name>_abi` */
 
 #include <stdint.h>
 #include <stddef.h>
@@ -92,7 +94,10 @@ void stx_diag(Ctx *c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, 
 
 /* One lifted function of a module and its guest address. */
 typedef struct { uint64_t addr; void (*fn)(Ctx *); } FnEntry;
-/* One dynamic symbol of a module, by index: its name, value and whether the module defines it. */
+/* One dynamic symbol of a module, by index: its name, value and whether the module defines it.
+ * value (ABI 3): for a defined symbol its GUEST ADDRESS (module base included, for every input kind: an NSO's st_value is
+ * module-relative and the lifter adds NxModule.base); 0 for an undefined one. Two exceptions keep the raw st_value: a
+ * thread-local symbol (STT_TLS: a TLS offset) and an SHN_ABS symbol (an absolute number). */
 typedef struct { const char *name; uint64_t value; int defined; } DynSym;
 /* A C++ landing pad: resuming the lifted function `fn` at guest address `pad` is fn(c, pad). */
 typedef struct { uint64_t pad; void (*fn)(Ctx *, uint64_t); } NxResume;
@@ -113,16 +118,27 @@ typedef struct { uint64_t start, end; uint32_t row_first, row_count; uint32_t si
  * `action` is 1 + an index into NxEh.actions, 0 = cleanup only (run the pad, then _Unwind_Resume). */
 typedef struct { uint64_t start, len, pad; uint32_t action; } NxCallSite;
 /* Action record: filter > 0 catches the type types[fde.type_first + filter - 1] (typeinfo address; 0 = catch(...)),
- * filter == 0 is a cleanup, filter < 0 an exception specification (unsupported, listed for completeness).
+ * filter == 0 is a cleanup. filter < 0 is an exception specification (ABI 3): -filter - 1 is the index into NxEh.specs of its
+ * list, a sequence of type filters (each k selects types[fde.type_first + k - 1] like a positive filter) ended by 0; the
+ * exception is allowed when it matches one of them (an empty list, `throw()`, allows nothing), otherwise
+ * __cxa_call_unexpected / std::terminate applies.
  * next: 1 + the index of the next record of the chain, 0 = end. */
 typedef struct { int32_t filter; uint32_t next; } NxAction;
+/* types (ABI 3): FINAL guest addresses of the typeinfo objects, after the module's relocations (R_AARCH64_RELATIVE added to
+ * NxModule.base; a typeinfo slot bound to a symbol this module defines resolves to that symbol), 0 = catch(...).
+ * type_syms is parallel to types: -1 when types[i] is final; >= 0 when the typeinfo is a symbol this module only imports:
+ * types[i] is then 0 and the typeinfo is the address of the symbol NxModule.syms[type_syms[i]].name in whichever module
+ * defines it (the runtime resolves it by name, like an import). specs: see NxAction (concatenated 0-terminated lists). */
 typedef struct {
     const NxFde *fdes; int nfdes;
     const NxCfiRow *rows; const NxCfiSaved *saved;
     const NxCallSite *sites; const NxAction *actions; const uint64_t *types;
+    const int32_t *type_syms; const uint32_t *specs;
 } NxEh;
 
-/* Everything the lifter writes about one module, in `nxmod_<name>` (module_<name>.cpp). */
+/* Everything the lifter writes about one module, in `nxmod_<name>` (module_<name>.cpp). The same file defines
+ * `const uint32_t nxmod_<name>_abi = NXRECOMP_ABI_VERSION;` (ABI 3): the version of the ctx.h the module was lifted and built
+ * with, so a stale prebuilt library is refused by the runtime's registration (compare it with the runtime's own version). */
 typedef struct NxModule {
     const char *name;
     uint32_t index;              /* position in the program's module list (see NX_IMPORT_ID); unique per program */

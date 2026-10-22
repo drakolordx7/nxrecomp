@@ -101,6 +101,32 @@ def analyse(img):
             end, how = nxt, 'next'
         rows.append({'start': s, 'end': end, 'src': src, 'end_from': how, 'names': names.get(s, [])})
 
+    # code that no function covers (no FDE, no sized symbol, never the target of a BL): hand-written SDK stubs. Each run of
+    # code between two functions is cut after every ret / br / unconditional b and becomes a function of its own (src G)
+    # unless it is only padding (zero words and nops). The NSO header (up to the end of the MOD0 record) is data.
+    hdr_end = (img.u32(4) + 0x1c) if nso else 0
+    gap_rows = []
+    prev_end = ts
+    for r in rows + [{'start': te, 'end': te}]:
+        lo, hi = max(prev_end, hdr_end if nso else ts), r['start']
+        prev_end = max(prev_end, r['end'])
+        a = lo
+        while a < hi:
+            b = a
+            while b < hi:
+                w = words[(b - ts) // 4]
+                b += 4
+                if (w & 0xfffffc1f) in (0xd65f0000, 0xd61f0000) or (w & 0xfc000000) == 0x14000000:
+                    break
+            seg = [words[(x - ts) // 4] for x in range(a, b, 4)]
+            while seg and seg[0] in (0, 0xd503201f):
+                seg.pop(0)
+                a += 4
+            if any(w not in (0, 0xd503201f) for w in seg):
+                gap_rows.append({'start': a, 'end': b, 'src': 'G', 'end_from': 'gap', 'names': names.get(a, [])})
+            a = b
+    rows = sorted(rows + gap_rows, key=lambda r: r['start'])
+
     # coverage of .text by exact functions
     covered = 0
     last = 0
@@ -109,7 +135,7 @@ def analyse(img):
         if e > last:
             covered += e - max(s, last)
             last = e
-    stats = {'text_size': img.text_size, 'functions': len(rows), 'exact_E': sum(1 for v in exact.values() if 'E' in v),
+    stats = {'text_size': img.text_size, 'functions': len(rows), 'gap_functions': len(gap_rows), 'exact_E': sum(1 for v in exact.values() if 'E' in v),
              'exact_S': sum(1 for v in exact.values() if 'S' in v),
              'exact_both': sum(1 for v in exact.values() if 'E' in v and 'S' in v),
              'E_S_end_disagree': len(disagree), 'E_S_disagree_examples': ['%x: E %x S %x' % x for x in disagree[:10]],

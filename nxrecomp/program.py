@@ -138,6 +138,7 @@ class Env:
         self.ends = {}
         self.starts = []
         self.jt = {}                  # address of a `br` -> sorted list of target addresses (jumptables.py)
+        self.tailbr = set()           # addresses of unresolved `br xN` that are indirect tail calls (jumptables.py)
         self.pads = []                # sorted landing pad addresses
         self.catchers = set()         # entries of functions entered through nx_catch_call
         self.eh_starts = set()        # entries of functions that have an LSDA
@@ -374,6 +375,7 @@ def make_env(spec):
     env.ends = dict(spec['ends'])
     env.starts = sorted(env.ends)
     env.jt = {int(k): v for k, v in spec['jt'].items()}
+    env.tailbr = set(spec.get('tailbr', ()))
     env.pads = spec['pads']
     env.catchers = set(spec['catchers'])
     env.full = True
@@ -464,7 +466,7 @@ def lift_module(spec, outdir, jobs=8, shards=0, bucket=0xC000, log=print):
     jumptables.resolve(env)
     starts = env.starts
     log('%s: %d function entries, %d landing pads, %d jump tables  (%.1fs)' % (img.name, len(starts), len(env.pads), len(env.jt), time.time() - t0))
-    spec = dict(spec, ends=env.ends, jt={str(k): v for k, v in env.jt.items()}, pads=env.pads, catchers=sorted(env.catchers))
+    spec = dict(spec, ends=env.ends, jt={str(k): v for k, v in env.jt.items()}, tailbr=sorted(env.tailbr), pads=env.pads, catchers=sorted(env.catchers))
     os.makedirs(outdir, exist_ok=True)
     known = set(starts)
     pending = list(starts)
@@ -571,6 +573,12 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
     allsyms = img.symbols() if nsym else []
     for i in range(nsym):
         sname, typ, bind, shndx, value, size = allsyms[i]
+        # value: guest ADDRESS of a defined symbol (an NSO's module-relative st_value gets the module base added, a static
+        # ELF's is absolute already); 0 for an undefined one; a thread-local symbol (STT_TLS) keeps its raw st_value (a TLS offset)
+        if not shndx:
+            value = 0
+        elif typ != 6 and shndx != 0xfff1:            # not thread-local, not SHN_ABS
+            value = img.base + img.sym_value(value)
         m.append('  { "%s", 0x%xULL, %d },' % (sname.replace('\\', '\\\\').replace('"', '\\"'), value, 1 if shndx else 0))
     if not nsym:
         m.append('  { "", 0, 0 },')
@@ -582,6 +590,8 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
     m.append('};')
     eh_name = emit_eh_tables(env, m)
     m.append('extern const NxModule nxmod_%s;' % name)
+    m.append('extern const uint32_t nxmod_%s_abi;' % name)
+    m.append('const uint32_t nxmod_%s_abi = NXRECOMP_ABI_VERSION;' % name)
     m.append('const NxModule nxmod_%s = { "%s", %du, 0x%xULL, 0x%xULL, fns, %d, syms, %d, resume, %d, %s };'
              % (name, img.name, env.module_index, env.base, env.text_hi, len(all_funcs) + len(env.overrides), nsym, len(resume), eh_name))
     m.append('}')

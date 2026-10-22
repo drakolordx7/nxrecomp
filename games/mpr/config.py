@@ -23,6 +23,7 @@ class Config(GameConfig):
         ModuleSpec('main', 0x7100000000, 'main'),
         ModuleSpec('sdk', 0x7500000000, 'sdk'),
         ModuleSpec('subsdk0', 0x7600000000, 'subsdk0'),
+        ModuleSpec('rtld', 0x7700000000, 'rtld'),      # lifted for completeness; the runtime's loader does rtld's job (docs/S1b.md)
     ]
     overrides = {}          # {guest address: handler name}: the runtime's h_<name>(Ctx *c) replaces that function
     extra_entries = {}      # {module name: [module-relative offsets]}
