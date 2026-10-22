@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <mutex>
 
+#include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
@@ -15,6 +16,7 @@
 #include "nxrt/memguard.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
+#include "nxrt/movie.h"
 #include "nxrt/nxmodule.h"
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
@@ -47,7 +49,10 @@ bool init(const InitOptions& opt) {
         ok = false;
     }
     svc_init();
-    if (opt.services) services::register_all();
+    if (opt.services) {
+        services::register_all();
+        media::install_movie_hle();   // movie:: on Media Foundation ([media] movie = off keeps the library in subsdk0)
+    }
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
@@ -60,6 +65,7 @@ std::string summary() {
     std::string s;
     s += svc_summary() + "\n";
     s += ipc::ipc_summary();
+    s += "audio: " + audio::stats_report() + "\n";
     size_t stubs = 0, called_stubs = 0;
     for (auto& h : hle_list()) {
         stubs += h.stub;
