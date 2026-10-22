@@ -8,7 +8,7 @@
 namespace nxrt::services {
 
 // ---- fs (fs.cpp): save data backend used by am (EnsureSaveData ...) and the fsp-srv commands ---------------------------------------
-// A user id is the 128-bit nn::account::Uid as (hi, lo) u64 halves in the order the IPC carries them (low word first in memory).
+// A user id is the 128-bit nn::account::Uid as two u64 halves in memory order: the first u64 (uid[0]) is "hi", the second is "lo" (profile().user_uid_hi / _lo).
 // Results are Horizon result codes (0 = success; the module-2 fs results otherwise).
 namespace fsapi {
 // Creates the account save data of the title for `uid` when it does not exist (size and journal from the profile). *created tells which.

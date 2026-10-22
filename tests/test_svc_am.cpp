@@ -2,6 +2,8 @@
 // appletOE / appletAE (S3c): command replies, the applet message queue, launch parameters, storages, save data, the language.
 // Request bytes and expected reply bytes are written out from Switchbrew "Applet Manager services" and ScarletNX am.swipc, and from
 // Ryujinx for the result codes (module 128: result = module | description << 9), not read from the service.
+#include <filesystem>
+#include <windows.h>
 #include <cstring>
 
 #include "nxrt/config.h"
@@ -244,8 +246,8 @@ NXTEST(am_launch_parameter_preselected_user) {
     uint8_t buf[0x88];
     std::memset(buf, 0xEE, sizeof buf);
     CHECK_EQ(accessor.call(11, nxsvc::Args().i64(0).buf_b(buf, sizeof buf)).result, 0u);
-    // magic 0xC79497CA (LE), flag 1, Uid low word 2, Uid high word 1, the rest zero.
-    const uint8_t want[24] = {0xCA, 0x97, 0x94, 0xC7, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0};
+    // magic 0xC79497CA (LE), flag 1, then the Uid in memory order (first u64 = uid_hi = 1, second = uid_lo = 2), the rest zero.
+    const uint8_t want[24] = {0xCA, 0x97, 0x94, 0xC7, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0};
     CHECK(std::memcmp(buf, want, sizeof want) == 0);
     CHECK_EQ(buf[24], 0u);
     CHECK_EQ(buf[0x87], 0u);
@@ -421,14 +423,28 @@ NXTEST(am_save_data_extend_and_size) {
 
 NXTEST(am_ensure_save_data) {
     nxsvc::Env env;
+    const std::string dir = (std::filesystem::temp_directory_path() / ("nxrt_am_save_" + std::to_string(GetCurrentProcessId()))).string();
+    std::filesystem::remove_all(dir);
+    config_set("fs", "save_dir", dir.c_str());
     nxsvc::Session proxy = open_proxy();
     REQUIRE(proxy.valid());
     nxsvc::Session app = proxy.sub(proxy.call(20));
     REQUIRE(app.valid());
-    // EnsureSaveData(Uid lo 2, hi 1): success with nothing missing (the fs side answers 0 on this branch).
-    nxsvc::Reply r = app.call(20, nxsvc::Args().u64(2).u64(1));
+    int64_t size = 0, journal = 0;
+    CHECK(services::fsapi::account_save_size(1, 2, &size, &journal) != 0);          // nothing there yet
+    // EnsureSaveData(Uid: first u64 = hi 1, second = lo 2): creates the account save data, nothing missing.
+    nxsvc::Reply r = app.call(20, nxsvc::Args().u64(1).u64(2));
     CHECK_EQ(r.result, 0u);
     CHECK_EQ(r.get<uint64_t>(0), 0ull);
+    CHECK_EQ(services::fsapi::account_save_size(1, 2, &size, &journal), 0u);
+    CHECK_EQ(size, 4ll << 20);
+    // GetSaveDataSize(type 1 = account, Uid) -> normal, journal
+    r = app.call(26, nxsvc::Args().u8(1).align(8).u64(1).u64(2));
+    CHECK_EQ(r.result, 0u);
+    CHECK_EQ(r.get<int64_t>(0), 4ll << 20);
+    CHECK_EQ(r.get<int64_t>(8), 1ll << 20);
+    std::filesystem::remove_all(dir);
+    clear_config();
 }
 
 NXTEST(am_common_stubs_accepted) {
