@@ -4,7 +4,9 @@
 // host objects built by hand (no GPU: the unit test links nvn_gpu_stub.cpp).
 #include <malloc.h>
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 #include "nvn_core.h"
 #include "nvn_impl.h"
@@ -198,6 +200,114 @@ NXTEST(virtual_pools_get_distinct_synthetic_ranges) {
     fin(&a);
     fin(&c);
     CHECK(be::pool_lookup(aa + 4096).pool == nullptr);
+}
+
+// A sparse texture reads the tiles mapped into its virtual pool. Two non-adjacent 64 KiB tiles (virtual 0x10000 and 0x40000) are mapped to
+// physical memory with distinct bytes; the storage of a 256x256 RGBA8 texture at virtual 0x10000 gathers them and the unmapped tiles read as
+// zeros. A remap marks the texture CPU-written; an unmapping request (physical pool 0) zeroes its tile.
+NXTEST(map_virtual_tiles_are_gathered) {
+    setup();
+    register_api_texture_builder();   // the texture builder and nvnTextureInitialize, which the texture reads its tiles through
+    register_api_texture();
+    auto b_defaults = abi::proc<PFNNVNMEMORYPOOLBUILDERSETDEFAULTSPROC>("nvnMemoryPoolBuilderSetDefaults");
+    auto b_storage = abi::proc<PFNNVNMEMORYPOOLBUILDERSETSTORAGEPROC>("nvnMemoryPoolBuilderSetStorage");
+    auto b_flags = abi::proc<PFNNVNMEMORYPOOLBUILDERSETFLAGSPROC>("nvnMemoryPoolBuilderSetFlags");
+    auto pool_init = abi::proc<PFNNVNMEMORYPOOLINITIALIZEPROC>("nvnMemoryPoolInitialize");
+    auto pool_fin = abi::proc<PFNNVNMEMORYPOOLFINALIZEPROC>("nvnMemoryPoolFinalize");
+    auto map_virtual = abi::proc<PFNNVNMEMORYPOOLMAPVIRTUALPROC>("nvnMemoryPoolMapVirtual");
+    auto tb_defaults = abi::proc<PFNNVNTEXTUREBUILDERSETDEFAULTSPROC>("nvnTextureBuilderSetDefaults");
+    auto tb_target = abi::proc<PFNNVNTEXTUREBUILDERSETTARGETPROC>("nvnTextureBuilderSetTarget");
+    auto tb_size = abi::proc<PFNNVNTEXTUREBUILDERSETSIZE2DPROC>("nvnTextureBuilderSetSize2D");
+    auto tb_depth = abi::proc<PFNNVNTEXTUREBUILDERSETDEPTHPROC>("nvnTextureBuilderSetDepth");
+    auto tb_levels = abi::proc<PFNNVNTEXTUREBUILDERSETLEVELSPROC>("nvnTextureBuilderSetLevels");
+    auto tb_format = abi::proc<PFNNVNTEXTUREBUILDERSETFORMATPROC>("nvnTextureBuilderSetFormat");
+    auto tb_storage = abi::proc<PFNNVNTEXTUREBUILDERSETSTORAGEPROC>("nvnTextureBuilderSetStorage");
+    auto t_init = abi::proc<PFNNVNTEXTUREINITIALIZEPROC>("nvnTextureInitialize");
+    auto t_fin = abi::proc<PFNNVNTEXTUREFINALIZEPROC>("nvnTextureFinalize");
+    auto zeros = [](const std::vector<uint8_t>& v, size_t from, size_t to) {
+        return std::all_of(v.begin() + static_cast<std::ptrdiff_t>(from), v.begin() + static_cast<std::ptrdiff_t>(to), [](uint8_t x) { return x == 0; });
+    };
+
+    // physical memory: three distinct 64 KiB tiles, A at 0, B at 0x10000, C at 0x20000
+    Region phys(kRegion);
+    std::vector<uint8_t> A(0x10000), B(0x10000), C(0x10000);
+    for (size_t i = 0; i < 0x10000; ++i) {
+        A[i] = static_cast<uint8_t>(i * 3 + 1);
+        B[i] = static_cast<uint8_t>(i * 5 + 2);
+        C[i] = static_cast<uint8_t>(i * 7 + 3);
+    }
+    std::memcpy(phys.p + 0x00000, A.data(), 0x10000);
+    std::memcpy(phys.p + 0x10000, B.data(), 0x10000);
+    std::memcpy(phys.p + 0x20000, C.data(), 0x10000);
+
+    NVNmemoryPoolBuilder pb;
+    b_defaults(&pb);
+    b_storage(&pb, phys.p, kRegion);
+    b_flags(&pb, NVN_MEMORY_POOL_FLAGS_CPU_CACHED | NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    NVNmemoryPool phys_pool;
+    std::memset(&phys_pool, 0, sizeof phys_pool);
+    CHECK_EQ(pool_init(&phys_pool, &pb), 1);
+
+    // the virtual pool: 1 MiB, no storage
+    NVNmemoryPoolBuilder vb;
+    b_defaults(&vb);
+    b_storage(&vb, nullptr, kRegion);
+    b_flags(&vb, NVN_MEMORY_POOL_FLAGS_VIRTUAL);
+    NVNmemoryPool vpool;
+    std::memset(&vpool, 0, sizeof vpool);
+    CHECK_EQ(pool_init(&vpool, &vb), 1);
+
+    // two 40-byte requests: virtual 0x10000 <- physical 0 (A), virtual 0x40000 <- physical 0x10000 (B)
+    uint64_t req[10] = {addr_of(&phys_pool), 0x00000, 0x10000, 0x10000, 0, addr_of(&phys_pool), 0x10000, 0x40000, 0x10000, 0};
+    CHECK_EQ(map_virtual(&vpool, 2, reinterpret_cast<const NVNmappingRequest*>(req)), 1);
+
+    // a 256x256 RGBA8 texture in the virtual pool at 0x10000: 0x40000 bytes of block-linear storage (virtual 0x10000..0x50000)
+    NVNtextureBuilder tb;
+    std::memset(&tb, 0, sizeof tb);
+    tb_defaults(&tb);
+    tb_target(&tb, NVN_TEXTURE_TARGET_2D);
+    tb_size(&tb, 256, 256);
+    tb_depth(&tb, 1);
+    tb_levels(&tb, 1);
+    tb_format(&tb, NVN_FORMAT_RGBA8);
+    tb_storage(&tb, &vpool, 0x10000);
+    NVNtexture tex;
+    std::memset(&tex, 0, sizeof tex);
+    CHECK_EQ(t_init(&tex, &tb), 1);
+    be::Texture* t = be::host_of<be::Texture>(&tex);
+    CHECK(t != nullptr);
+    if (!t) return;
+    CHECK(t->mem == nullptr);                                          // no storage of its own: the texels are in the mapped tiles
+    CHECK(t->vpool.get() == be::host_of<be::MemoryPool>(&vpool));
+    CHECK_EQ(t->voffset, uint64_t(0x10000));
+    CHECK_EQ(t->storage_size, uint64_t(0x40000));
+
+    std::vector<uint8_t> out;
+    CHECK(be::texture_gather_virtual(*t, out));
+    CHECK_EQ(out.size(), size_t(0x40000));
+    CHECK(std::memcmp(out.data(), A.data(), 0x10000) == 0);            // virtual 0x10000 is tile A
+    CHECK(zeros(out, 0x10000, 0x30000));                               // virtual 0x20000..0x40000 is unmapped
+    CHECK(std::memcmp(out.data() + 0x30000, B.data(), 0x10000) == 0);  // virtual 0x40000 is tile B
+
+    // remap virtual 0x40000 to physical 0x20000 (C): the texture is marked CPU-written and the gather shows C
+    t->cpu_dirty.store(false);
+    uint64_t req2[5] = {addr_of(&phys_pool), 0x20000, 0x40000, 0x10000, 0};
+    CHECK_EQ(map_virtual(&vpool, 1, reinterpret_cast<const NVNmappingRequest*>(req2)), 1);
+    CHECK(t->cpu_dirty.load());
+    CHECK(be::texture_gather_virtual(*t, out));
+    CHECK(std::memcmp(out.data() + 0x30000, C.data(), 0x10000) == 0);
+    CHECK(std::memcmp(out.data(), A.data(), 0x10000) == 0);
+
+    // unmapping (physical pool 0) virtual 0x10000 zeroes that tile; the other tile is untouched
+    uint64_t req3[5] = {0, 0, 0x10000, 0x10000, 0};
+    CHECK_EQ(map_virtual(&vpool, 1, reinterpret_cast<const NVNmappingRequest*>(req3)), 1);
+    CHECK(be::texture_gather_virtual(*t, out));
+    CHECK(zeros(out, 0, 0x10000));
+    CHECK(std::memcmp(out.data() + 0x30000, C.data(), 0x10000) == 0);
+
+    t_fin(&tex);
+    pool_fin(&vpool);
+    pool_fin(&phys_pool);
 }
 
 NXTEST(buffer_address_map_and_flush) {

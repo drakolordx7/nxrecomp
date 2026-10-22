@@ -281,6 +281,42 @@ NXTEST(untile_rgba8_r8_2d_array_six_levels) {
     }
 }
 
+// A sparse texture (no storage of its own, mem null, vpool set): its storage is gathered from the tiles mapped into its virtual pool. The image is
+// tiled as usual into a 64 KiB physical tile, which the virtual pool maps at virtual 0, and prepare_texture gives the untiled image back.
+NXTEST(sparse_texture_prepares_from_mapped_tiles) {
+    no_cache();
+    const TextureBuilderInfo info = make_info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 1, NVN_FORMAT_RGBA8);
+    Built bt;
+    CHECK_MSG(begin_block_linear(bt, info), "layout");
+    fill_random(bt.lin, 4242);
+    finish_block_linear(bt, info);
+    // the physical pool: a 64 KiB host buffer that holds the tiled storage at its start (the storage is smaller than one tile)
+    std::vector<uint8_t> phys(0x10000, 0);
+    std::memcpy(phys.data(), bt.mem.data(), bt.mem.size());
+    be::Ref<be::MemoryPool> pp(new be::MemoryPool());
+    pp->base = phys.data();
+    pp->size = phys.size();
+    // the virtual pool: one mapped tile at virtual 0, backed by the physical pool at offset 0
+    be::Ref<be::MemoryPool> vp(new be::MemoryPool());
+    vp->is_virtual = true;
+    vp->size = 1u << 20;
+    be::MemoryPool::VirtualMap map;
+    map.voff = 0;
+    map.size = 0x10000;
+    map.phys = be::Ref<be::MemoryPool>::share(pp.get());
+    map.poff = 0;
+    vp->vmaps.push_back(std::move(map));
+    // the texture reads its storage through the virtual pool, not through mem
+    Texture& t = *bt.tex;
+    t.mem = nullptr;
+    t.vpool = be::Ref<be::MemoryPool>::share(vp.get());
+    t.voffset = 0;
+    PreparedTexture out;
+    const bool ok = prepare_texture(t, TexCaps(), out);
+    CHECK_MSG(ok, out.error);
+    expect_image(bt, out, "sparse untile differs");
+}
+
 NXTEST(untile_cube_and_cube_array) {
     no_cache();
     const TextureBuilderInfo cube = make_info(NVN_TEXTURE_TARGET_CUBEMAP, 64, 64, 0, 4, NVN_FORMAT_RGBA8);
