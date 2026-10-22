@@ -60,9 +60,15 @@ struct LoaderAccess {
 // ---- Module ----------------------------------------------------------------------------------------------------------
 
 uint64_t Module::find_symbol(const char* sym) const {
-    for (auto& s : symbols_)
-        if (s.defined() && s.bind != 0 && s.name == sym) return s.shndx == elf::SHN_ABS ? s.value : bias_ + s.value;
-    return 0;
+    std::call_once(index_once_, [this] {          // the game's modules define 100k symbols and import thousands: no linear scans
+        index_.reserve(symbols_.size());
+        for (uint32_t i = 0; i < symbols_.size(); i++)
+            if (symbols_[i].defined() && symbols_[i].bind != 0 && !symbols_[i].name.empty()) index_.emplace(symbols_[i].name, i);
+    });
+    auto it = index_.find(sym);
+    if (it == index_.end()) return 0;
+    const ModuleSymbol& s = symbols_[it->second];
+    return s.shndx == elf::SHN_ABS ? s.value : bias_ + s.value;
 }
 
 std::string Module::describe(uint64_t addr) const {
@@ -322,6 +328,13 @@ uint64_t LoaderAccess::resolve(Module& m, const std::vector<elf::Sym>&, uint32_t
         if (s.type == 6) return s.value;                                   // TLS symbol: offset inside the TLS segment
         return s.shndx == elf::SHN_ABS ? s.value : m.bias_ + s.value;
     }
+    // The linker symbols the SDK's start-up code imports: the module's own relocation tables (Horizon's rtld defines them per module).
+    if (s.name.size() > 6 && s.name.compare(0, 6, "__rel_") == 0) {
+        if (s.name == "__rel_dyn_start") { st.to_own++; return m.bias_ + m.rela_; }
+        if (s.name == "__rel_dyn_end") { st.to_own++; return m.bias_ + m.rela_ + m.rela_sz_; }
+        if (s.name == "__rel_plt_start") { st.to_own++; return m.bias_ + m.jmprel_; }
+        if (s.name == "__rel_plt_end") { st.to_own++; return m.bias_ + m.jmprel_ + m.jmprel_sz_; }
+    }
     // Undefined: another module, host data, HLE handler, weak null, logging stub - in that order.
     for (auto& o : g_modules) {
         if (o.get() == &m) continue;
@@ -470,6 +483,13 @@ bool module_link_all() {
     bool ok = true;
     for (auto& m : g_modules) ok = LoaderAccess::link(*m) && ok;
     return ok;
+}
+
+bool module_protect_all() {
+    std::lock_guard<std::recursive_mutex> lk(g_lock);
+    for (auto& m : g_modules)
+        if (!m->linked()) LoaderAccess::protect(*m);
+    return true;
 }
 
 size_t module_register_functions(Module* m, const FuncEntry* table, size_t count) {
