@@ -143,6 +143,56 @@ NXTEST(mouse_with_and_without_for) {
     CHECK_EQ(sc.steps[1].count, (int64_t)5);
 }
 
+NXTEST(key_verbs_with_and_without_for) {
+    Script sc;
+    REQUIRE(parse_ok("key W for 3\nkey Left Ctrl\nkeydown Left Ctrl\nkeyup Left Ctrl\nkey Page Up for 2\nkey Mouse1 for 0x10\nkey WheelUp\n", sc));
+    REQUIRE(sc.steps.size() == 7);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Key);
+    CHECK_EQ(sc.steps[0].text, std::string("W"));
+    CHECK_EQ(sc.steps[0].count, (int64_t)3);
+    CHECK_EQ(sc.steps[0].line, 1);
+    CHECK_EQ(sc.steps[1].kind, StepKind::Key);
+    CHECK_EQ(sc.steps[1].text, std::string("Left Ctrl"));
+    CHECK_EQ(sc.steps[1].count, (int64_t)-1);
+    CHECK_EQ(sc.steps[2].kind, StepKind::KeyDown);
+    CHECK_EQ(sc.steps[2].text, std::string("Left Ctrl"));
+    CHECK_EQ(sc.steps[3].kind, StepKind::KeyUp);
+    CHECK_EQ(sc.steps[3].text, std::string("Left Ctrl"));
+    CHECK_EQ(sc.steps[4].kind, StepKind::Key);
+    CHECK_EQ(sc.steps[4].text, std::string("Page Up"));
+    CHECK_EQ(sc.steps[4].count, (int64_t)2);
+    CHECK_EQ(sc.steps[5].text, std::string("Mouse1"));
+    CHECK_EQ(sc.steps[5].count, (int64_t)16);
+    CHECK_EQ(sc.steps[6].text, std::string("WheelUp"));
+    CHECK_EQ(sc.steps[6].count, (int64_t)-1);
+    CHECK_EQ(sc.steps[6].src, std::string("key WheelUp"));
+}
+
+NXTEST(key_keywords_and_names_are_case_insensitive_and_trimmed) {
+    Script sc;
+    REQUIRE(parse_ok("KEY   Left   Ctrl  FOR 5  \nKeyDown  Form  \nkey Form for 2\nKEYUP Left Ctrl\n", sc));
+    REQUIRE(sc.steps.size() == 4);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Key);
+    CHECK_EQ(sc.steps[0].text, std::string("Left   Ctrl"));         // the name keeps its inner spacing as written
+    CHECK_EQ(sc.steps[0].count, (int64_t)5);
+    CHECK_EQ(sc.steps[1].kind, StepKind::KeyDown);
+    CHECK_EQ(sc.steps[1].text, std::string("Form"));                // only a trailing " for <n>" is split off; "Form" is a name
+    CHECK_EQ(sc.steps[2].text, std::string("Form"));
+    CHECK_EQ(sc.steps[2].count, (int64_t)2);
+    CHECK_EQ(sc.steps[3].kind, StepKind::KeyUp);
+    CHECK_EQ(sc.steps[3].text, std::string("Left Ctrl"));
+}
+
+NXTEST(key_down_and_up_take_no_count) {
+    // keydown / keyup are their own step kinds: no buttons, and the count stays "not given"
+    Script sc;
+    REQUIRE(parse_ok("keydown Shift\nkeyup Shift\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].buttons, (uint64_t)0);
+    CHECK_EQ(sc.steps[1].buttons, (uint64_t)0);
+    CHECK_EQ(sc.steps[0].count, (int64_t)-1);
+}
+
 NXTEST(frame_wait) {
     Script sc;
     REQUIRE(parse_ok("@frame 1200\n", sc));
@@ -342,6 +392,14 @@ NXTEST(error_wrong_argument_count_line) {
     expect_err("wait 1\n@pos 1 2\n", 2, "expected");
     expect_err("stick left 0\n", 1, "expected");
     expect_err("wait 1\n\n@warp frigate\n", 3, "expected");
+}
+
+NXTEST(error_key_verbs_need_a_name) {
+    expect_err("key\n", 1, "expected");
+    expect_err("wait 1\nkeydown\n", 2, "expected");
+    expect_err("keyup   \n", 1, "expected");
+    expect_err("key for 3\n", 1, "expected");                 // no name before the trailing "for 3"
+    expect_err("key W for x\n", 1, "bad number 'x'");
 }
 
 NXTEST(error_bad_number_line) {

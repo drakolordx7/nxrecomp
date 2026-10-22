@@ -360,3 +360,32 @@ NXTEST(repeated_init_window_shutdown) {
         CHECK(!platform::initialised());
     }
 }
+
+// ---- (9) gamepad poll / sensors / rumble on an id that is not open -------------------------------------------------
+
+NXTEST(gamepad_calls_on_unknown_id) {
+    Session s(false);
+    REQUIRE(s.ok);
+
+    const uint32_t bogus = 0xFFFFFFF0u;
+
+    platform::GamepadRaw raw;
+    CHECK(!platform::gamepad_poll(bogus, &raw));
+    CHECK_EQ(raw.buttons, 0u);
+    bool axes_zero = true;
+    for (int16_t a : raw.axes) axes_zero = axes_zero && a == 0;
+    CHECK(axes_zero);
+    CHECK_EQ(static_cast<int>(raw.face_label[0]), 0);
+    CHECK_EQ(static_cast<int>(raw.face_label[1]), 1);
+    CHECK_EQ(static_cast<int>(raw.face_label[2]), 2);
+    CHECK_EQ(static_cast<int>(raw.face_label[3]), 3);
+
+    float accel[3] = {7.f, 7.f, 7.f};
+    float gyro[3] = {7.f, 7.f, 7.f};
+    CHECK(!platform::gamepad_sensors(bogus, accel, gyro));
+    CHECK(accel[0] == 7.f && accel[1] == 7.f && accel[2] == 7.f);
+    CHECK(gyro[0] == 7.f && gyro[1] == 7.f && gyro[2] == 7.f);
+
+    CHECK(!platform::gamepad_rumble(bogus, 0, 0, 0));
+    CHECK(!platform::gamepad_rumble(bogus, 65535, 65535, 100));
+}

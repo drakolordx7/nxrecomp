@@ -454,3 +454,88 @@ NXTEST(watchdog_freeze_ends_a_scripted_run_with_code_5) {
     shutdown();
     nxrt::watchdog_stop();
 }
+
+// ---- scripted key steps (set_key_sink) ----------------------------------------------------------------------------------------
+namespace {
+struct KeyEvent {
+    std::string name;
+    bool down;
+    uint64_t frame;      // the frame boundary (0-based) the sink was called at
+};
+std::vector<KeyEvent> g_key_events;
+
+// the sink: refuses "Nope", records everything else with the frame it was called at
+bool record_key(const char* name, bool down) {
+    if (std::string(name) == "Nope") return false;
+    g_key_events.push_back({name, down, frame() - 1});
+    return true;
+}
+}  // namespace
+
+NXTEST(key_steps_reach_the_key_sink_on_their_frames) {
+    Rig r("keys");
+    const std::string s = scriptfile("keys.nxs", "key W for 3\nkeydown Left Ctrl\nkeyup Left Ctrl\n@pass\n");
+    begin(r, {{"script", s}, {"deterministic", "1"}});
+    g_key_events.clear();
+    set_key_sink(record_key);
+    run_frames(r, 50);
+    CHECK(finished());
+    CHECK_EQ(r.exit_code_seen, 0);
+    // "key W for 3" is down for frames 0, 1, 2 and released at frame 3, where the next two steps run in the same frame
+    REQUIRE(g_key_events.size() == 4);
+    CHECK(g_key_events[0].name == "W" && g_key_events[0].down && g_key_events[0].frame == 0);
+    CHECK(g_key_events[1].name == "W" && !g_key_events[1].down && g_key_events[1].frame == 3);
+    CHECK(g_key_events[2].name == "Left Ctrl" && g_key_events[2].down && g_key_events[2].frame == 3);
+    CHECK(g_key_events[3].name == "Left Ctrl" && !g_key_events[3].down && g_key_events[3].frame == 3);
+    set_key_sink(nullptr);
+    shutdown();
+}
+
+NXTEST(key_without_for_is_four_frames) {
+    Rig r("keys4");
+    const std::string s = scriptfile("keys4.nxs", "key Mouse1\n@pass\n");
+    begin(r, {{"script", s}});
+    g_key_events.clear();
+    set_key_sink(record_key);
+    run_frames(r, 50);
+    REQUIRE(g_key_events.size() == 2);
+    CHECK(g_key_events[0].name == "Mouse1" && g_key_events[0].down && g_key_events[0].frame == 0);
+    CHECK(g_key_events[1].name == "Mouse1" && !g_key_events[1].down && g_key_events[1].frame == 4);
+    set_key_sink(nullptr);
+    shutdown();
+}
+
+NXTEST(unknown_key_name_fails_the_run_and_releases_held_keys) {
+    Rig r("keyunknown");
+    // keydown W holds W; the next line names a key the sink refuses, so the run fails there and W must be released
+    const std::string s = scriptfile("keys_unknown.nxs", "keydown W\nkey Nope\n@pass\n");
+    begin(r, {{"script", s}});
+    g_key_events.clear();
+    set_key_sink(record_key);
+    run_frames(r, 50);
+    CHECK_EQ(r.exit_code_seen, 1);
+    const std::string res = slurp(r.out + "/result.json");
+    CHECK(res.find("\"verdict\":\"fail\"") != std::string::npos);
+    CHECK(res.find("keys_unknown.nxs:2:") != std::string::npos);
+    CHECK(res.find("unknown input 'Nope'") != std::string::npos);
+    REQUIRE(g_key_events.size() == 2);
+    CHECK(g_key_events[0].name == "W" && g_key_events[0].down);
+    CHECK(g_key_events[1].name == "W" && !g_key_events[1].down);
+    set_key_sink(nullptr);
+    shutdown();
+}
+
+NXTEST(keys_still_down_are_released_when_the_script_passes) {
+    Rig r("keyhold");
+    const std::string s = scriptfile("keyhold.nxs", "keydown Left Ctrl\n2\n@pass\n");
+    begin(r, {{"script", s}});
+    g_key_events.clear();
+    set_key_sink(record_key);
+    run_frames(r, 50);
+    CHECK_EQ(r.exit_code_seen, 0);
+    REQUIRE(g_key_events.size() == 2);
+    CHECK(g_key_events[0].name == "Left Ctrl" && g_key_events[0].down && g_key_events[0].frame == 0);
+    CHECK(g_key_events[1].name == "Left Ctrl" && !g_key_events[1].down && g_key_events[1].frame == 2);
+    set_key_sink(nullptr);
+    shutdown();
+}

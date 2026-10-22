@@ -21,6 +21,11 @@ public:
     void set_target_fps(double fps);
     double target_fps() const;
 
+    // A function that runs at the very start of every begin_frame(), on the thread that calls it (the presenting thread). Play mode uses it to
+    // apply present-mode changes at a point where nothing else touches the swapchain. nullptr removes it. Safe to call from any thread.
+    using PreFrameFn = void (*)(void* user);
+    void set_pre_frame_hook(PreFrameFn fn, void* user);
+
     // Call at the top of every frame, before polling input. Blocks until the scheduled start, returns the frame start time
     // in nanoseconds of the monotonic clock now_ns().
     uint64_t begin_frame();

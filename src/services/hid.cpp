@@ -388,6 +388,20 @@ int slot_of_handle(uint32_t h) {
     return idx < 0 ? -1 : static_cast<int>(slot_of_index(static_cast<uint32_t>(idx)));
 }
 
+// Forwards a stored value to the vibration sink: the handle's npad slot and its position (0 left or the only device, 1 right). Handles
+// whose npad is invalid or whose position is past 1 are not forwarded. Called without st().mu held.
+void forward_vibration(uint32_t h, const VibValue& v) {
+    const int slot = slot_of_handle(h);
+    const uint32_t hand = decode_handle(h).position;
+    if (slot < 0 || hand > 1) return;
+    nxrt::hid::VibrationValue out;
+    out.amp_low = v.amp_low;
+    out.freq_low = v.freq_low;
+    out.amp_high = v.amp_high;
+    out.freq_high = v.freq_high;
+    vibration_dispatch(static_cast<uint32_t>(slot), static_cast<int>(hand), out);
+}
+
 // ---- commands ---------------------------------------------------------------------------------------------------------------------------
 // A command that is accepted and does nothing (Switchbrew: stubbed, or nothing to do here). Writes `out_bytes` zero bytes as its reply.
 void ignore_cmd(ipc::Service& svc, uint32_t id, const char* name, size_t out_bytes = 0) {
@@ -659,8 +673,11 @@ void setup_hid(ipc::Service& svc) {
         v.freq_low = req.arg<float>(8);
         v.amp_high = req.arg<float>(12);
         v.freq_high = req.arg<float>(16);
-        std::lock_guard<std::mutex> lk(st().mu);
-        st().vibration[h] = v;
+        {
+            std::lock_guard<std::mutex> lk(st().mu);
+            st().vibration[h] = v;
+        }
+        forward_vibration(h, v);
         return 0;
     });
     svc.add_cmd(202, "GetActualVibrationValue", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
@@ -698,15 +715,18 @@ void setup_hid(ipc::Service& svc) {
             buf_read(hb, handles.data(), n * 4ull);
             buf_read(vb, vals.data(), n * 16ull);
         }
-        std::lock_guard<std::mutex> lk(st().mu);
+        std::vector<VibValue> values(n);
         for (uint32_t i = 0; i < n; ++i) {
-            VibValue v;
-            v.amp_low = vals[i * 4 + 0];
-            v.freq_low = vals[i * 4 + 1];
-            v.amp_high = vals[i * 4 + 2];
-            v.freq_high = vals[i * 4 + 3];
-            st().vibration[handles[i]] = v;
+            values[i].amp_low = vals[i * 4 + 0];
+            values[i].freq_low = vals[i * 4 + 1];
+            values[i].amp_high = vals[i * 4 + 2];
+            values[i].freq_high = vals[i * 4 + 3];
         }
+        {
+            std::lock_guard<std::mutex> lk(st().mu);
+            for (uint32_t i = 0; i < n; ++i) st().vibration[handles[i]] = values[i];
+        }
+        for (uint32_t i = 0; i < n; ++i) forward_vibration(handles[i], values[i]);
         return 0;
     });
     ignore_cmd(svc, 207, "SendVibrationGcErmCommand");
