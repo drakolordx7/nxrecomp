@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// XAudio2 host sink (stream S3c): an AudioSink that plays the guest's interleaved int16 PCM on the default output device.
-// The engine, a mastering voice on the default device and one source voice are created in open(); write() copies the caller's
-// frames into a small pool of buffers and submits them; the voice callback (OnBufferEnd, on XAudio2's audio thread) returns the
-// buffer to the pool. When the device already holds kMaxQueued buffers, or the pool is empty, write() drops the rest and reports
-// how many frames it accepted, so the caller never blocks.
+// XAudio2 host sink (stream S3c): an AudioSink that plays the guest's interleaved int16 PCM on the output device chosen by
+// [audio] device (the default device unless it names another one).
+// The engine, a mastering voice and one source voice are created in open(); write() copies the caller's frames into a small pool
+// of buffers and submits them; the voice callback (OnBufferEnd, on XAudio2's audio thread) returns the buffer to the pool. When the
+// device already holds kMaxQueued buffers, or the pool is empty, write() drops the rest and reports how many frames it accepted, so
+// the caller never blocks. The voice callback also counts underruns (OnVoiceProcessingPassStart with nothing queued). The source
+// voice carries the process master volume ([audio] volume), re-applied whenever it changes.
 #include <windows.h>
 #include <objbase.h>
 #include <mmreg.h>
 #include <xaudio2.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "nxrt/audio_sink.h"
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 
 #pragma comment(lib, "xaudio2.lib")
@@ -32,6 +38,43 @@ constexpr GUID kSubtypePcm = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xa
 // SPEAKER_5POINT1: FRONT_LEFT | FRONT_RIGHT | FRONT_CENTER | LOW_FREQUENCY | BACK_LEFT | BACK_RIGHT.
 constexpr DWORD kChannelMask51 = 0x3F;
 
+std::string to_utf8(const std::wstring& w) {
+    if (w.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return {};
+    std::string out(static_cast<size_t>(n - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, out.data(), n, nullptr, nullptr);
+    return out;
+}
+
+std::string lower_ascii(std::string s) {
+    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+void log_devices(const std::vector<OutputDevice>& devices) {
+    if (devices.empty()) NXLOG_I("audio", "xaudio2: no active output endpoints");
+    for (const OutputDevice& d : devices) {
+        NXLOG_I("audio", "xaudio2: output device%s: %s [%s]", d.is_default ? " (default)" : "", d.name.c_str(),
+                to_utf8(d.id).c_str());
+    }
+}
+
+// The endpoint [audio] device asks for. "default" (or empty) is the default endpoint (empty id). Otherwise an exact endpoint id
+// wins, then the first endpoint whose friendly name contains the text (ASCII case-insensitive). No match: a warning and the default.
+std::wstring pick_device(const std::vector<OutputDevice>& devices, const std::string& want) {
+    if (want.empty() || lower_ascii(want) == "default") return {};
+    for (const OutputDevice& d : devices) {
+        if (to_utf8(d.id) == want) return d.id;
+    }
+    const std::string needle = lower_ascii(want);
+    for (const OutputDevice& d : devices) {
+        if (lower_ascii(d.name).find(needle) != std::string::npos) return d.id;
+    }
+    NXLOG_W("audio", "xaudio2: [audio] device = %s matches no active output device; using the default device", want.c_str());
+    return {};
+}
+
 class XAudio2Sink final : public AudioSink {
 public:
     ~XAudio2Sink() override { close(); }
@@ -40,7 +83,9 @@ public:
     void close() override;
     uint32_t write(const int16_t* pcm, uint32_t frames) override;
     uint32_t queued_frames() override;
+    bool has_device_clock() const override { return true; }   // SamplesPlayed is the device's own clock
     const char* name() const override { return "xaudio2"; }
+    SinkStats stats() override;
 
 private:
     struct Slot {
@@ -49,10 +94,13 @@ private:
         bool busy = false;          // submitted and not yet finished by the voice
     };
 
-    // The voice callback. XAudio2 calls it on its own thread; only OnBufferEnd does anything.
+    // The voice callback. XAudio2 calls it on its own thread. OnBufferEnd returns a buffer to the pool; OnVoiceProcessingPassStart
+    // checks for underruns.
     struct Callback final : IXAudio2VoiceCallback {
         XAudio2Sink* owner = nullptr;
-        void STDMETHODCALLTYPE OnVoiceProcessingPassStart(UINT32) noexcept override {}
+        void STDMETHODCALLTYPE OnVoiceProcessingPassStart(UINT32 bytes_required) noexcept override {
+            owner->on_pass_start(bytes_required);
+        }
         void STDMETHODCALLTYPE OnVoiceProcessingPassEnd() noexcept override {}
         void STDMETHODCALLTYPE OnStreamEnd() noexcept override {}
         void STDMETHODCALLTYPE OnBufferStart(void*) noexcept override {}
@@ -66,6 +114,11 @@ private:
     };
 
     void release_slot(uint32_t idx);
+    void on_pass_start(UINT32 bytes_required) noexcept;
+    void note_queued(uint32_t buffers) noexcept;
+    uint32_t queued_now() noexcept;                  // submitted frames minus the frames the device has played
+    void note_queue_frames(bool playing) noexcept;   // peak and low water marks of queued_now()
+    uint32_t submit(const int16_t* pcm, uint32_t frames);
     void teardown();   // destroys the voices and the engine and undoes our COM initialisation; safe when nothing is open
 
     IXAudio2* engine_ = nullptr;
@@ -75,9 +128,23 @@ private:
     bool com_owned_ = false;          // this sink called CoInitializeEx successfully and must balance it
     DWORD com_thread_ = 0;            // the thread that did, so CoUninitialize runs there
     uint32_t channels_ = 0;
+    uint32_t rate_ = 48000;
+    float applied_volume_ = 1.0f;     // the volume last set on the source voice (write thread)
 
     std::mutex mu_;                   // guards slots_ (write, queued_frames and the callback)
     std::vector<Slot> slots_ = std::vector<Slot>(kSlots);
+
+    // Counters for stats(). They are not reset by open().
+    std::atomic<uint64_t> frames_written_{0};
+    std::atomic<uint64_t> frames_accepted_{0};
+    std::atomic<uint64_t> frames_dropped_{0};
+    std::atomic<uint64_t> underruns_{0};
+    std::atomic<uint32_t> queued_peak_{0};
+    std::atomic<uint64_t> submitted_frames_{0};          // frames handed to the voice since open()
+    std::atomic<uint32_t> queue_peak_frames_{0};
+    std::atomic<uint32_t> queue_low_frames_{0xffffffffu};
+    std::atomic<bool> started_{false};   // a buffer has been submitted since open()
+    std::atomic<bool> starved_{false};   // the device is out of buffers now; an underrun is counted once per such stretch
 };
 
 bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
@@ -108,8 +175,19 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         return false;
     }
 
-    hr = engine_->CreateMasteringVoice(&master_, XAUDIO2_DEFAULT_CHANNELS, XAUDIO2_DEFAULT_SAMPLERATE, 0, nullptr, nullptr,
-                                       AudioCategory_GameEffects);
+    const std::vector<OutputDevice> devices = list_output_devices();
+    log_devices(devices);
+    const std::wstring device_id = pick_device(devices, config_get_str("audio", "device", "default"));
+    auto create_master = [this](const wchar_t* id) {
+        return engine_->CreateMasteringVoice(&master_, XAUDIO2_DEFAULT_CHANNELS, XAUDIO2_DEFAULT_SAMPLERATE, 0, id, nullptr,
+                                             AudioCategory_GameEffects);
+    };
+    hr = create_master(device_id.empty() ? nullptr : device_id.c_str());
+    if (FAILED(hr) && !device_id.empty()) {
+        NXLOG_W("audio", "xaudio2: the chosen output device failed (CreateMasteringVoice 0x%08lx); using the default device",
+                static_cast<unsigned long>(hr));
+        hr = create_master(nullptr);
+    }
     if (FAILED(hr)) {
         NXLOG_W("audio", "xaudio2: no audio output device (CreateMasteringVoice 0x%08lx)", static_cast<unsigned long>(hr));
         teardown();
@@ -132,6 +210,9 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         wfx.SubFormat = kSubtypePcm;
     }
 
+    started_.store(false);
+    starved_.store(false);
+    submitted_frames_.store(0);
     callback_.owner = this;
     hr = engine_->CreateSourceVoice(&source_, &wfx.Format, 0, XAUDIO2_DEFAULT_FREQ_RATIO, &callback_, nullptr, nullptr);
     if (FAILED(hr)) {
@@ -146,6 +227,8 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         teardown();
         return false;
     }
+    applied_volume_ = master_volume();
+    source_->SetVolume(applied_volume_);
 
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -156,13 +239,16 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         }
     }
     channels_ = channels;
-    NXLOG_I("audio", "xaudio2: opened %u Hz, %u channels", sample_rate, channels);
+    rate_ = sample_rate;
+    NXLOG_I("audio", "xaudio2: opened %u Hz, %u channels, volume %.2f", sample_rate, channels, applied_volume_);
     return true;
 }
 
 void XAudio2Sink::close() {
     if (!engine_ && !com_owned_) return;
     if (source_) {
+        NXLOG_I("audio", "%s", format_stats(name(), stats()).c_str());
+        started_.store(false);
         source_->Stop(0);
         source_->FlushSourceBuffers();
         // DestroyVoice waits for the audio thread to leave the callbacks.
@@ -194,7 +280,20 @@ void XAudio2Sink::teardown() {
 }
 
 uint32_t XAudio2Sink::write(const int16_t* pcm, uint32_t frames) {
-    if (!source_ || !pcm || frames == 0) return 0;
+    const uint32_t accepted = (pcm && frames) ? submit(pcm, frames) : 0;
+    frames_written_.fetch_add(frames, std::memory_order_relaxed);
+    frames_accepted_.fetch_add(accepted, std::memory_order_relaxed);
+    frames_dropped_.fetch_add(frames - accepted, std::memory_order_relaxed);
+    return accepted;
+}
+
+uint32_t XAudio2Sink::submit(const int16_t* pcm, uint32_t frames) {
+    if (!source_) return 0;
+    const float volume = master_volume();
+    if (volume != applied_volume_) {
+        source_->SetVolume(volume);
+        applied_volume_ = volume;
+    }
     const size_t ch = channels_;
     uint32_t accepted = 0;
     while (accepted < frames) {
@@ -228,18 +327,80 @@ uint32_t XAudio2Sink::write(const int16_t* pcm, uint32_t frames) {
             release_slot(idx);
             break;
         }
+        started_.store(true);
+        starved_.store(false);
+        submitted_frames_.fetch_add(n, std::memory_order_relaxed);
+        note_queued(state.BuffersQueued + 1);
+        note_queue_frames(false);
         accepted += n;
     }
     return accepted;
 }
 
+// Runs on XAudio2's audio thread. Cheap: one GetState and a few atomic updates.
+void XAudio2Sink::on_pass_start(UINT32 bytes_required) noexcept {
+    if (bytes_required == 0 || !started_.load() || !source_) return;
+    XAUDIO2_VOICE_STATE state{};
+    source_->GetState(&state);
+    note_queued(state.BuffersQueued);
+    note_queue_frames(true);
+    if (state.BuffersQueued == 0) {
+        if (!starved_.exchange(true)) underruns_.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        starved_.store(false);
+    }
+}
+
+void XAudio2Sink::note_queued(uint32_t buffers) noexcept {
+    uint32_t peak = queued_peak_.load(std::memory_order_relaxed);
+    while (buffers > peak && !queued_peak_.compare_exchange_weak(peak, buffers, std::memory_order_relaxed)) {
+    }
+}
+
+// The device's play position is SamplesPlayed of the source voice: it counts the samples the voice has consumed, so submitted minus played
+// is exact (not rounded to whole buffers). A voice that starved keeps counting only what it really played.
+uint32_t XAudio2Sink::queued_now() noexcept {
+    IXAudio2SourceVoice* v = source_;
+    if (!v) return 0;
+    XAUDIO2_VOICE_STATE state{};
+    v->GetState(&state);
+    const uint64_t submitted = submitted_frames_.load(std::memory_order_relaxed);
+    return submitted > state.SamplesPlayed ? static_cast<uint32_t>(submitted - state.SamplesPlayed) : 0u;
+}
+
+void XAudio2Sink::note_queue_frames(bool playing) noexcept {
+    const uint32_t q = queued_now();
+    uint32_t peak = queue_peak_frames_.load(std::memory_order_relaxed);
+    while (q > peak && !queue_peak_frames_.compare_exchange_weak(peak, q, std::memory_order_relaxed)) {
+    }
+    if (playing && q > 0 && submitted_frames_.load(std::memory_order_relaxed) > rate_ / 2 + q) {   // not the start-up fill: after half a second played
+        uint32_t low = queue_low_frames_.load(std::memory_order_relaxed);
+        while (q < low && !queue_low_frames_.compare_exchange_weak(low, q, std::memory_order_relaxed)) {
+        }
+    }
+}
+
 uint32_t XAudio2Sink::queued_frames() {
+    if (source_) return queued_now();
     std::lock_guard<std::mutex> lk(mu_);
     uint32_t total = 0;
     for (const Slot& s : slots_) {
         if (s.busy) total += s.frames;
     }
     return total;
+}
+
+SinkStats XAudio2Sink::stats() {
+    SinkStats s;
+    s.frames_written = frames_written_.load(std::memory_order_relaxed);
+    s.frames_accepted = frames_accepted_.load(std::memory_order_relaxed);
+    s.frames_dropped = frames_dropped_.load(std::memory_order_relaxed);
+    s.underruns = underruns_.load(std::memory_order_relaxed);
+    s.queued_peak = queued_peak_.load(std::memory_order_relaxed);
+    s.queued_peak_frames = queue_peak_frames_.load(std::memory_order_relaxed);
+    const uint32_t low = queue_low_frames_.load(std::memory_order_relaxed);
+    s.queued_low_frames = low == 0xffffffffu ? 0 : low;
+    return s;
 }
 
 void XAudio2Sink::release_slot(uint32_t idx) {

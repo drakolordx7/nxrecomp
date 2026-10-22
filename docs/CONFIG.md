@@ -47,7 +47,13 @@ Rules:
 | `nvn` | `pipeline_cache` | `pipeline_cache.bin` | `NXRT_NVN_PIPELINE_CACHE` | `src/gfx/nvn/nvn_pipeline.cpp` | VkPipelineCache file, loaded with the first pipeline and saved at shutdown. Empty disables. |
 | `am` | `resolution` | empty (docked 1920x1080, handheld 1280x720) | `NXRT_AM_RESOLUTION` | `src/services/am.cpp` | Output size as `WIDTHxHEIGHT`, e.g. `1280x720`. Empty or not parseable: the default for the operation mode. |
 | `am` | `operation_mode` | `docked` | `NXRT_AM_OPERATION_MODE` | `src/services/common.cpp` | `handheld` sets handheld mode. Any other value is docked. |
-| `audio` | `sink` | `null` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `xaudio2` plays through XAudio2. Any other value keeps the null sink (no output). |
+| `audio` | `sink` | `auto` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `auto` plays through XAudio2 on the default output device and falls back to the null sink (no sound, a warning in the log) when XAudio2 or a device is missing. `xaudio2` is the same with an explicit name. `paced` is a simulated device: it drains its queue at the sample rate and reports underruns and queue levels, which is how the renderer's timing is checked on a machine without a sound card. `null` discards everything. Tests install their own sink. |
+| `audio` | `paced_ppm` | `0` | `NXRT_AUDIO_PACED_PPM` | `src/services/audio_paced.cpp` | Clock error of the paced sink in parts per million (positive: the simulated device runs fast). Used to check that the renderer follows a device clock that is not exactly the host's. |
+| `media` | `movie` | `mf` | `NXRT_MEDIA_MOVIE` | `src/media/movie_mf.cpp` | `mf`: the game's `movie::` imports (Extractor, Decoder, MediaData, Buffer) are answered on Windows Media Foundation. `off`: the library compiled into subsdk0 runs (it needs the NVDEC/VIC driver, which does not exist here, so no movie plays). |
+| `media` | `movie_log` | `false` | `NXRT_MEDIA_MOVIE_LOG` | `src/media/movie_mf.cpp` | One log line per sample read and per input buffer sent to a decoder. Very verbose. |
+| `audio` | `wav_dump` | empty | `NXRT_AUDIO_WAV_DUMP` | `src/services/audio_sink.cpp`, `src/services/audio_wav.cpp` | Path of a 16-bit PCM WAV file that receives every frame the game sends to the host sink. Empty: no file. See the audio notes below. |
+| `audio` | `volume` | `1.0` | `NXRT_AUDIO_VOLUME` | `src/services/audio_sink.cpp`, `src/services/audio_xaudio2.cpp` | Master volume, from `0.0` (silent) to `1.0`. Values outside that range are clamped. Applied by the XAudio2 sink. |
+| `audio` | `device` | `default` | `NXRT_AUDIO_DEVICE` | `src/services/audio_xaudio2.cpp`, `src/services/audio_devices.cpp` | Output device for the XAudio2 sink: `default`, an endpoint id, or part of a device's name. See the audio notes below. |
 | `title` | `program_id` | `0x010012101468C000` | `NXRT_TITLE_PROGRAM_ID` | `src/services/common.cpp` | Title id of the game. `[process] program_id`, when set, overrides it. Also the default for `save_owner_id`. |
 | `title` | `name` | `Metroid Prime Remastered` | `NXRT_TITLE_NAME` | `src/services/common.cpp` | Title name in the control data. |
 | `title` | `display_version` | `1.0.0` | `NXRT_TITLE_DISPLAY_VERSION` | `src/services/common.cpp` | Display version string in the control data. |
@@ -83,6 +89,18 @@ Rules:
 | `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
 | `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
+
+### Audio notes
+
+When the sink has a clock of its own (XAudio2, or `paced`), the audio renderer keeps about 40 ms of audio queued on it and renders the next 5 ms frame whenever the queue falls below that, instead of waiting on the host clock. The sound card and the host clock never agree exactly; pacing by the host clock alone would fill the queue slowly (frames dropped) or drain it (a click). With the null sink the renderer keeps its 5 ms host-clock pacing. The pace does not depend on the game's frame rate: the renderer runs on its own thread and the game's audio thread waits for the renderer's frame event.
+
+`wav_dump` is read when the first audio sink is created and works with either sink. `device` and `volume` only affect the XAudio2 sink (the null sink plays nothing). `device` is read each time the XAudio2 sink opens. `volume` is read once, at first use, and can also be changed in code while the program runs.
+
+`wav_dump` writes the game's sound to a WAV file as well as to the output device. Every frame that reaches the sink is written, including frames the device drops because its queue is full. The file header is updated about once a second of audio and again when the sink closes, so a file from a run that was killed is still playable up to the last update. If the sample rate or channel count changes during the run (for example a switch from stereo to 5.1), the next file gets a number before its extension: `dump.wav`, then `dump.1.wav`, and so on.
+
+`device` chooses where the XAudio2 sink plays. `default` (or an empty value) uses the system's default output. Any other text is looked for first as an exact endpoint id, then as part of a device's friendly name, ignoring upper and lower case. The first match wins. If nothing matches, the log gets a warning and the default device is used. Each time the XAudio2 sink opens, the log lists the active output devices with their names and ids, so the text for this key can be copied from there.
+
+When a sink closes, it writes one line to the log with its counters: frames written, accepted, dropped, underruns (times the device ran out of audio after playback had started) and the largest number of buffers queued at once.
 
 ## Environment variables read directly
 
@@ -134,7 +152,12 @@ host_stack_mb = 64
 operation_mode = docked
 
 [audio]
-sink = null
+sink = auto              ; auto (XAudio2, null sink when no device), xaudio2, paced (simulated device), null
+; volume = 1.0           ; master volume 0.0 .. 1.0 (XAudio2)
+; device = default       ; default, an endpoint id, or part of a device name
+; wav_dump = game.wav    ; also write everything the game plays to a WAV file
+[media]
+movie = mf               ; mf: movies on Media Foundation, off: the library in subsdk0 (no movies)
 
 [title]
 program_id = 0x010012101468C000
