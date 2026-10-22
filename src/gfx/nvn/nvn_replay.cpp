@@ -797,7 +797,9 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
                 if (nmissing < 32) missing[nmissing++] = {loc, in.type};
                 continue;
             }
-            if (in.type == ScalarType::Float && is_int_format(f)) f = scaled_for(f);
+            // a float input fed by an integer attribute gets the raw bits: the integer format stays and the pipeline patches the shader
+            // (spirv_int_attributes); stream-out draws use the shader's stream-out variant, which is not patched: scaled floats there
+            if (in.type == ScalarType::Float && is_int_format(f) && g_xfb_active) f = scaled_for(f);
             else if ((in.type == ScalarType::Uint || in.type == ScalarType::Sint) && !is_int_format(f))
                 log_once("attr-type-mismatch", "a vertex attribute with a float format feeds an integer shader input (needs a SPIR-V variant)");
             if (key.attr_count >= 16) break;
@@ -1016,6 +1018,8 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             }
             TRACE("    %s ubo%u %llx/%llu%s:%s", stg == kVertex ? "vs" : "fs", slot, static_cast<unsigned long long>(ub.addr), static_cast<unsigned long long>(ub.size), ur.ok ? "" : " (outside every pool)", words.c_str());
         }
+        TRACE("    viewport %u: %g %g %g %g depth %g..%g scissor %u: %d %d %d %d", S.nvp, S.vp[0][0], S.vp[0][1], S.vp[0][2], S.vp[0][3], S.dr[0][0], S.dr[0][1], S.nsc,
+              S.sc[0][0], S.sc[0][1], S.sc[0][2], S.sc[0][3]);
         for (uint32_t i = 0; i < P.ncolor; ++i)
             if (Texture* ct = S.color_tex[i].get())
                 TRACE("    rt%u t%u mem %p storage %llu cpu-dirty %d view level %u layer %u layers %u", i, ct->id, static_cast<void*>(ct->mem), static_cast<unsigned long long>(ct->storage_size),

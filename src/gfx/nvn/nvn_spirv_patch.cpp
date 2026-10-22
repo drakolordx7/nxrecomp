@@ -414,3 +414,169 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
 }
 
 }  // namespace nxrt::nvn::be::gpu
+
+namespace nxrt::nvn::be::gpu {
+
+bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<SpvIntSlot>& slots, std::vector<uint32_t>& out) {
+    enum : uint32_t { OpTypeIntOp = 21, OpTypeFloatOp = 22, OpTypeVectorOp = 23, OpTypePointerOp = 32, OpVariableOp = 59, OpLoadOp = 61, OpStoreOp = 62,
+                      OpAccessChainOp = 65, OpInBoundsAccessChainOp = 66, OpDecorateOp = 71, OpBitcastOp = 124, OpEntryPointOp = 15, OpFunctionOp = 54,
+                      DecComponent = 31, StorageInputC = 1, StoragePrivateC = 6 };
+    if (slots.empty() || in.size() < 5) return false;
+    std::vector<Inst> insts;
+    for (size_t i = 5; i < in.size();) {
+        const uint32_t len = in[i] >> 16;
+        if (!len || i + len > in.size()) return false;
+        insts.push_back({i, in[i] & 0xffff, len});
+        i += len;
+    }
+    uint32_t bound = in[3];
+    uint32_t f32 = 0, v4 = 0, u32 = 0, s32 = 0, entry_id = 0;
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> ptrs;      // (storage, pointee) -> pointer type id
+    std::map<uint32_t, uint32_t> ptr_pointee, location, var_type;
+    std::map<uint32_t, size_t> type_at;
+    std::map<uint32_t, uint32_t> vec4_of;                         // scalar type id -> its vec4 id
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if (n.op == OpTypeFloatOp && n.len >= 3 && w[2] == 32) { f32 = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypeIntOp && n.len == 4 && w[2] == 32) { (w[3] ? s32 : u32) = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypeVectorOp && n.len == 4 && w[3] == 4) { vec4_of[w[2]] = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypePointerOp && n.len == 4) { ptrs[{w[2], w[3]}] = w[1]; ptr_pointee[w[1]] = w[3]; type_at[w[1]] = n.at; }
+        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariableOp && n.len >= 4) var_type[w[2]] = w[1];
+        else if (n.op == OpEntryPointOp && !entry_id) entry_id = w[2];
+    }
+    if (!f32 || !vec4_of.count(f32) || !entry_id) return false;
+    v4 = vec4_of[f32];
+    struct Work { uint32_t location; bool is_signed; uint32_t old_var, old_ptr, new_var; size_t var_at; };
+    std::vector<Work> work;
+    size_t first_var_at = SIZE_MAX;
+    for (const SpvIntSlot& sl : slots) {
+        uint32_t var = 0;
+        size_t at = 0;
+        for (const Inst& n : insts) {
+            const uint32_t* w = &in[n.at];
+            if (n.op == OpVariableOp && n.len >= 4 && w[3] == StorageInputC && location.count(w[2]) && location[w[2]] == sl.location) { var = w[2]; at = n.at; }
+        }
+        if (!var) return false;
+        const uint32_t ptr = var_type[var];
+        if (!ptr_pointee.count(ptr) || ptr_pointee[ptr] != v4) return false;   // only a plain vec4 input
+        work.push_back({sl.location, sl.is_signed, var, ptr, 0, at});
+        first_var_at = std::min(first_var_at, at);
+    }
+    // the types the new variables need have to be declared before the first variable that changes
+    std::vector<uint32_t> types;
+    auto need_scalar = [&](bool is_signed) -> uint32_t {
+        const uint32_t t = is_signed ? s32 : u32;
+        return t && type_at.count(t) && type_at[t] < first_var_at ? t : 0;
+    };
+    auto vec4_for = [&](uint32_t scalar) -> uint32_t {
+        auto it = vec4_of.find(scalar);
+        if (it != vec4_of.end() && type_at[it->second] < first_var_at) return it->second;
+        const uint32_t id = bound++;
+        types.insert(types.end(), {(4u << 16) | OpTypeVectorOp, id, scalar, 4u});
+        vec4_of[scalar] = id;
+        type_at[id] = 0;
+        return id;
+    };
+    auto ptr_for = [&](uint32_t storage, uint32_t pointee) -> uint32_t {
+        auto it = ptrs.find({storage, pointee});
+        if (it != ptrs.end() && type_at[it->second] < first_var_at) return it->second;
+        const uint32_t id = bound++;
+        types.insert(types.end(), {(4u << 16) | OpTypePointerOp, id, storage, pointee});
+        ptrs[{storage, pointee}] = id;
+        ptr_pointee[id] = pointee;
+        type_at[id] = 0;
+        return id;
+    };
+    std::map<uint32_t, uint32_t> priv_ptr_of;    // old Input pointer type -> the Private pointer type to the same pointee
+    auto private_of = [&](uint32_t old_ptr) -> uint32_t {
+        auto it = priv_ptr_of.find(old_ptr);
+        if (it != priv_ptr_of.end()) return it->second;
+        return priv_ptr_of[old_ptr] = ptr_for(StoragePrivateC, ptr_pointee[old_ptr]);
+    };
+    std::map<uint32_t, uint32_t> old_to_work;    // old var -> index in work
+    std::vector<uint32_t> decls_after_types, decos;
+    uint32_t v4u = 0, v4i = 0;
+    for (size_t i = 0; i < work.size(); ++i) {
+        Work& wk = work[i];
+        const uint32_t sc = need_scalar(wk.is_signed);
+        if (!sc) return false;
+        uint32_t& vv = wk.is_signed ? v4i : v4u;
+        if (!vv) vv = vec4_for(sc);
+        const uint32_t in_ptr = ptr_for(StorageInputC, vv);
+        wk.new_var = bound++;
+        decls_after_types.insert(decls_after_types.end(), {(4u << 16) | OpVariableOp, in_ptr, wk.new_var, StorageInputC});
+        decos.insert(decos.end(), {(4u << 16) | OpDecorateOp, wk.new_var, DecorationLocation, wk.location});
+        private_of(wk.old_ptr);
+        old_to_work[wk.old_var] = static_cast<uint32_t>(i);
+    }
+
+    // the pointer types the access chains into the old inputs get (declared before the first changed variable)
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && old_to_work.count(w[3])) {
+            if (!ptr_pointee.count(w[1])) return false;
+            private_of(w[1]);
+        }
+    }
+
+    // the entry function: the new instructions go behind its leading OpVariable run
+    uint32_t entry_func = 0;
+    for (const Inst& n : insts)
+        if (n.op == OpEntryPointOp) { entry_func = in[n.at + 2]; break; }
+    size_t insert_at = 0;
+    for (size_t k = 0; k < insts.size() && !insert_at; ++k) {
+        if (insts[k].op == OpFunctionOp && in[insts[k].at + 2] == entry_func) {
+            size_t j = k + 1;
+            while (j < insts.size() && insts[j].op != 248 /* OpLabel */) ++j;
+            ++j;
+            while (j < insts.size() && insts[j].op == OpVariableOp) ++j;
+            if (j < insts.size()) insert_at = insts[j].at;
+        }
+    }
+    if (!insert_at) return false;
+    std::vector<uint32_t> init;
+    for (const Work& wk : work) {
+        const uint32_t vec = wk.is_signed ? v4i : v4u;
+        const uint32_t loaded = bound++, cast = bound++;
+        init.insert(init.end(), {(4u << 16) | OpLoadOp, vec, loaded, wk.new_var});
+        init.insert(init.end(), {(4u << 16) | OpBitcastOp, v4, cast, loaded});
+        init.insert(init.end(), {(3u << 16) | OpStoreOp, wk.old_var, cast});
+    }
+
+    out.clear();
+    out.reserve(in.size() + types.size() + decls_after_types.size() + decos.size() + init.size() + 16);
+    out.insert(out.end(), in.begin(), in.begin() + 5);
+    size_t first_function = 0;
+    for (const Inst& n : insts)
+        if (n.op == OpFunctionOp) { first_function = n.at; break; }
+    bool deco_done = false;
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if (!deco_done && is_type_or_constant(n.op)) { out.insert(out.end(), decos.begin(), decos.end()); deco_done = true; }
+        if (n.at == first_var_at) out.insert(out.end(), types.begin(), types.end());
+        if (n.at == first_function) out.insert(out.end(), decls_after_types.begin(), decls_after_types.end());
+        if (n.at == insert_at) out.insert(out.end(), init.begin(), init.end());
+        std::vector<uint32_t> c(in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
+        if (n.op == OpVariableOp && n.len >= 4 && old_to_work.count(w[2])) {            // the old input becomes a private variable
+            c[1] = private_of(work[old_to_work[w[2]]].old_ptr);
+            c[3] = StoragePrivateC;
+        } else if (n.op == OpDecorateOp && n.len >= 4 && old_to_work.count(w[1]) && (w[2] == DecorationLocation || w[2] == DecComponent)) {
+            continue;
+        } else if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && old_to_work.count(w[3])) {
+            c[1] = private_of(w[1]);                                                       // a pointer into the old input is a Private pointer now
+        } else if (n.op == OpEntryPointOp) {
+            // OpEntryPoint model id name... interface ids: the name is a literal string
+            const char* nm = reinterpret_cast<const char*>(&c[3]);
+            size_t chars = 0;
+            while (chars < (c.size() - 3) * 4 && nm[chars]) ++chars;
+            for (size_t k = 3 + chars / 4 + 1; k < c.size(); ++k)
+                if (old_to_work.count(c[k])) c[k] = work[old_to_work[c[k]]].new_var;
+        }
+        out.insert(out.end(), c.begin(), c.end());
+    }
+    out[3] = bound;
+    return true;
+}
+
+}  // namespace nxrt::nvn::be::gpu
