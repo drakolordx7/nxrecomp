@@ -9,6 +9,7 @@
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/eh.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/hooks.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
@@ -57,6 +58,7 @@ bool init(const InitOptions& opt) {
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
+    ft::start_from_config();    // frame trace ([prof] trace); a no-op when unset
     tt::init();                 // test tooling (deterministic mode, scripted runs, traces); a no-op unless a [test] key asks for it
     timestep::init();           // real-time frame step for the game ([time] section; the hooks do nothing until the lifted game calls them)
     g_up = ok;
