@@ -76,6 +76,7 @@ struct LowLatency::Impl {
 
     void marker(VkLatencyMarkerNV m, uint64_t id) {
         if (!reflex || !swapchain || !mode_set) return;
+        std::lock_guard<std::mutex> ql(dev->queue_mutex());      // never called with the queue lock held
         VkSetLatencyMarkerInfoNV mi = {VK_STRUCTURE_TYPE_SET_LATENCY_MARKER_INFO_NV};
         mi.presentID = id;
         mi.marker = m;
@@ -101,12 +102,18 @@ struct LowLatency::Impl {
         VkGetLatencyMarkerInfoNV gi = {VK_STRUCTURE_TYPE_GET_LATENCY_MARKER_INFO_NV};
         gi.timingCount = 0;
         gi.pTimings = nullptr;
-        vkGetLatencyTimingsNV(dev->device(), swapchain, &gi);
+        {
+            std::lock_guard<std::mutex> ql(dev->queue_mutex());
+            vkGetLatencyTimingsNV(dev->device(), swapchain, &gi);
+        }
         if (gi.timingCount == 0) return;
         std::vector<VkLatencyTimingsFrameReportNV> v(gi.timingCount);
         for (auto& f : v) f = {VK_STRUCTURE_TYPE_LATENCY_TIMINGS_FRAME_REPORT_NV};
         gi.pTimings = v.data();
-        vkGetLatencyTimingsNV(dev->device(), swapchain, &gi);
+        {
+            std::lock_guard<std::mutex> ql(dev->queue_mutex());
+            vkGetLatencyTimingsNV(dev->device(), swapchain, &gi);
+        }
         double sum_gpu = 0, sum_sp = 0;
         uint32_t n = 0;
         for (uint32_t i = 0; i < gi.timingCount; ++i) {
@@ -192,6 +199,7 @@ void LowLatency::prepare_swapchain(VkSwapchainCreateInfoKHR* ci) {
 
 void LowLatency::swapchain_created(VkSwapchainKHR sc) {
     Impl& s = *impl_;
+    std::lock_guard<std::mutex> ql(s.dev->queue_mutex());      // the layer wants calls on one swapchain from different threads kept apart (lock order: queue, then mu)
     std::lock_guard<std::mutex> lk(s.mu);
     s.swapchain = sc;
     s.mode_set = false;
@@ -209,6 +217,7 @@ void LowLatency::swapchain_destroyed(VkSwapchainKHR sc) {
 
 void LowLatency::set_cap_fps(double fps) {
     Impl& s = *impl_;
+    std::lock_guard<std::mutex> ql(s.dev->queue_mutex());
     std::lock_guard<std::mutex> lk(s.mu);
     s.cap_fps = fps > 0 ? fps : 0;
     if (enabled_) s.set_mode_locked();
@@ -220,6 +229,7 @@ void LowLatency::sim_begin() {
     const uint64_t id = s.sim_id.fetch_add(1) + 1;
     const uint64_t t0 = FrameLimiter::now_ns();
     if (s.ab_period_s > 0 && t0 >= s.ab_next_ns) {       // A/B test mode: flip the mode, forget the averages
+        std::lock_guard<std::mutex> ql(s.dev->queue_mutex());
         std::lock_guard<std::mutex> lk(s.mu);
         s.live_on = !s.live_on;
         s.ab_next_ns = t0 + static_cast<uint64_t>(s.ab_period_s * 1e9);
@@ -244,7 +254,12 @@ void LowLatency::sim_begin() {
         VkLatencySleepInfoNV si = {VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV};
         si.signalSemaphore = s.sleep_sem;
         si.value = ++s.sleep_value;
-        if (vkLatencySleepNV(s.dev->device(), sc, &si) == VK_SUCCESS) {
+        VkResult sr;
+        {
+            std::lock_guard<std::mutex> ql(s.dev->queue_mutex());     // returns at once; the wait below is what blocks
+            sr = vkLatencySleepNV(s.dev->device(), sc, &si);
+        }
+        if (sr == VK_SUCCESS) {
             VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
             wi.semaphoreCount = 1;
             wi.pSemaphores = &s.sleep_sem;

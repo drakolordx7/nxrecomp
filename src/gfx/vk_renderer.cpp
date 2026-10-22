@@ -669,6 +669,12 @@ void Renderer::end_frame() {
         si.signalSemaphoreInfoCount = 1;
         si.pSignalSemaphoreInfos = &signal;
     }
+    // low latency markers go outside the queue lock (they take it themselves: the validation layer wants calls on one swapchain from different threads apart)
+    uint64_t present_id = 0;
+    if (!s.headless && s.latency) {
+        const uint64_t id = s.latency->present_begin();
+        if (s.latency->enabled() && s.latency->backend() == extras::LowLatency::Backend::Reflex) present_id = id;
+    }
     {
         std::lock_guard<std::mutex> lk(s.dev->queue_mutex());
         VkResult r = vkQueueSubmit2(s.dev->queue(), 1, &si, slot.fence);
@@ -680,18 +686,13 @@ void Renderer::end_frame() {
             pi.swapchainCount = 1;
             pi.pSwapchains = &s.swapchain;
             pi.pImageIndices = &s.cur_image;
-            uint64_t present_id = 0;
             VkPresentIdKHR pid = {VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
-            if (s.latency && s.latency->enabled() && s.latency->backend() == extras::LowLatency::Backend::Reflex) {
-                present_id = s.latency->present_begin();
+            if (present_id) {
                 pid.swapchainCount = 1;
                 pid.pPresentIds = &present_id;
                 pi.pNext = &pid;
-            } else if (s.latency) {
-                s.latency->present_begin();
             }
             r = vkQueuePresentKHR(s.dev->queue(), &pi);
-            if (s.latency) s.latency->present_end();
             s.st.presents++;
             if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR || r == VK_ERROR_SURFACE_LOST_KHR) {
                 s.dirty = true;
@@ -701,6 +702,7 @@ void Renderer::end_frame() {
             }
         }
     }
+    if (!s.headless && s.latency) s.latency->present_end();
     s.st.frames++;
     s.frame_number++;
     {   // [gfx] log_fps = 1: one line per second with the presented frame rate and the GPU time of the present command buffer (output pass, FSR 1)
