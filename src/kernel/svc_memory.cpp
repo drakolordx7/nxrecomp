@@ -14,6 +14,7 @@
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/module.h"
 #include "nxrt/svc.h"
 
 namespace nxrt {
@@ -21,6 +22,7 @@ namespace {
 
 constexpr const char* kTag = "svc";
 constexpr uint64_t kHeapGranule = 0x200000;        // SetHeapSize: size must be a multiple of 2 MiB
+constexpr uint64_t kHeapOverhead = 0x4000000;       // same overhead GetInfo(UsedMemorySize) adds to the heap
 constexpr uint64_t kMaxHeapSvc = 0x100000000ull;   // SetHeapSize: larger than 4 GiB is refused
 constexpr uint64_t kPageMask = mem::kPage - 1;
 constexpr uint32_t kPermR = 1;                     // svc permission bits, same as mem::vm_set perm bits (bit0 R, bit1 W)
@@ -93,6 +95,14 @@ void set_heap_size(::Ctx* c) {
     if (size > kMaxHeapSvc || size > mem::kHeapMax) {
         fail(c, "SetHeapSize", kernel::kOutOfMemory, size, 0, 0);
         return;
+    }
+    {   // the kernel's resource limit: heap + module images + overhead must fit the physical memory it advertises (GetInfo TotalMemorySize)
+        uint64_t images = 0;
+        for (Module* m : modules()) images += m->size();
+        if (size + images + kHeapOverhead > svc_total_memory()) {
+            fail(c, "SetHeapSize", kernel::kOutOfMemory, size, images, svc_total_memory());
+            return;
+        }
     }
     std::lock_guard lk(g_mu);
     if (!mem::heap_exists()) {

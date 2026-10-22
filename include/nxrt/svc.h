@@ -48,6 +48,10 @@ void svc_register_ipc_group();                             // svc_ipc.cpp: Conne
 
 // Current size set by svcSetHeapSize (0 before the first call); implemented by the memory group, read by the info group.
 uint64_t svc_current_heap_size();
+// The physical memory the process may use: what GetInfo(TotalMemorySize) reports and the ceiling svcSetHeapSize enforces together with the
+// mapped module images and a fixed overhead (the kernel's resource limit). Default 0xCD500000 (a console application's pool);
+// [memory] app_memory_mb overrides.
+uint64_t svc_total_memory();
 
 // Helper for handlers.
 inline void svc_ret(::Ctx* c, uint32_t rc) { c->x[0] = rc; }
