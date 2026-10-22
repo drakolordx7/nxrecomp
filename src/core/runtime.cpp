@@ -16,6 +16,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
 #include "nxrt/nxmodule.h"
+#include "nxrt/services.h"
 #include "nxrt/svc.h"
 #include "nxrt/symbols.h"
 
@@ -45,6 +46,7 @@ bool init(const InitOptions& opt) {
         ok = false;
     }
     svc_init();
+    if (opt.services) services::register_all();
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();

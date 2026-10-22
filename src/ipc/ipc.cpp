@@ -118,7 +118,10 @@ void fill_request_buffers(const hipc::Message& m, Request& req) {
 uint32_t run_handler(const std::shared_ptr<Service>& svc, Request& req, Response& rsp) {
     count_request(*svc);
     try {
-        return svc->handle(req, rsp);
+        const uint32_t result = svc->handle(req, rsp);
+        NXLOG_T("ipc", "%s cmd %u (in %zu bytes, %zu copy, %zu move) -> 0x%x (out %zu bytes, %zu copy, %zu objects)", svc->name().c_str(), req.cmd,
+                req.in_size, req.in_copy.size(), req.in_move.size(), result, rsp.out.size(), rsp.out_copy.size(), rsp.out_objects.size());
+        return result;
     } catch (const std::exception& e) {
         NXLOG_E("ipc", "service '%s' cmd %u threw: %s", svc->name().c_str(), req.cmd, e.what());
     } catch (...) {
@@ -401,9 +404,10 @@ uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr,
         return kInvalidCombination;
     }
 
-    // Release (2, and 15): the session is closed; the reply is an empty message.
+    // Release (2, and 15): the client tells the server it is done with the object; the reply is an empty message. The client handle
+    // stays valid: libnx and the SDK follow the message with svcCloseHandle (a handle closed here made that call fail, and the SDK
+    // aborts on a failed CloseHandle). The service sees on_close when the handle is closed.
     if (m.type == hipc::kRelease || m.type == 15) {
-        kernel::handle_close(session_handle);
         words[0] = 0;
         words[1] = 0;
         return 0;

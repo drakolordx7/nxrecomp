@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Registry of the lifter's module descriptors (NxModule, recomp/include/nxrecomp/ctx.h, ABI version 2).
+// Registry of the lifter's module descriptors (NxModule, recomp/include/nxrecomp/ctx.h, ABI version 3).
 //
 // Every lifted module is registered once, at start-up, before any guest code runs:
 //
@@ -13,10 +13,11 @@
 //     module defines under that name (DynSym.defined), then the HLE handler or logging stub of that name (dispatch.h).
 //   * the C++ unwinder (eh.h): frames are found through the module whose [base, text_end) contains the pc.
 //
-// The ABI version of a lifted module cannot be read from the NxModule itself (the struct has no version field). The caller passes the
-// NXRECOMP_ABI_VERSION the lifted code was compiled with: the NXRT_REGISTER_NXMODULE macro does that for a program that compiles the
-// generated module_<name>.cpp with the same include path as its own sources. A stale prebuilt library is only caught if the lifter
-// also emits a version constant next to nxmod_<name> (proposed to S1 in docs/S3b.md); the caller would then pass that constant.
+// The ABI version of a lifted module cannot be read from the NxModule itself (the struct has no version field). Since ABI 3 every
+// generated module_<name>.cpp also defines `extern "C" const uint32_t nxmod_<name>_abi`, the NXRECOMP_ABI_VERSION of the ctx.h the
+// library was built with: the caller passes that constant (nxmodule_register(image, &nxmod_main, nxmod_main_abi)), so a stale prebuilt
+// library is refused. NXRT_REGISTER_NXMODULE passes the runtime's own ctx.h version instead (programs that compile the module file
+// themselves, the tests).
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -59,8 +60,13 @@ const char* import_name(uint32_t import_id);
 // Guest address host_import(c, import_id) dispatches to: a lifted function of another module or an HLE thunk. 0 for an unknown id.
 // The answer is cached per (module, symbol); registering a module or overriding a symbol invalidates the cache.
 uint64_t import_resolve(uint32_t import_id);
-// Absolute guest address of a DynSym of a registered module (module-relative values are rebased), 0 if it is not defined.
+// Guest address of a DynSym of a registered module (ABI 3: DynSym.value as is), 0 if it is not defined.
 uint64_t nxmodule_symbol_address(const NxModule* nx, int sym);
+// The typeinfo address behind filter `filter` (> 0) of an FDE of module `nx`: types[fde.type_first + filter - 1], or, when that slot
+// is 0 and NxEh.type_syms names an imported symbol, the address of that symbol in the module that defines it (resolved once and
+// cached). *out = 0 means catch(...). False (and *out = 0) when the import is defined by no registered module (logged once): the
+// clause then matches nothing.
+bool nxmodule_type_address(const NxModule* nx, const NxFde* fde, uint32_t filter, uint64_t* out);
 // Absolute address of the function a registered module defines under `name` (any module, registration order), 0 if none.
 uint64_t nxmodule_find_export(const char* name, const NxModule* except = nullptr);
 void import_cache_invalidate();                    // forget every resolved import (module_override_symbol calls it)

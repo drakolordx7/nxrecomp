@@ -51,13 +51,13 @@ struct Reset {
 };
 
 // Module A (index 0, function fa, one import "shared") and module B (index 1, function fb, export "shared", plus a
-// module-relative symbol "rel_sym" at offset 0x200). Used by the export and override tests.
+// second exported symbol "rel_sym" at kB + 0x200; ABI 3: every DynSym.value is a guest address). Used by the export and override tests.
 void register_shared_pair() {
     static const FnEntry a_fns[] = {{kA + 0x100, fa}};
     static const DynSym a_syms[] = {{"shared", 0, 0}};
     static const NxModule a = {"mod_a", 0u, kA, kA + kSpan, a_fns, 1, a_syms, 1, nullptr, 0, nullptr};
     static const FnEntry b_fns[] = {{kB + 0x100, fb}};
-    static const DynSym b_syms[] = {{"shared", kB + 0x100, 1}, {"rel_sym", 0x200, 1}};
+    static const DynSym b_syms[] = {{"shared", kB + 0x100, 1}, {"rel_sym", kB + 0x200, 1}};
     static const NxModule b = {"mod_b", 1u, kB, kB + kSpan, b_fns, 1, b_syms, 2, nullptr, 0, nullptr};
     CHECK(nxrt::nxmodule_register(nullptr, &a, nxrt::kAbiVersion).ok());
     CHECK(nxrt::nxmodule_register(nullptr, &b, nxrt::kAbiVersion).ok());
@@ -109,7 +109,7 @@ NXTEST(abi_mismatch_refused) {
     static const FnEntry fns[] = {{kA + 0x100, fa}};
     static const NxModule nx = {"abi_mod", 0u, kA, kA + kSpan, fns, 1, nullptr, 0, nullptr, 0, nullptr};
 
-    for (uint32_t v : {3u, 0u}) {
+    for (uint32_t v : {2u, 4u, 0u}) {
         nxrt::RegResult r = nxrt::nxmodule_register(nullptr, &nx, v);
         CHECK_EQ(r.status, RegStatus::AbiMismatch);
         CHECK(!r.ok());
