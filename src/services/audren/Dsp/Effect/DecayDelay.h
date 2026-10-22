@@ -2,18 +2,25 @@
 // Port of Ryujinx.Audio/Renderer/Dsp/Effect/DecayDelay.cs (Ryubing fork, MIT). The wrapped delay line is held by reference,
 // as the C# holds it by reference. Properties with a body (CurrentSampleCount, SampleCountMax) are methods.
 #pragma once
+#include <memory>
+
 #include "IDelayLine.h"
 
 namespace nxrt::audren {
 
 class DecayDelay : public IDelayLine {
   private:
+    std::unique_ptr<IDelayLine> _owned;   // set when the DecayDelay owns its delay line (C# relies on the GC for that)
+    IDelayLine* _ptr;
     IDelayLine& _delayLine;
 
     float _decayRate = 0.0f;
 
   public:
-    explicit DecayDelay(IDelayLine& delayLine) : _delayLine(delayLine) {}
+    explicit DecayDelay(IDelayLine& delayLine) : _ptr(&delayLine), _delayLine(delayLine) {}
+    // Owning form: `new DecayDelay(new DelayLine(...))` in the C#.
+    explicit DecayDelay(std::unique_ptr<IDelayLine> delayLine) : _owned(std::move(delayLine)), _ptr(_owned.get()), _delayLine(*_ptr) {}
+    DecayDelay(DecayDelay&& o) noexcept : _owned(std::move(o._owned)), _ptr(o._ptr), _delayLine(*o._ptr), _decayRate(o._decayRate) {}
 
     uint32_t CurrentSampleCount() const override { return _delayLine.CurrentSampleCount(); }
 

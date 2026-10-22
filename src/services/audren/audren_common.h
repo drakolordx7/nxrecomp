@@ -10,6 +10,7 @@
 //     (`T X { get; set; }`) becomes a public data member `T X;`. A C# property with a body (`=> expr` / `get { ... }`) becomes a method
 //     `T X() const`. Private fields `_name` stay `_name`. Method parameters keep their C# order; `ref`/`out` become references.
 //     So code written in one place can call code written in another by reading the C# signature only.
+//     EXCEPTION: the plain parameter structs of audren_types.h (the binary layouts) use lower_snake_case field names; use those as they are.
 //   * C# `uint/int/ulong/long/ushort/short/byte/sbyte/float/double/bool` -> uint32_t/int32_t/uint64_t/int64_t/uint16_t/int16_t/uint8_t/
 //     int8_t/float/double/bool. `CpuAddress` / `DspAddress` = uint64_t. C# `Span<T>`, `ReadOnlySpan<T>`, `Memory<T>`, `ReadOnlyMemory<T>` ->
 //     Span<T> below (const-ness by T). `T[]` that is allocated once -> std::vector<T> member (or Span<T> into a work buffer when the C#
