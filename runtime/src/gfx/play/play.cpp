@@ -8,6 +8,9 @@
 //                                                            present mode), the ImGui overlay and the settings page
 //   hid sampling thread                                      PlaySource::poll (200 Hz): reads the pad snapshot and asks the binding engine for the
 //                                                            keyboard and mouse contribution at that instant
+#include "nxrt/extras.h"
+#include "nxrt/lowlat.h"
+#include "extras/tonemap_hook.h"
 #include "nxrt/play.h"
 
 #include <windows.h>
@@ -20,6 +23,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -27,6 +31,7 @@
 #include <vector>
 
 #include "nxrt/ftrace.h"
+#include "play_camlook.h"
 #include "play_display.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
@@ -55,6 +60,8 @@ constexpr const char* kTag = "play";
 constexpr uint64_t kFnUpdate = 0x3c81c8;          // CGameArchitectureSupport::Update(float*): once per rendered frame
 constexpr uint64_t kFnProcessInput = 0xc70334;    // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&)
 constexpr uint64_t kFnSetTransform = 0xc4d588;    // CActorMP1::SetTransform(CTransform4f const&): x0 = the actor, x1 = the transform
+constexpr uint64_t kFnFpCamThink = 0xd72314;      // CFirstPersonCameraMP1::Think(float, CStateManager&): x0 the camera
+constexpr uint64_t kFnBallCamThink = 0xcff7ec;    // CBallCameraMP1::Think(float, CStateManager&): x0 the camera
 constexpr uint64_t kMs = 1000000ull;
 
 struct PadFrame {
@@ -148,7 +155,8 @@ struct G {
 
     std::thread::id pump_thread;
     uint64_t base = 0x7100000000ull;
-    uint32_t hook_update = 0, hook_input = 0;
+    uint32_t hook_update = 0, hook_input = 0, hook_fpcam = 0, hook_ballcam = 0;
+    LookOffsets free_look, ball_look;     // free look (first person, Alt held) and the morph ball camera orbit; main thread only
     bool capture_mouse = true, quit_on_close = true, log_status = false;
     bool late_sample = true;           // pump the window's events again right before the mouse counts are taken (S11: the counts are as new as ProcessInput)
     double pitch_limit_deg = 0;
@@ -156,6 +164,7 @@ struct G {
     // frame state (main thread)
     uint64_t update_seq = 0, aim_seq = 0;
     std::atomic<uint64_t> last_pi_ns{0};
+    std::atomic<uint64_t> last_pi_frame{0};       // value of `frames` at the last ProcessInput (the game is playing while it keeps being called)
     std::atomic<uint64_t> player{0};
     uint64_t map_acts_seen = 0;
     bool map_hint = false;
@@ -225,6 +234,7 @@ void apply_frame_cap(const Settings& s) {
         if (cap <= 0 || (hz > 0 && cap >= hz)) cap = 0;
     }
     st.limiter.set_target_fps(cap);
+    if (extras::LowLatency* ll = extras::lowlat()) ll->set_cap_fps(cap);     // Reflex / Anti-Lag pace to the same cap
 }
 
 // ---- hooks ----------------------------------------------------------------------------------------------------------------------------
@@ -478,6 +488,11 @@ void poll_pads(uint64_t now) {
 int update_hook(::Ctx*, uint64_t, void*) {
     G& st = g();
     ft::mark("main.update");
+    // low latency (S14): the sleep that lets the frame start as late as the GPU allows, then the input sample marker; the events are pumped right after
+    if (extras::LowLatency* ll = extras::lowlat()) {
+        ll->sim_begin();
+        ll->input_sample();
+    }
     const uint64_t now = now_ns();
     st.frames++;
     st.update_seq++;
@@ -502,6 +517,8 @@ int update_hook(::Ctx*, uint64_t, void*) {
             st.engine->set_settings(s, now);
             apply_frame_cap(s);
             display_apply(s.display);
+            extras::set_settings(s.extras);
+            extras::hdr_refresh_levels();
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) set_window_mode(s.display.window_mode);
             std::string err;
@@ -518,10 +535,13 @@ int update_hook(::Ctx*, uint64_t, void*) {
         for (size_t i = 0; i < got; ++i) handle_event(buf[i], now);
     }
     poll_pads(now);
+    if (st.engine) st.engine->frame_tick();
 
     // what the game is doing: the context, the beam, the pointer
     const uint64_t pi = st.last_pi_ns.load();
-    const bool in_game = pi != 0 && now - pi < 300 * kMs;
+    // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
+    // can take 100 ms or more per frame under load) must not read as a menu.
+    const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
     st.hints = st.aim->hints(st.player.load());
     if (st.hints.valid) {
         static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma
@@ -594,6 +614,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     G& st = g();
     const uint64_t now = now_ns();
     st.last_pi_ns.store(now);
+    st.last_pi_frame.store(st.frames.load());
     st.pi_calls++;
     const uint64_t player = c->x[0], mgr = c->x[2];
     st.player.store(player);
@@ -605,9 +626,40 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         // whole Update body runs first). Pump again so the counts include whatever the mouse did in between. Main thread only, like the pump
         // in the frame-boundary hook; the key and button events it queues are handled at the next boundary.
         if (st.late_sample && st.window && std::this_thread::get_id() == st.pump_thread) platform::pump_events();
+        if (extras::LowLatency* ll = extras::lowlat()) ll->input_sample();
         const input::MouseDelta d = input::mouse_delta_take();
         dx = d.dx;
         dy = d.dy;
+    }
+    // Camera look instead of body aim: the morph ball camera takes the mouse in the ball; the free look key makes the first-person mouse turn the
+    // view and not Samus. The counts are consumed here (the aim gets none), and the camera Think hooks below apply the offsets.
+    {
+        const AimBlock gate = st.aim->gate(player, mgr);
+        const MouseSettings& m = st.settings.mouse;
+        uint32_t morph_word = 0;                       // 0 unmorphed, 2 and 3 transitions, 1 in the ball (the gate stops at "not first person" first)
+        guest_read(player + 0x4d4, &morph_word, sizeof morph_word);
+        if (morph_word == 1) {
+            LookParams lp;
+            lp.yaw_rad = m.morph_yaw_rad;
+            lp.pitch_rad = m.morph_pitch_rad;
+            lp.invert_x = m.invert_x;
+            lp.invert_y = m.invert_y;
+            if (dx != 0 || dy != 0) st.ball_look.add(dx, dy, lp);
+            dx = dy = 0;
+        } else {
+            st.ball_look.reset();
+        }
+        if (gate == AimBlock::None && st.engine && st.engine->act_active(Act::FreeLook, now)) {
+            LookParams lp;
+            lp.yaw_rad = m.yaw_rad;
+            lp.pitch_rad = m.pitch_rad;
+            lp.invert_x = m.invert_x;
+            lp.invert_y = m.invert_y;
+            if (dx != 0 || dy != 0) st.free_look.add(dx, dy, lp);
+            dx = dy = 0;
+        } else {
+            st.free_look.reset();
+        }
     }
     AimParams p;
     {
@@ -627,10 +679,62 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         t_in_process_input = false;
         *c = saved;
     });
+    if (st.log_status && (dx != 0 || dy != 0))
+        NXLOG_I(kTag, "aim: dx=%.1f dy=%.1f block=%s applied=%d pitch=%.4f", dx, dy, aim_block_name(st.aim->last_block()), applied ? 1 : 0, st.aim->pitch());
     if (applied) {
         st.aim_frames++;
         st.counts += static_cast<uint64_t>(std::fabs(dx) + std::fabs(dy));
     }
+    return 1;
+}
+
+// Camera Think hooks: after the game's own Think the camera transform is turned by the current look offset (free look: about the eye; morph ball:
+// about the ball). Before the next Think the game's own transform is put back, so its camera logic never sees the offset.
+struct CamMemo { bool have = false; float orig[12] = {}, applied[12] = {}; uint64_t cam = 0; };
+thread_local bool t_in_cam_think = false;
+CamMemo g_cam_memo[2];
+
+bool read_xf(uint64_t actor, uint64_t* xfp, float xf[12]) {
+    *xfp = 0;
+    uint64_t a = 0;
+    if (!guest_read(actor + 8, &a, 8) || !a || !guest_read(a + 0x20, &a, 8) || !a || !guest_read(a + 0x40, &a, 8) || !a) return false;
+    *xfp = a;
+    return guest_read(a, xf, 12 * sizeof(float));
+}
+
+int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
+    if (t_in_cam_think) return 0;
+    G& st = g();
+    const bool ball = user != nullptr;
+    LookOffsets& off = ball ? st.ball_look : st.free_look;
+    CamMemo& memo = g_cam_memo[ball ? 1 : 0];
+    const uint64_t cam = c->x[0];
+    XfCall xc{c};
+    uint64_t xfp = 0;
+    float cur[12];
+    if (memo.have && memo.cam == cam && read_xf(cam, &xfp, cur) && std::memcmp(cur, memo.applied, sizeof cur) == 0) guest_set_transform(&xc, cam, memo.orig);
+    memo.have = false;
+    {
+        ::Ctx saved = *c;
+        t_in_cam_think = true;
+        dispatch_call(c, addr);
+        t_in_cam_think = false;
+        *c = saved;
+    }
+    if (!off.active() || !read_xf(cam, &xfp, cur)) return 1;
+    float pivot[3] = {cur[3], cur[7], cur[11]};          // free look: the eye itself
+    if (ball) {
+        float pxf[12];
+        uint64_t pp = 0;
+        const uint64_t player = st.player.load();
+        if (!player || !read_xf(player, &pp, pxf)) return 1;
+        pivot[0] = pxf[3]; pivot[1] = pxf[7]; pivot[2] = pxf[11];
+    }
+    float out[12];
+    orbit_transform(cur, pivot, off.yaw(), off.pitch(), out);
+    std::memcpy(memo.orig, cur, sizeof cur);
+    guest_set_transform(&xc, cam, out);
+    if (read_xf(cam, &xfp, memo.applied)) { memo.have = true; memo.cam = cam; }
     return 1;
 }
 
@@ -734,6 +838,32 @@ SelfTestHost* selftest_host() {
     return &h;
 }
 
+// mpr.ini and the environment override the settings file for the display extras. A key that is set there ([hdr] mode in mpr.ini, or NXRT_HDR_MODE)
+// replaces the file's value with the one extras::settings_from_config() reads; other keys keep the file's value (the F1 page edits the file).
+extras::Settings merge_env(const extras::Settings& from_file) {
+    const extras::Settings env = extras::settings_from_config();
+    extras::Settings r = from_file;
+    auto set = [](const char* name) {
+        const char* v = std::getenv(name);
+        return v != nullptr && v[0] != '\0';
+    };
+    if (config_has("hdr", "mode")) r.hdr.mode = env.hdr.mode;
+    if (config_has("hdr", "format")) r.hdr.format = env.hdr.format;
+    if (config_has("hdr", "peak_nits")) r.hdr.peak_nits = env.hdr.peak_nits;
+    if (config_has("hdr", "paper_white_nits")) r.hdr.paper_white_nits = env.hdr.paper_white_nits;
+    if (config_has("hdr", "highlight_boost")) r.hdr.highlight_boost = env.hdr.highlight_boost;
+    if (config_has("upscale", "mode")) r.upscale.mode = env.upscale.mode;
+    if (config_has("upscale", "sharpness")) r.upscale.sharpness = env.upscale.sharpness;
+    if (config_has("upscale", "scene_scale")) r.upscale.scene_scale = env.upscale.scene_scale;
+    if (config_has("upscale", "fsr_dll")) r.upscale.fsr_dll = env.upscale.fsr_dll;
+    if (config_has("upscale", "dlss_dll")) r.upscale.dlss_dll = env.upscale.dlss_dll;
+    if (config_has("upscale", "xess_dll")) r.upscale.xess_dll = env.upscale.xess_dll;
+    if (config_has("upscale", "frame_generation")) r.upscale.frame_generation = env.upscale.frame_generation;
+    if (config_has("latency", "mode")) r.latency.mode = env.latency.mode;
+    if (config_has("latency", "log_timings")) r.latency.log_timings = env.latency.log_timings;
+    return r;
+}
+
 }  // namespace
 
 // ---- public API ---------------------------------------------------------------------------------------------------------------------------
@@ -753,6 +883,9 @@ bool load() {
     } else {
         NXLOG_I(kTag, "settings loaded from %s (%zu bindings)", st.path.c_str(), st.settings.bindings.size());
     }
+    // Display extras: a value set in mpr.ini or in the environment (NXRT_HDR_MODE ...) overrides the file; the file overrides the built-in defaults.
+    st.settings.extras = merge_env(st.settings.extras);
+    extras::set_settings(st.settings.extras);
     st.capture_mouse = config_get_bool("play", "capture_mouse", true);
     st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);
@@ -842,9 +975,12 @@ bool start(const StartOptions& opt) {
         if (st.window) platform::pixel_size(&ww, &wh);
         if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
         display_install(st.base, st.settings.display, ww, wh);
+    extras::tonemap_hook_install(st.base);
     }
     st.hook_update = hook_add_entry(st.base + kFnUpdate, &update_hook);
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
+    st.hook_fpcam = hook_add_entry(st.base + kFnFpCamThink, &cam_think_hook, nullptr);
+    st.hook_ballcam = hook_add_entry(st.base + kFnBallCamThink, &cam_think_hook, &st);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
             static_cast<unsigned long long>(st.base), st.hook_update, st.hook_input);
@@ -856,7 +992,9 @@ void stop() {
     if (!st.started) return;
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
-    st.hook_update = st.hook_input = 0;
+    if (st.hook_fpcam) hook_remove(st.hook_fpcam);
+    if (st.hook_ballcam) hook_remove(st.hook_ballcam);
+    st.hook_update = st.hook_input = st.hook_fpcam = st.hook_ballcam = 0;
     display_remove();
     hid::set_vibration_sink(nullptr, nullptr);
     if (hid::input_source() == st.source) hid::set_input_source(nullptr);

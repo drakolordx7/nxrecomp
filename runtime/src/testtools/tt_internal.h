@@ -19,6 +19,10 @@ void set_game_base(uint64_t b);
 // The warp sequence of the practice mod (docs/mpr/hooks.md section 8), executed with the live context. false: not possible now (no state manager yet).
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
 bool have_state_manager();
+// @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x44, 8 bytes per item); item -1 = every upgrade.
+bool grant(int64_t item, int32_t amount, int32_t capacity);
+// @call: the guest function at main+offset with arguments (numbers, $gs $ps $mgr $player); false and *err when an argument is bad or the game is not ready.
+bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err);
 bool read_mem(uint64_t addr, void* out, size_t n);      // ReadProcessMemory on ourselves: false instead of a fault
 bool write_mem(uint64_t addr, const void* in, size_t n);
 
@@ -54,6 +58,9 @@ private:
     bool started_ = false, done_ = false, warped_ = false, has_keys_ = false;
     int64_t remaining_ = 0;
     uint64_t start_frame_ = 0;
+    uint64_t start_ms_ = 0;
+    double start_igt_ = -1;
+    uint64_t next_mash_ms_ = 0, mash_release_ms_ = 0;
     int64_t default_timeout_ = 3600;
     uint64_t held_ = 0, pressing_ = 0;
     int16_t stick_[2][2] = {{0, 0}, {0, 0}};            // persistent [which][x,y]
@@ -62,6 +69,7 @@ private:
     int stick_tmp_which_ = 0;
     float mouse_x_ = 0, mouse_y_ = 0;
     int fail_line_ = 0;
+    double igt_base_ = -1;                               // @play: the play time at the first readable frame of the step
     void advance() { idx_++; started_ = false; remaining_ = 0; }
     void fail(const Step& st, const std::string& msg);
     bool eval_assert(const Step& st, const GameState& s, bool valid, std::string* detail);
@@ -70,6 +78,7 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
+bool give_item(int item, int amount);      // tt_probe.cpp: writes amount and capacity of one item of CPlayerStateMP1
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
 bool sample_live(PadFrame* out);           // the pad of the live source (the one installed before ours); false when there is none

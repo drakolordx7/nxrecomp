@@ -18,6 +18,8 @@
 
 #include "nxrt/gfx.h"
 #include "nvn_present_pass.h"
+
+namespace nxrt::extras { class OutputPass; }
 #include "nvn_core.h"
 #include "nvn_gpu.h"
 
@@ -165,6 +167,9 @@ bool dump_texture(Texture* t, const std::string& png_path, std::string* stats);
 // snapshot_write(): returns an index (-1: not copyable). snapshot_write writes it as dump_texture does and frees the buffer.
 int snapshot_record(Texture* t, Frame& f);
 bool snapshot_write(int index, const std::string& png_path, std::string* stats);
+// [nvn] trace_dump_tex = <dir>: writes the data prepare_texture builds for t (raw blocks of every level and layer) as t<id>.bin with a t<id>.txt describing it, once per texture.
+void trace_dump_prepared(Texture* t, const std::string& dir);
+int snapshot_record_raw(Texture* t, Frame& f);   // block-compressed level 0 as the GPU holds it; snapshot_write writes the bytes
 void tex_destroy(TexGpu* g);      // render thread
 void tex_shutdown();              // frees samplers and dummy resources (device idle)
 // Image formats chosen: bool descriptor for tests and logs
@@ -185,6 +190,7 @@ int depth_mode();
 gfx::Renderer* renderer();
 FrameLimiter* limiter();
 PresentPass* present_pass();
+extras::OutputPass* output_pass();
 bool keep_aspect();
 
 // After a traced frame ([nvn] trace_frame): dumps the targets it drew to (PNG next to the log: trace_<texture id>_<format>.png) and logs their statistics.

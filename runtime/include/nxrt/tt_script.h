@@ -24,12 +24,26 @@
 //   @world <id> [timeout=<n>]         the same for the world id
 //   @pos <x> <y> <z> [<r>] [timeout=<n>]   wait until the player is within r (default 1.0) world units of the point
 //   @igt <seconds> [timeout=<n>]      wait until the in-game play time is >= seconds
+//   @run <seconds> [timeout=<n>] [soft]      wait until the in-game play time has advanced by <seconds> since this step began (the game clock stands
+//                                     still while an area loads, so this is "the game ran for that long"). `soft`: when the timeout runs out,
+//                                     log "SOFT-TIMEOUT" and go on instead of failing the run
+//   @mash <keys> <period_ms> area|world <id> [timeout=<ms>]
+//                                     press the buttons for 250 ms of host time every <period_ms> until the area (or world) becomes current: gets
+//                                     through the front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
+//   @give <item> <amount>             set an item of the player state (CPlayerStateMP1 item table): amount and capacity. <item> is a number or the game's
+//                                     name without case or underscores (MorphBall, ChargeBeam, Missiles, XRayVisor, WaveBeam ...)
+//   @rate <hz>                        the game step is exactly 1/hz for every frame from here on (hz > 0), 0 = the configured mode again; the clock
+//                                     itself stays real, so areas load at full speed
+//   @sleep <ms>                       wait <ms> of host wall-clock time (not game time: loading and fade-outs run on the host clock even in
+//                                     deterministic mode); frames keep being delivered meanwhile
 //   @warp <world> <area>              warp to the area (practice-mod sequence, done by the runner); then waits until that area is current
 //   @shot <name>                      save a screenshot <shot_dir>/<name>.png at this frame (does not block)
 //   @hash [<label>]                   write a labelled hash line into the trace and the result file (does not block)
 //   @log <text...>                    write the rest of the line to the log
 //   @assert <field> <op> <value>      fail the run now if false. fields: area world frame igt health px py pz vx vy vz speed state.
 //                                     ops: == != < <= > >=. area/world compare ids (== and != only); the others compare numbers
+//   @mashuntil <keys> every <n> until <field> <op> <value> [timeout=<n>]   press the buttons for 4 frames every n frames until the condition
+//                                     (same fields and operators as @assert) holds, e.g. `@mashuntil A every 120 until state >= 0` drives menus
 //   @timeout <n>                      default timeout (frames) of every later wait; initial 3600; 0 = none
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
@@ -57,6 +71,11 @@ enum class StepKind : uint8_t {
     WaitWorld,   // id (16 bytes), timeout
     WaitPos,     // x, y, z, r, timeout
     WaitIgt,     // x = seconds, timeout
+    WaitMs,      // x = milliseconds of host time
+    Give,        // x = item id, y = amount
+    Rate,        // x = hz (0 = real clock)
+    Mash,        // buttons every x ms until area (text "area") / world (text "world") id; timeout in host ms (-1 = 600000)
+    WaitRun,     // x = seconds of in-game play time from the step start, timeout
     Warp,        // id = area, id2 = world
     Shot,        // text = name
     Hash,        // text = label (may be empty)
@@ -68,6 +87,9 @@ enum class StepKind : uint8_t {
     Key,         // text = input name, count = frames (-1 = not given: the runner uses 4); blocks like Press
     KeyDown,     // text = input name
     KeyUp,       // text = input name
+    Grant,       // text = item name (or 'all'), count = item id (-1 for all), x = amount, y = capacity (written into the player state's power-up array)
+    Call,        // count = main-module offset of a guest function, text = its arguments (numbers or $gs $ps $mgr $player), run in the frame hook
+    PressUntil,  // buttons pressed 4 frames every `count` frames until the condition (field/op/x/id, as Assert) holds; timeout
 };
 
 enum class AssertField : uint8_t { Area, World, Frame, Igt, Health, PosX, PosY, PosZ, VelX, VelY, VelZ, Speed, State };
@@ -85,6 +107,7 @@ struct Step {
     uint8_t id[16] = {};           // Area/World/Assert(area, world)/Warp (the area): the resolved id in memory order (see tt_guid_to_bytes)
     uint8_t id2[16] = {};          // Warp: the world id
     std::string name1, name2;      // the id/name text as written (Warp: name1 = world, name2 = area)
+    bool soft = false;             // PlayTime: a timeout logs and continues instead of failing
     std::string text;
     AssertField field = AssertField::Frame;
     AssertOp op = AssertOp::Eq;

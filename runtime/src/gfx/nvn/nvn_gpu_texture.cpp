@@ -10,7 +10,10 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <unordered_set>
 #include <initializer_list>
 #include <map>
 #include <set>
@@ -24,6 +27,7 @@
 #include "nvn_enums.h"
 #include "nvn_format.h"
 #include "nvn_gpu_internal.h"
+#include "extras/hdr_nvn.h"
 #include "nvn_texdata.h"
 #include "nvn_texture_layout.h"
 #include "tegra_tiling.h"
@@ -35,6 +39,7 @@ static std::mutex g_live_mu;
 static std::set<struct TexGpu*> g_live_set;
 
 struct TexGpu {
+    bool promoted = false;                              // HDR scene pipeline: an 8-bit sRGB render target kept as RGBA16F (src/gfx/extras/hdr_nvn.h)
     gfx::Image img;                                     // the image; created without a view (views are cached below)
     const FormatInfo* fmt = nullptr;
     VkFormat format = VK_FORMAT_UNDEFINED;              // the image format: the NVN one, its fallback, or BC7 for ASTC
@@ -52,6 +57,7 @@ struct TexGpu {
     bool uploaded = false;                              // the image holds the storage's content (or the black fallback)
     bool gpu_written = false;                           // rendered by the GPU since the CPU last wrote the storage
     std::map<std::array<uint32_t, 12>, VkImageView> views;
+    int refs = 1;                                       // texture objects over the same storage share one image (render thread)
 };
 
 Texture::~Texture() {
@@ -160,6 +166,12 @@ bool format_view_ok(const TexGpu& g, VkFormat fmt) {
     return bit_alias_class(g.format) && (fmt == float_alias(g.format) || fmt == uint_alias(g.format) || fmt == sint_alias(g.format));
 }
 
+// A promoted image answers the 8-bit RGBA formats the game asks for (its sRGB and UNORM views) with its own format: the values are linear floats.
+VkFormat promoted_view_format(const TexGpu& g, VkFormat f) {
+    if (g.promoted && (f == VK_FORMAT_R8G8B8A8_SRGB || f == VK_FORMAT_R8G8B8A8_UNORM)) return g.format;
+    return f;
+}
+
 // The format a colour attachment of this image is rendered through: integer 32-bit formats as their float alias, because the
 // translated fragment shaders write float outputs and the console stores the register bits unconverted.
 VkFormat attachment_format_of(const TexGpu& g, VkFormat requested) {
@@ -262,8 +274,12 @@ TexGpu* create_texture_gpu(Texture* t) {
     const gfx::DeviceFeatures& ft = device().features();
     const bool to_bc7 = g->fmt->astc && !ft.astc_ldr;
     if (to_bc7 && !ft.bc) return fail("ASTC is stored as BC7 and the GPU has no BC compression");
-    const VkFormat want = to_bc7 ? (g->fmt->srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK) : g->fmt->vk;
-    const VkFormat alt = to_bc7 ? VK_FORMAT_UNDEFINED : g->fmt->vk_fallback;
+    const VkFormat bc7_format = g->fmt->srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+    // A disk cache entry that is not BC7 (RGBA8 for a texture BC7 cannot reproduce, BC5 for a two-channel normal map) makes the image in the
+    // entry's format; prepare_texture is then told the image's format and delivers the entry's data (docs/S4f.md).
+    const VkFormat entry = to_bc7 ? cache_entry_format(*t) : VK_FORMAT_UNDEFINED;
+    const VkFormat want = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? entry : bc7_format) : g->fmt->vk;
+    const VkFormat alt = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? bc7_format : VK_FORMAT_UNDEFINED) : g->fmt->vk_fallback;
 
     std::string why = std::string("no Vulkan format for NVN format ") + g->fmt->name;
     VkFormat chosen = VK_FORMAT_UNDEFINED;
@@ -277,6 +293,14 @@ TexGpu* create_texture_gpu(Texture* t) {
         why = r;
     }
     if (chosen == VK_FORMAT_UNDEFINED) return fail(why);
+
+    if (const VkFormat hf = extras::hdr_promote_target(chosen, t->b.flags, s.type == VK_IMAGE_TYPE_2D, s.levels, s.layers, s.samples, g->fmt->srgb)) {
+        if (device().image_supported(make_desc(s, hf, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, base_flags(s, hf)))) {
+            NXLOG_I(kTag, "texture %u: %s %ux%u (flags 0x%x) kept as float16 for the HDR scene", t->id, g->fmt->name, s.base.width, s.base.height, static_cast<unsigned>(t->b.flags));
+            chosen = hf;
+            g->promoted = true;
+        }
+    }
 
     g->format = chosen;
     g->transcoded = to_bc7;
@@ -317,6 +341,19 @@ TexGpu* create_texture_gpu(Texture* t) {
 TexGpu* tex_or_null(Texture* t) {
     if (!t || !active()) return nullptr;
     if (t->gpu) return t->gpu->failed ? nullptr : t->gpu;
+    if (Ref<Texture> alias = texture_registry_find_alias(t)) {
+        TexGpu* ag = alias->gpu;
+        if (ag && !ag->failed) {
+            // the same bytes under another texture object: one image (the object rendered to and the one that is sampled are not the same
+            // object); what the image holds is as current for this object as for the one it was made for
+            t->gpu = ag;
+            ++ag->refs;
+            if (ag->uploaded || ag->gpu_written) t->cpu_dirty.store(false);
+            static int logged = 0;
+            if (logged++ < 20) NXLOG_I(kTag, "texture %u shares the image of texture %u (the same storage)", t->id, alias->id);
+            return ag;
+        }
+    }
     TexGpu* g = create_texture_gpu(t);
     return g->failed ? nullptr : g;
 }
@@ -631,6 +668,12 @@ void tex_ensure_current(Texture* t, Frame& f) {
     const bool dirty = t->cpu_dirty.load();
     if (g->uploaded && !dirty) return;           // the image already holds the storage's content
     if (g->gpu_written && !dirty) return;        // the GPU rendered it and the CPU did not write since
+    if (g->promoted) {                           // a float16 render target of the HDR scene: nothing in memory matches its format
+        t->cpu_dirty.exchange(false);
+        if (!g->uploaded) fill_zero(f, *g);
+        g->uploaded = true;
+        return;
+    }
     t->cpu_dirty.exchange(false);
     if (g->gpu_written) {
         static int logged = 0;
@@ -642,6 +685,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
     caps.bc = ft.bc;
     caps.astc = ft.astc_ldr;
     caps.bc7_transcode = true;
+    caps.image_format = g->format;
     PreparedTexture prep;
     bool ok;
     { NXFT_MIN("tex.prepare", 30000); ok = prepare_texture(*t, caps, prep); }
@@ -654,6 +698,11 @@ void tex_ensure_current(Texture* t, Frame& f) {
         return;
     }
 
+    {
+        uint64_t w0 = 0;
+        if (!prep.data.empty()) std::memcpy(&w0, prep.data.data(), std::min<size_t>(8, prep.data.size()));
+        tev(t, "upload", w0, dirty ? 1 : 0);
+    }
     const uint64_t bytes = prep.data.size();
     UploadAlloc st = f.staging(bytes);
     if (!st) {
@@ -752,7 +801,7 @@ VkImageView tex_sampled_view(Texture* t, const ViewRequest& req) {
         default:
             return bad_view(*t, "1D views are not supported (the image is 2D with height 1)");
     }
-    VkFormat fmt = req.format == VK_FORMAT_UNDEFINED ? g->format : req.format;
+    VkFormat fmt = req.format == VK_FORMAT_UNDEFINED ? g->format : promoted_view_format(*g, req.format);
     if (req.component != 0 && g->mutable_fmt && fmt == g->format) {
         // The shader's sampled type decides how the bits read: float shaders over an integer texture (and the reverse) see the raw bits.
         const VkFormat a = req.component == 1 ? float_alias(fmt) : req.component == 2 ? sint_alias(fmt) : uint_alias(fmt);
@@ -771,7 +820,7 @@ VkImageView tex_attachment_view(Texture* t, uint32_t level, uint32_t layer, uint
     const uint32_t total_layers = g->type == VK_IMAGE_TYPE_3D ? g->base.depth : g->layers;
     const uint32_t n = layer_count > 1 ? layer_count : 1;
     if (layer >= total_layers || layer + n > total_layers) return bad_view(*t, "attachment layers out of range");
-    const VkFormat fmt = attachment_format_of(*g, view_format);
+    const VkFormat fmt = attachment_format_of(*g, promoted_view_format(*g, view_format));
     if (!format_view_ok(*g, fmt)) return bad_view(*t, "attachment format is not compatible with the image");
     const VkImageViewType type = n > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     return view_for(*g, type, level, 1, layer, n, fmt, g->aspect, kIdentity);
@@ -779,7 +828,7 @@ VkImageView tex_attachment_view(Texture* t, uint32_t level, uint32_t layer, uint
 
 VkFormat tex_attachment_format(Texture* t, VkFormat view_format) {
     TexGpu* g = tex_or_null(t);
-    return g ? attachment_format_of(*g, view_format) : VK_FORMAT_UNDEFINED;
+    return g ? attachment_format_of(*g, promoted_view_format(*g, view_format)) : VK_FORMAT_UNDEFINED;
 }
 
 bool tex_has_storage(Texture* t) {
@@ -891,6 +940,7 @@ VkSampler sampler_for(const SamplerInfo& game_sampler) {
 
 void tex_destroy(TexGpu* g) {
     if (!g) return;
+    if (--g->refs > 0) return;   // another texture object over the same storage still uses the image
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
         if (!g_live_set.erase(g)) return;   // already destroyed by tex_shutdown
@@ -920,7 +970,7 @@ void tex_shutdown() {
         std::lock_guard<std::mutex> lk(g_live_mu);
         left.assign(g_live_set.begin(), g_live_set.end());
     }
-    for (TexGpu* g : left) tex_destroy(g);
+    for (TexGpu* g : left) { g->refs = 1; tex_destroy(g); }
     for (auto& kv : g_sh.samplers)
         for (auto& e : kv.second) vkDestroySampler(vkdev(), e.second, nullptr);
     g_sh.samplers.clear();
@@ -1040,6 +1090,7 @@ struct Snapshot {
     VkExtent3D e = {0, 0, 1};
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     uint32_t bpp = 0;
+    bool raw = false;                  // a block-compressed image copied as it is (the buffer is written to a file as it is)
 };
 std::vector<Snapshot> g_snaps;
 }  // namespace
@@ -1067,11 +1118,82 @@ int snapshot_record(Texture* t, Frame& fr) {
     return static_cast<int>(g_snaps.size()) - 1;
 }
 
+// A block-compressed image: every level and layer, copied as blocks (for comparing what the GPU holds with trace_dump_prepared's data).
+int snapshot_record_raw(Texture* t, Frame& fr) {
+    TexGpu* g = t ? t->gpu : nullptr;
+    if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED || g->depth) return -1;
+    uint32_t bytes = 0;
+    if (g->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && g->format <= VK_FORMAT_BC7_SRGB_BLOCK)
+        bytes = (g->format <= VK_FORMAT_BC1_RGBA_SRGB_BLOCK || g->format == VK_FORMAT_BC4_UNORM_BLOCK || g->format == VK_FORMAT_BC4_SNORM_BLOCK) ? 8 : 16;
+    if (!bytes) return -1;
+    // every level, tight, level after level with all layers: the layout prepare_texture produces for block formats
+    std::vector<VkBufferImageCopy> regions;
+    uint64_t size = 0;
+    for (uint32_t l = 0; l < g->levels; ++l) {
+        const VkExtent3D e = level_extent(g->base, l);
+        VkBufferImageCopy r = {};
+        r.bufferOffset = size;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, l, 0, g->layers};
+        r.imageExtent = {e.width, e.height, 1};
+        regions.push_back(r);
+        size += static_cast<uint64_t>((e.width + 3) / 4) * ((e.height + 3) / 4) * bytes * g->layers;
+    }
+    Snapshot s;
+    s.raw = true;
+    s.format = g->format;
+    s.e = {static_cast<uint32_t>(size), 1, 1};
+    if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &s.buf, "nvn raw snapshot") != VK_SUCCESS) return -1;
+    const VkImageLayout prev = g->layout;
+    move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, static_cast<uint32_t>(regions.size()), regions.data());
+    move_layout(fr, *g, prev);
+    g_snaps.push_back(std::move(s));
+    return static_cast<int>(g_snaps.size()) - 1;
+}
+
+void trace_dump_prepared(Texture* t, const std::string& dir) {
+    static std::unordered_set<uint32_t> done;
+    if (!t || !done.insert(t->id).second) return;
+    TexCaps caps;
+    caps.bc = device().features().bc;
+    caps.astc = device().features().astc_ldr;
+    caps.bc7_transcode = true;
+    PreparedTexture prep;
+    const bool ok = prepare_texture(*t, caps, prep);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::string base = dir + "/t" + std::to_string(t->id);
+    if (FILE* f = std::fopen((base + ".txt").c_str(), "w")) {
+        std::fprintf(f, "ok %d format %d levels %u layers %u block %ux%u bytes %u transcoded %d error %s\n", ok ? 1 : 0, static_cast<int>(prep.format), prep.levels, prep.layers,
+                     prep.block_w, prep.block_h, prep.block_bytes, prep.transcoded ? 1 : 0, prep.error.c_str());
+        for (const PreparedLevel& l : prep.level)
+            std::fprintf(f, "level %u %u %u offset %llu size %llu row_blocks %u\n", l.width, l.height, l.depth, static_cast<unsigned long long>(l.offset),
+                         static_cast<unsigned long long>(l.size), l.row_blocks);
+        std::fclose(f);
+    }
+    if (ok)
+        if (FILE* f = std::fopen((base + ".bin").c_str(), "wb")) {
+            std::fwrite(prep.data.data(), 1, prep.data.size(), f);
+            std::fclose(f);
+        }
+}
+
 bool snapshot_write(int index, const std::string& path, std::string* stats) {
     if (index < 0 || index >= static_cast<int>(g_snaps.size())) return false;
     Snapshot& s = g_snaps[static_cast<size_t>(index)];
     if (!s.buf) return false;
     device().invalidate_buffer(s.buf);
+    if (s.raw) {
+        bool wrote = false;
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            wrote = std::fwrite(s.buf.mapped, 1, static_cast<size_t>(s.e.width), f) == s.e.width;   // e.width holds the byte count of a raw copy
+            std::fclose(f);
+        }
+        if (stats) *stats = "raw " + std::to_string(s.e.width) + " bytes";
+        device().destroy_buffer(s.buf);
+        s.buf = gfx::Buffer();
+        return wrote;
+    }
     const bool ok = convert_png_impl(static_cast<const uint8_t*>(s.buf.mapped), s.format, s.e, s.bpp, s.aspect, path, stats);
     device().destroy_buffer(s.buf);
     s.buf = gfx::Buffer();

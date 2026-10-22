@@ -6,3 +6,7 @@ out/
 *_freeze.txt
 tt_test_out/
 /*.png
+bc7_cache/
+shader_cache/
+pipeline_cache.bin
+pipeline_keys.bin

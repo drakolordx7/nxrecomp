@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/extras.h"
+
 namespace nxrt::play {
 
 // ---- contexts ----------------------------------------------------------------------------------------------------------------
@@ -101,6 +103,8 @@ inline double rad_per_count(double source) { return source * kSourceRadPerCount;
 struct MouseSettings {
     double yaw_rad = 0.000767945;   // radians per count, horizontal
     double pitch_rad = 0.000767945;   // radians per count, vertical (separate)
+    double morph_yaw_rad = 0.000767945;     // the morph ball camera: its own sensitivity, radians per count
+    double morph_pitch_rad = 0.000767945;
     bool invert_y = false;                         // false: mouse up looks up
     bool invert_x = false;
     bool menu_touch = true;                        // in menus the left click is a touch on the Switch touch screen
@@ -145,6 +149,7 @@ struct Settings {
     PadSettings pad;
     TimingSettings timing;
     DisplaySettings display;
+    extras::Settings extras;       // the [hdr] [upscale] [latency] sections (nxrt/extras.h): HDR output, upscaling, low latency
     Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
 };
@@ -162,6 +167,11 @@ const char* default_settings_text();
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
 //   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
 //              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration
+//   [hdr]      mode (off auto on) format (auto hdr10 scrgb) peak_nits (0 = auto, else 200..10000) paper_white_nits (0 = auto, else
+//              80..500) highlight_boost (0..2)
+//   [upscale]  mode (off fsr1 fsr3 dlss xess; spatial = fsr1) sharpness (0..1) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
+//              frame_generation (1/0)
+//   [latency]  mode (off auto on boost) log_timings (1/0)
 //   [switch]   <action> = <output>      e.g.  fire = ZR    beam_1 = X+UP    (missing actions keep the default)
 //   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = fire    Left Ctrl = morph hold 250    Space = jump toggle
 //                      ctx is one of all gameplay morph map menu scan. The same input may appear several times in a section.

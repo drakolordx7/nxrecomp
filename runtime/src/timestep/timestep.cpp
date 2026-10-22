@@ -481,4 +481,16 @@ void reset_stats() {
 void set_clock_for_tests(ClockFn fn) { g().test_clock = fn; }
 void set_deterministic_for_tests(double step_seconds) { g().det_step_test = step_seconds; }
 
+void set_run_rate(double hz) {
+    G& s = g();
+    if (hz > 0) {
+        s.det_step = 1.0 / hz;
+        s.det = true;
+    } else {
+        s.det = tt::deterministic() || s.det_step_test > 0;     // back to what the run was configured with
+        if (s.det_step_test > 0) s.det_step = s.det_step_test;
+        s.have_last = false;                                     // no frame time across the switch
+    }
+}
+
 }  // namespace nxrt::timestep

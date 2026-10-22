@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Display options of play mode: see play_display.h.
 #include "play_display.h"
+#include "nxrt/extras.h"
 
 #include <algorithm>
 #include <atomic>
@@ -151,7 +152,10 @@ int hook_height(::Ctx* c, uint64_t, void*) {
 int hook_resolution_scale(::Ctx* c, uint64_t, void*) {
     State& s = st();
     if (s.dynres.load(std::memory_order_relaxed)) return 0;      // the game's own controller
-    c->v[0].f32[0] = 1.0f;
+    // [upscale] scene_scale (S14): the 3D scene is rendered at that percent of the output size per side, through the game's own
+    // dynamic-resolution path (it takes an area factor and makes the scene targets sqrt(factor) of the full size; the post chain and the HUD stay native)
+    const float lin = static_cast<float>(extras::upscale_scene_scale()) * 0.01f;
+    c->v[0].f32[0] = lin < 0.999f ? lin * lin : 1.0f;
     s.calls.fetch_add(1, std::memory_order_relaxed);
     return 1;
 }
