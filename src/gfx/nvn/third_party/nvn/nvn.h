@@ -123,11 +123,11 @@ typedef struct {
 } NVNwindow;
 
 typedef struct {
-    char reserved[0xC0];
+    char reserved[0x80];
 } NVNtexture;
 
 typedef struct {
-    char reserved[0x28];
+    char reserved[0x10];
 } NVNtextureView;
 
 typedef struct {
@@ -146,7 +146,7 @@ typedef struct {
 } NVNrectangle;
 
 typedef struct {
-    char reserved[0xC0];
+    char reserved[0x80];
 } NVNprogram;
 
 typedef struct {
@@ -188,11 +188,11 @@ typedef struct {
 } NVNmappingRequest;
 
 typedef struct {
-    char reserved[0x60];
+    char reserved[0x40];
 } NVNsamplerBuilder;
 
 typedef struct {
-    char reserved[0x30];
+    char reserved[0x40];
 } NVNsampler;
 
 typedef struct {

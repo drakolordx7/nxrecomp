@@ -246,7 +246,12 @@ NXTEST(object_sizes) {
     CHECK(n >= 30);
     CHECK(s != nullptr);
     CHECK_EQ(nvn::struct_size("NVNdevice"), 0x3000u);
-    CHECK_EQ(nvn::struct_size("NVNtexture"), 0xC0u);
+    // the game's own layout (docs/S4e.md, "Struct sizes"): its classes keep their next member this far behind the object
+    CHECK_EQ(nvn::struct_size("NVNtexture"), 0x80u);
+    CHECK_EQ(nvn::struct_size("NVNprogram"), 0x80u);
+    CHECK_EQ(nvn::struct_size("NVNsampler"), 0x40u);
+    CHECK_EQ(nvn::struct_size("NVNsamplerBuilder"), 0x40u);
+    CHECK_EQ(nvn::struct_size("NVNtextureView"), 0x10u);
     CHECK_EQ(nvn::struct_size("NVNcommandBuffer"), 0xA0u);
     CHECK_EQ(nvn::struct_size("NVNqueue"), 0x2000u);
     CHECK_EQ(nvn::struct_size("NVNwindow"), 0x180u);

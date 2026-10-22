@@ -144,9 +144,17 @@ void nvnProgramSetSampleShading(NVNprogram* program, int mode) {
     if (!host_of<Program>(program)) return;
 }
 
+// NVN 55 name the game asks for and never calls (signature assumed): the sub-tile size is not modelled; it reports 0 x 0.
+int nvnProgramGetSubtileSize(const NVNprogram*, int* width, int* height) {
+    if (width) *width = 0;
+    if (height) *height = 0;
+    return 0;
+}
+
 }  // namespace
 
 void register_api_program() {
+    NVN_REG(nvnProgramGetSubtileSize);
     NVN_REG(nvnProgramInitialize);
     NVN_REG(nvnProgramFinalize);
     NVN_REG(nvnProgramSetDebugLabel);

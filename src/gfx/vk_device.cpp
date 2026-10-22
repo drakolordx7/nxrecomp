@@ -148,6 +148,14 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
         NXLOG_D("vulkan", "%s: %s", id, msg);
         return VK_FALSE;
     }
+    // A known false positive of the validation layers: for a geometry shader they add the input (gl_in) and the output ClipDistance /
+    // CullDistance arrays together, while the limit applies to each separately (KhronosGroup/Vulkan-ValidationLayers#13414). The
+    // translated geometry shaders declare 7 + 1 per block, the 8 the device allows.
+    if (std::strcmp(id, "VUID-RuntimeSpirv-maxCombinedClipAndCullDistances-00710") == 0 && std::strstr(msg, "VK_SHADER_STAGE_GEOMETRY_BIT")) {
+        impl->infos.fetch_add(1);
+        NXLOG_D("vulkan", "filtered (validation layers #13414): %s", msg);
+        return VK_FALSE;
+    }
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         if (impl->errors.fetch_add(1) == 0) {
             std::lock_guard<std::mutex> lk(impl->first_error_mu);
