@@ -160,7 +160,8 @@ const char* default_settings_text();
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
 //   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
-//   [display]  window_mode vsync fps_cap width height keep_aspect
+//   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
+//              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration
 //   [switch]   <action> = <output>      e.g.  fire = ZR    beam_1 = X+UP    (missing actions keep the default)
 //   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = fire    Left Ctrl = morph hold 250    Space = jump toggle
 //                      ctx is one of all gameplay morph map menu scan. The same input may appear several times in a section.
