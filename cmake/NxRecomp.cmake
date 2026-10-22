@@ -49,8 +49,10 @@ function(nxrecomp_add_module target)
     set(A_OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/gen/${target}")
   endif()
   set(extra "")
+  set(game_deps "")
   if(A_GAME)
     list(APPEND extra --game ${A_GAME})
+    file(GLOB game_deps CONFIGURE_DEPENDS "${NXRECOMP_ROOT}/games/${A_GAME}/*.py")
   endif()
   if(A_KIND)
     list(APPEND extra --kind ${A_KIND})
@@ -84,7 +86,7 @@ function(nxrecomp_add_module target)
     COMMAND "${NX_PYTHON}" -m nxrecomp lift "${A_INPUT}" "${A_OUTDIR}" --name ${A_NAME} --base ${A_BASE}
             --shards ${A_SHARDS} --jobs ${A_JOBS} ${extra}
     WORKING_DIRECTORY "${NXRECOMP_ROOT}"
-    DEPENDS "${A_INPUT}" ${A_SITES} ${NX_LIFTER_SOURCES}
+    DEPENDS "${A_INPUT}" ${A_SITES} ${NX_LIFTER_SOURCES} ${game_deps}
     COMMENT "nxrecomp: lifting ${A_NAME} (${A_INPUT})"
     VERBATIM)
   add_library(${target} STATIC ${shard_srcs} "${A_OUTDIR}/module_${A_NAME}.cpp")
