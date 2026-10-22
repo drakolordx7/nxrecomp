@@ -265,8 +265,12 @@ TexGpu* create_texture_gpu(Texture* t) {
     const gfx::DeviceFeatures& ft = device().features();
     const bool to_bc7 = g->fmt->astc && !ft.astc_ldr;
     if (to_bc7 && !ft.bc) return fail("ASTC is stored as BC7 and the GPU has no BC compression");
-    const VkFormat want = to_bc7 ? (g->fmt->srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK) : g->fmt->vk;
-    const VkFormat alt = to_bc7 ? VK_FORMAT_UNDEFINED : g->fmt->vk_fallback;
+    const VkFormat bc7_format = g->fmt->srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
+    // A disk cache entry that is not BC7 (RGBA8 for a texture BC7 cannot reproduce, BC5 for a two-channel normal map) makes the image in the
+    // entry's format; prepare_texture is then told the image's format and delivers the entry's data (docs/S4f.md).
+    const VkFormat entry = to_bc7 ? cache_entry_format(*t) : VK_FORMAT_UNDEFINED;
+    const VkFormat want = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? entry : bc7_format) : g->fmt->vk;
+    const VkFormat alt = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? bc7_format : VK_FORMAT_UNDEFINED) : g->fmt->vk_fallback;
 
     std::string why = std::string("no Vulkan format for NVN format ") + g->fmt->name;
     VkFormat chosen = VK_FORMAT_UNDEFINED;
@@ -645,6 +649,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
     caps.bc = ft.bc;
     caps.astc = ft.astc_ldr;
     caps.bc7_transcode = true;
+    caps.image_format = g->format;
     PreparedTexture prep;
     bool ok;
     { NXFT_MIN("tex.prepare", 30000); ok = prepare_texture(*t, caps, prep); }
