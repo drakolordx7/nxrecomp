@@ -9,6 +9,13 @@
 //   press <keys> [for <n>]            hold the buttons for n frames (default 4), release them, go on. Blocks for n frames.
 //   hold <keys>                       press the buttons and keep them down (until release); goes on at once
 //   release <keys>|all                release some or all held buttons; goes on at once
+//   key <name> [for <n>]              press the named keyboard key / mouse button / wheel notch for n frames (default 4), release, go on
+//                                     after n frames (blocks like press)
+//   keydown <name>                    press the named input and keep it down; goes on at once
+//   keyup <name>                      release the named input; goes on at once
+//                                     <name> is the rest of the line up to an optional trailing " for <n>" (case-insensitive): "W",
+//                                     "Left Ctrl", "Page Up", "Mouse1", "WheelUp". The name is not checked here; the input layer
+//                                     (tt.h set_key_sink) decides, and an unknown name fails the run.
 //   stick left|right|l|r <x> <y> [for <n>]   stick vector, each -1.0..1.0 (y up = +). With `for n` it blocks n frames and then returns to 0;
 //                                     without it the vector persists until the next stick step for that stick
 //   mouse <dx> <dy> [for <n>]         raw mouse counts delivered once per frame for n frames (default 1); blocks for n frames
@@ -58,6 +65,9 @@ enum class StepKind : uint8_t {
     Timeout,     // count
     Pass,
     Fail,        // text = message
+    Key,         // text = input name, count = frames (-1 = not given: the runner uses 4); blocks like Press
+    KeyDown,     // text = input name
+    KeyUp,       // text = input name
 };
 
 enum class AssertField : uint8_t { Area, World, Frame, Igt, Health, PosX, PosY, PosZ, VelX, VelY, VelZ, Speed, State };

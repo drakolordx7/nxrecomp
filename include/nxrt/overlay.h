@@ -48,6 +48,10 @@ public:
 
     // Applies menu choices that cannot be made in the middle of a frame. Call before Renderer::begin_frame().
     void apply_pending();
+    // The same in two halves for a multi-threaded caller: the present mode must change on the thread that presents (before its begin_frame), the
+    // window (fullscreen) on the thread that owns the SDL window.
+    void apply_present_pending();
+    void apply_window_pending();
 
     // The Renderer overlay hook: builds and draws the menu on top of the frame (no-op while hidden).
     void draw(const FrameInfo& f);
