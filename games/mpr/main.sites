@@ -1,0 +1,7 @@
+# Hook sites in Metroid Prime Remastered's `main` (v1.0.0), passed to the lifter with --sites.
+# Addresses are guest addresses: main base 0x7100000000 + the offset in the binary (docs/mpr/hooks.md).
+# Entry hooks are marked noinline by the lifter so the runtime can intercept every call.
+#   0x3c81c8  CGameArchitectureSupport::Update(float*): once per rendered game frame (frame boundary, timestep)
+#   0xc70334  CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): player input (state probes, mouse aim)
+entryhook 0x71003c81c8
+entryhook 0x7100c70334
