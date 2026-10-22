@@ -36,6 +36,11 @@ bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOut
 // Moves the fragment output at Location 1 to Location 0, Index 1. False (out untouched) when the module has no such output.
 bool spirv_dual_source_output(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);
 
+// A fragment shader of a pass without colour attachments: every Location output becomes a private variable (the decorations go, and
+// the entry point's interface loses them before SPIR-V 1.4). False (out untouched) when no Location output exists or a built-in output
+// (FragDepth, SampleMask) does.
+bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);
+
 struct SpvXfbOutput {
     uint32_t location, components, offset;   // offset in bytes inside a captured vertex
 };

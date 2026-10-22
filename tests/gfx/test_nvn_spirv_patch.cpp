@@ -352,3 +352,28 @@ NXTEST(xfb_variant_without_outputs_is_refused) {
     CHECK(!gpu::spirv_add_xfb(bad, out, nullptr, nullptr));
     CHECK_EQ(out.size(), size_t(1));
 }
+
+NXTEST(outputs_to_private_on_real_fragment_shader) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> in;
+    REQUIRE(load_hash(kConstFragHash, in));
+    const std::vector<uint32_t> before = in;
+    std::vector<uint32_t> out;
+    REQUIRE(gpu::spirv_outputs_to_private(in, out));
+    CHECK(in == before);
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_priv", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+    ShaderReflection r;
+    std::string err;
+    CHECK_MSG(reflect(out, r, err), err);
+    CHECK_MSG(r.outputs.empty(), "the module still has " + std::to_string(r.outputs.size()) + " outputs");
+    // a vertex shader has built-in outputs: refused
+    std::vector<uint32_t> vs, keep = {1u, 2u};
+    REQUIRE(load_hash(kVertexHash, vs));
+    CHECK(!gpu::spirv_outputs_to_private(vs, keep));
+    CHECK(keep.size() == 2);
+}

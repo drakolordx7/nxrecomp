@@ -282,4 +282,53 @@ bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, 
     return true;
 }
 
+bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
+    if (in.size() < 5) return false;
+    enum : uint32_t { OpVariableOp = 59, OpDecorateOp = 71, OpEntryPointOp = 15, StoragePrivate = 6, DecIndex = 32, DecComponent = 31, DecBuiltIn = 11 };
+    std::vector<Inst> insts;
+    for (size_t i = 5; i < in.size();) {
+        const uint32_t len = in[i] >> 16;
+        if (!len || i + len > in.size()) return false;
+        insts.push_back({i, in[i] & 0xffff, len});
+        i += len;
+    }
+    std::map<uint32_t, bool> out_var, has_location, builtin;
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if (n.op == OpVariableOp && n.len >= 4 && w[3] == StorageOutput) out_var[w[2]] = true;
+        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) has_location[w[1]] = true;
+        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecBuiltIn) builtin[w[1]] = true;
+    }
+    if (out_var.empty()) return false;
+    for (const auto& kv : out_var)
+        if (builtin.count(kv.first) || !has_location.count(kv.first)) return false;
+    const bool before_14 = in[1] < 0x10400;
+    std::vector<uint32_t> res(in.begin(), in.begin() + 5);
+    res.reserve(in.size());
+    for (const Inst& n : insts) {
+        std::vector<uint32_t> c(in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
+        if (n.op == OpTypePointer && n.len == 4 && c[2] == StorageOutput) c[2] = StoragePrivate;
+        else if (n.op == OpVariableOp && n.len >= 4 && c[3] == StorageOutput) c[3] = StoragePrivate;
+        else if (n.op == OpDecorateOp && n.len >= 4 && out_var.count(c[1]) && (c[2] == DecorationLocation || c[2] == DecIndex || c[2] == DecComponent)) continue;
+        else if (n.op == OpEntryPointOp && before_14) {
+            // OpEntryPoint model id name... interface ids: drop the output variables from the interface
+            size_t name_words = 0;
+            const char* nm = reinterpret_cast<const char*>(&c[3]);
+            const size_t max_chars = (c.size() - 3) * 4;
+            size_t chars = 0;
+            while (chars < max_chars && nm[chars]) ++chars;
+            name_words = chars / 4 + 1;
+            const size_t iface = 3 + name_words;
+            std::vector<uint32_t> d(c.begin(), c.begin() + static_cast<std::ptrdiff_t>(std::min(iface, c.size())));
+            for (size_t i = iface; i < c.size(); ++i)
+                if (!out_var.count(c[i])) d.push_back(c[i]);
+            d[0] = (static_cast<uint32_t>(d.size()) << 16) | OpEntryPointOp;
+            c = d;
+        }
+        res.insert(res.end(), c.begin(), c.end());
+    }
+    out = std::move(res);
+    return true;
+}
+
 }  // namespace nxrt::nvn::be::gpu
