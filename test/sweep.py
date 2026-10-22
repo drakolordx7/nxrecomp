@@ -548,7 +548,46 @@ def rel(p, root):
         return str(p)
 
 
+def reclassify(v):
+    """Status of an area that ran, from what was recorded (so a rule change applies to old results at report time). A few textures drawn before
+    their data arrived (the streaming order at every load) are a note, not a visual issue; black or noisy screenshots, a missing shader,
+    validation messages and unsupported operations are."""
+    if v.get("status") not in ("OK", "visual issue"):
+        return v
+    iss = v.get("issues", {})
+    notes, bad = [], False
+    if "missing shader" in iss:
+        notes.append("missing shader %s" % ",".join(v.get("issue_detail", {}).get("missing shader", [])))
+        bad = True
+    if iss.get("texture not uploaded"):
+        notes.append("%d texture(s) drawn before their data arrived" % iss["texture not uploaded"])
+        bad = bad or iss["texture not uploaded"] >= 100
+    if "unsupported NVN operation" in iss:
+        notes.append("unsupported NVN operation x%d" % iss["unsupported NVN operation"])
+        bad = True
+    if "validation message" in iss:
+        notes.append("validation messages x%d" % iss["validation message"])
+        bad = True
+    nb = 0
+    for nm in ("arr", "a", "b"):
+        sh = v.get("shots", {}).get(nm)
+        if not sh:
+            continue
+        if nm != "arr" and sh.get("mean", 99) < 2.0 and sh.get("std", 99) < 2.0:
+            notes.append("shot %s is black" % nm)
+            bad = True
+        nb = max(nb, sh.get("noise_blocks", 0)) if nm != "arr" else nb
+    if nb >= NOISE_FLAG:
+        notes.append("colour noise in %d blocks" % nb)
+        bad = True
+    v["notes"] = notes
+    v["status"] = "visual issue" if bad else "OK"
+    return v
+
+
 def write_report(a, areas, results, runs, unknown, meta):
+    for _v in results.values():
+        reclassify(_v)
     by_world = collections.OrderedDict((w, []) for w in WORLD_ORDER)
     for ar in areas:
         by_world[ar["world"]].append(ar)
