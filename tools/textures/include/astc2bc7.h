@@ -46,7 +46,9 @@ typedef struct a2b_options {
     int quality;     /* bc7e preset 0 ultrafast, 1 veryfast, 2 fast, 3 basic, 4 slow, 5 veryslow, 6 slowest; -1 = default */
     int threads;     /* 0 = all hardware threads */
     int perceptual;  /* bc7e perceptual weights (default 0: minimise plain RGB error against the ASTC decode) */
-    int allow_opaque_mode6; /* 0 (default): opaque blocks avoid BC7 mode 6 so alpha stays exactly 255 (-2 dB RGB PSNR) */
+    int allow_opaque_mode6; /* opaque source blocks: 0 (default) alpha exactly 255 (mode 6 off, the preset's channel rotations kept and the
+                           swapped-in alpha slot pinned); 1 raw bc7e (alpha may drift to 254..244); 2 legacy (mode 6 and rotation
+                           off, 2 to 12 dB lower RGB PSNR on RG normal maps) */
 } a2b_options;
 
 typedef struct a2b_stats {

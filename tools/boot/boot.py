@@ -21,7 +21,7 @@ import argparse, os, re, subprocess, sys, shutil, time, collections
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 RUN = os.path.join(ROOT, 'work', 'run')
-EXE = os.path.join(ROOT, 'game-build', 'build', 'release', 'mpr.exe')
+EXE = os.path.join(os.environ.get('MPR_BUILD_DIR') or os.path.join(ROOT, 'game-build', 'build', 'release'), 'mpr.exe')   # MPR_RUNTIME / MPR_BUILD_DIR: build against another runtime checkout (game-build/scripts/build.ps1)
 CXXFILT = r'C:\Program Files\LLVM\bin\llvm-cxxfilt.exe'
 sys.path.insert(0, os.path.dirname(__file__))
 import addrname
@@ -70,6 +70,7 @@ def run(a):
     # the run directory is work\run, so point the services at the real RomFS and a disposable save folder
     env.setdefault('NXRT_FS_ROMFS', os.path.join(ROOT, 'game', 'romfs'))
     env.setdefault('NXRT_FS_SAVE_DIR', os.path.join(RUN, 'save'))
+    env.setdefault('NXRT_BOOT_GFX', 'headless')   # mpr.exe opens a play-mode window by default; the boot loop stays headless (override with --env NXRT_BOOT_GFX=window)
     if a.level:
         env['NXRT_LOG_LEVEL'] = a.level
     if a.probe: env['NXRT_BOOT_PROBE'] = a.probe
