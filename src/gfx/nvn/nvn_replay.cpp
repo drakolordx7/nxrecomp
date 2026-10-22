@@ -143,6 +143,7 @@ bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in t
 // [nvn] trace_frame = N (NXRT_NVN_TRACE_FRAME): every draw, clear, copy and dispatch of the frame that is presented as number N is logged
 // at Info ("trace ..." lines): programs, render targets, sampled textures, blend and depth state. For finding out what a frame does.
 bool g_xfb_active = false;
+bool g_pipe_xfb = false;             // the bound pipeline is a stream-out variant
 bool g_xfb_began = false;            // vkCmdBeginTransformFeedbackEXT is in effect in the open pass
 bool g_xfb_have_counter = false;     // a counter buffer holds the bytes written so far: the next begin continues after them
 gfx::Buffer g_xfb_counter;
@@ -812,7 +813,8 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
         }
     }
     key.color_count = P.ncolor;
-    if (device().features().dynamic_rendering_unused_attachments) {
+    if (!P.ncolor && S.stage[kFragment] && !S.stage[kFragment]->refl.outputs.empty()) key.no_out = 1;   // a depth-only pass: no outputs
+    if (!key.no_out && device().features().dynamic_rendering_unused_attachments) {
         // the fragment shader may write outputs the pass has no attachment for: they are listed as unused (format UNDEFINED)
         if (const ShaderInfo* fs = S.stage[kFragment])
             for (const ShaderIo& o : fs->refl.outputs)
@@ -941,12 +943,15 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         GraphicsKey key;
         build_key(key, topo);
         g_pipe = graphics_pipeline(key, *pl);
+        g_pipe_xfb = key.xfb != 0;
         g_pipe_topo = topo;
         g_key_attr_count = key.attr_count;
         g_key_dummy_binding = key.dummy_binding;
         for (uint32_t i = 0; i < key.attr_count; ++i) g_key_binding[i] = key.attr[i].binding;
     }
     if (!g_pipe) return false;
+    // a draw inside a stream-out section that has no stream-out variant and nothing to render to has no effect
+    if (g_xfb_active && !g_pipe_xfb && !P.ncolor && !S.depth_tex) return false;
     if (g_trace) {
         char a[96], b[96], c[96];
         std::string line;
@@ -990,7 +995,12 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             NXLOG_I("nvn.xfb", "draw under transform feedback: vs %s mode %d attrs %u xfb0 %llx/%llu", S.stage[kVertex]->hash.c_str(), mode, S.attr_count,
                     static_cast<unsigned long long>(S.xfb[0].addr), static_cast<unsigned long long>(S.xfb[0].size));
     }
-    if (g_xfb_active && !g_xfb_began && device().features().transform_feedback && S.xfb[0].addr) {
+    if (g_pipe != g_bound_pipeline) {
+        xfb_end_in_pass();     // the pipeline cannot change while feedback is active; the byte counter carries the position over
+        vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
+        g_bound_pipeline = g_pipe;
+    }
+    if (g_xfb_active && g_pipe_xfb && !g_xfb_began && device().features().transform_feedback && S.xfb[0].addr) {
         BufRef xb = resolve_buffer(S.xfb[0].addr, S.xfb[0].size);
         if (xb.ok) {
             if (!g_xfb_counter) {
@@ -1008,10 +1018,6 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         } else {
             note_unsupported("transform feedback into an address outside every pool");
         }
-    }
-    if (g_pipe != g_bound_pipeline) {
-        vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
-        g_bound_pipeline = g_pipe;
     }
     set_dynamic_state(g_dirty, topo, indexed, index_type);
     if (g_dirty & kDesc) bind_sets(*pl, VK_PIPELINE_BIND_POINT_GRAPHICS);

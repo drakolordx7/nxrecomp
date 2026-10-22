@@ -31,6 +31,7 @@ std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
 // Producer modules with extra outputs (nvn_spirv_patch.h): (shader, slots as location * 4 + scalar type).
 std::map<std::pair<const ShaderInfo*, std::vector<uint32_t>>, VkShaderModule> g_variants;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;
+std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, bool>> g_no_out;   // (module, owned by this map)      // fragment shaders with private outputs (passes without colour attachments)
 std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, uint32_t>> g_xfb_mod;   // vertex shaders with the captured outputs, their stride       // fragment shaders with the second blend source at Location 0, Index 1
 std::unordered_map<uint64_t, std::vector<std::pair<GraphicsKey, VkPipeline>>> g_gfx;
 std::map<std::pair<const ShaderInfo*, VkPipelineLayout>, VkPipeline> g_compute;
@@ -152,6 +153,17 @@ static const std::pair<VkShaderModule, uint32_t>& xfb_variant(const ShaderInfo* 
 }
 
 uint32_t xfb_stride(const ShaderInfo* vs) { return vs ? xfb_variant(vs).second : 0; }
+
+static VkShaderModule no_output_module(const ShaderInfo* fs) {
+    auto it = g_no_out.find(fs);
+    if (it != g_no_out.end()) return it->second.first;
+    std::vector<uint32_t> patched;
+    std::pair<VkShaderModule, bool> e = {VK_NULL_HANDLE, false};
+    if (spirv_outputs_to_private(fs->spirv, patched)) e = {create_module(patched, fs->hash.c_str()), true};
+    else e = {shader_module(fs), false};
+    g_no_out[fs] = e;
+    return e.first;
+}
 
 static VkShaderModule dual_source_module(const ShaderInfo* fs) {
     auto it = g_dual_src.find(fs);
@@ -304,6 +316,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
             continue;
         }
         VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1])
+                           : (i == 1 && key.no_out)      ? no_output_module(key.stage[i])
                            : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
                                                          : shader_module(key.stage[i]);
         if (!m) { bucket.emplace_back(key, VK_NULL_HANDLE); return VK_NULL_HANDLE; }
@@ -509,6 +522,9 @@ void pipeline_shutdown() {
     for (auto& [k, m] : g_dual_src)
         if (m) vkDestroyShaderModule(d, m, nullptr);
     g_dual_src.clear();
+    for (auto& [k, e] : g_no_out)
+        if (e.first && e.second) vkDestroyShaderModule(d, e.first, nullptr);
+    g_no_out.clear();
     for (auto& [k, v] : g_xfb_mod)
         if (v.first) vkDestroyShaderModule(d, v.first, nullptr);
     g_xfb_mod.clear();
