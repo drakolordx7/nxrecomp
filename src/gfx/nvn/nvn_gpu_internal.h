@@ -109,7 +109,6 @@ struct ViewRequest {
     VkComponentMapping swizzle = {};                  // identity when all IDENTITY
     bool depth_aspect = true;                         // depth/stencil images: sample depth (true) or stencil (false)
 };
-struct TexGpu;     // opaque; created by tex_prepare
 // Creates the VkImage if needed and returns it (null when the format cannot be created: logged once; callers then bind
 // the dummy). Does not upload.
 TexGpu* tex_gpu(Texture* t);
@@ -141,6 +140,7 @@ VkSampler dummy_sampler();
 VkSampler sampler_for(const SamplerInfo& s);
 // Buffer <-> image copies with the NVN conventions (used by the replay for CopyBufferToTexture etc.).
 void tex_destroy(TexGpu* g);      // render thread
+void tex_shutdown();              // frees samplers and dummy resources (device idle)
 // Image formats chosen: bool descriptor for tests and logs
 struct TexStats { uint64_t images = 0, uploads = 0, upload_bytes = 0, transcodes = 0, failed = 0; };
 TexStats tex_stats();

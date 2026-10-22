@@ -525,6 +525,7 @@ void tear_down() {
         wait_serial_blocking(gp->submitted);
         retire();
         replay_shutdown();
+        tex_shutdown();
         while (!gp->deferred.empty()) {
             auto fn = std::move(gp->deferred.front().fn);
             gp->deferred.pop_front();
