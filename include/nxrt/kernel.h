@@ -155,6 +155,7 @@ int sched_current_core();
 // stalls and half the frame rate with every core busy); a class above the background keeps the hand-overs immediate.
 void sched_set_process_priority(bool interactive);
 void sched_apply(KThread& t);            // (re)applies affinity + priority of t to its host thread
+void install_busy_mutex_hle();           // nn::os::LockBusyMutex as host code that yields while it waits (busy_mutex.cpp, [sched] busy_mutex_hle)
 void sched_reset_for_tests();            // forget the slot and re-read the config at the next sched_info()
 
 // ---- time --------------------------------------------------------------------------------------------------------------------

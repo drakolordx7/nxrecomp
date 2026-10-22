@@ -30,6 +30,15 @@
 //   @log <text...>                    write the rest of the line to the log
 //   @assert <field> <op> <value>      fail the run now if false. fields: area world frame igt health px py pz vx vy vz speed state.
 //                                     ops: == != < <= > >=. area/world compare ids (== and != only); the others compare numbers
+//   @play <seconds> [timeout=<n>] [soft]   wait until the in-game play time has advanced by <seconds> since this step began (a loading screen or a
+//                                     stalled game does not advance it, so this waits for the game to be running). `soft`: when the timeout
+//                                     runs out, log "SOFT-TIMEOUT" and go on instead of failing the run
+//   @grant <item|all> [<amount> [<capacity>]]   set a power-up in the player state (EItemType name such as MorphBall, Missiles, ChargeBeam, or a number;
+//                                     `all` = every suit, beam, visor, ball and weapon upgrade at full capacity). Amount and capacity default to 1
+//   @call <offset> [<arg>...]         call the guest function at main+offset from the frame hook with up to 6 arguments: numbers (decimal or 0x hex) or
+//                                     $gs (CGameStateMP1*), $ps (CPlayerStateMP1*), $mgr (CStateManager*), $player (CPlayerMP1*); the result goes to the log
+//   @mash <keys> every <n> until <field> <op> <value> [timeout=<n>]   press the buttons for 4 frames every n frames until the condition
+//                                     (same fields and operators as @assert) holds, e.g. `@mash A every 120 until health > 0` drives menus
 //   @timeout <n>                      default timeout (frames) of every later wait; initial 3600; 0 = none
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
@@ -68,6 +77,10 @@ enum class StepKind : uint8_t {
     Key,         // text = input name, count = frames (-1 = not given: the runner uses 4); blocks like Press
     KeyDown,     // text = input name
     KeyUp,       // text = input name
+    PlayTime,    // x = seconds: wait until the in-game play time has advanced by x since the step began (the game is running, not loading); timeout
+    Grant,       // text = item name (or 'all'), count = item id (-1 for all), x = amount, y = capacity (written into the player state's power-up array)
+    Call,        // count = main-module offset of a guest function, text = its arguments (numbers or $gs $ps $mgr $player), run in the frame hook
+    Mash,        // buttons pressed 4 frames every `count` frames until the condition (field/op/x/id, as Assert) holds; timeout
 };
 
 enum class AssertField : uint8_t { Area, World, Frame, Igt, Health, PosX, PosY, PosZ, VelX, VelY, VelZ, Speed, State };
@@ -85,6 +98,7 @@ struct Step {
     uint8_t id[16] = {};           // Area/World/Assert(area, world)/Warp (the area): the resolved id in memory order (see tt_guid_to_bytes)
     uint8_t id2[16] = {};          // Warp: the world id
     std::string name1, name2;      // the id/name text as written (Warp: name1 = world, name2 = area)
+    bool soft = false;             // PlayTime: a timeout logs and continues instead of failing
     std::string text;
     AssertField field = AssertField::Frame;
     AssertOp op = AssertOp::Eq;

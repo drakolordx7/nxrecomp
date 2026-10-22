@@ -582,3 +582,65 @@ NXTEST(guid_malformed_text_rejected) {
     CHECK(!tt_guid_to_bytes("01234567-89ab-cdef-0123-456789abcde", b));   // too short
     CHECK(!tt_guid_to_bytes("", b));
 }
+
+// ---- S15 steps: @mash, @play, @grant, @call ----------------------------------------------------------------
+
+NXTEST(mash_parses_keys_interval_condition_and_timeout) {
+    Script sc;
+    REQUIRE(parse_ok("@mash A+B every 90 until health > 0 timeout=500\n@mash START every 5 until state >= 0\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Mash);
+    CHECK_EQ(sc.steps[0].buttons, bit(0) | bit(1));
+    CHECK_EQ(sc.steps[0].count, (int64_t)90);
+    CHECK_EQ(sc.steps[0].field, AssertField::Health);
+    CHECK_EQ(sc.steps[0].op, AssertOp::Gt);
+    CHECK_EQ(sc.steps[0].x, 0.0);
+    CHECK_EQ(sc.steps[0].timeout, (int64_t)500);
+    CHECK_EQ(sc.steps[1].field, AssertField::State);
+    CHECK_EQ(sc.steps[1].op, AssertOp::Ge);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)-1);
+}
+
+NXTEST(mash_errors) {
+    expect_err("@mash A every 90 until health\n", 1, "@mash <keys> every");
+    expect_err("@mash A every 3 until health > 0\n", 1, "at least 5");
+    expect_err("@mash A every 90 until bogus > 0\n", 1, "unknown assert field");
+    expect_err("@mash A each 90 until health > 0\n", 1, "@mash <keys> every");
+}
+
+NXTEST(play_parses_seconds_and_timeout) {
+    Script sc;
+    REQUIRE(parse_ok("@play 2.5\n@play 0 timeout=40\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::PlayTime);
+    CHECK_EQ(sc.steps[0].x, 2.5);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)40);
+    expect_err("@play -1\n", 1, "must be >= 0");
+}
+
+NXTEST(grant_names_numbers_and_all) {
+    Script sc;
+    REQUIRE(parse_ok("@grant MorphBall\n@grant missiles 250 250\n@grant Charge_Beam\n@grant 0x12 1\n@grant all\n", sc));
+    REQUIRE(sc.steps.size() == 5);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Grant);
+    CHECK_EQ(sc.steps[0].count, (int64_t)0x10);
+    CHECK_EQ(sc.steps[0].x, 1.0);
+    CHECK_EQ(sc.steps[1].count, (int64_t)4);
+    CHECK_EQ(sc.steps[1].x, 250.0);
+    CHECK_EQ(sc.steps[1].y, 250.0);
+    CHECK_EQ(sc.steps[2].count, (int64_t)0xa);
+    CHECK_EQ(sc.steps[3].count, (int64_t)0x12);
+    CHECK_EQ(sc.steps[4].count, (int64_t)-1);
+    expect_err("@grant sword\n", 1, "unknown item");
+}
+
+NXTEST(call_parses_offset_and_argument_text) {
+    Script sc;
+    REQUIRE(parse_ok("@call 0xb03a58 $mgr\n@call 0xc88f30 $ps 4 250\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Call);
+    CHECK_EQ(sc.steps[0].count, (int64_t)0xb03a58);
+    CHECK_EQ(sc.steps[0].text, std::string("$mgr"));
+    CHECK_EQ(sc.steps[1].text, std::string("$ps 4 250"));
+    expect_err("@call\n", 1, "@call <offset>");
+}
