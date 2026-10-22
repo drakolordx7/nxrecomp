@@ -26,11 +26,16 @@ class FillBufferCommand : public ICommand {
     FillBufferCommand& Initialize(SplitterDestinationT& destination, int32_t length, float value, int32_t nodeId) {
         Enabled = true;
         NodeId = nodeId;
+        // The C# property PreviousMixBufferVolume is a method of the server SplitterDestinationVersion1/2 (a plain vector member in test doubles).
+        auto volumes = [](auto* v) {
+            if constexpr (requires { v->PreviousMixBufferVolume(); }) return Span<float>(v->PreviousMixBufferVolume());
+            else return Span<float>(v->PreviousMixBufferVolume);
+        };
         if (destination.GetV2RefOrNull() == nullptr) {
-            PreviousMixBufferVolume = Span<float>(destination.GetV1RefOrNull()->PreviousMixBufferVolume);
+            PreviousMixBufferVolume = volumes(destination.GetV1RefOrNull());
             IsV2 = false;
         } else {
-            PreviousMixBufferVolume = Span<float>(destination.GetV2RefOrNull()->PreviousMixBufferVolume);
+            PreviousMixBufferVolume = volumes(destination.GetV2RefOrNull());
             IsV2 = true;
         }
         Length = length;
