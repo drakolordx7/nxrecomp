@@ -1,4 +1,4 @@
-"""Run Metroid Prime Remastered in the portable Eden under work/eden unattended and collect frames (stream S5).
+"""Run Metroid Prime Remastered in the portable Eden under work/eden unattended and collect frames (work area S5).
 
 Frames come from the LunarG screenshot layer (VK_LAYER_LUNARG_screenshot, in the Vulkan SDK): it writes the swapchain image of chosen present numbers as PPM,
 independent of any desktop, so it works in a disconnected session where screen capture is black. A converter thread turns each PPM into a PNG and deletes it.

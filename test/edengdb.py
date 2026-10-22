@@ -1,4 +1,4 @@
-"""Minimal GDB remote-protocol client for Eden's GDB stub (stream S5), plus the game-state reader that mirrors runtime/src/testtools/tt_probe.cpp.
+"""Minimal GDB remote-protocol client for Eden's GDB stub (work area S5), plus the game-state reader that mirrors runtime/src/testtools/tt_probe.cpp.
 
 Eden (v0.2.1, src/core/debugger) listens on [Debugging] gdbstub_port (default 6543) when use_gdbstub is on. A client connecting PAUSES the game; it keeps
 running only after a continue. Supported packets used here: qSupported, QStartNoAckMode, qRcmd (monitor get info / mappings), m (memory), g/p (registers),

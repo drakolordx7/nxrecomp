@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-run checks for the play-mode oracles (stream S8). run_suite.py proves each run passes; this proves what only a comparison can.
+"""Cross-run checks for the play-mode oracles (work area S8). run_suite.py proves each run passes; this proves what only a comparison can.
 
   python play_check.py suite <out_root>      after: run_suite.py suites/play.toml   (out_root = work/suite_out_play)
   python play_check.py mouse <run_dir> [--counts N] [--yaw-rad R] [--tol T]
