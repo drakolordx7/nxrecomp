@@ -154,3 +154,132 @@ bool spirv_dual_source_output(const std::vector<uint32_t>& in, std::vector<uint3
 }
 
 }  // namespace nxrt::nvn::be::gpu
+
+namespace nxrt::nvn::be::gpu {
+namespace {
+enum : uint32_t { OpCapability = 17, OpExecutionMode = 16, OpConstant = 43, OpStore = 62, OpLoad = 61, OpCopyObject = 83, OpAccessChain = 65, OpInBoundsAccessChain = 66,
+                  DecOffset = 35, DecXfbBuffer = 36, DecXfbStride = 37, CapTransformFeedback = 53, ExecXfb = 11 };
+}  // namespace
+
+bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, std::vector<SpvXfbOutput>* layout, uint32_t* stride) {
+    if (in.size() < 5) return false;
+    std::vector<Inst> insts;
+    for (size_t i = 5; i < in.size();) {
+        const uint32_t len = in[i] >> 16;
+        if (!len || i + len > in.size()) return false;
+        insts.push_back({i, in[i] & 0xffff, len});
+        i += len;
+    }
+    uint32_t bound = in[3];
+    uint32_t f32 = 0, entry_id = 0;
+    size_t first_type = 0, after_entry = 0, first_cap_end = 0;
+    std::map<uint32_t, uint32_t> location;                            // variable id -> Location
+    std::map<uint32_t, uint32_t> output_ptr_type;                     // output variable id -> pointer type id
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> vecs, ptrs;     // (component, count) / (storage, pointee) -> id
+    std::map<uint32_t, uint32_t> constants;                           // OpConstant id -> low word
+    std::map<uint32_t, uint32_t> max_component;                       // variable -> highest constant component index stored (+1)
+    std::map<uint32_t, bool> whole;                                   // variable used as a whole (store, load, copy)
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if (!first_type && is_type_or_constant(n.op)) first_type = n.at;
+        if (n.op == OpCapability) first_cap_end = n.at + n.len;
+        if (n.op == OpEntryPoint && !entry_id) entry_id = w[2];
+        if (n.op == OpEntryPoint || n.op == OpExecutionMode) after_entry = n.at + n.len;
+        if (n.op == OpTypeFloat && n.len >= 3 && w[2] == 32) f32 = w[1];
+        else if (n.op == OpTypeVector && n.len == 4) vecs[{w[2], w[3]}] = w[1];
+        else if (n.op == OpTypePointer && n.len == 4) ptrs[{w[2], w[3]}] = w[1];
+        else if (n.op == OpConstant && n.len >= 4) constants[w[2]] = w[3];
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariable && n.len >= 4 && w[3] == StorageOutput) output_ptr_type[w[2]] = w[1];
+    }
+    if (!first_type || !first_cap_end || !after_entry || !f32 || !entry_id) return false;
+    auto is_captured = [&](uint32_t v) { return location.count(v) && output_ptr_type.count(v); };
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if ((n.op == OpAccessChain || n.op == OpInBoundsAccessChain) && n.len >= 5) {
+            const uint32_t base = w[3];
+            if (!is_captured(base)) continue;
+            auto c = constants.find(w[4]);
+            if (c == constants.end()) whole[base] = true;
+            else max_component[base] = std::max(max_component[base], c->second + 1);
+        } else if (n.op == OpStore && n.len >= 3) {
+            if (is_captured(w[1])) whole[w[1]] = true;
+        } else if ((n.op == OpLoad || n.op == OpCopyObject) && n.len >= 4) {
+            if (is_captured(w[3])) whole[w[3]] = true;
+        }
+    }
+    // the captured variables in Location order, each narrowed to the components that are stored
+    std::map<uint32_t, uint32_t> by_location;   // Location -> variable id
+    for (const auto& kv : output_ptr_type)
+        if (location.count(kv.first)) by_location[location[kv.first]] = kv.first;
+    if (by_location.empty()) return false;
+    std::vector<uint32_t> decos, decls;
+    std::map<uint32_t, uint32_t> new_ptr;       // variable id -> replacement pointer type
+    uint32_t offset = 0;
+    std::vector<SpvXfbOutput> lay;
+    std::vector<std::pair<uint32_t, uint32_t>> decorate;   // variable, byte offset
+    for (const auto& kv : by_location) {
+        const uint32_t var = kv.second;
+        uint32_t ncomp = (whole.count(var) || !max_component.count(var)) ? 4u : std::min(4u, max_component[var]);
+        if (ncomp < 2) ncomp = 4;                // a lone scalar component keeps its vec4 (a scalar cannot be indexed)
+        if (ncomp != 4) {
+            const std::pair<uint32_t, uint32_t> vk = {f32, ncomp};
+            uint32_t vid;
+            auto vit = vecs.find(vk);
+            if (vit != vecs.end()) {
+                vid = vit->second;
+            } else {
+                vid = bound++;
+                decls.insert(decls.end(), {(4u << 16) | OpTypeVector, vid, f32, ncomp});
+                vecs[vk] = vid;
+            }
+            const std::pair<uint32_t, uint32_t> pk = {StorageOutput, vid};
+            uint32_t pid;
+            auto pit = ptrs.find(pk);
+            if (pit != ptrs.end()) {
+                pid = pit->second;
+            } else {
+                pid = bound++;
+                decls.insert(decls.end(), {(4u << 16) | OpTypePointer, pid, StorageOutput, vid});
+                ptrs[pk] = pid;
+            }
+            new_ptr[var] = pid;
+        }
+        decorate.push_back({var, offset});
+        lay.push_back({kv.first, ncomp, offset});
+        offset += 4 * ncomp;
+    }
+    for (const auto& d : decorate) {
+        decos.insert(decos.end(), {(4u << 16) | OpDecorate, d.first, DecXfbBuffer, 0u});
+        decos.insert(decos.end(), {(4u << 16) | OpDecorate, d.first, DecXfbStride, offset});
+        decos.insert(decos.end(), {(4u << 16) | OpDecorate, d.first, DecOffset, d.second});
+    }
+    std::vector<uint32_t> res;
+    res.reserve(in.size() + decos.size() + decls.size() + 8);
+    res.insert(res.end(), in.begin(), in.begin() + 5);
+    res[3] = bound;
+    bool decls_done = false;
+    for (const Inst& n : insts) {
+        if (n.at == first_type) res.insert(res.end(), decos.begin(), decos.end());
+        // the new vector and pointer types go in front of the first variable that uses one (every type precedes its users)
+        if (!decls_done && ((n.op == OpVariable && n.len >= 4 && in[n.at + 3] == StorageOutput && new_ptr.count(in[n.at + 2])) || n.op == OpFunction)) {
+            res.insert(res.end(), decls.begin(), decls.end());
+            decls_done = true;
+        }
+        std::vector<uint32_t> copy(in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
+        if (n.op == OpVariable && copy.size() >= 4 && copy[3] == StorageOutput) {
+            auto it = new_ptr.find(copy[2]);
+            if (it != new_ptr.end()) copy[1] = it->second;
+        }
+        res.insert(res.end(), copy.begin(), copy.end());
+        if (n.at + n.len == first_cap_end) res.insert(res.end(), {(2u << 16) | OpCapability, CapTransformFeedback});
+        if (n.at + n.len == after_entry) res.insert(res.end(), {(3u << 16) | OpExecutionMode, entry_id, ExecXfb});
+    }
+    if (!decls_done) return false;
+    out = std::move(res);
+    if (layout) *layout = lay;
+    if (stride) *stride = offset;
+    return true;
+}
+
+}  // namespace nxrt::nvn::be::gpu

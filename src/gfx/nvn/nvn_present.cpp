@@ -11,7 +11,6 @@ namespace nxrt::nvn::be::gpu {
 namespace {
 struct CaptureEnd {
     ~CaptureEnd() {
-        renderdoc_end_if_capturing();
         trace_dump_targets();
     }
 };

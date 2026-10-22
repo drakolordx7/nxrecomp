@@ -24,7 +24,7 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `tests/data` | Loader fixtures, HIPC test vectors (generated, see Build and test) |
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py` (HIPC vectors); for the lifted tests: `guest_build.py`, `make_sites.py`, `unicorn_expect.py`, `native_check.cmd`, `dump_results.py` |
-| `docs` | `S3.md`, `S3b.md`, `S4b.md` and `S4d.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
+| `docs` | `S3.md`, `S3b.md`, `S4b.md`, `S4d.md` and `S4e.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
 | `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_scene_shaders.py` (test-scene SPIR-V), `nvn_unit.ps1` (build and run one NVN unit test without CMake), `gen_present_shaders.py`, `gen_mask_clear_shaders.py` (SPIR-V of the present pass and the masked clear), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
 
 ## Build and test
@@ -130,6 +130,7 @@ Every source or header file that names an upstream project in its comments is li
 | `src/gfx/nvn/api_cmdbuf.cpp`, `nvn_cmd_handles.cpp` | SuperMarioWonderRecomp `docs/nvn/DEBUG.md` #1, #26 and `DEBUG-2.md` #90, #91 (the command memory and handle lifetime rules); code new | MIT |
 | `src/gfx/nvn/nvn_gpu.cpp`, `nvn_gpu_pool.cpp`, `nvn_gpu_texture.cpp`, `nvn_replay.cpp`, `nvn_pipeline.cpp`, `nvn_present.cpp` | Design only: smo-recomp `docs/architecture.md` (record on game threads, replay on one render thread) and SuperMarioWonderRecomp `docs/NVN.md`, `docs/nvn/DEBUG.md`, `DEBUG-2.md`, `TRANSLATOR.md` (pitfall list, binding scheme); Ryujinx `Ryujinx.Graphics.Vulkan` binding scheme through the harness; `VK_EXT_external_memory_host` import measured here. Code written from scratch | GPL-3.0; MIT |
 | `src/gfx/nvn/nvn_texture_layout.cpp`, `nvn_texdata.cpp` | tools/tiling (`tegra_tiling.h`, compiled in as source) and tools/textures (`astc2bc7.h`, linked as prebuilt libraries); layout rules cross-checked against SuperMarioWonderRecomp `docs/nvn/TILING.md` | GPL-3.0-or-later; MIT |
+| `src/gfx/nvn/nvn_spirv_patch.cpp` | SuperMarioWonderRecomp `runtime/src/nvn/nvn_spirv_patch.cpp` (MIT, Copyright (c) 2026 BelmanteGu): the idea of rewriting a translated module's declarations when the pipeline needs it (there for integer vertex inputs); the two rewrites here (missing varyings, dual-source output) and the code are new | MIT |
 | `src/gfx/nvn/nvn_present_pass.cpp`, `nvn_mask_clear.cpp`, `present_shaders.inc`, `mask_clear_shaders.inc` | Written from scratch; SPIR-V generated from GLSL in `scripts/gen_*_shaders.py` with glslc | GPL-3.0-or-later |
 | `../tools/shaders/harness/translator/spirv-pixld-*.patch` | Patches to the Ryujinx shader translator (MIT, Copyright Ryujinx Team and Contributors); context lines are Ryujinx source | MIT |
 | `src/gfx/scene.cpp` | tools/tiling (`tegra_tiling.h`, compiled in as source from the tools repository) for the block-linear round trip of the test texture | GPL-3.0-or-later |
@@ -176,7 +177,7 @@ External specifications used as references:
 ## Status and gaps
 
 - No real service behaviour: services are stubs, by design.
-- Audio is out of scope of this library. Graphics, platform input and the NVN front end are the graphics shell (`nxrt_gfx`, docs/S4b.md): the NVN entry points are logging stubs until `nvn::install_backend()` (include/nxrt/nvn_backend.h) registers the real ones: 513 of 523 are implemented (docs/S4d.md); game input mapping is not part of it.
+- Audio is out of scope of this library. Graphics, platform input and the NVN front end are the graphics shell (`nxrt_gfx`, docs/S4b.md): the NVN entry points are logging stubs until `nvn::install_backend()` (include/nxrt/nvn_backend.h) registers the real ones: 524 of 534 are implemented (docs/S4d.md, docs/S4e.md); game input mapping is not part of it.
 - Kernel objects for guest-side servers (CreatePort, ReplyAndReceive) are not implemented and are logged as unknown SVCs.
 - C++ exceptions: `_Unwind_ForcedUnwind` and `_Unwind_Backtrace` are not supported; the `__cxa_exception` layout, the typeinfo vtable symbols and the place of libunwind in the game are assumptions until the dump exists (docs/S3b.md, Gaps).
 - A lifted module's ABI version is passed by the caller because `NxModule` carries none (lifter note in docs/S3b.md).

@@ -606,6 +606,10 @@ void tex_ensure_current(Texture* t, Frame& f) {
     if (g->uploaded && !dirty) return;           // the image already holds the storage's content
     if (g->gpu_written && !dirty) return;        // the GPU rendered it and the CPU did not write since
     t->cpu_dirty.exchange(false);
+    if (g->gpu_written) {
+        static int logged = 0;
+        if (logged++ < 20) NXLOG_W(kTag, "texture %u: the GPU wrote it, the game flushed memory it overlaps: its storage replaces the image content", t->id);
+    }
 
     const gfx::DeviceFeatures& ft = device().features();
     TexCaps caps;
@@ -914,42 +918,8 @@ uint8_t to8(float v, bool hdr) {
 }
 }  // namespace
 
-bool dump_texture(Texture* t, const std::string& path, std::string* stats) {
-    TexGpu* g = t ? t->gpu : nullptr;
-    if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED) return false;
-    const VkFormat f = g->format;
-    uint32_t bpp = 0;
-    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
-    switch (f) {
-        case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
-        case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_B10G11R11_UFLOAT_PACK32: case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-            bpp = 4; break;
-        case VK_FORMAT_R16G16B16A16_SFLOAT: case VK_FORMAT_R32G32_SFLOAT: case VK_FORMAT_R32G32_UINT: bpp = 8; break;
-        case VK_FORMAT_R32G32B32A32_SFLOAT: case VK_FORMAT_R32G32B32A32_UINT: bpp = 16; break;
-        case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_SFLOAT: case VK_FORMAT_R16_UNORM: bpp = 2; break;
-        case VK_FORMAT_R8_UNORM: bpp = 1; break;
-        case VK_FORMAT_D16_UNORM: bpp = 2; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
-        case VK_FORMAT_D32_SFLOAT: case VK_FORMAT_D32_SFLOAT_S8_UINT: bpp = 4; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
-        case VK_FORMAT_D24_UNORM_S8_UINT: bpp = 4; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
-        default: return false;
-    }
-    const VkExtent3D e = level_extent(g->base, 0);
-    const uint64_t size = static_cast<uint64_t>(e.width) * e.height * bpp;
-    finish();
-    gfx::Buffer rb;
-    run_frame_sync([&](Frame& fr) {
-        if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &rb, "nvn texture dump") != VK_SUCCESS) return;
-        const VkImageLayout prev = g->layout;
-        move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        VkBufferImageCopy r = {};
-        r.imageSubresource = {aspect, 0, 0, 1};
-        r.imageExtent = {e.width, e.height, 1};
-        vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.buffer, 1, &r);
-        move_layout(fr, *g, prev);
-    });
-    if (!rb) return false;
-    device().invalidate_buffer(rb);
-    const uint8_t* src = static_cast<const uint8_t*>(rb.mapped);
+// The decode of a dump: texel bytes of a level to RGBA8 (saved as a PNG when path is not empty) plus per-channel statistics.
+static bool convert_png_impl(const uint8_t* src, VkFormat f, VkExtent3D e, uint32_t bpp, VkImageAspectFlags aspect, const std::string& path, std::string* stats) {
     std::vector<uint8_t> rgba(static_cast<size_t>(e.width) * e.height * 4, 255);
     double sum[4] = {0, 0, 0, 0};
     float mn[4] = {1e30f, 1e30f, 1e30f, 1e30f}, mx[4] = {-1e30f, -1e30f, -1e30f, -1e30f};
@@ -994,7 +964,6 @@ bool dump_texture(Texture* t, const std::string& path, std::string* stats) {
         }
         if (any) ++nonzero;
     }
-    device().destroy_buffer(rb);
     if (stats) {
         char b[400];
         const double n = static_cast<double>(e.width) * e.height;
@@ -1003,6 +972,107 @@ bool dump_texture(Texture* t, const std::string& path, std::string* stats) {
         *stats = b;
     }
     return path.empty() || gfx::save_png_rgba(path, rgba.data(), e.width, e.height);
+}
+
+// ---- mid-frame snapshots (debug): a copy of a texture recorded into the frame being replayed, written out after the frame
+static uint32_t dump_bpp(VkFormat f, VkImageAspectFlags* aspect) {
+    *aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    switch (f) {
+        case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_B10G11R11_UFLOAT_PACK32: case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            return 4;
+        case VK_FORMAT_R16G16B16A16_SFLOAT: case VK_FORMAT_R32G32_SFLOAT: case VK_FORMAT_R32G32_UINT: return 8;
+        case VK_FORMAT_R32G32B32A32_SFLOAT: case VK_FORMAT_R32G32B32A32_UINT: return 16;
+        case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_SFLOAT: case VK_FORMAT_R16_UNORM: return 2;
+        case VK_FORMAT_R8_UNORM: return 1;
+        case VK_FORMAT_D16_UNORM: *aspect = VK_IMAGE_ASPECT_DEPTH_BIT; return 2;
+        case VK_FORMAT_D32_SFLOAT: case VK_FORMAT_D32_SFLOAT_S8_UINT: case VK_FORMAT_D24_UNORM_S8_UINT: *aspect = VK_IMAGE_ASPECT_DEPTH_BIT; return 4;
+        default: return 0;
+    }
+}
+
+namespace {
+struct Snapshot {
+    gfx::Buffer buf;
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    VkExtent3D e = {0, 0, 1};
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    uint32_t bpp = 0;
+};
+std::vector<Snapshot> g_snaps;
+}  // namespace
+
+int snapshot_record(Texture* t, Frame& fr) {
+    TexGpu* g = t ? t->gpu : nullptr;
+    if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED) return -1;
+    Snapshot s;
+    s.format = g->format;
+    s.bpp = dump_bpp(g->format, &s.aspect);
+    if (!s.bpp) return -1;
+    s.e = level_extent(g->base, 0);
+    const uint64_t size = static_cast<uint64_t>(s.e.width) * s.e.height * s.bpp;
+    if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &s.buf, "nvn snapshot") != VK_SUCCESS) return -1;
+    const VkImageLayout prev = g->layout;
+    move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    VkBufferImageCopy r = {};
+    r.imageSubresource = {s.aspect, 0, 0, 1};
+    r.imageOffset = {0, 0, static_cast<int32_t>(s.e.depth / 2)};    // a 3D texture: its middle slice
+    r.imageExtent = {s.e.width, s.e.height, 1};
+    vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, 1, &r);
+    move_layout(fr, *g, prev);
+    g_snaps.push_back(std::move(s));
+    return static_cast<int>(g_snaps.size()) - 1;
+}
+
+bool snapshot_write(int index, const std::string& path, std::string* stats) {
+    if (index < 0 || index >= static_cast<int>(g_snaps.size())) return false;
+    Snapshot& s = g_snaps[static_cast<size_t>(index)];
+    if (!s.buf) return false;
+    device().invalidate_buffer(s.buf);
+    const bool ok = convert_png_impl(static_cast<const uint8_t*>(s.buf.mapped), s.format, s.e, s.bpp, s.aspect, path, stats);
+    device().destroy_buffer(s.buf);
+    s.buf = gfx::Buffer();
+    return ok;
+}
+
+bool dump_texture(Texture* t, const std::string& path, std::string* stats) {
+    TexGpu* g = t ? t->gpu : nullptr;
+    if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED) return false;
+    const VkFormat f = g->format;
+    uint32_t bpp = 0;
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
+    switch (f) {
+        case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: case VK_FORMAT_B8G8R8A8_UNORM: case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_B10G11R11_UFLOAT_PACK32: case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            bpp = 4; break;
+        case VK_FORMAT_R16G16B16A16_SFLOAT: case VK_FORMAT_R32G32_SFLOAT: case VK_FORMAT_R32G32_UINT: bpp = 8; break;
+        case VK_FORMAT_R32G32B32A32_SFLOAT: case VK_FORMAT_R32G32B32A32_UINT: bpp = 16; break;
+        case VK_FORMAT_R8G8_UNORM: case VK_FORMAT_R16_SFLOAT: case VK_FORMAT_R16_UNORM: bpp = 2; break;
+        case VK_FORMAT_R8_UNORM: bpp = 1; break;
+        case VK_FORMAT_D16_UNORM: bpp = 2; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
+        case VK_FORMAT_D32_SFLOAT: case VK_FORMAT_D32_SFLOAT_S8_UINT: bpp = 4; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
+        case VK_FORMAT_D24_UNORM_S8_UINT: bpp = 4; aspect = VK_IMAGE_ASPECT_DEPTH_BIT; break;
+        default: return false;
+    }
+    const VkExtent3D e = level_extent(g->base, 0);
+    const uint64_t size = static_cast<uint64_t>(e.width) * e.height * bpp;
+    finish();
+    gfx::Buffer rb;
+    run_frame_sync([&](Frame& fr) {
+        if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &rb, "nvn texture dump") != VK_SUCCESS) return;
+        const VkImageLayout prev = g->layout;
+        move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy r = {};
+        r.imageSubresource = {aspect, 0, 0, 1};
+        r.imageExtent = {e.width, e.height, 1};
+        vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rb.buffer, 1, &r);
+        move_layout(fr, *g, prev);
+    });
+    if (!rb) return false;
+    device().invalidate_buffer(rb);
+    const bool ok = convert_png_impl(static_cast<const uint8_t*>(rb.mapped), f, e, bpp, aspect, path, stats);
+    device().destroy_buffer(rb);
+    return ok;
 }
 
 void mark_texture_cpu_dirty(Texture* t) {

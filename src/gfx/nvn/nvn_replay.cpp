@@ -143,7 +143,18 @@ bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in t
 // [nvn] trace_frame = N (NXRT_NVN_TRACE_FRAME): every draw, clear, copy and dispatch of the frame that is presented as number N is logged
 // at Info ("trace ..." lines): programs, render targets, sampled textures, blend and depth state. For finding out what a frame does.
 bool g_xfb_active = false;
+bool g_xfb_began = false;            // vkCmdBeginTransformFeedbackEXT is in effect in the open pass
+bool g_xfb_have_counter = false;     // a counter buffer holds the bytes written so far: the next begin continues after them
+gfx::Buffer g_xfb_counter;
+VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
 bool g_trace = false;
+struct TraceSnap { int index; int draw; std::string name; std::string desc; };
+std::vector<TraceSnap> g_trace_snaps;
+std::vector<int> g_trace_snap_draws;   // [nvn] trace_snap: draw numbers after which the targets are copied
+bool g_trace_snap_read = false;
+std::vector<std::string> g_trace_snap_fs;
+bool g_trace_snap_sampled = false;           // [nvn] trace_snap_sampled = 1: a snapshot draw also copies the textures that draw samples
+std::vector<Texture*> g_trace_sampled;       // textures sampled by the last traced draw
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
 int g_trace_n = 0;
@@ -154,6 +165,20 @@ const char* tex_desc(const Texture* t, char* buf, size_t n) {
     std::snprintf(buf, n, "t%u:%s %dx%dx%d L%u/%u%s%s", t->id, t->fmt ? t->fmt->name : "?", t->b.width, t->b.height, t->b.depth, t->levels, t->layers,
                   t->b.samples > 1 ? " ms" : "", t->b.target == NVN_TEXTURE_TARGET_3D ? " 3D" : "");
     return buf;
+}
+
+// Percentage of the texture's storage (in the game's memory, first 16 MiB) that holds a non-zero 8-byte word; -1 without storage. Trace only.
+int storage_nonzero_pct(const Texture* t) {
+    if (!t || !t->mem || !t->storage_size) return -1;
+    const uint64_t n = std::min<uint64_t>(t->storage_size, 16ull << 20) / 8;
+    if (!n) return -1;
+    uint64_t nz = 0;
+    for (uint64_t i = 0; i < n; ++i) {
+        uint64_t w;
+        std::memcpy(&w, t->mem + i * 8, 8);
+        nz += w != 0;
+    }
+    return static_cast<int>(nz * 100 / n);
 }
 
 void log_once(const char* key, const char* msg) {
@@ -200,8 +225,19 @@ VkImageViewType view_type_for(const DescriptorBinding& b) {
 }
 
 // ---- passes ----------------------------------------------------------------------------------------------------------------
+// Ends transform feedback in the open pass, remembering the bytes written in the counter buffer (a pass break must not restart the buffer).
+void xfb_end_in_pass() {
+    if (!g_xfb_began) return;
+    VkBuffer cbuf = g_xfb_counter.buffer;
+    const VkDeviceSize off = 0;
+    vkCmdEndTransformFeedbackEXT(F->cb, 0, 1, &cbuf, &off);
+    g_xfb_began = false;
+    g_xfb_have_counter = true;
+}
+
 void end_pass() {
     if (!P.open) return;
+    xfb_end_in_pass();
     vkCmdEndRendering(F->cb);
     P.open = false;
     memory_barrier(F->cb);
@@ -289,6 +325,10 @@ bool ensure_pass(bool depth_ro = false) {
             have_depth = true;
             any = true;
         }
+    }
+    if (!any && g_xfb_active && device().features().transform_feedback) {   // a stream-out pass without attachments
+        extent = {1, 1};
+        any = true;
     }
     if (!any || extent.width == UINT32_MAX) return false;
     P.extent = extent;
@@ -797,6 +837,7 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
                                     uses_src1(static_cast<VkBlendFactor>(key.blend_src_a[i])) || uses_src1(static_cast<VkBlendFactor>(key.blend_dst_a[i]))))
             key.dual_src = 1;
     }
+    key.xfb = g_xfb_active && device().features().transform_feedback && S.stage[kVertex] && xfb_stride(S.stage[kVertex]) ? 1 : 0;
     key.depth_format = P.depth_fmt;
     key.stencil_format = P.has_stencil ? P.depth_fmt : VK_FORMAT_UNDEFINED;
     key.samples = P.samples;
@@ -911,11 +952,14 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
               S.stage[kGeometry] ? S.stage[kGeometry]->hash.c_str() : "-", mode, indexed ? 1 : 0, line.c_str(), tex_desc(S.depth_tex.get(), b, sizeof b),
               P.depth_ro ? " (ro)" : "", S.color.blend_enable_mask, S.chmask.mask[0], S.ds.depth_test ? 1 : 0, S.ds.depth_write ? 1 : 0, S.ds.depth_func,
               S.poly.cull_face, static_cast<unsigned long long>(S.ubo[kVertex][0].addr), static_cast<unsigned long long>(S.ubo[kVertex][0].size));
+        g_trace_sampled.clear();
         for (const BindingDesc& d : pl->bindings) {
             if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
             const TexResolved r = d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? resolve_image(d) : resolve_texture(d);
-            TRACE("    %s set%u b%u %s -> %s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
-                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)");
+            if (r.tex) g_trace_sampled.push_back(r.tex);
+            TRACE("    %s set%u b%u %s -> %s%s mem %d%%%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
+                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
+                  r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "");
         }
     }
     if (g_xfb_active) {
@@ -923,6 +967,25 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         if (seen.emplace(S.stage[kVertex]->hash, true).second)
             NXLOG_I("nvn.xfb", "draw under transform feedback: vs %s mode %d attrs %u xfb0 %llx/%llu", S.stage[kVertex]->hash.c_str(), mode, S.attr_count,
                     static_cast<unsigned long long>(S.xfb[0].addr), static_cast<unsigned long long>(S.xfb[0].size));
+    }
+    if (g_xfb_active && !g_xfb_began && device().features().transform_feedback && S.xfb[0].addr) {
+        BufRef xb = resolve_buffer(S.xfb[0].addr, S.xfb[0].size);
+        if (xb.ok) {
+            if (!g_xfb_counter) {
+                if (device().create_buffer(256, VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Upload,
+                                           &g_xfb_counter, "nvn xfb counter") != VK_SUCCESS)
+                    g_xfb_counter = gfx::Buffer();
+            }
+            const VkDeviceSize size = std::min<VkDeviceSize>(S.xfb[0].size ? S.xfb[0].size : xb.avail, xb.avail) & ~static_cast<VkDeviceSize>(3);
+            vkCmdBindTransformFeedbackBuffersEXT(F->cb, 0, 1, &xb.buffer, &xb.offset, &size);
+            VkBuffer cbuf = g_xfb_counter.buffer;
+            const VkDeviceSize coff = 0;
+            if (g_xfb_have_counter && cbuf) vkCmdBeginTransformFeedbackEXT(F->cb, 0, 1, &cbuf, &coff);
+            else vkCmdBeginTransformFeedbackEXT(F->cb, 0, 0, nullptr, nullptr);
+            g_xfb_began = true;
+        } else {
+            note_unsupported("transform feedback into an address outside every pool");
+        }
     }
     if (g_pipe != g_bound_pipeline) {
         vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
@@ -963,6 +1026,54 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     return true;
 }
 
+
+// [nvn] trace_snap = "253,300": after those draws of the traced frame the pass is closed and the colour targets and the depth target are
+// copied (png after the frame: snap_d<draw>_t<id>_<format>.png).
+void trace_snap_after_draw() {
+    if (!g_trace) return;
+    if (!g_trace_snap_read) {
+        g_trace_snap_read = true;
+        g_trace_snap_sampled = nxrt::config_get_int("nvn", "trace_snap_sampled", 0) != 0;
+        {   // [nvn] trace_snap_fs = "f77f9d,e72811": every draw whose fragment shader hash starts with one of these
+            const std::string fl = nxrt::config_get_str("nvn", "trace_snap_fs", "");
+            size_t k = 0;
+            while (k < fl.size()) {
+                size_t j = fl.find(',', k);
+                if (j == std::string::npos) j = fl.size();
+                if (j > k) g_trace_snap_fs.push_back(fl.substr(k, j - k));
+                k = j + 1;
+            }
+        }
+        const std::string list = nxrt::config_get_str("nvn", "trace_snap", "");
+        size_t i = 0;
+        while (i < list.size()) {
+            size_t j = list.find(',', i);
+            if (j == std::string::npos) j = list.size();
+            if (j > i) g_trace_snap_draws.push_back(std::atoi(list.substr(i, j - i).c_str()));
+            i = j + 1;
+        }
+    }
+    bool hit = false;
+    for (int d : g_trace_snap_draws) hit |= d == g_trace_n;
+    if (!hit && S.stage[kFragment] && !g_trace_snap_fs.empty()) {
+        for (const std::string& pre : g_trace_snap_fs) hit |= S.stage[kFragment]->hash.compare(0, pre.size(), pre) == 0;
+    }
+    if (!hit) return;
+    end_pass();
+    auto take = [&](Texture* t) {
+        if (!t) return;
+        const int idx = snapshot_record(t, *F);
+        if (idx < 0) return;
+        char buf[96];
+        g_trace_snaps.push_back({idx, g_trace_n, std::string("snap_d") + std::to_string(g_trace_n) + "_t" + std::to_string(t->id) + "_" + (t->fmt ? t->fmt->name : "x") + ".png", tex_desc(t, buf, sizeof buf)});
+    };
+    for (uint32_t i = 0; i < S.ncolor; ++i) take(S.color_tex[i].get());
+    take(S.depth_tex.get());
+    if (g_trace_snap_sampled) {
+        for (Texture* t : g_trace_sampled) take(t);
+    }
+}
+
 void do_draw_arrays(const P_DrawArrays& p) {
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), false, 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
@@ -997,6 +1108,7 @@ void do_draw_arrays(const P_DrawArrays& p) {
         vkCmdDrawIndexed(F->cb, static_cast<uint32_t>(idx.size()), std::max<uint32_t>(1, p.instance_count), 0, 0, p.base_instance);
     }
     counters().draws.fetch_add(1, std::memory_order_relaxed);
+    trace_snap_after_draw();
 }
 
 void do_draw_elements(const P_DrawElements& p) {
@@ -1044,6 +1156,7 @@ void do_draw_elements(const P_DrawElements& p) {
         vkCmdDrawIndexed(F->cb, p.count, std::max<uint32_t>(1, p.instance_count), 0, p.base_vertex, p.base_instance);
     }
     counters().draws.fetch_add(1, std::memory_order_relaxed);
+    trace_snap_after_draw();
 }
 
 void do_draw_indirect(const P_DrawIndirect& p) {
@@ -1069,6 +1182,7 @@ void do_draw_indirect(const P_DrawIndirect& p) {
         vkCmdDrawIndirect(F->cb, ib.buffer, ib.offset, 1, 16);
     }
     counters().draws.fetch_add(1, std::memory_order_relaxed);
+    trace_snap_after_draw();
 }
 
 void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
@@ -1202,6 +1316,17 @@ void do_clear_texture(const P_ClearTexture& p) {
 
 void do_copy_buffer_texture(const P_CopyBufTex& p, bool to_texture) {
     Texture* t = p.tex;
+    if (t && t->b.target == NVN_TEXTURE_TARGET_3D) {
+        static int logged = 0;
+        if (logged < 30) {
+            ++logged;
+            char a[96];
+            NXLOG_I("nvn.copy", "%s 3D %s region %s (%d,%d,%d %dx%dx%d) buffer %llx row %lld image %lld", to_texture ? "buffer -> texture" : "texture -> buffer", tex_desc(t, a, sizeof a),
+                    p.has_region ? "given" : "whole", p.has_region ? p.region.x : 0, p.has_region ? p.region.y : 0, p.has_region ? p.region.z : 0,
+                    p.has_region ? p.region.w : 0, p.has_region ? p.region.h : 0, p.has_region ? p.region.d : 0, static_cast<unsigned long long>(p.address),
+                    static_cast<long long>(p.row_stride), static_cast<long long>(p.image_stride));
+        }
+    }
     if (!t || !tex_gpu(t)) return;
     end_pass();
     SubRes s = sub_of(p.view, p.has_view);
@@ -1588,9 +1713,18 @@ void run_list(const CmdList& list, int depth) {
                             S.stage[kVertex] ? S.stage[kVertex]->hash.c_str() : "-", static_cast<unsigned long long>(S.xfb[0].addr),
                             static_cast<unsigned long long>(S.xfb[0].size));
                 TRACE("%s control %llx", op_name(r.op()), static_cast<unsigned long long>(p.address));
-                if (r.op() == Op::BeginXfb) g_xfb_active = true;
-                else if (r.op() == Op::EndXfb) g_xfb_active = false;
-                note_unsupported("transform feedback (recorded; the vertex shader stream-out is not executed)");
+                if (!device().features().transform_feedback) {
+                    note_unsupported("transform feedback (the device has no VK_EXT_transform_feedback)");
+                    break;
+                }
+                if (r.op() == Op::BeginXfb) {
+                    g_xfb_active = true;
+                    g_xfb_have_counter = false;
+                } else if (r.op() == Op::EndXfb) {
+                    xfb_end_in_pass();
+                    g_xfb_active = false;
+                    g_xfb_have_counter = false;
+                }
                 break;
             }
             default: note_unsupported(op_name(r.op())); break;
@@ -1602,7 +1736,6 @@ void run_list(const CmdList& list, int depth) {
 
 void replay_begin_submit(Frame& f) {
     F = &f;
-    renderdoc_start_if_due(counters().presents.load());
     if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }
@@ -1634,6 +1767,12 @@ void replay_lists(Frame& f, const std::vector<Ref<CmdList>>& lists) {
 }
 
 void trace_dump_targets() {
+    for (const TraceSnap& sn : g_trace_snaps) {
+        std::string stats;
+        const bool ok = snapshot_write(sn.index, sn.name, &stats);
+        NXLOG_I("nvn.trace", "snapshot after draw %d: %s -> %s: %s", sn.draw, sn.desc.c_str(), ok ? sn.name.c_str() : "(not written)", ok ? stats.c_str() : "");
+    }
+    g_trace_snaps.clear();
     if (g_trace_targets.empty()) return;
     std::vector<Ref<Texture>> list;
     list.swap(g_trace_targets);
@@ -1657,6 +1796,9 @@ void replay_end_submit(Frame& f) {
 }
 
 void replay_shutdown() {
+    if (g_xfb_counter) device().destroy_buffer(g_xfb_counter);
+    g_xfb_counter = gfx::Buffer();
+    g_xfb_began = g_xfb_active = g_xfb_have_counter = false;
     if (g_occ_pool) vkDestroyQueryPool(vkdev(), g_occ_pool, nullptr);
     g_occ_pool = VK_NULL_HANDLE;
     g_occ_tried = false;
