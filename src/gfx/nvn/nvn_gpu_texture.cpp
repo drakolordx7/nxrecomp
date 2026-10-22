@@ -17,6 +17,8 @@
 #include <utility>
 #include <vector>
 
+#include "nxrt/ftrace.h"
+#include "nxrt/gfx_tuning.h"
 #include "nxrt/log.h"
 #include "nvn_enums.h"
 #include "nvn_format.h"
@@ -553,6 +555,7 @@ VkSampler create_sampler(const SamplerInfo& s) {
 TexGpu* tex_gpu(Texture* t) { return tex_or_null(t); }
 
 void tex_ensure_current(Texture* t, Frame& f) {
+    NXFT_MIN("tex.ensure", 30000);
     TexGpu* g = tex_or_null(t);
     if (!g || g->depth) return;
     if (t->b.samples > 1 || target_is_multisample(t->b.target)) return;   // multisampled images are only ever rendered
@@ -567,7 +570,8 @@ void tex_ensure_current(Texture* t, Frame& f) {
     caps.astc = ft.astc_ldr;
     caps.bc7_transcode = true;
     PreparedTexture prep;
-    const bool ok = prepare_texture(*t, caps, prep);
+    bool ok;
+    { NXFT_MIN("tex.prepare", 30000); ok = prepare_texture(*t, caps, prep); }
     if (!ok || prep.format != g->format || !(g->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
         NXLOG_E(kTag, "texture %u: not uploaded (%s): the image is cleared", t->id,
                 !ok ? prep.error.c_str() : "the image format differs from the storage format or the image cannot be written");
@@ -723,7 +727,22 @@ VkSampler dummy_sampler() {
     return g_sh.dummy_sampler;
 }
 
-VkSampler sampler_for(const SamplerInfo& s) {
+// The sampler as the display settings want it (nxrt/gfx_tuning.h): more anisotropy on filtering samplers, a LOD bias on every sampler
+// that samples colour. Nearest-filtered samplers, shadow comparison samplers and clamped single-level samplers are left as the game set them.
+SamplerInfo tuned_sampler(const SamplerInfo& in) {
+    SamplerInfo s = in;
+    const int aniso = gfx::tuning().anisotropy.load(std::memory_order_relaxed);
+    const float bias = gfx::tuning().lod_bias.load(std::memory_order_relaxed);
+    if (s.compare_mode == NVN_COMPARE_MODE_COMPARE_R_TO_TEXTURE) return s;
+    const bool mips = min_filter_uses_mips(s.min_filter);
+    if (aniso > 1 && mips && vk_min_filter(s.min_filter) == VK_FILTER_LINEAR && vk_mag_filter(s.mag_filter) == VK_FILTER_LINEAR)
+        s.max_anisotropy = std::max(s.max_anisotropy, static_cast<float>(aniso));
+    if (bias != 0.0f && mips) s.lod_bias += bias;
+    return s;
+}
+
+VkSampler sampler_for(const SamplerInfo& game_sampler) {
+    const SamplerInfo s = tuned_sampler(game_sampler);
     auto& bucket = g_sh.samplers[sampler_hash(s)];
     for (const auto& e : bucket)
         if (e.first == s) return e.second;

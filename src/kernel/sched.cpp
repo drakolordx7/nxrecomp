@@ -5,6 +5,7 @@
 // Config: [sched] console_cores (default 1; env NXRT_SCHED_CONSOLE_CORES), [sched] host_cpus = hexadecimal mask of host processors to use.
 #include <windows.h>
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
@@ -119,6 +120,20 @@ int sched_host_priority(int hos_prio) {
     if (nn == 16) return THREAD_PRIORITY_NORMAL;
     if (nn <= 27) return THREAD_PRIORITY_BELOW_NORMAL;
     return THREAD_PRIORITY_LOWEST;
+}
+
+void sched_set_process_priority(bool interactive) {
+    std::string v = config_get_str("sched", "priority_class", "auto");
+    for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    DWORD cls = 0;
+    if (v == "high") cls = HIGH_PRIORITY_CLASS;
+    else if (v == "above_normal" || v == "above") cls = ABOVE_NORMAL_PRIORITY_CLASS;
+    else if (v == "normal") cls = NORMAL_PRIORITY_CLASS;
+    else if (v == "auto") cls = interactive ? HIGH_PRIORITY_CLASS : 0;
+    else NXLOG_W("sched", "[sched] priority_class = %s is not auto, high, above_normal or normal: left alone", v.c_str());
+    if (!cls) return;
+    if (SetPriorityClass(GetCurrentProcess(), cls)) NXLOG_I("sched", "process priority class: %s", cls == HIGH_PRIORITY_CLASS ? "high" : cls == ABOVE_NORMAL_PRIORITY_CLASS ? "above normal" : "normal");
+    else NXLOG_W("sched", "SetPriorityClass failed, error %lu", static_cast<unsigned long>(GetLastError()));
 }
 
 int sched_current_core() {

@@ -26,6 +26,8 @@
 #include <thread>
 #include <vector>
 
+#include "nxrt/ftrace.h"
+#include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
@@ -471,6 +473,7 @@ void poll_pads(uint64_t now) {
 
 int update_hook(::Ctx*, uint64_t, void*) {
     G& st = g();
+    ft::mark("main.update");
     const uint64_t now = now_ns();
     st.frames++;
     st.update_seq++;
@@ -781,6 +784,7 @@ bool start(const StartOptions& opt) {
     st.renderer = opt.renderer;
     st.device = opt.device;
     st.window = opt.window && platform::has_window();
+    kernel::sched_set_process_priority(st.window);     // a person is playing: keep the frame out of the background load
     st.pump_thread = std::this_thread::get_id();
     st.engine = std::make_unique<Engine>(st.settings);
     st.engine->set_context(Ctx::Menu, now_ns());
