@@ -96,7 +96,7 @@ struct RegionTable {
 };
 
 // GUID text "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" -> the 16 bytes as the game's CObjectId holds them in memory.
-// ASSUMPTION until verified against the real game (docs/S5.md): the 16 bytes are the text's hex pairs in text order, dashes dropped.
+// VERIFIED against the real game under Eden (docs/S5.md): a Windows-style GUID struct, the first three groups little-endian.
 // The layout lives only in these two functions.
 bool tt_guid_to_bytes(const std::string& text, uint8_t out[16]);
 std::string tt_guid_to_text(const uint8_t in[16]);

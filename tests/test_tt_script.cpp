@@ -15,9 +15,9 @@ using namespace nxrt::tt;
 namespace {
 
 constexpr const char* kGuid1 = "01234567-89ab-cdef-0123-456789abcdef";
-constexpr const char* kHex1 = "0123456789abcdef0123456789abcdef";
+constexpr const char* kHex1 = "67452301ab89efcd0123456789abcdef";
 constexpr const char* kGuid2 = "fedcba98-7654-3210-fedc-ba9876543210";
-constexpr const char* kHex2 = "fedcba9876543210fedcba9876543210";
+constexpr const char* kHex2 = "98badcfe54761032fedcba9876543210";
 
 // Region table fixture: two worlds, each with one area. "frigate" and "ruins" are world-only entries.
 constexpr const char* kWorld1 = "10000000-0000-0000-0000-000000000001";
@@ -497,8 +497,14 @@ NXTEST(parse_script_file_missing_file) {
 
 NXTEST(guid_round_trip_and_hex) {
     uint8_t b[16];
+    {   // the real game's Frigate world id as read from its memory under Eden
+        uint8_t f[16];
+        REQUIRE(tt_guid_to_bytes("4b5e8635-0f43-4ffb-9427-2e62186e517d", f));
+        CHECK_EQ(tt_guid_hex(f), std::string("35865e4b430ffb4f94272e62186e517d"));
+        CHECK_EQ(tt_guid_to_text(f), std::string("4b5e8635-0f43-4ffb-9427-2e62186e517d"));
+    }
     REQUIRE(tt_guid_to_bytes(kGuid1, b));
-    CHECK_EQ(b[0], (uint8_t)0x01);
+    CHECK_EQ(b[0], (uint8_t)0x67);
     CHECK_EQ(b[15], (uint8_t)0xef);
     CHECK_EQ(tt_guid_hex(b), std::string(kHex1));
     CHECK_EQ(tt_guid_to_text(b), std::string(kGuid1));

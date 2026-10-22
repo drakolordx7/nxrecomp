@@ -167,3 +167,25 @@ offline = true
 [time]
 zone = host
 ```
+
+## Test tooling keys (`[test]`, stream S5)
+
+All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment variable = `NXRT_TEST_<KEY>`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `script` | empty | Scripted run (`.nxs`, grammar in `include/nxrt/tt_script.h`). Exit code 0 pass, 1 fail, 2 usage/parse error, 4 crash, 5 freeze, 6 process ended early, 124 wall timeout. |
+| `regions` | `regions.tsv` next to the script | Name table for `@area` / `@warp` (`name<TAB>world guid<TAB>area guid`). |
+| `out` | `testout` | Output folder: `result.json`, `trace.jsonl`, `shots/`. |
+| `deterministic` | `false` | Virtual clock (one frame = `clock_step_ticks`), seeded RNG, fixed wall-clock epoch. |
+| `seed` | `0x5EED5EED` | RNG seed of deterministic mode. |
+| `clock_step_ticks` | `320000` | Virtual ticks (19.2 MHz) per frame. |
+| `frame_source` | `hook` | `hook` (needs `tests/sites/mpr_testtools.sites` in the lifted game), `tick` (`diag_frame_tick`), `svc:N` (a frame every N SVCs, bring-up), `manual` (tests). |
+| `trace` | `<out>/trace.jsonl` | Per-frame JSON lines; `none` disables. |
+| `record` / `replay` | empty | Record the live pad of every frame / feed a recorded input trace (`replay_exit=1` ends the run where it ends). |
+| `hash_regions` | empty | Memory folded into the frame hash: comma list of `0xADDR+0xSIZE` and `module:<name>` (the module's RW pages). |
+| `max_frames` | `0` | Fail the run after this many frames. |
+| `wall_timeout_s` | `900` with a script | End the run with exit code 124 after this long. |
+| `freeze_exit` | `true` with a script | A watchdog fire ends the run with exit code 5. |
+| `shot_dir` / `require_shots` | `<out>/shots` / `false` | Where `@shot` writes; a missing screenshot provider fails the run when set. |
+| `game_base` | `0x7100000000` | Base of the game's main module (probe and hook addresses). |
