@@ -292,7 +292,15 @@ TexGpu* create_texture_gpu(Texture* t) {
     add(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (!g->depth && !is_block_format(chosen)) add(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
     if (g->depth) add(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
-    if (t->b.flags & NVN_TEXTURE_FLAGS_IMAGE) add(VK_IMAGE_USAGE_STORAGE_BIT);
+    // The console reads and writes any colour texture through an image handle; the builder's IMAGE flag is a hint the game does not always
+    // set (the froxel volume of the fog is written by a vertex shader without it). Every uncompressed colour image therefore keeps the
+    // storage usage when the GPU accepts the combination.
+    if (!g->depth && !is_block_format(chosen)) {
+        add(VK_IMAGE_USAGE_STORAGE_BIT);
+        if ((t->b.flags & NVN_TEXTURE_FLAGS_IMAGE) && !(usage & VK_IMAGE_USAGE_STORAGE_BIT))
+            NXLOG_W(kTag, "texture %u (%s, image flag set): the GPU refuses storage usage with the other usages (flags 0x%x, usage 0x%x)", t->id, t->fmt ? t->fmt->name : "?",
+                    static_cast<unsigned>(flags), static_cast<unsigned>(usage));
+    }
     g->usage = usage;
 
     std::string why2;
@@ -1009,15 +1017,16 @@ int snapshot_record(Texture* t, Frame& fr) {
     s.format = g->format;
     s.bpp = dump_bpp(g->format, &s.aspect);
     if (!s.bpp) return -1;
-    s.e = level_extent(g->base, 0);
+    const VkExtent3D full = level_extent(g->base, 0);
+    const uint32_t slices = g->type == VK_IMAGE_TYPE_3D ? full.depth : 1;   // a 3D texture: all slices, stacked into one tall image
+    s.e = {full.width, full.height * slices, 1};
     const uint64_t size = static_cast<uint64_t>(s.e.width) * s.e.height * s.bpp;
     if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &s.buf, "nvn snapshot") != VK_SUCCESS) return -1;
     const VkImageLayout prev = g->layout;
     move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkBufferImageCopy r = {};
     r.imageSubresource = {s.aspect, 0, 0, 1};
-    r.imageOffset = {0, 0, static_cast<int32_t>(s.e.depth / 2)};    // a 3D texture: its middle slice
-    r.imageExtent = {s.e.width, s.e.height, 1};
+    r.imageExtent = {full.width, full.height, slices};
     vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, 1, &r);
     move_layout(fr, *g, prev);
     g_snaps.push_back(std::move(s));
