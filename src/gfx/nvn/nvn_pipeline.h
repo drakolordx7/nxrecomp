@@ -60,7 +60,9 @@ struct GraphicsKey {
     uint8_t polygon_mode = 0;                   // VkPolygonMode
     uint8_t depth_clamp = 0, alpha_to_coverage = 0, depth_neg_one = 0;
     uint8_t patch_control_points = 0;
-    uint8_t pad[3] = {};
+    uint8_t dummy_binding = 0;                  // 1 + the vertex binding that feeds unset attributes (stride 0, defaults buffer); 0 = none
+    uint8_t dual_src = 0;                       // a blend factor of an enabled attachment reads the second source (fragment output moved to Location 0, Index 1)
+    uint8_t pad[1] = {};
     bool operator==(const GraphicsKey& o) const;
     uint64_t hash() const;
 };

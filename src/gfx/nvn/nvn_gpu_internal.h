@@ -99,6 +99,8 @@ struct BufRef {
 // false and the buffer is the dummy buffer (a zeroed 64 KiB buffer) so the draw can go on; this is logged once per address.
 BufRef resolve_buffer(uint64_t gpu_address, uint64_t size);
 VkBuffer dummy_buffer();
+// The last 32 bytes of the dummy buffer hold the default of an unset vertex attribute: float (0,0,0,1) and integer (0,0,0,1).
+constexpr VkDeviceSize kDummyAttrFloatOffset = 65504, kDummyAttrIntOffset = 65520;
 uint64_t pool_imports();          // statistics
 // Called from destroy_pool_gpu on the render thread.
 void pool_gpu_destroy(PoolGpu* p);
@@ -114,6 +116,7 @@ struct ViewRequest {
     VkFormat format = VK_FORMAT_UNDEFINED;            // UNDEFINED: the image's own format
     VkComponentMapping swizzle = {};                  // identity when all IDENTITY
     bool depth_aspect = true;                         // depth/stencil images: sample depth (true) or stencil (false)
+    uint8_t component = 0;                            // the shader's sampled type: 0 unknown, 1 float, 2 sint, 3 uint (raw-bit aliases of 32-bit formats)
 };
 // Creates the VkImage if needed and returns it (null when the format cannot be created: logged once; callers then bind
 // the dummy). Does not upload.
@@ -137,6 +140,15 @@ bool tex_is_depth(Texture* t);
 VkImageView tex_sampled_view(Texture* t, const ViewRequest& req);
 // Single-level, single-layer (or all layers when layer_count > 1) view for use as an attachment.
 VkImageView tex_attachment_view(Texture* t, uint32_t level, uint32_t layer, uint32_t layer_count, VkFormat view_format);
+// The format colour attachments of this texture are rendered through (integer 32-bit formats as their float alias).
+VkFormat tex_attachment_format(Texture* t, VkFormat view_format);
+// The image can be bound as a storage image (created with NVN_TEXTURE_FLAGS_IMAGE).
+bool tex_has_storage(Texture* t);
+// The layout a texture is sampled in: SHADER_READ_ONLY_OPTIMAL, or DEPTH_STENCIL_READ_ONLY_OPTIMAL for depth and stencil formats (so
+// the same layout serves a depth texture that is also the read-only depth attachment of the pass).
+VkImageLayout tex_sampled_layout(Texture* t);
+// A 1x1 storage image view in GENERAL layout for descriptors that cannot be resolved (UNDEFINED format: RGBA8 UNORM).
+VkImageView dummy_storage_view(VkImageViewType type, VkFormat format);
 // A UNORM (non-sRGB) view of the whole texture for the present pass.
 VkImageView tex_present_view(Texture* t);
 // Dummy 1x1 views used when a binding cannot be resolved: black texture of the requested type.

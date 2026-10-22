@@ -121,9 +121,51 @@ VkFormat srgb_partner(VkFormat f) {
     return VK_FORMAT_UNDEFINED;
 }
 
-// Same image family: the format itself, or its sRGB / UNORM partner on a mutable image.
+// The float member of a 32/64/128-bit integer format's class and back: Maxwell moves the raw bits, whatever the shader's declared
+// type (the translated shaders declare every sampled value and colour output as float).
+VkFormat float_alias(VkFormat f) {
+    switch (f) {
+        case VK_FORMAT_R32_UINT: case VK_FORMAT_R32_SINT: return VK_FORMAT_R32_SFLOAT;
+        case VK_FORMAT_R32G32_UINT: case VK_FORMAT_R32G32_SINT: return VK_FORMAT_R32G32_SFLOAT;
+        case VK_FORMAT_R32G32B32A32_UINT: case VK_FORMAT_R32G32B32A32_SINT: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+VkFormat uint_alias(VkFormat f) {
+    switch (f) {
+        case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_R32_SINT: return VK_FORMAT_R32_UINT;
+        case VK_FORMAT_R32G32_SFLOAT: case VK_FORMAT_R32G32_SINT: return VK_FORMAT_R32G32_UINT;
+        case VK_FORMAT_R32G32B32A32_SFLOAT: case VK_FORMAT_R32G32B32A32_SINT: return VK_FORMAT_R32G32B32A32_UINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+VkFormat sint_alias(VkFormat f) {
+    switch (f) {
+        case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_R32_UINT: return VK_FORMAT_R32_SINT;
+        case VK_FORMAT_R32G32_SFLOAT: case VK_FORMAT_R32G32_UINT: return VK_FORMAT_R32G32_SINT;
+        case VK_FORMAT_R32G32B32A32_SFLOAT: case VK_FORMAT_R32G32B32A32_UINT: return VK_FORMAT_R32G32B32A32_SINT;
+        default: return VK_FORMAT_UNDEFINED;
+    }
+}
+bool bit_alias_class(VkFormat f) { return float_alias(f) != VK_FORMAT_UNDEFINED || uint_alias(f) != VK_FORMAT_UNDEFINED; }
+
+// Same image family: the format itself, its sRGB / UNORM partner, or a raw-bit alias of the same size, on a mutable image.
 bool format_view_ok(const TexGpu& g, VkFormat fmt) {
-    return fmt == g.format || (g.mutable_fmt && srgb_partner(g.format) == fmt);
+    if (fmt == g.format) return true;
+    if (!g.mutable_fmt) return false;
+    if (srgb_partner(g.format) == fmt) return true;
+    return bit_alias_class(g.format) && (fmt == float_alias(g.format) || fmt == uint_alias(g.format) || fmt == sint_alias(g.format));
+}
+
+// The format a colour attachment of this image is rendered through: integer 32-bit formats as their float alias, because the
+// translated fragment shaders write float outputs and the console stores the register bits unconverted.
+VkFormat attachment_format_of(const TexGpu& g, VkFormat requested) {
+    const VkFormat f = requested == VK_FORMAT_UNDEFINED ? g.format : requested;
+    if (g.mutable_fmt && bit_alias_class(f)) {
+        const VkFormat a = float_alias(f);
+        if (a != VK_FORMAT_UNDEFINED && format_view_ok(g, a)) return a;
+    }
+    return f;
 }
 
 VkImageAspectFlags aspect_bits(const FormatInfo* f) {
@@ -189,7 +231,7 @@ VkImageCreateFlags base_flags(const Shape& s, VkFormat fmt) {
     VkImageCreateFlags f = 0;
     if (s.cube) f |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     if (s.type == VK_IMAGE_TYPE_3D) f |= VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT;   // 2D views of the slices
-    if (srgb_partner(fmt) != VK_FORMAT_UNDEFINED) f |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    if (srgb_partner(fmt) != VK_FORMAT_UNDEFINED || bit_alias_class(fmt)) f |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
     return f;
 }
 
@@ -235,7 +277,7 @@ TexGpu* create_texture_gpu(Texture* t) {
 
     g->format = chosen;
     g->transcoded = to_bc7;
-    g->mutable_fmt = srgb_partner(chosen) != VK_FORMAT_UNDEFINED;
+    g->mutable_fmt = srgb_partner(chosen) != VK_FORMAT_UNDEFINED || bit_alias_class(chosen);
     g->aspect = aspect_bits(g->fmt);
     g->depth = (g->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) != 0;
 
@@ -271,7 +313,9 @@ TexGpu* tex_or_null(Texture* t) {
 // ---- barriers and copies ----------------------------------------------------------------------------------------------------
 void move_layout(Frame& f, TexGpu& g, VkImageLayout to) {
     if (g.layout == to) return;
-    image_barrier(f.cb, g.img.image, g.layout, to, g.aspect, 0, g.levels, 0, g.layers);
+    // A 3D image created with 2D_ARRAY_COMPATIBLE: without maintenance9 the layer range of a barrier means all depth slices.
+    const uint32_t layer_count = g.type == VK_IMAGE_TYPE_3D ? VK_REMAINING_ARRAY_LAYERS : g.layers;
+    image_barrier(f.cb, g.img.image, g.layout, to, g.aspect, 0, g.levels, 0, layer_count);
     g.layout = to;
 }
 
@@ -372,6 +416,7 @@ struct Shared {
     VkSampler dummy_sampler = VK_NULL_HANDLE;
     Dummy color[6];
     Dummy depth[6];
+    std::map<std::pair<int, int>, Dummy> storage;   // (view type, format): GENERAL-layout 1x1 storage images
 };
 Shared g_sh;
 
@@ -675,7 +720,12 @@ VkImageView tex_sampled_view(Texture* t, const ViewRequest& req) {
         default:
             return bad_view(*t, "1D views are not supported (the image is 2D with height 1)");
     }
-    const VkFormat fmt = req.format == VK_FORMAT_UNDEFINED ? g->format : req.format;
+    VkFormat fmt = req.format == VK_FORMAT_UNDEFINED ? g->format : req.format;
+    if (req.component != 0 && g->mutable_fmt && fmt == g->format) {
+        // The shader's sampled type decides how the bits read: float shaders over an integer texture (and the reverse) see the raw bits.
+        const VkFormat a = req.component == 1 ? float_alias(fmt) : req.component == 2 ? sint_alias(fmt) : uint_alias(fmt);
+        if (a != VK_FORMAT_UNDEFINED && format_view_ok(*g, a)) fmt = a;
+    }
     if (!format_view_ok(*g, fmt)) return bad_view(*t, "view format is not compatible with the image");
     VkImageAspectFlags asp = g->aspect;
     if (g->aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) asp = req.depth_aspect ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_STENCIL_BIT;
@@ -689,10 +739,24 @@ VkImageView tex_attachment_view(Texture* t, uint32_t level, uint32_t layer, uint
     const uint32_t total_layers = g->type == VK_IMAGE_TYPE_3D ? g->base.depth : g->layers;
     const uint32_t n = layer_count > 1 ? layer_count : 1;
     if (layer >= total_layers || layer + n > total_layers) return bad_view(*t, "attachment layers out of range");
-    const VkFormat fmt = view_format == VK_FORMAT_UNDEFINED ? g->format : view_format;
+    const VkFormat fmt = attachment_format_of(*g, view_format);
     if (!format_view_ok(*g, fmt)) return bad_view(*t, "attachment format is not compatible with the image");
     const VkImageViewType type = n > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
     return view_for(*g, type, level, 1, layer, n, fmt, g->aspect, kIdentity);
+}
+
+VkFormat tex_attachment_format(Texture* t, VkFormat view_format) {
+    TexGpu* g = tex_or_null(t);
+    return g ? attachment_format_of(*g, view_format) : VK_FORMAT_UNDEFINED;
+}
+
+bool tex_has_storage(Texture* t) {
+    TexGpu* g = tex_or_null(t);
+    return g && (g->usage & VK_IMAGE_USAGE_STORAGE_BIT) != 0;
+}
+
+VkImageLayout tex_sampled_layout(Texture* t) {
+    return (t && t->fmt && t->fmt->aspect != kAspectColor) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
 VkImageView tex_present_view(Texture* t) {
@@ -707,6 +771,51 @@ VkImageView dummy_view(VkImageViewType type, bool depth_compare) {
     const int idx = dummy_index(type);
     Dummy& d = (depth_compare ? g_sh.depth : g_sh.color)[idx];
     if (!d.tried) make_dummy(d, kDummyTypes[idx], depth_compare);
+    return d.view;
+}
+
+VkImageView dummy_storage_view(VkImageViewType type, VkFormat format) {
+    if (format == VK_FORMAT_UNDEFINED) format = VK_FORMAT_R8G8B8A8_UNORM;
+    if (type == VK_IMAGE_VIEW_TYPE_CUBE || type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) type = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    const std::pair<int, int> key = {static_cast<int>(type), static_cast<int>(format)};
+    auto& d = g_sh.storage[key];
+    if (d.tried) return d.view;
+    d.tried = true;
+    gfx::ImageDesc id;
+    id.format = format;
+    id.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    id.create_view = false;
+    id.name = "nvn dummy storage";
+    if (type == VK_IMAGE_VIEW_TYPE_1D || type == VK_IMAGE_VIEW_TYPE_1D_ARRAY) id.type = VK_IMAGE_TYPE_1D;
+    if (type == VK_IMAGE_VIEW_TYPE_3D) id.type = VK_IMAGE_TYPE_3D;
+    if (type == VK_IMAGE_VIEW_TYPE_2D_ARRAY || type == VK_IMAGE_VIEW_TYPE_1D_ARRAY) id.array_layers = 6;
+    std::string why;
+    if (device().create_image(id, &d.img, &why) != VK_SUCCESS) {
+        NXLOG_W(kTag, "dummy storage image failed: %s", why.c_str());
+        return d.view;
+    }
+    const VkImage img = d.img.image;
+    const uint32_t layers = id.array_layers;
+    const bool ok = device().submit_once([&](VkCommandBuffer cmd) {
+        image_barrier(cmd, img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers);
+        const VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
+        VkClearColorValue c = {};
+        vkCmdClearColorImage(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &c, 1, &range);
+        image_barrier(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers);
+    });
+    if (!ok) {
+        device().destroy_image(d.img);
+        return d.view;
+    }
+    VkImageViewCreateInfo vi = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = img;
+    vi.viewType = type;
+    vi.format = format;
+    vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
+    if (vkCreateImageView(vkdev(), &vi, nullptr, &d.view) != VK_SUCCESS) {
+        d.view = VK_NULL_HANDLE;
+        device().destroy_image(d.img);
+    }
     return d.view;
 }
 
@@ -769,6 +878,10 @@ void tex_shutdown() {
         for (auto& e : kv.second) vkDestroySampler(vkdev(), e.second, nullptr);
     g_sh.samplers.clear();
     if (g_sh.dummy_sampler != VK_NULL_HANDLE) vkDestroySampler(vkdev(), g_sh.dummy_sampler, nullptr);
+    for (auto& kv : g_sh.storage) {
+        if (kv.second.view != VK_NULL_HANDLE) vkDestroyImageView(vkdev(), kv.second.view, nullptr);
+        device().destroy_image(kv.second.img);
+    }
     for (Dummy* set : {g_sh.color, g_sh.depth}) {
         for (int i = 0; i < 6; ++i) {
             if (set[i].view != VK_NULL_HANDLE) vkDestroyImageView(vkdev(), set[i].view, nullptr);

@@ -7,9 +7,11 @@
 // negative-height viewport, a memory barrier after every pass, textures sampled by a draw are made current before the pass,
 // handles never dropped by count, deferred bind arrays read at record time.
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nvn_decoded.h"
 #include "nvn_enums.h"
@@ -89,6 +91,7 @@ struct Pass {
     VkFormat color_fmt[8] = {};
     VkFormat depth_fmt = VK_FORMAT_UNDEFINED;
     bool has_stencil = false;
+    bool depth_ro = false;      // the depth attachment is in DEPTH_STENCIL_READ_ONLY_OPTIMAL (it is also sampled by the draws of this pass)
     uint32_t samples = 1;
 };
 
@@ -114,6 +117,23 @@ VkPrimitiveTopology g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
 bool g_restart = false, g_restart_valid = false;
 uint32_t g_key_attr_count = 0;
 uint8_t g_key_binding[16] = {};
+uint8_t g_key_dummy_binding = 0;      // 1 + the binding that feeds the defaults of unset vertex attributes (0: none)
+bool g_want_depth_ro = false;         // some texture this draw samples is the current depth attachment
+bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in this command buffer (dynamic strides need one)
+
+// [nvn] trace_frame = N (NXRT_NVN_TRACE_FRAME): every draw, clear, copy and dispatch of the frame that is presented as number N is logged
+// at Info ("trace ..." lines): programs, render targets, sampled textures, blend and depth state. For finding out what a frame does.
+bool g_trace = false;
+int64_t g_trace_frame = -2;
+int g_trace_n = 0;
+#define TRACE(...) do { if (g_trace) NXLOG_I("nvn.trace", __VA_ARGS__); } while (0)
+
+const char* tex_desc(const Texture* t, char* buf, size_t n) {
+    if (!t) { std::snprintf(buf, n, "-"); return buf; }
+    std::snprintf(buf, n, "t%u:%s %dx%dx%d L%u/%u%s%s", t->id, t->fmt ? t->fmt->name : "?", t->b.width, t->b.height, t->b.depth, t->levels, t->layers,
+                  t->b.samples > 1 ? " ms" : "", t->b.target == NVN_TEXTURE_TARGET_3D ? " 3D" : "");
+    return buf;
+}
 
 void log_once(const char* key, const char* msg) {
     static std::unordered_map<std::string, bool> seen;
@@ -193,10 +213,11 @@ bool targets_match() {
 }
 
 // Starts a pass on the current render targets if none is open for them. False when there is nothing to render to.
-bool ensure_pass() {
-    if (P.open && targets_match()) return true;
+bool ensure_pass(bool depth_ro = false) {
+    if (P.open && targets_match() && P.depth_ro == depth_ro) return true;
     end_pass();
     P = Pass();
+    P.depth_ro = depth_ro;
     VkRenderingAttachmentInfo colors[8] = {};
     VkRenderingAttachmentInfo depth = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     VkRenderingAttachmentInfo stencil = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
@@ -217,7 +238,7 @@ bool ensure_pass() {
         colors[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         colors[i].loadOp = fresh ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         colors[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        P.color_fmt[i] = P.color[i].view_format != VK_FORMAT_UNDEFINED ? P.color[i].view_format : tex_vk_format(t);
+        P.color_fmt[i] = tex_attachment_format(t, P.color[i].view_format);
         const VkExtent3D e = tex_extent(t, P.color[i].level);
         extent.width = std::min(extent.width, e.width);
         extent.height = std::min(extent.height, e.height);
@@ -228,13 +249,14 @@ bool ensure_pass() {
     bool have_depth = false;
     if (dt && tex_gpu(dt)) {
         const bool fresh = tex_layout(dt) == VK_IMAGE_LAYOUT_UNDEFINED;
-        tex_transition(dt, *F, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-        tex_mark_gpu_written(dt);
+        const VkImageLayout dlayout = depth_ro ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        tex_transition(dt, *F, dlayout);
+        if (!depth_ro) tex_mark_gpu_written(dt);
         VkImageView v = tex_attachment_view(dt, P.depth.level, P.depth.layer, P.depth.layers, P.depth.view_format);
         if (v) {
             depth.imageView = stencil.imageView = v;
-            depth.imageLayout = stencil.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            depth.loadOp = stencil.loadOp = fresh ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+            depth.imageLayout = stencil.imageLayout = dlayout;
+            depth.loadOp = stencil.loadOp = (fresh && !depth_ro) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
             depth.storeOp = stencil.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             depth.clearValue.depthStencil = {1.0f, 0};
             stencil.clearValue.depthStencil = {1.0f, 0};
@@ -374,27 +396,137 @@ ViewRequest make_request(const DescriptorBinding& b, const TexResolved& r) {
     q.swizzle.b = vk_swizzle(sw[2]);
     q.swizzle.a = vk_swizzle(sw[3]);
     q.depth_aspect = dsmode == NVN_TEXTURE_DEPTH_STENCIL_MODE_DEPTH;
+    switch (b.image.component) {
+        case ScalarType::Float: q.component = 1; break;
+        case ScalarType::Sint: q.component = 2; break;
+        case ScalarType::Uint: q.component = 3; break;
+        default: break;
+    }
     return q;
 }
 
-// Makes the textures a draw samples current (uploaded, in SHADER_READ_ONLY layout). Ends the pass when it has to touch images.
-void prepare_textures(const ProgLayout& pl) {
-    std::vector<Texture*> need;
+// The image a draw reads or writes through an image binding (nvnCommandBufferBindImage): the handle is a texture pool id.
+TexResolved resolve_image(const BindingDesc& d) {
+    TexResolved r;
+    const DescriptorBinding& b = d.shader->refl.bindings[d.index];
+    uint64_t handle = 0;
+    if (b.nvn.source == NvnSource::ImageBinding) {
+        const int idx = b.nvn.index;
+        if (idx >= 0 && idx < 16) handle = S.img[d.nvn_stage][idx];
+    } else if (b.nvn.source == NvnSource::HandleInUniform) {
+        handle = read_handle_word(d.nvn_stage, b.nvn.bank, b.nvn.word);
+    }
+    const uint32_t tid = handle_texture_id(handle);
+    if (S.tpool && static_cast<int>(tid) < S.tpool->count) {
+        std::shared_lock<std::shared_mutex> lk(S.tpool->lock);
+        const TexturePool::Entry& e = S.tpool->entries[tid];
+        if (e.used && e.tex) {
+            r.tex = e.tex.get();
+            r.view = e.view;
+            r.has_view = e.has_view;
+        }
+    }
+    return r;
+}
+
+// True when a texture the program samples is the depth attachment of the current target set: the draw then runs in a pass whose depth
+// attachment is read-only (DEPTH_STENCIL_READ_ONLY_OPTIMAL serves as attachment and as sampled layout).
+bool samples_depth_target(const ProgLayout& pl) {
+    if (!S.depth_tex) return false;
     for (const BindingDesc& d : pl.bindings) {
+        if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+        const DescriptorBinding& b = d.shader->refl.bindings[d.index];
+        if (b.nvn.source != NvnSource::SamplerBinding && b.nvn.source != NvnSource::HandleInUniform) continue;
+        if (resolve_texture(d).tex == S.depth_tex.get()) return true;
+    }
+    return false;
+}
+
+// A colour attachment cannot be sampled in the pass that renders to it (no feedback loops): the binding gets the dummy view.
+bool is_color_feedback(const Texture* t) {
+    if (!t) return false;
+    for (uint32_t i = 0; i < S.ncolor; ++i)
+        if (S.color_tex[i].get() == t) return true;
+    return false;
+}
+
+// Makes the textures a draw samples current (uploaded, in their sampled layout) and the storage images it binds writable (GENERAL).
+// Ends the pass when it has to touch images. The depth attachment itself is left to the pass.
+void prepare_textures(const ProgLayout& pl) {
+    std::vector<Texture*> need, need_storage;
+    for (const BindingDesc& d : pl.bindings) {
+        if (d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+            TexResolved r = resolve_image(d);
+            if (!r.tex || !tex_gpu(r.tex) || !tex_has_storage(r.tex)) continue;
+            if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != VK_IMAGE_LAYOUT_GENERAL) need_storage.push_back(r.tex);
+            continue;
+        }
         if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
         const DescriptorBinding& b = d.shader->refl.bindings[d.index];
         if (b.nvn.source != NvnSource::SamplerBinding && b.nvn.source != NvnSource::HandleInUniform) continue;
         TexResolved r = resolve_texture(d);
         if (!r.tex) continue;
         if (!tex_gpu(r.tex)) continue;
-        if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) need.push_back(r.tex);
+        if (r.tex == S.depth_tex.get() || is_color_feedback(r.tex)) continue;   // owned by the pass
+        if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != tex_sampled_layout(r.tex)) need.push_back(r.tex);
     }
-    if (need.empty()) return;
+    if (need.empty() && need_storage.empty()) return;
     end_pass();
     counters().pass_breaks.fetch_add(1, std::memory_order_relaxed);
     for (Texture* t : need) {
         tex_ensure_current(t, *F);
-        tex_transition(t, *F, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        tex_transition(t, *F, tex_sampled_layout(t));
+    }
+    for (Texture* t : need_storage) {
+        tex_ensure_current(t, *F);
+        tex_transition(t, *F, VK_IMAGE_LAYOUT_GENERAL);
+        tex_mark_gpu_written(t);
+    }
+}
+
+// SPIR-V ImageFormat of a storage image -> VkFormat (UNDEFINED: Unknown or unmapped).
+VkFormat image_format_vk(uint32_t f) {
+    switch (f) {
+        case 1: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        case 2: return VK_FORMAT_R16G16B16A16_SFLOAT;
+        case 3: return VK_FORMAT_R32_SFLOAT;
+        case 4: return VK_FORMAT_R8G8B8A8_UNORM;
+        case 5: return VK_FORMAT_R8G8B8A8_SNORM;
+        case 6: return VK_FORMAT_R32G32_SFLOAT;
+        case 7: return VK_FORMAT_R16G16_SFLOAT;
+        case 8: return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+        case 9: return VK_FORMAT_R16_SFLOAT;
+        case 10: return VK_FORMAT_R16G16B16A16_UNORM;
+        case 11: return VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        case 12: return VK_FORMAT_R16G16_UNORM;
+        case 13: return VK_FORMAT_R8G8_UNORM;
+        case 14: return VK_FORMAT_R16_UNORM;
+        case 15: return VK_FORMAT_R8_UNORM;
+        case 16: return VK_FORMAT_R16G16B16A16_SNORM;
+        case 17: return VK_FORMAT_R16G16_SNORM;
+        case 18: return VK_FORMAT_R8G8_SNORM;
+        case 19: return VK_FORMAT_R16_SNORM;
+        case 20: return VK_FORMAT_R8_SNORM;
+        case 21: return VK_FORMAT_R32G32B32A32_SINT;
+        case 22: return VK_FORMAT_R16G16B16A16_SINT;
+        case 23: return VK_FORMAT_R8G8B8A8_SINT;
+        case 24: return VK_FORMAT_R32_SINT;
+        case 25: return VK_FORMAT_R32G32_SINT;
+        case 26: return VK_FORMAT_R16G16_SINT;
+        case 27: return VK_FORMAT_R8G8_SINT;
+        case 28: return VK_FORMAT_R16_SINT;
+        case 29: return VK_FORMAT_R8_SINT;
+        case 30: return VK_FORMAT_R32G32B32A32_UINT;
+        case 31: return VK_FORMAT_R16G16B16A16_UINT;
+        case 32: return VK_FORMAT_R8G8B8A8_UINT;
+        case 33: return VK_FORMAT_R32_UINT;
+        case 34: return VK_FORMAT_A2B10G10R10_UINT_PACK32;
+        case 35: return VK_FORMAT_R32G32_UINT;
+        case 36: return VK_FORMAT_R16G16_UINT;
+        case 37: return VK_FORMAT_R8G8_UINT;
+        case 38: return VK_FORMAT_R16_UINT;
+        case 39: return VK_FORMAT_R8_UINT;
+        default: return VK_FORMAT_UNDEFINED;
     }
 }
 
@@ -488,19 +620,40 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
         } else if (d.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
             VkDescriptorImageInfo ii = {dummy_sampler(), dummy_view(view_type_for(b), b.image.depth), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             TexResolved r = resolve_texture(d);
-            if (r.tex && tex_gpu(r.tex)) {
+            if (r.tex && tex_gpu(r.tex) && !is_color_feedback(r.tex)) {
                 VkImageView v = tex_sampled_view(r.tex, make_request(b, r));
-                if (v) ii.imageView = v;
-                if (r.has_sampler) ii.sampler = sampler_for(r.smp);
+                if (v) {
+                    ii.imageView = v;
+                    ii.imageLayout = tex_sampled_layout(r.tex);
+                    if (r.has_sampler) ii.sampler = sampler_for(r.smp);
+                }
+            } else if (r.tex && is_color_feedback(r.tex)) {
+                log_once("color-feedback", "a texture is sampled while it is a colour attachment of the pass: the dummy texture is bound");
             }
             iinfo.push_back(ii);
             w.pImageInfo = &iinfo.back();
-            mix(reinterpret_cast<uint64_t>(ii.imageView)); mix(reinterpret_cast<uint64_t>(ii.sampler));
-        } else {
-            note_unsupported("storage image / texel buffer descriptors");
-            VkDescriptorImageInfo ii = {VK_NULL_HANDLE, dummy_view(VK_IMAGE_VIEW_TYPE_2D, false), VK_IMAGE_LAYOUT_GENERAL};
+            mix(reinterpret_cast<uint64_t>(ii.imageView));
+            mix(reinterpret_cast<uint64_t>(ii.sampler));
+            mix(static_cast<uint64_t>(ii.imageLayout));
+        } else if (d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
+            const VkFormat shader_fmt = image_format_vk(b.image.format);
+            VkDescriptorImageInfo ii = {VK_NULL_HANDLE, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL};
+            TexResolved r = resolve_image(d);
+            if (r.tex && tex_gpu(r.tex) && tex_has_storage(r.tex)) {
+                ViewRequest q = make_request(b, r);
+                q.swizzle = {};
+                if (shader_fmt != VK_FORMAT_UNDEFINED) q.format = shader_fmt;
+                ii.imageView = tex_sampled_view(r.tex, q);
+            }
+            if (!ii.imageView) {
+                log_once("storage-image-dummy", "a storage image binding has no usable texture: a dummy storage image is bound");
+                ii.imageView = dummy_storage_view(view_type_for(b), shader_fmt);
+            }
             iinfo.push_back(ii);
             w.pImageInfo = &iinfo.back();
+            mix(reinterpret_cast<uint64_t>(ii.imageView));
+        } else {
+            note_unsupported("texel buffer descriptors (the binding stays unwritten)");
             continue;
         }
         writes.push_back(w);
@@ -530,22 +683,55 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
     key.stage[1] = S.stage[kFragment];
     key.stage[2] = S.stage[kGeometry];
     const ShaderInfo* vs = key.stage[0];
-    // attributes: those the vertex shader reads
+    // attributes: those the vertex shader reads. An input array takes one location per element. A location the game did not set up
+    // (no attribute, or a disabled one) still has to exist in the pipeline; it reads (0, 0, 0, 1) from a dummy binding.
+    struct Missing { uint32_t location; ScalarType type; };
+    Missing missing[32];
+    uint32_t nmissing = 0;
     for (const ShaderIo& in : vs->refl.inputs) {
-        if (in.location >= 16 || in.location >= S.attr_count) continue;
-        const VertexAttribInfo& a = S.attr[in.location];
-        VkFormat f = vertex_format(a.format);
-        if (f == VK_FORMAT_UNDEFINED) continue;
-        if (in.type == ScalarType::Float && is_int_format(f)) f = scaled_for(f);
-        else if ((in.type == ScalarType::Uint || in.type == ScalarType::Sint) && !is_int_format(f))
-            log_once("attr-type-mismatch", "a vertex attribute with a float format feeds an integer shader input (needs a SPIR-V variant)");
-        if (key.attr_count >= 16) break;
-        KeyAttr& k = key.attr[key.attr_count++];
-        k.location = static_cast<uint8_t>(in.location);
-        k.binding = static_cast<uint8_t>(a.stream & 15);
-        k.offset = static_cast<uint16_t>(a.relative_offset);
-        k.format = f;
-        key.binding_instance[k.binding] = S.stream[k.binding].divisor > 0 ? 1 : 0;
+        const uint32_t elems = in.array ? in.array : 1;
+        for (uint32_t e = 0; e < elems; ++e) {
+            const uint32_t loc = in.location + e;
+            if (loc >= 32) break;
+            VkFormat f = VK_FORMAT_UNDEFINED;
+            const VertexAttribInfo* a = nullptr;
+            if (loc < S.attr_count && loc < 16) {
+                a = &S.attr[loc];
+                f = vertex_format(a->format);
+            }
+            if (f == VK_FORMAT_UNDEFINED) {
+                if (nmissing < 32) missing[nmissing++] = {loc, in.type};
+                continue;
+            }
+            if (in.type == ScalarType::Float && is_int_format(f)) f = scaled_for(f);
+            else if ((in.type == ScalarType::Uint || in.type == ScalarType::Sint) && !is_int_format(f))
+                log_once("attr-type-mismatch", "a vertex attribute with a float format feeds an integer shader input (needs a SPIR-V variant)");
+            if (key.attr_count >= 16) break;
+            KeyAttr& k = key.attr[key.attr_count++];
+            k.location = static_cast<uint8_t>(loc);
+            k.binding = static_cast<uint8_t>(a->stream & 15);
+            k.offset = static_cast<uint16_t>(a->relative_offset);
+            k.format = f;
+            key.binding_instance[k.binding] = S.stream[k.binding].divisor > 0 ? 1 : 0;
+        }
+    }
+    if (nmissing) {
+        uint32_t used = 0;
+        for (uint32_t i = 0; i < key.attr_count; ++i) used |= 1u << key.attr[i].binding;
+        uint32_t free_binding = 0;
+        while (free_binding < 16 && (used >> free_binding & 1)) ++free_binding;
+        if (free_binding < 16) {
+            key.dummy_binding = static_cast<uint8_t>(free_binding + 1);
+            key.binding_instance[free_binding] = 0;
+            for (uint32_t i = 0; i < nmissing && key.attr_count < 16; ++i) {
+                KeyAttr& k = key.attr[key.attr_count++];
+                k.location = static_cast<uint8_t>(missing[i].location);
+                k.binding = static_cast<uint8_t>(free_binding);
+                const bool is_float = missing[i].type != ScalarType::Uint && missing[i].type != ScalarType::Sint;
+                k.offset = is_float ? 0 : 16;
+                k.format = is_float ? VK_FORMAT_R32G32B32A32_SFLOAT : (missing[i].type == ScalarType::Uint ? VK_FORMAT_R32G32B32A32_UINT : VK_FORMAT_R32G32B32A32_SINT);
+            }
+        }
     }
     key.color_count = P.ncolor;
     for (uint32_t i = 0; i < P.ncolor && i < 8; ++i) {
@@ -560,6 +746,13 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
         key.blend_op_a[i] = b.eq_a ? vk_blend_op(b.eq_a) : VK_BLEND_OP_ADD;
         key.write_mask[i] = S.chmask.mask[i] & 0xf;
         if (P.color_fmt[i] == VK_FORMAT_UNDEFINED) key.write_mask[i] = 0;
+        auto uses_src1 = [](VkBlendFactor f) {
+            return f == VK_BLEND_FACTOR_SRC1_COLOR || f == VK_BLEND_FACTOR_ONE_MINUS_SRC1_COLOR || f == VK_BLEND_FACTOR_SRC1_ALPHA ||
+                   f == VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA;
+        };
+        if (key.blend_enable[i] && (uses_src1(static_cast<VkBlendFactor>(key.blend_src_rgb[i])) || uses_src1(static_cast<VkBlendFactor>(key.blend_dst_rgb[i])) ||
+                                    uses_src1(static_cast<VkBlendFactor>(key.blend_src_a[i])) || uses_src1(static_cast<VkBlendFactor>(key.blend_dst_a[i]))))
+            key.dual_src = 1;
     }
     key.depth_format = P.depth_fmt;
     key.stencil_format = P.has_stencil ? P.depth_fmt : VK_FORMAT_UNDEFINED;
@@ -604,7 +797,7 @@ void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, i
     const bool have_depth = P.depth_fmt != VK_FORMAT_UNDEFINED;
     if (dirty & kDynDepth) {
         vkCmdSetDepthTestEnable(cb, have_depth && S.ds.depth_test);
-        vkCmdSetDepthWriteEnable(cb, have_depth && S.ds.depth_test && S.ds.depth_write);
+        vkCmdSetDepthWriteEnable(cb, have_depth && !P.depth_ro && S.ds.depth_test && S.ds.depth_write);
         vkCmdSetDepthCompareOp(cb, vk_compare_op(S.ds.depth_func ? S.ds.depth_func : NVN_DEPTH_FUNC_LESS));
         vkCmdSetDepthBoundsTestEnable(cb, have_depth && S.depth_bounds && device().features().depth_bounds);
         if (S.depth_bounds && device().features().depth_bounds) vkCmdSetDepthBounds(cb, S.db_near, S.db_far);
@@ -617,7 +810,7 @@ void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, i
                               vk_compare_op(S.ds.stencil_func[f] ? S.ds.stencil_func[f] : NVN_STENCIL_FUNC_ALWAYS));
             vkCmdSetStencilReference(cb, face, S.stencil_ref[f]);
             vkCmdSetStencilCompareMask(cb, face, S.stencil_vmask[f]);
-            vkCmdSetStencilWriteMask(cb, face, S.stencil_wmask[f]);
+            vkCmdSetStencilWriteMask(cb, face, P.depth_ro ? 0u : S.stencil_wmask[f]);
         }
     }
     if (dirty & kDynBias) {
@@ -643,8 +836,11 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     }
     const ProgLayout* pl = g_pl;
     if (!pl) return false;
-    if (g_dirty & kDesc) prepare_textures(*pl);
-    if (!ensure_pass()) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
+    if (g_dirty & (kDesc | kPipe)) {
+        g_want_depth_ro = samples_depth_target(*pl);
+        prepare_textures(*pl);
+    }
+    if (!ensure_pass(g_want_depth_ro)) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
     const VkPrimitiveTopology topo = vk_topology(mode);
     if ((g_dirty & kPipe) || topo != g_pipe_topo || !g_pipe) {
         GraphicsKey key;
@@ -652,9 +848,26 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         g_pipe = graphics_pipeline(key, *pl);
         g_pipe_topo = topo;
         g_key_attr_count = key.attr_count;
+        g_key_dummy_binding = key.dummy_binding;
         for (uint32_t i = 0; i < key.attr_count; ++i) g_key_binding[i] = key.attr[i].binding;
     }
     if (!g_pipe) return false;
+    if (g_trace) {
+        char a[96], b[96], c[96];
+        std::string line;
+        for (uint32_t i = 0; i < P.ncolor; ++i) { line += tex_desc(S.color_tex[i].get(), a, sizeof a); line += " | "; }
+        TRACE("draw #%d vs %s fs %s gs %s mode %d idx %d | rt %s ds %s%s | blend %u mask %x depth t%d w%d f%d cull %d | ubo0 %llx/%llu",
+              ++g_trace_n, S.stage[kVertex] ? S.stage[kVertex]->hash.c_str() : "-", S.stage[kFragment] ? S.stage[kFragment]->hash.c_str() : "-",
+              S.stage[kGeometry] ? S.stage[kGeometry]->hash.c_str() : "-", mode, indexed ? 1 : 0, line.c_str(), tex_desc(S.depth_tex.get(), b, sizeof b),
+              P.depth_ro ? " (ro)" : "", S.color.blend_enable_mask, S.chmask.mask[0], S.ds.depth_test ? 1 : 0, S.ds.depth_write ? 1 : 0, S.ds.depth_func,
+              S.poly.cull_face, static_cast<unsigned long long>(S.ubo[kVertex][0].addr), static_cast<unsigned long long>(S.ubo[kVertex][0].size));
+        for (const BindingDesc& d : pl->bindings) {
+            if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && d.type != VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) continue;
+            const TexResolved r = d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? resolve_image(d) : resolve_texture(d);
+            TRACE("    %s set%u b%u %s -> %s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
+                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)");
+        }
+    }
     if (g_pipe != g_bound_pipeline) {
         vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
         g_bound_pipeline = g_pipe;
@@ -667,11 +880,26 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             bool done = false;
             for (uint32_t j = 0; j < i; ++j) if (g_key_binding[j] == binding) done = true;
             if (done) continue;
+            if (g_key_dummy_binding && binding == static_cast<uint32_t>(g_key_dummy_binding - 1)) {
+                VkBuffer dummy = dummy_buffer();
+                VkDeviceSize off = kDummyAttrFloatOffset, size = 32, stride = 0;
+                vkCmdBindVertexBuffers2(F->cb, binding, 1, &dummy, &off, &size, &stride);
+                g_vb_bound_in_cb = true;
+                continue;
+            }
             const GState::Bind& vb = S.vtx[binding];
             BufRef br = vb.addr ? resolve_buffer(vb.addr, vb.size) : BufRef{dummy_buffer(), 0, 65536, false};
             VkDeviceSize size = vb.size ? std::min<VkDeviceSize>(vb.size, br.avail) : br.avail;
             VkDeviceSize stride = static_cast<VkDeviceSize>(S.stream[binding].stride);
             vkCmdBindVertexBuffers2(F->cb, binding, 1, &br.buffer, &br.offset, &size, &stride);
+            g_vb_bound_in_cb = true;
+        }
+        if (!g_vb_bound_in_cb) {
+            // the pipeline's vertex binding strides are dynamic: a command buffer that never bound a vertex buffer must still bind one
+            VkBuffer dummy = dummy_buffer();
+            VkDeviceSize off = 0, size = 65536, stride = 0;
+            vkCmdBindVertexBuffers2(F->cb, 0, 1, &dummy, &off, &size, &stride);
+            g_vb_bound_in_cb = true;
         }
     }
     g_dirty = 0;
@@ -789,6 +1017,7 @@ void do_draw_indirect(const P_DrawIndirect& p) {
 
 void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     const ShaderInfo* cs = S.stage[kCompute];
+    TRACE("dispatch %u %u %u indirect %llx cs %s", x, y, z, static_cast<unsigned long long>(indirect), cs ? cs->hash.c_str() : "-");
     if (!cs) return;
     const ShaderInfo* stages[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, cs};
     const ProgLayout* pl = prog_layout(stages);
@@ -821,6 +1050,7 @@ VkClearRect full_rect() {
 }
 
 void do_clear_color(const P_ClearColor& p) {
+    if (g_trace) { char a[96]; TRACE("clear color rt%u mask %x kind %u %s", p.target, p.mask, p.kind, tex_desc(p.target < 8 ? S.color_tex[p.target].get() : nullptr, a, sizeof a)); }
     if (p.target >= 8 || !S.color_tex[p.target]) return;
     if (p.mask == 0) return;
     if (!ensure_pass()) return;
@@ -847,13 +1077,26 @@ void do_clear_color(const P_ClearColor& p) {
 }
 
 void do_clear_depth_stencil(const P_ClearDepthStencil& p) {
+    TRACE("clear depth/stencil d %g (mask %d) s %d (mask %x)", p.depth, p.depth_mask, p.stencil, p.stencil_mask);
     if (!S.depth_tex) return;
     if (!ensure_pass()) return;
     VkClearAttachment ca = {};
     if (p.depth_mask) ca.aspectMask |= VK_IMAGE_ASPECT_DEPTH_BIT;
     if (p.stencil_mask && P.has_stencil) ca.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
     if (!ca.aspectMask) return;
-    if (p.stencil_mask && p.stencil_mask != 0xff) note_unsupported("ClearDepthStencil with a partial stencil mask");
+    if (p.stencil_mask && p.stencil_mask != 0xff && P.has_stencil && !P.depth_ro) {
+        // vkCmdClearAttachments has no stencil write mask: a masked stencil clear is a draw with that write mask (depth goes along)
+        if (!g_mask_ready) { g_mask_ok = g_mask.init(device()); g_mask_ready = true; }
+        const VkClearRect cr = full_rect();
+        if (g_mask_ok && g_mask.record_depth_stencil(F->cb, P.color_fmt, P.ncolor, P.depth_fmt, true, P.samples, p.depth_mask != 0, p.depth, p.stencil_mask,
+                                                    static_cast<uint32_t>(p.stencil), cr.rect)) {
+            counters().clears.fetch_add(1, std::memory_order_relaxed);
+            g_bound_pipeline = VK_NULL_HANDLE;
+            g_dirty = kAllDirty;
+            return;
+        }
+        note_unsupported("ClearDepthStencil with a partial stencil mask (the whole stencil is cleared)");
+    }
     ca.clearValue.depthStencil = {p.depth, static_cast<uint32_t>(p.stencil)};
     VkClearRect r = full_rect();
     vkCmdClearAttachments(F->cb, 1, &ca, 1, &r);
@@ -1254,6 +1497,9 @@ void run_list(const CmdList& list, int depth) {
 
 void replay_begin_submit(Frame& f) {
     F = &f;
+    if (g_trace_frame == -2) g_trace_frame = nxrt::config_get_int("nvn", "trace_frame", -1);
+    g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
+    if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(g_trace_frame)); }
     S.window_origin = window_origin_mode();
     S.depth_mode = depth_mode();
     P = Pass();
@@ -1264,6 +1510,9 @@ void replay_begin_submit(Frame& f) {
     g_pipe = VK_NULL_HANDLE;
     g_topo = g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
     g_restart_valid = false;
+    g_vb_bound_in_cb = false;
+    g_want_depth_ro = false;
+    g_key_dummy_binding = 0;
     // one support buffer per submission (Ryujinx SupportBuffer: render scales 1.0, no BGRA remap)
     g_support = f.upload(sizeof(SupportBuffer), 256);
     if (g_support) {

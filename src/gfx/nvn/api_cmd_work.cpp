@@ -585,6 +585,10 @@ void nvnCommandBufferPopDebugGroupId(NVNcommandBuffer*, uint32_t) {}
 void nvnCommandBufferInsertDebugMarkerStatic(NVNcommandBuffer*, uint32_t, const char*) {}
 void nvnCommandBufferInsertDebugMarkerDynamic(NVNcommandBuffer*, uint32_t, const char*) {}
 void nvnCommandBufferInsertDebugMarker(NVNcommandBuffer*, const char*) {}
+// NVN 55 names the game asks for and never calls (signatures assumed): accepted, nothing to do.
+void nvnCommandBufferInsertCheckpointStatic(NVNcommandBuffer*, uint32_t, const char*) {}
+void nvnCommandBufferInsertCheckpointDynamic(NVNcommandBuffer*, uint32_t, const char*) {}
+void nvnCommandBufferOverrideSubtileSize(NVNcommandBuffer*, int, int) {}
 
 }  // namespace
 
@@ -644,6 +648,9 @@ void register_api_cmd_work() {
     NVN_REG(nvnCommandBufferInsertDebugMarkerStatic);
     NVN_REG(nvnCommandBufferInsertDebugMarkerDynamic);
     NVN_REG(nvnCommandBufferInsertDebugMarker);
+    NVN_REG(nvnCommandBufferInsertCheckpointStatic);
+    NVN_REG(nvnCommandBufferInsertCheckpointDynamic);
+    NVN_REG(nvnCommandBufferOverrideSubtileSize);
 }
 
 }  // namespace nxrt::nvn

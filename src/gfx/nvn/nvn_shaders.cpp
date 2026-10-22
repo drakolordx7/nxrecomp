@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <unordered_set>
 
@@ -821,6 +822,43 @@ const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control)
     return load_locked(hash, code, control, c.code_size);
 }
 
+namespace {
+// [nvn] dump_missing (NXRT_NVN_DUMP_MISSING): a folder that receives every block the cache has no translation for, in the layout of
+// the shader corpus (code_<hash>.bin, ctrl_<hash>.bin, manifest.tsv), so `spirv_harness --batch <folder>` can translate it.
+// The stage is the word at control +0x714 (0 vertex, 1 fragment, 2 geometry, 5 compute).
+void dump_missing_block(const std::string& hash, const uint8_t* code, const uint8_t* control, uint32_t code_size) {
+    static const std::string dir = nxrt::config_get_str("nvn", "dump_missing", "");
+    if (dir.empty()) return;
+    static std::mutex mu;
+    static std::unordered_set<std::string> done;
+    std::lock_guard<std::mutex> lk(mu);
+    if (!done.insert(hash).second) return;
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    constexpr uint32_t kCtrlBytes = 0x880;
+    const ShaderControl c = read_control(control);
+    uint32_t stage_word = 0;
+    std::memcpy(&stage_word, control + 0x714, 4);
+    const char* stage = stage_word == 0 ? "vertex" : stage_word == 1 ? "fragment" : stage_word == 2 ? "geometry" : stage_word == 5 ? "compute" : "unknown";
+    {
+        std::ofstream f(dir + "/code_" + hash + ".bin", std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(code), code_size);
+    }
+    {
+        std::ofstream f(dir + "/ctrl_" + hash + ".bin", std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(control), kCtrlBytes);
+    }
+    const std::string manifest = dir + "/manifest.tsv";
+    const bool fresh = !std::filesystem::exists(manifest, ec);
+    std::ofstream m(manifest, std::ios::app);
+    if (fresh) m << "id\tstage\tcode_off\tcode_size\tctrl_off\tctrl_size\tprogram_start\tprogram_bytes\tconst_off\tconst_size\tcode_sha1_16\tcode_file\tctrl_file\n";
+    char row[512];
+    std::snprintf(row, sizeof row, "run_%s\t%s\t0x0\t0x%x\t0x0\t0x%x\t0x%x\t0x%x\t0x%x\t0x%x\t%s\tcode_%s.bin\tctrl_%s.bin\n", hash.c_str(), stage, code_size,
+                  kCtrlBytes, c.program_start, c.program_size, c.const_offset, c.const_size, hash.c_str(), hash.c_str(), hash.c_str());
+    m << row;
+}
+}  // namespace
+
 const ShaderInfo* ShaderCache::load_locked(const std::string& hash, const uint8_t* code, const uint8_t* control,
                                            uint32_t code_size) {
     auto miss = [&](const std::string& why) -> const ShaderInfo* {
@@ -830,8 +868,10 @@ const ShaderInfo* ShaderCache::load_locked(const std::string& hash, const uint8_
         return nullptr;
     };
     std::string bytes;
-    if (!read_file(dir_ + "/" + hash + ".spv", bytes) || bytes.empty() || bytes.size() % 4)
+    if (!read_file(dir_ + "/" + hash + ".spv", bytes) || bytes.empty() || bytes.size() % 4) {
+        dump_missing_block(hash, code, control, code_size);
         return miss("no usable " + dir_ + "/" + hash + ".spv");
+    }
     std::vector<uint32_t> words(bytes.size() / 4);
     std::memcpy(words.data(), bytes.data(), bytes.size());
 
