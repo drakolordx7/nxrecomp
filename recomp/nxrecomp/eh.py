@@ -377,3 +377,75 @@ def parse_lsda(rd, img, fde):
                 v = img.ptr_at(v)
             types.append(v)
     return sites, actions, types
+
+
+def parse_lsda_ex(rd, img, fde):
+    """parse_lsda with the type table resolved to final guest addresses, and the exception specifications.
+       -> (sites, actions, types, specs)
+       types: [(address, sym)] 1-based by filter like parse_lsda's list. address is the final post-relocation guest address
+              (module base added; 0 = catch(...) / null entry); sym >= 0 means the entry is an undefined dynamic symbol
+              (an imported typeinfo) of this module: address is 0 and the runtime resolves the symbol's name; -1 otherwise.
+       specs: {raw filter (< 0): [type filter, ...]}  the exception specification lists the negative filters point at
+              (a list of 1-based type filters, in the order of the LSDA)."""
+    sites, actions, _ = parse_lsda(rd, img, fde)
+    o = fde.lsda
+    lpstart_enc = rd.u8(o)
+    o += 1
+    if lpstart_enc != DW_EH_PE_omit:
+        _, o = rd.enc(o, lpstart_enc)
+    ttype_enc = rd.u8(o)
+    o += 1
+    if ttype_enc == DW_EH_PE_omit:
+        return sites, actions, [], {}
+    off, o = rd.uleb(o)
+    ttbase = o + off
+    specs = {}
+    for filt, _ in actions.values():
+        if filt < 0 and filt not in specs:
+            p = ttbase + (-filt) - 1                      # -filter - 1 = byte offset of the list from the table base
+            lst = []
+            while True:
+                k, p = rd.uleb(p)
+                if k == 0:
+                    break
+                lst.append(k)
+            specs[filt] = lst
+    maxf = max([f for f, _ in actions.values() if f > 0] + [k for l in specs.values() for k in l] + [0])
+    sz = {0x00: 8, 0x04: 8, 0x0c: 8, 0x03: 4, 0x0b: 4, 0x02: 2, 0x0a: 2}[ttype_enc & 0x0f]
+    rel = img.reloc_map()
+    syms = None
+    types = []
+    for k in range(1, maxf + 1):
+        p = ttbase - k * sz
+        if sz == 4 and (ttype_enc & 0x0f) == 0x0b:
+            v = rd.s32(p)
+        elif sz == 4:
+            v = rd.u32(p)
+        elif sz == 2:
+            v = rd.u16(p)
+        else:
+            v = rd.u64(p)
+        if v == 0:
+            types.append((0, -1))
+            continue
+        if (ttype_enc & 0x70) == 0x10:
+            v += p
+        if ttype_enc & 0x80:                                  # indirect: v is the offset of a slot holding the pointer
+            r = rel.get(v)
+            if r is None:
+                types.append((img.ptr_at(v), -1))             # no relocation: a static image holds the final address
+            elif r[0] == 0x403:                               # R_AARCH64_RELATIVE: base + addend
+                types.append((img.base + r[2], -1))
+            elif r[0] in (0x101, 0x401, 0x402):               # ABS64 / GLOB_DAT / JUMP_SLOT against a symbol
+                if syms is None:
+                    syms = img.symbols()
+                s = syms[r[1]]
+                if s[3]:
+                    types.append((img.base + img.sym_value(s[4]) + r[2], -1))
+                else:
+                    types.append((0, r[1]))
+            else:
+                raise ValueError('typeinfo slot %x has relocation type %x' % (v, r[0]))
+        else:
+            types.append((img.base + v, -1))
+    return sites, actions, types, specs

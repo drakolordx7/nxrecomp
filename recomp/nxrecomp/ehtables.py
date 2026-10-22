@@ -11,7 +11,7 @@ def emit(env, m):
     fdes, cies = ehmod.all_fdes(img)
     if not fdes:
         return 'NULL'
-    rows, saved, sites_out, actions_out, types_out, fde_out = [], [], [], [], [], []
+    rows, saved, sites_out, actions_out, types_out, tsyms_out, specs_out, fde_out = [], [], [], [], [], [], [], []
     for f in fdes:
         cie = ehmod.parse_cie(rd, f.cie)
         try:
@@ -28,16 +28,21 @@ def emit(env, m):
         site_first = len(sites_out)
         type_first = len(types_out)
         if f.lsda:
-            lsites, lactions, ltypes = ehmod.parse_lsda(rd, img, f)
+            lsites, lactions, ltypes, lspecs = ehmod.parse_lsda_ex(rd, img, f)
             order = sorted(lactions)                        # 1-based byte offsets -> compact indices
             index = {k: i + len(actions_out) for i, k in enumerate(order)}
+            spec_at = {}
+            for raw, lst in lspecs.items():                 # exception specification lists: 0-terminated, shared by index
+                spec_at[raw] = -(len(specs_out) + 1)
+                specs_out += lst + [0]
             for k in order:
                 filt, nxt = lactions[k]
-                actions_out.append((filt, index[nxt] + 1 if nxt else 0))
+                actions_out.append((spec_at[filt] if filt < 0 else filt, index[nxt] + 1 if nxt else 0))
             for s in lsites:
                 sites_out.append((env.base + s.start, s.len, env.base + s.pad if s.pad else 0,
                                   index[s.action] + 1 if s.action else 0))
-            types_out += ltypes
+            types_out += [a for a, _ in ltypes]
+            tsyms_out += [y for _, y in ltypes]
         fde_out.append((env.base + f.start, env.base + f.end, row_first, len(rows) - row_first, site_first,
                         len(sites_out) - site_first, type_first))
     m.append('static const NxFde eh_fdes[] = {')
@@ -58,5 +63,11 @@ def emit(env, m):
     m.append('static const uint64_t eh_types[] = {')
     m += ['  0x%xULL,' % x for x in types_out] or ['  0,']
     m.append('};')
-    m.append('static const NxEh eh = { eh_fdes, %d, eh_rows, eh_saved, eh_sites, eh_actions, eh_types };' % len(fde_out))
+    m.append('static const int32_t eh_type_syms[] = {')
+    m += ['  %d,' % x for x in tsyms_out] or ['  -1,']
+    m.append('};')
+    m.append('static const uint32_t eh_specs[] = {')
+    m += ['  %d,' % x for x in specs_out] or ['  0,']
+    m.append('};')
+    m.append('static const NxEh eh = { eh_fdes, %d, eh_rows, eh_saved, eh_sites, eh_actions, eh_types, eh_type_syms, eh_specs };' % len(fde_out))
     return '&eh'

@@ -4,6 +4,7 @@
 #     INPUT <module file>          NSO or static ELF (see --kind)
 #     NAME <module name>           default: main        (the generated descriptor is `nxmod_<NAME>`)
 #     [BASE <0x...>]               guest address the module is mapped at (default 0x7100000000)
+#     [INDEX <n>]                  NxModule.index / import-id module number (default: position in the game config's module list)
 #     [GAME <name>]                recomp/games/<name>/config.py (default: generic)
 #     [KIND nso|nx_elf|static_elf] default: guessed from the file's magic
 #     [SHARDS <n>]                 exactly n translation units c_000.cpp ... (default 16)
@@ -31,7 +32,7 @@ file(GLOB NX_LIFTER_SOURCES CONFIGURE_DEPENDS
      "${NXRECOMP_ROOT}/include/nxrecomp/*.h")
 
 function(nxrecomp_add_module target)
-  cmake_parse_arguments(A "" "INPUT;NAME;BASE;GAME;KIND;SHARDS;JOBS;OUTDIR;PATCHES;SITES" "" ${ARGN})
+  cmake_parse_arguments(A "" "INPUT;NAME;BASE;INDEX;GAME;KIND;SHARDS;JOBS;OUTDIR;PATCHES;SITES" "" ${ARGN})
   if(NOT A_NAME)
     set(A_NAME main)
   endif()
@@ -48,11 +49,16 @@ function(nxrecomp_add_module target)
     set(A_OUTDIR "${CMAKE_CURRENT_BINARY_DIR}/gen/${target}")
   endif()
   set(extra "")
+  set(game_deps "")
   if(A_GAME)
     list(APPEND extra --game ${A_GAME})
+    file(GLOB game_deps CONFIGURE_DEPENDS "${NXRECOMP_ROOT}/games/${A_GAME}/*.py")
   endif()
   if(A_KIND)
     list(APPEND extra --kind ${A_KIND})
+  endif()
+  if(NOT "${A_INDEX}" STREQUAL "")
+    list(APPEND extra --index ${A_INDEX})
   endif()
   if(A_PATCHES)
     list(APPEND extra --patches ${A_PATCHES})
@@ -80,7 +86,7 @@ function(nxrecomp_add_module target)
     COMMAND "${NX_PYTHON}" -m nxrecomp lift "${A_INPUT}" "${A_OUTDIR}" --name ${A_NAME} --base ${A_BASE}
             --shards ${A_SHARDS} --jobs ${A_JOBS} ${extra}
     WORKING_DIRECTORY "${NXRECOMP_ROOT}"
-    DEPENDS "${A_INPUT}" ${A_SITES} ${NX_LIFTER_SOURCES}
+    DEPENDS "${A_INPUT}" ${A_SITES} ${NX_LIFTER_SOURCES} ${game_deps}
     COMMENT "nxrecomp: lifting ${A_NAME} (${A_INPUT})"
     VERBATIM)
   add_library(${target} STATIC ${shard_srcs} "${A_OUTDIR}/module_${A_NAME}.cpp")
