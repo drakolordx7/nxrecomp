@@ -65,6 +65,45 @@ void copy_utf8(char* dst, size_t cap, const char* src) {
     dst[n] = '\0';
 }
 
+// The open pad with this id, or nullptr.
+SDL_Gamepad* find_pad(uint32_t id) {
+    for (const OpenPad& p : g_pads) {
+        if (p.id == id) return p.pad;
+    }
+    return nullptr;
+}
+
+// Face positions in GamepadRaw::face_label order: SOUTH, EAST, WEST, NORTH.
+constexpr SDL_GamepadButton kFaceButtons[4] = {SDL_GAMEPAD_BUTTON_SOUTH, SDL_GAMEPAD_BUTTON_EAST, SDL_GAMEPAD_BUTTON_WEST,
+                                               SDL_GAMEPAD_BUTTON_NORTH};
+
+// Maps the label printed on face position p to a GamepadRaw::face_label code (0 A, 1 B, 2 X, 3 Y). Unknown labels keep
+// the position default {0,1,2,3}[p], which equals p.
+uint8_t face_code(SDL_GamepadButtonLabel label, int p) {
+    switch (label) {
+        case SDL_GAMEPAD_BUTTON_LABEL_A:
+        case SDL_GAMEPAD_BUTTON_LABEL_CROSS:
+            return 0;
+        case SDL_GAMEPAD_BUTTON_LABEL_B:
+        case SDL_GAMEPAD_BUTTON_LABEL_CIRCLE:
+            return 1;
+        case SDL_GAMEPAD_BUTTON_LABEL_X:
+        case SDL_GAMEPAD_BUTTON_LABEL_SQUARE:
+            return 2;
+        case SDL_GAMEPAD_BUTTON_LABEL_Y:
+        case SDL_GAMEPAD_BUTTON_LABEL_TRIANGLE:
+            return 3;
+        default:
+            return static_cast<uint8_t>(p);
+    }
+}
+
+void read_face_labels(SDL_Gamepad* pad, uint8_t out[4]) {
+    for (int p = 0; p < 4; ++p) {
+        out[p] = face_code(SDL_GetGamepadButtonLabel(pad, kFaceButtons[p]), p);
+    }
+}
+
 // Opens a gamepad that SDL reports as added and fills its info entry.
 void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
     for (const OpenPad& p : g_pads) {
@@ -90,6 +129,15 @@ void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
 
     NXLOG_I(kTag, "gamepad %u added: \"%s\" rumble=%d gyro=%d", static_cast<unsigned>(id), info.name, info.rumble ? 1 : 0,
             info.gyro ? 1 : 0);
+    // Motion sensors: enabled when the pad has them, skipped silently when it does not.
+    const bool accel_on =
+        SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
+    const bool gyro_on = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
+    uint8_t labels[4] = {0, 1, 2, 3};
+    read_face_labels(pad, labels);
+    NXLOG_I(kTag, "gamepad %u sensors: accel=%d gyro=%d labels=%d%d%d%d", static_cast<unsigned>(id), accel_on ? 1 : 0,
+            gyro_on ? 1 : 0, labels[0], labels[1], labels[2], labels[3]);
+
     input::Event e = make_event(input::EventType::GamepadAdded, ts);
     e.u.gamepad.id = id;
     input::queue_push(e);
@@ -431,6 +479,40 @@ void clear_quit() { g_quit = false; }
 void request_quit() { g_quit = true; }
 
 uint64_t ticks_ns() { return SDL_GetTicksNS(); }
+
+// ---- gamepad polling, sensors and rumble ------------------------------------------------------------------------------
+
+bool gamepad_poll(uint32_t id, GamepadRaw* out) {
+    SDL_Gamepad* pad = find_pad(id);
+    if (!pad || !out) return false;
+    static_assert(SDL_GAMEPAD_AXIS_COUNT == 6, "GamepadRaw::axes holds the six SDL axes");
+    GamepadRaw s;
+    for (int n = 0; n < SDL_GAMEPAD_BUTTON_COUNT && n < 32; ++n) {
+        if (SDL_GetGamepadButton(pad, static_cast<SDL_GamepadButton>(n))) s.buttons |= uint32_t{1} << n;
+    }
+    for (int i = 0; i < SDL_GAMEPAD_AXIS_COUNT; ++i) {
+        s.axes[i] = SDL_GetGamepadAxis(pad, static_cast<SDL_GamepadAxis>(i));
+    }
+    read_face_labels(pad, s.face_label);
+    *out = s;
+    return true;
+}
+
+bool gamepad_sensors(uint32_t id, float accel[3], float gyro[3]) {
+    SDL_Gamepad* pad = find_pad(id);
+    if (!pad || !accel || !gyro) return false;
+    const bool present = SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) && SDL_GamepadSensorEnabled(pad, SDL_SENSOR_ACCEL) &&
+                         SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_GamepadSensorEnabled(pad, SDL_SENSOR_GYRO);
+    if (!present) return false;
+    return SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, accel, 3) &&
+           SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, gyro, 3);
+}
+
+bool gamepad_rumble(uint32_t id, uint16_t low, uint16_t high, uint32_t duration_ms) {
+    SDL_Gamepad* pad = find_pad(id);
+    if (!pad) return false;
+    return SDL_RumbleGamepad(pad, low, high, duration_ms);
+}
 
 // ---- Vulkan -------------------------------------------------------------------------------------------------------
 

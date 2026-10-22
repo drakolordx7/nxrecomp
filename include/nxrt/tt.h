@@ -112,6 +112,11 @@ void set_screenshot_provider(ScreenshotFn fn, void* user);
 // Where a replayed / scripted mouse impulse goes (the PC-input layer registers input::mouse_delta_add here; counts per frame).
 using MouseSinkFn = void (*)(double dx, double dy);
 void set_mouse_sink(MouseSinkFn fn);
+// Where a scripted key step goes (the play layer registers its key/button/wheel handler here). down=true presses the named input,
+// false releases it. Return false when the name is unknown or cannot be delivered: the run then fails at that script line.
+// Keys still down when the run ends (pass, fail or shutdown) are released with down=false.
+using KeySinkFn = bool (*)(const char* input_name, bool down);
+void set_key_sink(KeySinkFn fn);
 // What happens when the run is over (default: flush files, TerminateProcess(code)). Tests install their own.
 using ExitFn = void (*)(int code);
 void set_exit_handler(ExitFn fn);

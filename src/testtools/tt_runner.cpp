@@ -26,7 +26,12 @@ bool Runner::load(const std::string& script_file, const RegionTable* regions, st
     stick_override_ = false;
     mouse_x_ = mouse_y_ = 0;
     fail_line_ = 0;
-    return parse_script_file(script_file, regions, &script_, err);
+    has_keys_ = false;
+    const bool ok = parse_script_file(script_file, regions, &script_, err);
+    for (const Step& st : script_.steps) {
+        if (st.kind == StepKind::Key || st.kind == StepKind::KeyDown || st.kind == StepKind::KeyUp) has_keys_ = true;
+    }
+    return ok;
 }
 
 PadFrame Runner::pad() const {
@@ -193,6 +198,26 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             case StepKind::Timeout: default_timeout_ = st.count; advance(); continue;
             case StepKind::Pass: done_ = true; end_run(0, "pass", "@pass at " + script_.path + ":" + std::to_string(st.line)); return;
             case StepKind::Fail: fail(st, st.text.empty() ? "@fail" : st.text); return;
+            case StepKind::Key:
+                if (first) {
+                    if (!key_event(st.text, true)) { fail(st, "unknown input '" + st.text + "'"); return; }
+                    remaining_ = st.count < 0 ? 4 : st.count;
+                }
+                if (remaining_ <= 0) {
+                    if (!key_event(st.text, false)) { fail(st, "unknown input '" + st.text + "'"); return; }
+                    advance();
+                    continue;
+                }
+                remaining_--;
+                return;
+            case StepKind::KeyDown:
+                if (!key_event(st.text, true)) { fail(st, "unknown input '" + st.text + "'"); return; }
+                advance();
+                continue;
+            case StepKind::KeyUp:
+                if (!key_event(st.text, false)) { fail(st, "unknown input '" + st.text + "'"); return; }
+                advance();
+                continue;
         }
         if (r == 1) continue;
         return;       // 0 blocked, -1 failed

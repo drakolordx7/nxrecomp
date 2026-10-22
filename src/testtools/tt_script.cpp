@@ -306,6 +306,30 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    // key <name> [for <n>] / keydown <name> / keyup <name>: the name is the rest of the line; key takes an optional trailing "for <n>".
+    if (kw == "key" || kw == "keydown" || kw == "keyup") {
+        const bool takes_for = kw == "key";
+        const char* form = kw == "key" ? "key <name> [for <n>]" : kw == "keydown" ? "keydown <name>" : "keyup <name>";
+        std::string name = rest_after_first_word(body);
+        Step s = make(kw == "key" ? StepKind::Key : kw == "keydown" ? StepKind::KeyDown : StepKind::KeyUp);
+        s.count = -1;
+        if (takes_for) {
+            std::vector<std::string> tk = split_ws(name);
+            if (tk.size() >= 2 && lower(tk[tk.size() - 2]) == "for") {
+                // name is trimmed, so the last token ends the string; skip the blanks before it to reach the "for" token
+                std::size_t p = name.size() - tk.back().size();
+                while (p > 0 && is_ws(name[p - 1])) p--;
+                const std::size_t for_at = p - tk[tk.size() - 2].size();
+                if (!count_arg(tk.back(), &s.count, msg)) return false;
+                name = trim(name.substr(0, for_at));
+            }
+        }
+        if (name.empty()) return usage(msg, form);
+        s.text = name;
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "stick") {
         if (!(n == 4 || (n == 6 && lower(t[4]) == "for"))) return usage(msg, "stick left|right|l|r <x> <y> [for <n>]");
         Step s = make(StepKind::Stick);
