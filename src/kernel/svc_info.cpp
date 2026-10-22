@@ -8,6 +8,7 @@
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/module.h"
 #include "nxrt/svc.h"
 
 namespace nxrt {
@@ -20,7 +21,7 @@ constexpr uint64_t kCoreMaskApp = 0x7;                          // nxrt: cores 0
 constexpr uint64_t kPriorityMaskApp = 0x0FFFFFFFF0000000ull;    // nxrt: bits 28..59 = HOS priorities 0x1C..0x3B (kernel.h: applications 28..59)
 constexpr uint64_t kAslrRegionAddress = 0x0008000000ull;       // brief value (Switchbrew: no value given)
 constexpr uint64_t kAslrRegionSize = 0x7FF8000000ull;           // brief value (Switchbrew: no value given)
-constexpr uint64_t kTotalMemoryAvailable = 0xCD500000ull;       // brief value: ~3.2 GiB, like an application
+constexpr uint64_t kTotalMemoryAvailable = 0xCD500000ull;       // brief value: ~3.2 GiB, like an application ([memory] app_memory_mb overrides)
 constexpr uint64_t kUsedMemoryOverhead = 0x4000000ull;          // brief value: 64 MiB added to the heap size for "used"
 constexpr uint64_t kEntropyDefaultSeed = 0x1234567890ABCDEFull; // brief value
 constexpr uint64_t kGoldenRatio64 = 0x9E3779B97F4A7C15ull;      // used to separate the four RandomEntropy subtypes
@@ -29,7 +30,17 @@ constexpr uint32_t kInfoThreadTickCountOld = 0xF0000002u;       // ThreadTickCou
 constexpr uint32_t kInfoThreadTickCount = 25;                   // ThreadTickCount id on firmware 12.1.0+ (Switchbrew table)
 constexpr uint64_t kProcessStateStarted = 2;                    // Switchbrew ProcessState 2 = Started (not debugged)
 
-uint64_t used_memory() { return svc_current_heap_size() + kUsedMemoryOverhead; }
+}  // namespace
+uint64_t svc_total_memory() {
+    const int64_t mb = config_get_int("memory", "app_memory_mb", 0);
+    return mb > 0 ? static_cast<uint64_t>(mb) << 20 : kTotalMemoryAvailable;
+}
+namespace {
+uint64_t used_memory() {
+    uint64_t images = 0;
+    for (Module* m : modules()) images += m->size();          // the kernel counts the mapped code/data of the process as used
+    return svc_current_heap_size() + kUsedMemoryOverhead + images;
+}
 
 // UserExceptionContextAddress: one committed kernel page, made on first use and again only if it has been unmapped.
 uint64_t user_exception_context() {
@@ -48,7 +59,7 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
         case 3: out = mem::kAliasSize; return kernel::kOk;                    // AliasRegionSize
         case 4: out = mem::kHeapBase; return kernel::kOk;                     // HeapRegionAddress
         case 5: out = mem::kHeapMax; return kernel::kOk;                      // HeapRegionSize
-        case 6: out = kTotalMemoryAvailable; return kernel::kOk;              // TotalMemorySize
+        case 6: out = svc_total_memory(); return kernel::kOk;              // TotalMemorySize
         case 7: out = used_memory(); return kernel::kOk;                      // UsedMemorySize
         case 8: out = 0; return kernel::kOk;                                  // DebuggerAttached: never
         case 9: out = 0; return kernel::kOk;                                  // ResourceLimit: no handle
@@ -71,7 +82,7 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
         case 20:                                                              // UserExceptionContextAddress
             out = user_exception_context();
             return out ? kernel::kOk : kernel::kOutOfMemory;
-        case 21: out = kTotalMemoryAvailable; return kernel::kOk;             // TotalNonSystemMemorySize (same as 6)
+        case 21: out = svc_total_memory(); return kernel::kOk;             // TotalNonSystemMemorySize (same as 6)
         case 22: out = used_memory(); return kernel::kOk;                     // UsedNonSystemMemorySize (same as 7)
         case 23: out = 1; return kernel::kOk;                                 // IsApplication
         case kInfoThreadTickCountOld:

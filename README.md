@@ -12,7 +12,7 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `src/diag` | Config file and environment lookup (config.cpp), leveled log (log.cpp), crash report (crash.cpp), host stack walk (stackwalk.cpp), linker-map symbols (symbols.cpp), freeze watchdog (watchdog.cpp), memory guard (memguard.cpp), thread registry and recent files (registry.cpp) |
 | `src/ipc` | HIPC wire format (hipc.cpp), service registry, sessions, domains and routing (ipc.cpp), `sm:` service manager (sm.cpp), stub services (stub.cpp) |
 | `src/kernel` | Handle table (handles.cpp), SVC dispatcher (svc.cpp) and its groups: info (svc_info.cpp), IPC (svc_ipc.cpp), memory (svc_memory.cpp), thread and sync (svc_thread.cpp), names (svc_names.inc); kernel sync semantics (kernel_sync.cpp), guest threads (thread.cpp), console core model (sched.cpp), system tick (time.cpp) |
-| `src/loader` | ELF64 AArch64 structures (elf.h), module loader and linker (module.cpp) |
+| `src/loader` | ELF64 AArch64 structures (elf.h), module loader and linker (module.cpp), NSO loader with LZ4 (nso.cpp) |
 | `src/mem` | Guest address space, heap section and alias views (memory.cpp) |
 | `src/os` | Guest-address keyed sync objects (sync.cpp) |
 | `src/gfx` | Graphics shell (stream S4b, library `nxrt_gfx`, see docs/S4b.md): SDL3 platform and input queue (platform.cpp, input.cpp), frame limiter (frame_limiter.cpp), Vulkan device and renderer (vk_device.cpp, vk_renderer.cpp, vma_impl.cpp), test scene and loop (scene.cpp, scene_runner.cpp, shaders/, scene_shaders.inc), ImGui overlay (overlay.cpp), NVN front end (nvn/nvn_loader.cpp, generated nvn/nvn_table.inc and nvn/nvn_sizes.inc) |
@@ -37,9 +37,9 @@ Requirements: Windows x64, the Visual Studio Build Tools (`env.cmd` calls `vcvar
 
 Output goes to `build\<config in lower case>`, so Release builds to `build\release`.
 
-The ABI header `nxrecomp/ctx.h` is owned by stream S1. CMake looks for it in `..\recomp\include` relative to the checkout (`NXRT_RECOMP_INCLUDE`, see `CMakeLists.txt`). `include/nxrt/abi.h` asserts `NXRECOMP_ABI_VERSION == 2`. A git worktree does not contain `..\recomp`, so it has to be configured once by hand with `-DNXRT_RECOMP_INCLUDE=D:/AI/Active/Metroid-Prime/recomp/include`. The CMake cache keeps the value for later `build.ps1` runs.
+The ABI header `nxrecomp/ctx.h` is owned by stream S1. CMake looks for it in `..\recomp\include` relative to the checkout (`NXRT_RECOMP_INCLUDE`, see `CMakeLists.txt`). `include/nxrt/abi.h` asserts `NXRECOMP_ABI_VERSION == 3`. A git worktree does not contain `..\recomp`, so it has to be configured once by hand with `-DNXRT_RECOMP_INCLUDE=D:/AI/Active/Metroid-Prime/recomp/include`. The CMake cache keeps the value for later `build.ps1` runs.
 
-Test groups: `crash`, `eh`, `eh_typeinfo`, `hipc`, `hooks`, `ipc`, `kernel_sync`, `kernel_threads`, `loader`, `log_config`, `memguard`, `memory`, `nxmodule`, `runtime_e2e`, `smoke`, `svc_info`, `svc_memory`, `svc_names`, `symbols`, `sync`, `watchdog`. Beside them, 25 CTest entries `lift_*` run lifted programs (see Lifted-code tests). CMake reads the `NXTEST_GROUP` line of each test source and creates one CTest entry per group, with a 120 s timeout. To run one group directly, use `build\release\nxrt_tests.exe <group>`. `nxrt_tests.exe --list` prints the groups, `--all` runs everything and `--child <name>` runs a child-process mode (for example `crash_av`, `crash_trap`, `crash_stackoverflow`). The graphics shell has its own 8 groups in `nxrt_gfx_tests` (see docs/S4b.md).
+Test groups: `crash`, `eh`, `eh_abi3`, `eh_typeinfo`, `hipc`, `hooks`, `ipc`, `kernel_sync`, `kernel_threads`, `loader`, `log_config`, `memguard`, `memory`, `nxmodule`, `runtime_e2e`, `smoke`, `svc_info`, `svc_memory`, `svc_names`, `symbols`, `sync`, `watchdog`. Beside them, 25 CTest entries `lift_*` run lifted programs (see Lifted-code tests). CMake reads the `NXTEST_GROUP` line of each test source and creates one CTest entry per group, with a 120 s timeout. To run one group directly, use `build\release\nxrt_tests.exe <group>`. `nxrt_tests.exe --list` prints the groups, `--all` runs everything and `--child <name>` runs a child-process mode (for example `crash_av`, `crash_trap`, `crash_stackoverflow`). The graphics shell has its own 8 groups in `nxrt_gfx_tests` (see docs/S4b.md).
 
 Snapshot on 2026-10-21 (clean Release build): CTest reported 46 of 46 entries passed (a busy machine can push the older timing tests `kernel_sync` and `kernel_threads` over their limits; rerun them alone). `build\release\nxrt_tests.exe --all` printed:
 
@@ -116,6 +116,7 @@ Every source or header file that names an upstream project in its comments is li
 | `src/kernel/svc_thread.cpp` | SuperMarioWonderRecomp `runtime/src/kernel.cpp` svc_impl (structure adapted) | MIT |
 | `src/kernel/thread.cpp` | SuperMarioWonderRecomp `runtime/src/kernel.cpp` new_thread, thread_main (pattern); smo-recomp `runtime/os/os_threads.c` (pattern) | MIT; GPL-3.0 |
 | `src/kernel/time.cpp` | smo-recomp `runtime/os/os_threads.c` sleep_ns (pattern); SuperMarioWonderRecomp `runtime/src/kernel.cpp` system_tick (pattern) | GPL-3.0; MIT |
+| `src/loader/nso.cpp` | Switchbrew NSO page (header layout, segment table, MOD0 at text +4) and the LZ4 block format description (lz4/lz4 doc/lz4_Block_format.md); both are file-format facts, the code is written from scratch | n/a |
 | `src/loader/module.cpp` | smo-recomp `runtime/core/hostrt.c` runtime_init (pattern); SuperMarioWonderRecomp `runtime/src/loader.cpp` (pattern) | GPL-3.0; MIT |
 | `src/mem/memory.cpp` | smo-recomp SetMemoryHeapSize behaviour (body comment at line 456, no file named) | GPL-3.0 |
 | `include/nxrt/frame_limiter.h` | Blur Busters G-SYNC 101 guidance (the VRR cap formula refresh - refresh^2 / 3600; a published rule, no code) | n/a |
@@ -150,5 +151,5 @@ External specifications used as references:
 - No real service behaviour: services are stubs, by design.
 - Audio is out of scope of this library. Graphics, platform input and the NVN front end are the graphics shell (`nxrt_gfx`, docs/S4b.md): the NVN entry points are logging stubs until a back end fills them in; game input mapping is not part of it.
 - Kernel objects for guest-side servers (CreatePort, ReplyAndReceive) are not implemented and are logged as unknown SVCs.
-- C++ exceptions: dynamic exception specifications, `_Unwind_ForcedUnwind` and `_Unwind_Backtrace` are not supported; the `__cxa_exception` layout, the typeinfo vtable symbols and the place of libunwind in the game are assumptions until the dump exists (docs/S3b.md, Gaps).
+- C++ exceptions: `_Unwind_ForcedUnwind` and `_Unwind_Backtrace` are not supported; the `__cxa_exception` layout, the typeinfo vtable symbols and the place of libunwind in the game are assumptions until the dump exists (docs/S3b.md, Gaps).
 - A lifted module's ABI version is passed by the caller because `NxModule` carries none (lifter note in docs/S3b.md).

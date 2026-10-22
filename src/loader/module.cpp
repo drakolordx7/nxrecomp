@@ -485,6 +485,13 @@ bool module_link_all() {
     return ok;
 }
 
+bool module_protect_all() {
+    std::lock_guard<std::recursive_mutex> lk(g_lock);
+    for (auto& m : g_modules)
+        if (!m->linked()) LoaderAccess::protect(*m);
+    return true;
+}
+
 size_t module_register_functions(Module* m, const FuncEntry* table, size_t count) {
     size_t ok = 0, bad = 0;
     for (size_t i = 0; i < count; i++) {

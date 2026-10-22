@@ -114,6 +114,10 @@ Module* module_load_nso_file(const char* path, const LoadOptions& opt = {}, std:
 Module* module_load_nso_memory(const void* data, size_t size, const LoadOptions& opt = {}, std::string* err = nullptr);
 // Phase 2: apply relocations of every module that is mapped but not yet linked, then protect segments. False when a module failed.
 bool module_link_all();
+// For a title that carries its own dynamic linker (Horizon's rtld relocates every module itself): applies only the page protections and
+// the Horizon memory-state records (svcQueryMemory sees the modules as code / code data), leaving the images exactly as the NSO has
+// them. Do not combine with module_link_all() on the same modules.
+bool module_protect_all();
 // Lifted code: registers each entry in the call_indirect table. Entries outside the module's image are rejected (counted, logged).
 size_t module_register_functions(Module* m, const FuncEntry* table, size_t count);
 size_t module_register_functions(Module* m, const ::FnEntry* table, size_t count);   // the lifter's FnEntry (same layout)
