@@ -21,6 +21,7 @@
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
 #include "nxrt/symbols.h"
+#include "nxrt/timestep.h"
 #include "nxrt/tt.h"
 
 namespace nxrt {
@@ -57,6 +58,7 @@ bool init(const InitOptions& opt) {
     if (opt.watchdog) watchdog_start();
     config_log_effective();
     tt::init();                 // test tooling (deterministic mode, scripted runs, traces); a no-op unless a [test] key asks for it
+    timestep::init();           // real-time frame step for the game ([time] section; the hooks do nothing until the lifted game calls them)
     g_up = ok;
     return ok;
 }
@@ -92,6 +94,7 @@ void shutdown() {
     std::lock_guard<std::mutex> lk(g_lock);
     if (!g_up) return;
     NXLOG_I("runtime", "end-of-run summary:\n%s", summary().c_str());
+    timestep::shutdown();
     tt::shutdown();
     watchdog_stop();
     memguard_stop();
