@@ -20,11 +20,11 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `apps` | `gfx_demo.cpp`: the test scene as an executable (`nxrt_gfx_demo`) |
 | `cmake` | `gfx.cmake`, `gfx_deps.cmake`: the graphics library, the demo, the gfx tests and the pinned third-party sources |
 | `tests` | 21 unit-test groups (`test_*.cpp`), `test_framework.h`, `test_main.cpp`; `tests/gfx` holds the graphics groups (`nxrt_gfx_tests`: the shell, 30 NVN groups, 8 of them scene oracles that play a small game through `nvnBootstrapLoader`; see docs/S4d.md), `tests/data/gfx` the reference image |
-| `tests/lift` | Integration tests: test programs lifted by the recompiler and run on this runtime (`driver.cpp`, `CMakeLists.txt`), this work's exception programs (`progs`), their miniature libc++abi (`guest/rt2.h`) and its host stand-in (`native`) |
+| `tests/lift` | Integration tests: test programs lifted by the recompiler and run on this runtime (`driver.cpp`, `CMakeLists.txt`), the S3b exception programs (`progs`), their miniature libc++abi (`guest/rt2.h`) and its host stand-in (`native`) |
 | `tests/data` | Loader fixtures, HIPC test vectors (generated, see Build and test) |
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py` (HIPC vectors); for the lifted tests: `guest_build.py`, `make_sites.py`, `unicorn_expect.py`, `native_check.cmd`, `dump_results.py` |
-| `docs` | `S3.md`, `S3b.md`, `S4b.md` and `S4d.md` (stream logs, decisions, gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
+| `docs` | `S3.md`, `S3b.md`, `S4b.md` and `S4d.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
 | `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_scene_shaders.py` (test-scene SPIR-V), `nvn_unit.ps1` (build and run one NVN unit test without CMake), `gen_present_shaders.py`, `gen_mask_clear_shaders.py` (SPIR-V of the present pass and the masked clear), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
 
 ## Build and test
