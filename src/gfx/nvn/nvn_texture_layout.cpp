@@ -145,7 +145,13 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     ds.block_h = bh;
     ds.bytes_per_block = bpb;
     ds.linear_stride_align = 1;   // tight rows in the scratch buffers of the texel access
-    if (is3d) {
+    int tile[3] = {0, 0, 0};
+    if (is3d && (b.flags & NVN_TEXTURE_FLAGS_SPARSE) && sparse_tile_shape(b.target, out.fmt, tile) && tile[2] <= 16 && tile[1] / static_cast<int>(bh) >= 8) {
+        // A sparse volume is cut into 64 KiB tiles; a tile is whole GOB blocks, so the block shape is the tile's: rows of GOBs of its height, as deep
+        // as the tile (the lighting probe volumes of the game: 2 GOBs high, 16 deep for 8 and 16 byte blocks)
+        ds.gob_blocks_y = static_cast<uint32_t>(tile[1] / static_cast<int>(bh)) / 8;
+        ds.gob_blocks_z = static_cast<uint32_t>(tile[2]);
+    } else if (is3d) {
         ds.gob_blocks_y = 1;
         ds.gob_blocks_z = 16;
     } else {
@@ -159,6 +165,10 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
 
     out.storage_size = out.layout.tiled_layer_stride * layers * samples;
     out.alignment = std::max<uint64_t>(0x200, 512ull * out.layout.levels[0].gob_blocks_y);
+    if (b.flags & NVN_TEXTURE_FLAGS_SPARSE) {   // whole 64 KiB tiles
+        out.storage_size = align_up(out.storage_size, 0x10000);
+        out.alignment = std::max<uint64_t>(out.alignment, 0x10000);
+    }
     out.valid = true;
     return out;
 }
