@@ -1,4 +1,4 @@
-# Play-mode oracles (S8, runtime/docs/S8.md). Run:
+# Play-mode oracles (work area S8, runtime/docs/S8.md). Run:
 #   tools\.venv\Scripts\python tools\test\run_suite.py tools\test\suites\play.toml [--exe path\to\mpr.exe]
 #   tools\.venv\Scripts\python tools\test\play_check.py suite work\suite_out_play        (the cross-run comparisons the table cannot express)
 # Title-screen runs are headless; the window runs open a real window on the desktop for about a minute each.

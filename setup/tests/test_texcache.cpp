@@ -671,7 +671,7 @@ int keysdump(const std::string& romfs, const std::string& out_path) {
     return 0;
 }
 
-// buildcache <romfs> <cache dir> [threads]: runs build_texture_cache itself (used on a subset folder, the full run is the maintainer's)
+// buildcache <romfs> <cache dir> [threads]: runs build_texture_cache itself (used on a subset folder, the full run is done separately)
 int buildcache(const std::string& romfs, const std::string& cache, int threads) {
     TexCacheOptions o;
     o.romfs_dir = romfs;

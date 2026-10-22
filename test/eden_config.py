@@ -1,4 +1,4 @@
-"""Portable Eden setup for the reference harness (S5).
+"""Portable Eden setup for the reference harness (work area S5).
 
   python eden_config.py setup [--eden-dir work/eden] [--keys game/keys] [--nsp PATH]
       Creates <eden-dir>/user/{keys,config,log,screenshots}, copies eden.exe/eden-cli.exe from toolchain/eden when missing (portable mode = a `user`
