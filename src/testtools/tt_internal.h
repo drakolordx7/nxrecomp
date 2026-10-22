@@ -31,6 +31,9 @@ bool require_shots();
 uint64_t current_frame_hash();
 void set_pad(const PadFrame& p);                        // the runner's pad for the frame that just began
 uint64_t main_frame_count();
+// Scripted key steps: calls the registered key sink (tt::set_key_sink) and tracks which names are down, so the run's end can release them.
+// false when there is no sink or the sink refused the name.
+bool key_event(const std::string& name, bool down);
 
 // ---- tt_runner.cpp ----
 class Runner {
@@ -43,11 +46,12 @@ public:
     size_t steps_total() const { return script_.steps.size(); }
     size_t steps_done() const { return idx_; }
     int fail_line() const { return fail_line_; }
+    bool has_key_steps() const { return has_keys_; }    // the loaded script has at least one key / keydown / keyup step
 
 private:
     Script script_;
     size_t idx_ = 0;
-    bool started_ = false, done_ = false, warped_ = false;
+    bool started_ = false, done_ = false, warped_ = false, has_keys_ = false;
     int64_t remaining_ = 0;
     uint64_t start_frame_ = 0;
     int64_t default_timeout_ = 3600;
@@ -69,5 +73,7 @@ namespace nxrt::tt::detail {
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
 bool sample_live(PadFrame* out);           // the pad of the live source (the one installed before ours); false when there is none
-void publish_pad(const PadFrame& p, bool override_live);   // pad for the sampler thread (override_live: replay/script replaces the live source)
+// pad for the sampler thread (override_live: replay/script replaces the live source; merge_live: with override_live, the live pad's buttons are
+// ORed into player 1's and a stick whose scripted value is (0, 0) takes the live stick. Used when a script has key steps.)
+void publish_pad(const PadFrame& p, bool override_live, bool merge_live = false);
 }  // namespace nxrt::tt::detail

@@ -18,6 +18,7 @@ namespace {
 std::mutex g_mu;
 PadFrame g_pad;
 bool g_override = false;
+bool g_merge = false;
 
 class TtSource : public hid::InputSource {
 public:
@@ -26,19 +27,28 @@ public:
         std::shared_ptr<hid::InputSource> l = live;
         if (l) l->poll(out);
         PadFrame p;
-        bool ov;
+        bool ov, merge;
         {
             std::lock_guard<std::mutex> lk(g_mu);
             p = g_pad;
             ov = g_override;
+            merge = g_merge;
         }
         if (!ov) return;
         hid::NpadInput& n = out.npad[0];
         n.connected = true;
         n.style = hid::NpadStyle::FullKey;
-        n.buttons = p.buttons;
-        n.left.x = p.lx; n.left.y = p.ly;
-        n.right.x = p.rx; n.right.y = p.ry;
+        if (merge) {
+            // script with key steps: the live pad (the play layer's output for the keys) stays, the script adds its buttons; a stick the
+            // script leaves at (0, 0) keeps the live stick
+            n.buttons |= p.buttons;
+            if (p.lx != 0 || p.ly != 0) { n.left.x = p.lx; n.left.y = p.ly; }
+            if (p.rx != 0 || p.ry != 0) { n.right.x = p.rx; n.right.y = p.ry; }
+        } else {
+            n.buttons = p.buttons;
+            n.left.x = p.lx; n.left.y = p.ly;
+            n.right.x = p.rx; n.right.y = p.ry;
+        }
         out.mouse.dx = static_cast<int32_t>(p.mouse_dx);
         out.mouse.dy = static_cast<int32_t>(p.mouse_dy);
     }
@@ -73,10 +83,11 @@ bool sample_live(PadFrame* out) {
     return true;
 }
 
-void publish_pad(const PadFrame& p, bool override_live) {
+void publish_pad(const PadFrame& p, bool override_live, bool merge_live) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_pad = p;
     g_override = override_live;
+    g_merge = override_live && merge_live;
 }
 
 }  // namespace nxrt::tt::detail
@@ -84,6 +95,6 @@ void publish_pad(const PadFrame& p, bool override_live) {
 namespace nxrt::tt::detail {
 void install_input() {}
 bool sample_live(PadFrame*) { return false; }
-void publish_pad(const PadFrame&, bool) {}
+void publish_pad(const PadFrame&, bool, bool) {}
 }  // namespace nxrt::tt::detail
 #endif
