@@ -4,7 +4,7 @@
 
 namespace nxrt::services {
 
-void register_audio() {}
-void audio_reset() {}
+void register_audio() { register_audio_out(); }
+void audio_reset() { audio_out_reset(); }
 
 }  // namespace nxrt::services
