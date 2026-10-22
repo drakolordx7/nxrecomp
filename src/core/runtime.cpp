@@ -15,6 +15,7 @@
 #include "nxrt/memguard.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
+#include "nxrt/movie.h"
 #include "nxrt/nxmodule.h"
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
@@ -47,7 +48,10 @@ bool init(const InitOptions& opt) {
         ok = false;
     }
     svc_init();
-    if (opt.services) services::register_all();
+    if (opt.services) {
+        services::register_all();
+        media::install_movie_hle();   // movie:: on Media Foundation ([media] movie = off keeps the library in subsdk0)
+    }
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
