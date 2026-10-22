@@ -23,6 +23,7 @@
 #include "nvn_texdata.h"
 #include "nvn_texture_layout.h"
 #include "nxrt/gfx.h"
+#include "nxrt/gfx_tuning.h"
 #include "tegra_tiling.h"
 #include "test_framework.h"
 NXTEST_GROUP(gfx_nvn_texgpu)
@@ -503,6 +504,92 @@ NXTEST(samplers) {
         CHECK(bords.count(VK_NULL_HANDLE) == 0);
         CHECK(gpu::sampler_for(aniso) != VK_NULL_HANDLE);
         CHECK(gpu::sampler_for(aniso) == gpu::sampler_for(aniso));
+    });
+    teardown(r);
+}
+
+// ---- 8b: display tuning on the samplers: anisotropy and LOD bias only where the rules allow ---------------------------------------
+NXTEST(sampler_tuning) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    const bool aniso_ok = r.dev->features().sampler_anisotropy;
+    std::printf("    sampler_anisotropy on this device: %s\n", aniso_ok ? "yes" : "no");
+    gpu::run_on_render_thread([&] {
+        // Puts the tuning back to its defaults when the case ends, also when a check above failed.
+        struct Reset {
+            ~Reset() {
+                gfx::tuning().anisotropy.store(0);
+                gfx::tuning().lod_bias.store(0.0f);
+            }
+        } reset;
+        auto set_tuning = [](int aniso, float bias) {
+            gfx::tuning().anisotropy.store(aniso);
+            gfx::tuning().lod_bias.store(bias);
+        };
+
+        // 1 and 2: linear-mipmap-linear filters take both the anisotropy and the LOD bias.
+        SamplerInfo L;
+        L.min_filter = NVN_MIN_FILTER_LINEAR_MIPMAP_LINEAR;
+        L.mag_filter = NVN_MAG_FILTER_LINEAR;
+        L.max_anisotropy = 1;
+        set_tuning(0, 0.0f);
+        const VkSampler base = gpu::sampler_for(L);
+        CHECK(base != VK_NULL_HANDLE);
+
+        set_tuning(8, 0.0f);
+        const VkSampler aniso8 = gpu::sampler_for(L);
+        if (aniso_ok) {
+            CHECK(aniso8 != base);
+        } else {
+            std::printf("    anisotropy is not available on this GPU: the anisotropy handle check is skipped\n");
+        }
+        set_tuning(0, 0.0f);
+        CHECK(gpu::sampler_for(L) == base);
+
+        set_tuning(0, 0.5f);
+        const VkSampler bias05 = gpu::sampler_for(L);
+        CHECK(bias05 != base);
+        CHECK(bias05 != aniso8);
+        set_tuning(0, 0.0f);
+        CHECK(gpu::sampler_for(L) == base);
+
+        // 3: nearest filtering is never changed.
+        SamplerInfo N;
+        N.min_filter = NVN_MIN_FILTER_NEAREST;
+        N.mag_filter = NVN_MAG_FILTER_NEAREST;
+        set_tuning(0, 0.0f);
+        const VkSampler nearest0 = gpu::sampler_for(N);
+        CHECK(nearest0 != VK_NULL_HANDLE);
+        set_tuning(16, -1.0f);
+        CHECK(gpu::sampler_for(N) == nearest0);
+        set_tuning(0, 0.0f);
+
+        // 4: comparison samplers are never changed.
+        SamplerInfo C = L;
+        C.compare_mode = NVN_COMPARE_MODE_COMPARE_R_TO_TEXTURE;
+        set_tuning(0, 0.0f);
+        const VkSampler cmp0 = gpu::sampler_for(C);
+        CHECK(cmp0 != VK_NULL_HANDLE);
+        set_tuning(16, 0.0f);
+        CHECK(gpu::sampler_for(C) == cmp0);
+        set_tuning(0, 1.0f);
+        CHECK(gpu::sampler_for(C) == cmp0);
+        set_tuning(0, 0.0f);
+
+        // 5: linear minification without mipmaps is changed by neither the anisotropy nor the LOD bias.
+        SamplerInfo Lin;
+        Lin.min_filter = NVN_MIN_FILTER_LINEAR;
+        Lin.mag_filter = NVN_MAG_FILTER_LINEAR;
+        set_tuning(0, 0.0f);
+        const VkSampler lin0 = gpu::sampler_for(Lin);
+        CHECK(lin0 != VK_NULL_HANDLE);
+        set_tuning(16, 0.0f);
+        CHECK(gpu::sampler_for(Lin) == lin0);
+        set_tuning(0, 1.0f);
+        CHECK(gpu::sampler_for(Lin) == lin0);
     });
     teardown(r);
 }
