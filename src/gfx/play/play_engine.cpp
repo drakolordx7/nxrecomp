@@ -282,9 +282,15 @@ EngineOut Engine::output(uint64_t now) {
     for (int a = 1; a < kActCount; ++a) {
         if (!is_select(static_cast<Act>(a)) && on[a]) add(st_.out[a]);
     }
-    for (const Sel& s : sels_)
-        if (now >= s.start && now < s.end) add(st_.out[static_cast<int>(s.act)]);
-    sels_.erase(std::remove_if(sels_.begin(), sels_.end(), [&](const Sel& s) { return s.end <= now; }), sels_.end());
+    bool retired = false;
+    for (auto it = sels_.begin(); it != sels_.end();) {
+        if (it->seen && now >= it->end) { it = sels_.erase(it); retired = true; }
+        else ++it;
+    }
+    if (!retired && !sels_.empty() && now >= sels_.front().start) {       // a poll that retired a pulse shows nothing: the release gap
+        add(st_.out[static_cast<int>(sels_.front().act)]);
+        sels_.front().seen = true;
+    }
     clamp_stick(lx, ly);
     clamp_stick(rx, ry);
     o.lx = lx; o.ly = ly; o.rx = rx; o.ry = ry;
@@ -301,9 +307,7 @@ bool Engine::act_active(Act a, uint64_t now) {
     std::lock_guard<std::mutex> lk(mu_);
     step(now);
     if (is_select(a)) {
-        for (const Sel& s : sels_)
-            if (s.act == a && now >= s.start && now < s.end) return true;
-        return false;
+        return !sels_.empty() && sels_.front().act == a && now >= sels_.front().start && (now < sels_.front().end || !sels_.front().seen);
     }
     for (int b : cur_)
         if (st_.bindings[b].act == a && binding_active(b, now)) return true;

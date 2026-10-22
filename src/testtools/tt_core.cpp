@@ -257,6 +257,7 @@ void write_trace_line(State& s, uint64_t k, uint64_t h, const GameState& g, bool
         if (g.have_player) add(",\"pos\":[%.9g,%.9g,%.9g],\"vel\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"state\":%u", g.pos[0], g.pos[1], g.pos[2], g.vel[0], g.vel[1], g.vel[2], g.yaw, g.move_state);
         if (g.have_player && g.have_phys) add(",\"phys\":1,\"spd\":%.9g", g.speed);
         if (g.have_aim) add(",\"pitch\":%.9g,\"cam\":%d,\"morph\":%d,\"orbit\":%d", g.pitch, g.cam_state, g.morph_state, g.orbit_state);
+        if (g.have_cam) add(",\"camyaw\":%.9g,\"campitch\":%.9g", g.cam_yaw, g.cam_pitch);
         if (g.have_ps) add(",\"beam\":%d,\"visor\":%d,\"msl\":%d", g.beam, g.visor, g.missiles);
         if (g.have_hp) add(",\"hp\":%.9g", g.hp);
         if (g.have_igt) add(",\"igt\":%.9g", g.igt);
