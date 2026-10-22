@@ -87,6 +87,23 @@ Rules:
 | `play` | `game_base` | `0x7100000000` | `NXRT_PLAY_GAME_BASE` | `src/gfx/play/play.cpp` | Base of the game's main module (hook addresses). |
 | `play` | `log_status` | `false` | `NXRT_PLAY_LOG_STATUS` | `src/gfx/play/play.cpp` | One status line per second in the log. |
 | `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
+| `play` | `late_sample` | `true` | `NXRT_PLAY_LATE_SAMPLE` | `src/gfx/play/play.cpp` | Pump the window's events again right before the first `ProcessInput` of a frame takes the mouse counts, so the aim includes what the mouse did since the frame boundary. |
+| `time` | `mode` | `real` | `NXRT_TIME_MODE` | `src/timestep/timestep.cpp` | Frame step the game runs: `real` (measured frame time, clamped and smoothed), `fixed` (1/`rate` and the frame is held to it: the 60 Hz lock) or `off` (the game's own 1/60 per call). Needs the lifted game built with the S11 sites in `recomp/games/mpr/main.sites`. |
+| `time` | `rate` | `60` | `NXRT_TIME_RATE` | `src/timestep/timestep.cpp` | Steps per second in `fixed` mode (10 to 1000). |
+| `time` | `max_rate` | `480` | `NXRT_TIME_MAX_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never shorter than 1/max_rate, and with `pace` a frame is held until then. This is also the cap of an unlimited frame rate: the game's logic never runs faster than this. |
+| `time` | `min_rate` | `30` | `NXRT_TIME_MIN_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never longer than 1/min_rate. A slower frame makes the game run in slow motion instead of taking one huge step. |
+| `time` | `smooth` | `4` | `NXRT_TIME_SMOOTH` | `src/timestep/timestep.cpp` | `real` mode: the step is the mean of the last N frame times (1 = raw, 64 at most); a frame more than 50 % away from the mean restarts the window. |
+| `time` | `pace` | `true` | `NXRT_TIME_PACE` | `src/timestep/timestep.cpp` | Hold the frame in the Update hook until the shortest step the mode allows has passed. |
+| `time` | `off_rate` | `0` | `NXRT_TIME_OFF_RATE` | `src/timestep/timestep.cpp` | `off` mode only: hold the frame to this rate and keep the retail 1/60 step. A diagnostic: the game then runs `off_rate / 60` times faster. |
+| `time` | `movie_real` | `true` | `NXRT_TIME_MOVIE_REAL` | `src/timestep/timestep.cpp` | The movie list's clock is real elapsed time (up to `movie_max` per call) instead of the game's step. |
+| `time` | `movie_max` | `0.5` | `NXRT_TIME_MOVIE_MAX` | `src/timestep/timestep.cpp` | Longest delta handed to the movie list in one call, seconds. |
+| `time` | `fix_friction` | `true` | `NXRT_TIME_FIX_FRICTION` | `src/timestep/timestep.cpp` | Scale the in-air walk friction constant (3.5 per 1/60 s) of `CPlayerMP1::GetDampedClampedVelocityWR` by the step. |
+| `time` | `fix_render_timings` | `true` | `NXRT_TIME_FIX_RENDER_TIMINGS` | `src/timestep/timestep.cpp` | `NRenderUtilMPT::TickRenderTimings` (texture scroll, UV animation, water) advances by the step instead of one frame per call. |
+| `time` | `fix_streaming` | `true` | `NXRT_TIME_FIX_STREAMING` | `src/timestep/timestep.cpp` | Texture streaming ages its entries by the step instead of 1/60. |
+| `time` | `fix_budget` | `true` | `NXRT_TIME_FIX_BUDGET` | `src/timestep/timestep.cpp` | The 14 ms background-work budget after the tick scales with the step. |
+| `time` | `log_every` | `0` | `NXRT_TIME_LOG_EVERY` | `src/timestep/timestep.cpp` | One log line of frame statistics every N frames (0 = off). |
+| `time` | `csv` | empty | `NXRT_TIME_CSV` | `src/timestep/timestep.cpp` | Write one line per frame: frame, host time, measured elapsed, step, sum of steps, movie frames delivered, render-timing clock. |
+| `time` | `game_base` | `0x7100000000` | `NXRT_TIME_GAME_BASE` | `src/timestep/timestep.cpp` | Guest address of the main module (the hooks are keyed by it). |
 | `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
 
