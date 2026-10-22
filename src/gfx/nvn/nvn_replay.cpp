@@ -1035,8 +1035,8 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             if (r.has_view)
                 std::snprintf(vw, sizeof vw, " | view levels %d+%d layers %d+%d%s", r.view.has_levels ? r.view.min_level : -1, r.view.has_levels ? r.view.num_levels : -1,
                               r.view.has_layers ? r.view.min_layer : -1, r.view.has_layers ? r.view.num_layers : -1, r.view.has_format ? " format" : "");
-            TRACE("    %s set%u b%u %s -> %s%s mem %d%%%s%s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
-                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
+            TRACE("    %s set%u b%u %s -> %s @%p%s mem %d%%%s%s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
+                  d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.tex ? static_cast<void*>(r.tex->mem) : nullptr, r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
                   r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "", smp, vw);
         }
     }

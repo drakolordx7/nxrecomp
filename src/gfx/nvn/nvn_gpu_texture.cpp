@@ -55,6 +55,7 @@ struct TexGpu {
     bool uploaded = false;                              // the image holds the storage's content (or the black fallback)
     bool gpu_written = false;                           // rendered by the GPU since the CPU last wrote the storage
     std::map<std::array<uint32_t, 12>, VkImageView> views;
+    int refs = 1;                                       // texture objects over the same storage share one image (render thread)
 };
 
 Texture::~Texture() {
@@ -324,6 +325,19 @@ TexGpu* create_texture_gpu(Texture* t) {
 TexGpu* tex_or_null(Texture* t) {
     if (!t || !active()) return nullptr;
     if (t->gpu) return t->gpu->failed ? nullptr : t->gpu;
+    if (Ref<Texture> alias = texture_registry_find_alias(t)) {
+        TexGpu* ag = alias->gpu;
+        if (ag && !ag->failed) {
+            // the same bytes under another texture object: one image (the object rendered to and the one that is sampled are not the same
+            // object); what the image holds is as current for this object as for the one it was made for
+            t->gpu = ag;
+            ++ag->refs;
+            if (ag->uploaded || ag->gpu_written) t->cpu_dirty.store(false);
+            static int logged = 0;
+            if (logged++ < 20) NXLOG_I(kTag, "texture %u shares the image of texture %u (the same storage)", t->id, alias->id);
+            return ag;
+        }
+    }
     TexGpu* g = create_texture_gpu(t);
     return g->failed ? nullptr : g;
 }
@@ -904,6 +918,7 @@ VkSampler sampler_for(const SamplerInfo& game_sampler) {
 
 void tex_destroy(TexGpu* g) {
     if (!g) return;
+    if (--g->refs > 0) return;   // another texture object over the same storage still uses the image
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
         if (!g_live_set.erase(g)) return;   // already destroyed by tex_shutdown
@@ -933,7 +948,7 @@ void tex_shutdown() {
         std::lock_guard<std::mutex> lk(g_live_mu);
         left.assign(g_live_set.begin(), g_live_set.end());
     }
-    for (TexGpu* g : left) tex_destroy(g);
+    for (TexGpu* g : left) { g->refs = 1; tex_destroy(g); }
     for (auto& kv : g_sh.samplers)
         for (auto& e : kv.second) vkDestroySampler(vkdev(), e.second, nullptr);
     g_sh.samplers.clear();
