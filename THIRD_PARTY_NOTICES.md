@@ -102,6 +102,13 @@ Copyright 2015-2026 The Khronos Group Inc. Files fall under Apache-2.0 or MIT (S
 
 `src/gfx/nvn/nvn_table.inc` and `nvn_sizes.inc` list NVN function names, argument classes and object sizes. They were read from `nvn.h` of the mp1r-practice-mod repository (MIT notice in the file: "Copyright (c) 2020 h1k421"; the repository as a whole is GPL-2.0) and checked against smo-recomp, ssbu-recomp (both GPL-3.0), SuperMarioWonderRecomp (MIT, Copyright (c) 2026 BelmanteGu) and LASRecomp (MIT, Copyright (c) 2026 Peiikai). No source text is copied into the tables.
 
+### NVN header (MIT) and shader cache module
+
+`src/gfx/nvn/third_party/nvn/nvn.h` is the NVN header of the mp1r-practice-mod repository, copied with its MIT notice ("Copyright (c) 2020 h1k421") and a few corrected typedefs (marked in the file). `src/gfx/nvn/nvn_shaders.h` and `nvn_shaders.cpp` are adapted from SuperMarioWonderRecomp `runtime/src/nvn/nvn_shaders.{h,cpp}` (MIT, Copyright (c) 2026 BelmanteGu; MIT text as above), which in turn follows Ryujinx's `SupportBuffer.cs` (MIT, Copyright Ryujinx Team and Contributors). The translator patches in `tools/shaders` are Ryujinx source in context lines (MIT).
+
+### Tools linked at build time
+
+`nxrt_gfx` links `tools/textures` (astc2bc7, GPL-3.0-or-later; it bundles ARM astcenc 5.7.0, Apache-2.0, loaded as decoder DLLs next to the executable, and bc7e from bc7enc_rdo, Apache-2.0) and `tools/tiling` (GPL-3.0-or-later). Their notices are in those folders.
 ## Ryujinx and ryubing (MIT)
 
 The service files below adapt code, tables or layouts from Ryujinx and its fork ryubing, both under the MIT licence (their headers name the source files): `src/services/acc.cpp`, `am.cpp`, `audio_out.cpp`, `hid.cpp`, `logfault.cpp`, `misc.cpp`, `network.cpp`, `pl.cpp`, `power.cpp`, `settings.cpp`, `time.cpp`, `timezone.cpp` and `vi_nv.cpp`. Licence text, from `refs/ryubing/LICENSE.txt`:
