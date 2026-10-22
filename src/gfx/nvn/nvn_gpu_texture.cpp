@@ -10,7 +10,10 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <unordered_set>
 #include <initializer_list>
 #include <map>
 #include <set>
@@ -1040,6 +1043,7 @@ struct Snapshot {
     VkExtent3D e = {0, 0, 1};
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     uint32_t bpp = 0;
+    bool raw = false;                  // a block-compressed image copied as it is (the buffer is written to a file as it is)
 };
 std::vector<Snapshot> g_snaps;
 }  // namespace
@@ -1067,11 +1071,75 @@ int snapshot_record(Texture* t, Frame& fr) {
     return static_cast<int>(g_snaps.size()) - 1;
 }
 
+// A block-compressed image: level 0, every layer, copied as blocks (for comparing what the GPU holds with trace_dump_prepared's data).
+int snapshot_record_raw(Texture* t, Frame& fr) {
+    TexGpu* g = t ? t->gpu : nullptr;
+    if (!g || g->failed || g->layout == VK_IMAGE_LAYOUT_UNDEFINED || g->depth) return -1;
+    uint32_t bytes = 0;
+    if (g->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && g->format <= VK_FORMAT_BC7_SRGB_BLOCK)
+        bytes = (g->format <= VK_FORMAT_BC1_RGBA_SRGB_BLOCK || g->format == VK_FORMAT_BC4_UNORM_BLOCK || g->format == VK_FORMAT_BC4_SNORM_BLOCK) ? 8 : 16;
+    if (!bytes) return -1;
+    const VkExtent3D full = level_extent(g->base, 0);
+    const uint64_t size = static_cast<uint64_t>((full.width + 3) / 4) * ((full.height + 3) / 4) * bytes * g->layers;
+    Snapshot s;
+    s.raw = true;
+    s.format = g->format;
+    s.e = {static_cast<uint32_t>(size), 1, 1};
+    if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &s.buf, "nvn raw snapshot") != VK_SUCCESS) return -1;
+    const VkImageLayout prev = g->layout;
+    move_layout(fr, *g, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    VkBufferImageCopy r = {};
+    r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, g->layers};
+    r.imageExtent = {full.width, full.height, 1};
+    vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, 1, &r);
+    move_layout(fr, *g, prev);
+    g_snaps.push_back(std::move(s));
+    return static_cast<int>(g_snaps.size()) - 1;
+}
+
+void trace_dump_prepared(Texture* t, const std::string& dir) {
+    static std::unordered_set<uint32_t> done;
+    if (!t || !done.insert(t->id).second) return;
+    TexCaps caps;
+    caps.bc = device().features().bc;
+    caps.astc = device().features().astc_ldr;
+    caps.bc7_transcode = true;
+    PreparedTexture prep;
+    const bool ok = prepare_texture(*t, caps, prep);
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    const std::string base = dir + "/t" + std::to_string(t->id);
+    if (FILE* f = std::fopen((base + ".txt").c_str(), "w")) {
+        std::fprintf(f, "ok %d format %d levels %u layers %u block %ux%u bytes %u transcoded %d error %s\n", ok ? 1 : 0, static_cast<int>(prep.format), prep.levels, prep.layers,
+                     prep.block_w, prep.block_h, prep.block_bytes, prep.transcoded ? 1 : 0, prep.error.c_str());
+        for (const PreparedLevel& l : prep.level)
+            std::fprintf(f, "level %u %u %u offset %llu size %llu row_blocks %u\n", l.width, l.height, l.depth, static_cast<unsigned long long>(l.offset),
+                         static_cast<unsigned long long>(l.size), l.row_blocks);
+        std::fclose(f);
+    }
+    if (ok)
+        if (FILE* f = std::fopen((base + ".bin").c_str(), "wb")) {
+            std::fwrite(prep.data.data(), 1, prep.data.size(), f);
+            std::fclose(f);
+        }
+}
+
 bool snapshot_write(int index, const std::string& path, std::string* stats) {
     if (index < 0 || index >= static_cast<int>(g_snaps.size())) return false;
     Snapshot& s = g_snaps[static_cast<size_t>(index)];
     if (!s.buf) return false;
     device().invalidate_buffer(s.buf);
+    if (s.raw) {
+        bool wrote = false;
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            wrote = std::fwrite(s.buf.mapped, 1, static_cast<size_t>(s.e.width), f) == s.e.width;   // e.width holds the byte count of a raw copy
+            std::fclose(f);
+        }
+        if (stats) *stats = "raw " + std::to_string(s.e.width) + " bytes";
+        device().destroy_buffer(s.buf);
+        s.buf = gfx::Buffer();
+        return wrote;
+    }
     const bool ok = convert_png_impl(static_cast<const uint8_t*>(s.buf.mapped), s.format, s.e, s.bpp, s.aspect, path, stats);
     device().destroy_buffer(s.buf);
     s.buf = gfx::Buffer();
