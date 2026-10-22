@@ -73,6 +73,7 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
+bool give_item(int item, int amount);      // tt_probe.cpp: writes amount and capacity of one item of CPlayerStateMP1
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
 bool sample_live(PadFrame* out);           // the pad of the live source (the one installed before ours); false when there is none

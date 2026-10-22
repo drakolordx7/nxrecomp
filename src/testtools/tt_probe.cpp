@@ -138,7 +138,7 @@ bool read_state(GameState* out) {
         float m[12];
         if (xf && rd(xf, &m)) {
             g.pos[0] = m[3]; g.pos[1] = m[7]; g.pos[2] = m[11];
-            g.yaw = std::atan2(-m[1], m[5]);
+            g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is -Z at 0; + = turn left)
             rd(player + 0x3f0, &g.move_state);
             g.have_player = std::isfinite(g.pos[0]) && std::isfinite(g.pos[1]) && std::isfinite(g.pos[2]);
         }
@@ -176,6 +176,16 @@ void install_game_hooks() {
 }
 
 namespace detail {
+
+bool give_item(int item, int amount) {
+    if (item < 0 || item > 40) return false;
+    const uint64_t gp = g_layout.game_state_global ? g_layout.game_state_global : game_base() + kGpGameState;
+    const uint64_t gs = rd64(gp);
+    const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
+    if (!ps) return false;
+    const int32_t v[2] = {amount, amount};
+    return write_mem(ps + 0x30 + 8 * static_cast<uint64_t>(item), v, sizeof v);
+}
 
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
     const uint64_t base = game_base();
