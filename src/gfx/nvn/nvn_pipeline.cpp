@@ -3,9 +3,11 @@
 // VkPipelineCache persists between runs ([nvn] pipeline_cache, default "pipeline_cache.bin").
 #include "nvn_pipeline.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -26,8 +28,12 @@ struct LayoutKey {
     bool operator<(const LayoutKey& o) const { return std::memcmp(s, o.s, sizeof s) < 0; }
 };
 
+// Shader modules and layouts are also made by the prewarm workers (nvn_prewarm.cpp), so they have locks; the pipeline buckets below stay
+// render thread only.
+std::mutex g_layout_mu, g_module_mu;
 std::map<LayoutKey, ProgLayout> g_layouts;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
+std::atomic<bool> g_cache_dirty{false};
 std::unordered_map<uint64_t, std::vector<std::pair<GraphicsKey, VkPipeline>>> g_gfx;
 std::map<std::pair<const ShaderInfo*, VkPipelineLayout>, VkPipeline> g_compute;
 VkPipelineCache g_cache = VK_NULL_HANDLE;
@@ -48,7 +54,12 @@ VkShaderStageFlagBits stage_bit(ShaderStage s) {
     }
 }
 
+std::mutex g_cache_mu;
+std::atomic<bool> g_cache_ready{false};
+
 void ensure_cache() {
+    if (g_cache_ready.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::mutex> lk(g_cache_mu);       // the prewarm workers and the render thread may get here together
     if (g_cache_tried) return;
     g_cache_tried = true;
     g_cache_path = config_get_str("nvn", "pipeline_cache", "pipeline_cache.bin");
@@ -67,19 +78,36 @@ void ensure_cache() {
     } else if (!data.empty()) {
         NXLOG_I(kTag, "pipeline cache loaded: %zu bytes from %s", data.size(), g_cache_path.c_str());
     }
+    g_cache_ready.store(true, std::memory_order_release);
 }
 
 void save_cache() {
     if (!g_cache || g_cache_path.empty()) return;
+    g_cache_dirty.store(false);
     size_t n = 0;
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, nullptr) != VK_SUCCESS || !n) return;
     std::vector<char> data(n);
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, data.data()) != VK_SUCCESS) return;
-    std::ofstream f(g_cache_path, std::ios::binary | std::ios::trunc);
-    if (f) f.write(data.data(), static_cast<std::streamsize>(n));
+    // written to a temporary file and renamed, so a process that ends in the middle of it leaves the old cache intact
+    const std::string tmp = g_cache_path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return;
+        f.write(data.data(), static_cast<std::streamsize>(n));
+        if (!f) return;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, g_cache_path, ec);
+    if (ec) {
+        std::filesystem::remove(g_cache_path, ec);
+        std::filesystem::rename(tmp, g_cache_path, ec);
+    }
 }
 
 }  // namespace
+
+bool pipeline_cache_dirty() { return g_cache_dirty.load(std::memory_order_relaxed); }
+void pipeline_cache_save() { save_cache(); }
 
 bool GraphicsKey::operator==(const GraphicsKey& o) const { return std::memcmp(this, &o, sizeof *this) == 0; }
 uint64_t GraphicsKey::hash() const {
@@ -91,6 +119,7 @@ uint64_t GraphicsKey::hash() const {
 
 VkShaderModule shader_module(const ShaderInfo* s) {
     if (!s) return VK_NULL_HANDLE;
+    std::lock_guard<std::mutex> lk(g_module_mu);
     auto it = g_modules.find(s);
     if (it != g_modules.end()) return it->second;
     // The translator declares OpCapability Float64 in every module although no module uses a 64-bit float; devices without
@@ -127,6 +156,7 @@ VkShaderModule shader_module(const ShaderInfo* s) {
 const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
     LayoutKey key;
     for (int i = 0; i < 6; ++i) key.s[i] = stages[i];
+    std::lock_guard<std::mutex> lk(g_layout_mu);
     auto it = g_layouts.find(key);
     if (it != g_layouts.end()) return &it->second;
 
@@ -186,16 +216,8 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
     return &g_layouts.emplace(key, std::move(pl)).first->second;
 }
 
-VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
+VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     ensure_cache();
-    const uint64_t h = key.hash();
-    auto& bucket = g_gfx[h];
-    for (auto& e : bucket)
-        if (e.first == key) {
-            counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
-            return e.second;
-        }
-    NXFT("pipe.create");
     const auto t0 = std::chrono::steady_clock::now();
 
     VkPipelineShaderStageCreateInfo stages[3] = {};
@@ -204,7 +226,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
         VkShaderModule m = shader_module(key.stage[i]);
-        if (!m) { bucket.emplace_back(key, VK_NULL_HANDLE); return VK_NULL_HANDLE; }
+        if (!m) return VK_NULL_HANDLE;
         stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         stages[ns].stage = bits[i];
         stages[ns].module = m;
@@ -315,9 +337,34 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
         pipe = VK_NULL_HANDLE;
     } else {
         counters().pipelines_created.fetch_add(1);
-        ++g_pipeline_count;
-        NXLOG_D(kTag, "graphics pipeline #%zu created in %.1f ms (vs %s fs %s)", g_pipeline_count, ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
+        g_cache_dirty.store(true, std::memory_order_relaxed);
+        NXLOG_D(kTag, "graphics pipeline created in %.1f ms (vs %s fs %s)", ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
                 key.stage[1] ? key.stage[1]->hash.c_str() : "-");
+    }
+    return pipe;
+}
+
+VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
+    ensure_cache();
+    const uint64_t h = key.hash();
+    auto& bucket = g_gfx[h];
+    for (auto& e : bucket)
+        if (e.first == key) {
+            counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
+            return e.second;
+        }
+    prewarm_init();
+    VkPipeline pipe = VK_NULL_HANDLE;
+    if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
+        ++g_pipeline_count;
+        bucket.emplace_back(key, pipe);
+        return pipe;
+    }
+    NXFT("pipe.create");
+    pipe = build_graphics_pipeline(key, layout);
+    if (pipe) {
+        ++g_pipeline_count;
+        prewarm_record(key);
     }
     bucket.emplace_back(key, pipe);
     return pipe;
@@ -343,6 +390,7 @@ VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout) {
         } else {
             counters().pipelines_created.fetch_add(1);
             ++g_pipeline_count;
+            g_cache_dirty.store(true, std::memory_order_relaxed);
         }
     }
     g_compute[k] = pipe;
@@ -384,6 +432,7 @@ size_t pipeline_count() { return g_pipeline_count; }
 
 void pipeline_shutdown() {
     VkDevice d = vkdev();
+    prewarm_shutdown();
     save_cache();
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket)
@@ -408,6 +457,7 @@ void pipeline_shutdown() {
     if (g_cache) vkDestroyPipelineCache(d, g_cache, nullptr);
     g_cache = VK_NULL_HANDLE;
     g_cache_tried = false;
+    g_cache_ready.store(false);
     g_pipeline_count = 0;
 }
 
