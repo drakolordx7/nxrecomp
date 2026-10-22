@@ -10,6 +10,7 @@
 #include <mutex>
 #include <vector>
 
+#include "nxrt/ftrace.h"
 #include "nxrt/abi.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
@@ -214,7 +215,11 @@ void map_memory(::Ctx* c) {
         fail(c, "MapMemory", kernel::kInvalidSize, dst, src, size);
         return;
     }
+    static const uint16_t zid = ft::zone_id("MapMemory.pages");
+    ft::Scope zs(zid, 1000000, static_cast<uint32_t>(size >> 12));
+    uint64_t tq0 = ft::now_ns();
     std::lock_guard lk(g_mu);
+    ft::event(ft::zone_id("mm.lock"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     // The source is heap memory or the .data/.bss of a loaded module (state CodeData): the SDK maps thread stacks that live in its
     // own static data (MapAliasStack of a static buffer), which the console allows.
     const mem::VmInfo sv = mem::vm_query(src);
@@ -223,6 +228,7 @@ void map_memory(::Ctx* c) {
         fail(c, "MapMemory (range)", kernel::kInvalidMemoryState, dst, src, size);
         return;
     }
+    ft::event(ft::zone_id("mm.checks"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     // The destination must be free in the vm map, as on hardware: mapping over a live block would break its bookkeeping.
     const mem::VmInfo d = mem::vm_query(dst);
     if (d.state != mem::kMemFree || d.addr + d.size < dst + size) {
@@ -233,14 +239,18 @@ void map_memory(::Ctx* c) {
         fail(c, "MapMemory (commit)", kernel::kOutOfMemory, dst, src, size);
         return;
     }
+    ft::event(ft::zone_id("mm.commit"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     std::memcpy(reinterpret_cast<void*>(dst), reinterpret_cast<const void*>(src), size);
+    ft::event(ft::zone_id("mm.memcpy"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     if (!mem::protect(src, size, mem::Prot::None)) {
         mem::decommit(dst, size);
         fail(c, "MapMemory (protect source)", kernel::kInvalidMemoryState, dst, src, size);
         return;
     }
+    ft::event(ft::zone_id("mm.protect"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     mem::vm_set(dst, size, mem::kMemStack, kPermRW);
     mem::vm_set(src, size, mem::vm_query(src).state, 0);  // the source is no-access while mapped
+    ft::event(ft::zone_id("mm.vmset"), tq0, ft::now_ns(), 0);
     g_maps.push_back(MapRec{dst, src, size});
     NXLOG_D(kTag, "MapMemory(dst %llx, src %llx, size %llx)", U(dst), U(src), U(size));
     svc_ret(c, kernel::kOk);

@@ -46,6 +46,26 @@ fps_cap = 60
 width = 1280
 height = 720
 keep_aspect = 1
+# Internal render size as a percent of the window size, 25..400; applies at the next start. Ignored while a fixed size is set.
+render_scale = 100
+# Fixed internal width, 0 = follow the window, otherwise 320..16384; applies at the next start.
+render_width = 0
+# Fixed internal height, 0 = follow the window, otherwise 320..16384; applies at the next start.
+render_height = 0
+# Forced aspect ratio of the 3D view and HUD: 0 = auto, otherwise 1.0..5.0 (16:9 is 1.7778); applies at the next start.
+aspect = 0
+# Degrees added to the vertical field of view of every game camera, -30..40. 0 = the game's own.
+fov_offset = 0
+# The game's own dynamic resolution: it lowers the render size when the GPU is late.
+dynamic_resolution = 0
+# Texture anisotropy: 0 = the game's own, otherwise 2, 4, 8 or 16 at least on every filtered texture.
+anisotropy = 0
+# Texture LOD bias added to every sampler, -2.0..2.0. Negative is sharper.
+lod_bias = 0
+# Bloom post effect.
+bloom = 1
+# Chromatic aberration post effect.
+chromatic_aberration = 1
 
 [bindings.all]
 W = move_forward
