@@ -149,6 +149,11 @@ SchedInfo sched_info();                  // initialises on first use
 int sched_host_priority(int hos_prio);   // THREAD_PRIORITY_* for a HOS priority under the model (nn::os prio = hos - 28)
 // Which console core the calling thread is on right now: the core of its host processor, or its ideal core.
 int sched_current_core();
+// Process priority class. [sched] priority_class = auto | high | above_normal | normal (default auto: high when `interactive`, i.e. a person
+// is playing in a window, otherwise left alone). The guest threads are pinned and run with Windows' wake-up boost off, so under
+// background CPU load a woken thread waits a full scheduler quantum for its processor (debug 180, S10 measurements: 100 to 200 ms
+// stalls and half the frame rate with every core busy); a class above the background keeps the hand-overs immediate.
+void sched_set_process_priority(bool interactive);
 void sched_apply(KThread& t);            // (re)applies affinity + priority of t to its host thread
 void sched_reset_for_tests();            // forget the slot and re-read the config at the next sched_info()
 

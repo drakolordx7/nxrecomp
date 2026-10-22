@@ -39,6 +39,17 @@ std::string num(double v) {
     return buf;
 }
 
+// As num(), but a value that would not read back to the same double gets all 17 digits (16/9 needs them).
+std::string num_exact(double v) {
+    std::string s = num(v);
+    if (std::strtod(s.c_str(), nullptr) != v) {
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%.17g", v);
+        return buf;
+    }
+    return s;
+}
+
 // Whole numbers and reals: the whole string must be a number, and reals must be finite.
 bool to_int(const std::string& v, long long* out) {
     if (v.empty()) return false;
@@ -166,6 +177,34 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         }
         return true;
     };
+    // A fixed render size: 0 (follow the window) or 320..16384.
+    auto set_size = [&](int* dst) {
+        long long x = 0;
+        if (!to_int(v, &x)) {
+            *msg = k + " must be a whole number, got '" + v + "'";
+            return false;
+        }
+        if (x != 0 && (x < 320 || x > 16384)) {
+            *msg = k + " must be 0 or 320..16384, got " + v;
+            return false;
+        }
+        *dst = static_cast<int>(x);
+        return true;
+    };
+    // The forced aspect ratio: 0 (auto) or 1.0..5.0.
+    auto set_aspect = [&](double* dst) {
+        double x = 0;
+        if (!to_double(v, &x)) {
+            *msg = k + " must be a number, got '" + v + "'";
+            return false;
+        }
+        if (x != 0 && (x < 1.0 || x > 5.0)) {
+            *msg = k + " must be 0 (auto) or 1.0..5.0, got " + v;
+            return false;
+        }
+        *dst = x;
+        return true;
+    };
 
     switch (sec) {
         case Sec::Mouse:
@@ -212,6 +251,28 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "width") return set_int(320, 16384, &s->display.width);
             if (k == "height") return set_int(320, 16384, &s->display.height);
             if (k == "keep_aspect") return set_bool(&s->display.keep_aspect);
+            if (k == "render_scale") return set_int(25, 400, &s->display.render_scale);
+            if (k == "render_width") return set_size(&s->display.render_width);
+            if (k == "render_height") return set_size(&s->display.render_height);
+            if (k == "aspect") return set_aspect(&s->display.aspect);
+            if (k == "fov_offset") return set_real(-30.0, 40.0, &s->display.fov_offset);
+            if (k == "dynamic_resolution") return set_bool(&s->display.dynamic_resolution);
+            if (k == "anisotropy") {
+                long long x = 0;
+                if (!to_int(v, &x)) {
+                    *msg = k + " must be a whole number, got '" + v + "'";
+                    return false;
+                }
+                if (x != 0 && x != 2 && x != 4 && x != 8 && x != 16) {
+                    *msg = "anisotropy must be 0, 2, 4, 8 or 16, got " + v;
+                    return false;
+                }
+                s->display.anisotropy = static_cast<int>(x);
+                return true;
+            }
+            if (k == "lod_bias") return set_real(-2.0, 2.0, &s->display.lod_bias);
+            if (k == "bloom") return set_bool(&s->display.bloom);
+            if (k == "chromatic_aberration") return set_bool(&s->display.chromatic_aberration);
             break;
         case Sec::Switch: {
             Act a = Act::None;
@@ -423,6 +484,16 @@ std::string format_settings(const Settings& s) {
     kv("width", std::to_string(s.display.width));
     kv("height", std::to_string(s.display.height));
     kv("keep_aspect", flag(s.display.keep_aspect));
+    kv("render_scale", std::to_string(s.display.render_scale));
+    kv("render_width", std::to_string(s.display.render_width));
+    kv("render_height", std::to_string(s.display.render_height));
+    kv("aspect", num_exact(s.display.aspect));
+    kv("fov_offset", num_exact(s.display.fov_offset));
+    kv("dynamic_resolution", flag(s.display.dynamic_resolution));
+    kv("anisotropy", std::to_string(s.display.anisotropy));
+    kv("lod_bias", num_exact(s.display.lod_bias));
+    kv("bloom", flag(s.display.bloom));
+    kv("chromatic_aberration", flag(s.display.chromatic_aberration));
 
     o += "\n[switch]\n";
     for (int a = 1; a < kActCount; ++a) {   // every action except none

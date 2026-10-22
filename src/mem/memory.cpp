@@ -72,6 +72,10 @@ HANDLE g_section = nullptr;
 uint64_t g_heap_size = 0;                 // 0 = no heap; otherwise the section size = size of the primary view
 std::vector<uint64_t> g_commit_bits;      // one bit per 4 KiB page of the section, set by heap_commit
 uint64_t g_committed = 0;                 // bytes of pages whose bit is set
+// Per 4 KiB page of the section, what the host reports for it: 0 never committed, 1 committed but no-access (a decommitted page or one
+// the guest made inaccessible), 2 committed and accessible. VirtualQuery over the section view walks every page table entry of the
+// run of identical pages (about 75 ms for a 3 GiB committed heap), so is_mapped and protect answer heap ranges from this table.
+std::vector<uint8_t> g_heap_cls;
 struct Alias {
     uint64_t size;
     uint64_t offset;                      // section offset of the first byte of the view
@@ -79,6 +83,17 @@ struct Alias {
 std::map<uint64_t, Alias> g_aliases;      // view address -> record
 // Alias region in use: start -> size for every live view and for every candidate address the kernel refused.
 std::map<uint64_t, uint64_t> g_alias_used;
+
+// [memory] fast_query = false: ask the host (VirtualQuery) instead of the page table above; for before/after measurements.
+bool fast_query() {
+    static const bool v = config_get_bool("memory", "fast_query", true);
+    return v;
+}
+
+// True when [start, end) lies inside the heap primary view (g_heap_mu held).
+bool in_heap_view(uint64_t start, uint64_t end) {
+    return fast_query() && g_heap_size && !g_heap_cls.empty() && start >= kHeapBase && end <= kHeapBase + g_heap_size && start < end;
+}
 
 bool bit_test(uint64_t page) { return (g_commit_bits[page / 64] >> (page % 64)) & 1; }
 void bit_set(uint64_t page) { g_commit_bits[page / 64] |= uint64_t{1} << (page % 64); }
@@ -174,6 +189,7 @@ void shutdown() {
         g_section = nullptr;
         g_heap_size = 0;
         g_commit_bits.clear();
+        g_heap_cls.clear();
         g_committed = 0;
     }
     {
@@ -281,6 +297,19 @@ bool protect(uint64_t addr, uint64_t size, Prot p) {
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
     const DWORD np = protect_of(p);
+    {   // heap: the page table says whether every page is committed, so one VirtualProtect does it (no VirtualQuery over the view)
+        std::lock_guard hk(g_heap_mu);
+        if (in_heap_view(start, end)) {
+            const uint64_t p0 = (start - kHeapBase) / kPage, p1 = (end - kHeapBase) / kPage;
+            bool all = true;
+            for (uint64_t q = p0; q < p1 && all; ++q) all = g_heap_cls[q] != 0;
+            DWORD old = 0;
+            if (all && VirtualProtect(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), np, &old)) {
+                std::fill(g_heap_cls.begin() + static_cast<std::ptrdiff_t>(p0), g_heap_cls.begin() + static_cast<std::ptrdiff_t>(p1), np == PAGE_NOACCESS ? uint8_t{1} : uint8_t{2});
+                return true;
+            }
+        }
+    }
     // Pass 1: every page must be committed, so a failure never leaves the range half changed.
     for (uint64_t cur = start; cur < end;) {
         MEMORY_BASIC_INFORMATION mbi{};
@@ -339,6 +368,15 @@ uint64_t alloc_kernel(uint64_t size, uint64_t align) {
 bool is_mapped(uint64_t addr, uint64_t size) {
     uint64_t start = 0, end = 0;
     if (!page_span(addr, size, &start, &end)) return false;
+    {
+        std::lock_guard hk(g_heap_mu);
+        if (in_heap_view(start, end)) {
+            const uint64_t p0 = (start - kHeapBase) / kPage, p1 = (end - kHeapBase) / kPage;
+            for (uint64_t q = p0; q < p1; ++q)
+                if (g_heap_cls[q] != 2) return false;
+            return true;
+        }
+    }
     for (uint64_t cur = start; cur < end;) {
         MEMORY_BASIC_INFORMATION mbi{};
         if (VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi) != sizeof mbi || mbi.RegionSize == 0) return false;
@@ -394,6 +432,7 @@ bool heap_create(uint64_t reserve_bytes) {
     g_section = sec;
     g_heap_size = size;
     g_commit_bits.assign((size / kPage + 63) / 64, 0);
+    g_heap_cls.assign(static_cast<size_t>(size / kPage), 0);
     g_committed = 0;
     NXLOG_I(kTag, "heap: section of %llu MiB, primary view at %llx", static_cast<unsigned long long>(size >> 20),
             static_cast<unsigned long long>(kHeapBase));
@@ -438,6 +477,7 @@ bool heap_commit(uint64_t offset, uint64_t size) {
             bit_set(p);
             g_committed += kPage;
         }
+        g_heap_cls[p] = 2;       // MEM_COMMIT with PAGE_READWRITE applies to pages that were committed already too
     }
     return true;
 }
@@ -475,6 +515,7 @@ bool heap_decommit(uint64_t offset, uint64_t size) {
         for (uint64_t q = p; q < run; q++) {
             bit_clear(q);
             g_committed -= kPage;
+            g_heap_cls[q] = 1;
         }
         p = run;
     }

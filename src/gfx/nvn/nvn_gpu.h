@@ -34,6 +34,11 @@ void present(Window* window, int index);
 // ---- resources (called from destructors and finalizers, any thread) --------------------------------------------------------
 void destroy_texture_gpu(TexGpu* t);          // the Vulkan image of a finalized texture; deferred until the GPU is done with it
 void destroy_pool_gpu(PoolGpu* p);
+// A pool was created: import it into Vulkan on a background thread so the first draw that uses it does not wait for the driver (the import
+// pins the pages; it takes 10 to 80 ms). A no-op without a back end and for virtual pools.
+void prefetch_pool(MemoryPool* p);
+// A program got its shaders: queue the recorded pipelines that use exactly these shaders (nvn_prewarm.cpp). A no-op without a back end.
+void prewarm_program_shaders(const ShaderInfo* const stages[6]);
 // The CPU wrote texture memory (nvnMemoryPoolFlushMappedRange, nvnTextureWriteTexels ...): upload again before the next use.
 void mark_texture_cpu_dirty(Texture* t);
 

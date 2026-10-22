@@ -27,12 +27,16 @@
 #include <thread>
 #include <vector>
 
+#include "nxrt/ftrace.h"
+#include "play_display.h"
+#include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/input.h"
 #include "nxrt/input_source.h"
 #include "nxrt/log.h"
+#include "nxrt/nvn_backend.h"
 #include "nxrt/overlay.h"
 #include "nxrt/platform.h"
 #include "nxrt/runtime.h"
@@ -292,6 +296,7 @@ void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
         if (!save_settings(st.path, st.settings, &err)) NXLOG_W(kTag, "cannot save %s: %s", st.path.c_str(), err.c_str());
         st.dirty = false;
     }
+    nvn::backend_flush_caches();                    // the pipeline cache; this path does not shut the back end down
     nxrt::log_flush();
     if (tt::enabled() && !tt::finished()) tt::end_run(code, verdict, message);     // writes result.json, then terminates
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
@@ -473,6 +478,7 @@ void poll_pads(uint64_t now) {
 
 int update_hook(::Ctx*, uint64_t, void*) {
     G& st = g();
+    ft::mark("main.update");
     const uint64_t now = now_ns();
     st.frames++;
     st.update_seq++;
@@ -496,6 +502,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             lk.unlock();
             st.engine->set_settings(s, now);
             apply_frame_cap(s);
+            display_apply(s.display);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) set_window_mode(s.display.window_mode);
             std::string err;
@@ -558,10 +565,10 @@ int update_hook(::Ctx*, uint64_t, void*) {
 
     if (st.log_status && now - st.last_status_ns > 1000 * kMs) {
         st.last_status_ns = now;
-        NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d", ctx_name(ctx),
+        NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d display_hook_calls=%u", ctx_name(ctx),
                 in_game ? 1 : 0, aim_block_name(st.aim->last_block()), static_cast<unsigned long long>(st.frames.load()),
                 static_cast<unsigned long long>(st.pi_calls.load()), static_cast<unsigned long long>(st.aim_frames.load()),
-                static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0);
+                static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0, display_hook_calls());
     }
     if (st.selftest.active()) st.selftest.tick(st.renderer, &st.limiter, selftest_host());
     return 0;
@@ -809,6 +816,7 @@ bool start(const StartOptions& opt) {
     st.renderer = opt.renderer;
     st.device = opt.device;
     st.window = opt.window && platform::has_window();
+    kernel::sched_set_process_priority(st.window);     // a person is playing: keep the frame out of the background load
     st.pump_thread = std::this_thread::get_id();
     st.engine = std::make_unique<Engine>(st.settings);
     st.engine->set_context(Ctx::Menu, now_ns());
@@ -851,6 +859,12 @@ bool start(const StartOptions& opt) {
     }
     if (st.window && st.settings.display.window_mode != "windowed") set_window_mode(st.settings.display.window_mode);
 
+    {   // display options: the internal resolution comes from the window as it is now (after the window mode change above)
+        int ww = 1600, wh = 900;
+        if (st.window) platform::pixel_size(&ww, &wh);
+        if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
+        display_install(st.base, st.settings.display, ww, wh);
+    }
     st.hook_update = hook_add_entry(st.base + kFnUpdate, &update_hook);
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
     st.started = true;
@@ -865,6 +879,7 @@ void stop() {
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     st.hook_update = st.hook_input = 0;
+    display_remove();
     hid::set_vibration_sink(nullptr, nullptr);
     if (hid::input_source() == st.source) hid::set_input_source(nullptr);
     if (st.dirty) {
