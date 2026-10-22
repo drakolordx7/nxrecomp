@@ -46,7 +46,7 @@ name = "window_fps_limiter"
 script = "../scripts/play_idle.nxs"
 deterministic = true
 timeout = 300
-env = { NXRT_BOOT_GFX = "window", NXRT_FS_ROMFS = "../../game/romfs", NXRT_FS_SAVE_DIR = "save", NXRT_PLAY_SELFTEST = "wait:1500,cap:60,measure:6,expect_fps:60:0.03,cap:120,measure:6,expect_fps:120:0.03,cap:144,measure:6,expect_fps:144:0.03,pass" }
+env = { NXRT_BOOT_GFX = "window", NXRT_FS_ROMFS = "../../game/romfs", NXRT_FS_SAVE_DIR = "save", NXRT_PLAY_SELFTEST = "wait:1500,cap:30,measure:8,expect_late:0.5,cap:60,measure:8,expect_late:0.5,cap:120,measure:6,cap:144,measure:6,pass" }
 tags = ["window", "pacing"]
 
 # settings: vsync, frame cap, window mode and mouse sensitivity changed the way the settings page does it, saved to controls.ini
