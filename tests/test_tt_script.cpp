@@ -583,13 +583,13 @@ NXTEST(guid_malformed_text_rejected) {
     CHECK(!tt_guid_to_bytes("", b));
 }
 
-// ---- S15 steps: @mash, @play, @grant, @call ----------------------------------------------------------------
+// ---- S15 steps: @mash, @run, @grant, @call ----------------------------------------------------------------
 
-NXTEST(mash_parses_keys_interval_condition_and_timeout) {
+NXTEST(mashuntil_parses_keys_interval_condition_and_timeout) {
     Script sc;
-    REQUIRE(parse_ok("@mash A+B every 90 until health > 0 timeout=500\n@mash START every 5 until state >= 0\n", sc));
+    REQUIRE(parse_ok("@mashuntil A+B every 90 until health > 0 timeout=500\n@mashuntil START every 5 until state >= 0\n", sc));
     REQUIRE(sc.steps.size() == 2);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Mash);
+    CHECK_EQ(sc.steps[0].kind, StepKind::PressUntil);
     CHECK_EQ(sc.steps[0].buttons, bit(0) | bit(1));
     CHECK_EQ(sc.steps[0].count, (int64_t)90);
     CHECK_EQ(sc.steps[0].field, AssertField::Health);
@@ -601,21 +601,21 @@ NXTEST(mash_parses_keys_interval_condition_and_timeout) {
     CHECK_EQ(sc.steps[1].timeout, (int64_t)-1);
 }
 
-NXTEST(mash_errors) {
-    expect_err("@mash A every 90 until health\n", 1, "@mash <keys> every");
-    expect_err("@mash A every 3 until health > 0\n", 1, "at least 5");
-    expect_err("@mash A every 90 until bogus > 0\n", 1, "unknown assert field");
-    expect_err("@mash A each 90 until health > 0\n", 1, "@mash <keys> every");
+NXTEST(mashuntil_errors) {
+    expect_err("@mashuntil A every 90 until health\n", 1, "@mashuntil <keys> every");
+    expect_err("@mashuntil A every 3 until health > 0\n", 1, "at least 5");
+    expect_err("@mashuntil A every 90 until bogus > 0\n", 1, "unknown assert field");
+    expect_err("@mashuntil A each 90 until health > 0\n", 1, "@mashuntil <keys> every");
 }
 
-NXTEST(play_parses_seconds_and_timeout) {
+NXTEST(run_parses_seconds_and_timeout) {
     Script sc;
-    REQUIRE(parse_ok("@play 2.5\n@play 0 timeout=40\n", sc));
+    REQUIRE(parse_ok("@run 2.5\n@run 0 timeout=40\n", sc));
     REQUIRE(sc.steps.size() == 2);
-    CHECK_EQ(sc.steps[0].kind, StepKind::PlayTime);
+    CHECK_EQ(sc.steps[0].kind, StepKind::WaitRun);
     CHECK_EQ(sc.steps[0].x, 2.5);
     CHECK_EQ(sc.steps[1].timeout, (int64_t)40);
-    expect_err("@play -1\n", 1, "must be >= 0");
+    expect_err("@run -1\n", 1, "must be >= 0");
 }
 
 NXTEST(grant_names_numbers_and_all) {

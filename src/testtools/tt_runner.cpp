@@ -2,6 +2,8 @@
 // The scripted-run executor (stream S5): runs the steps of a parsed script (tt_script.h) one frame boundary at a time.
 // Each call to Runner::frame is one frame; a step that blocks consumes the frame, a step that does not lets the next one run in the
 // same call. Failure and pass call tt::end_run (exit code 1 / 0).
+#include <windows.h>
+
 #include <cmath>
 #include <cstring>
 
@@ -164,6 +166,49 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 break;
             }
             case StepKind::WaitIgt: r = wait_cond(valid && s.have_igt && s.igt >= st.x, "the in-game time"); break;
+            case StepKind::WaitRun: {
+                if (first) igt_base_ = -1;
+                bool met = false;
+                if (valid && s.have_igt) {
+                    if (igt_base_ < 0 || s.igt < igt_base_) igt_base_ = s.igt;     // (re)baseline: a new game state restarts the clock
+                    met = s.igt - igt_base_ >= st.x;
+                }
+                char b[64];
+                std::snprintf(b, sizeof b, "%.1f s of play time", st.x);
+                if (st.soft && !met) {
+                    const int64_t to = timeout_of();
+                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) {
+                        NXLOG_W("script", "SOFT-TIMEOUT line %d: no %s within %lld frames, going on", st.line, b, static_cast<long long>(to));
+                        advance();
+                        continue;
+                    }
+                    return;
+                }
+                r = wait_cond(met, b);
+                break;
+            }
+            case StepKind::Mash: {
+                const uint64_t now_ms = GetTickCount64();
+                if (first) { start_ms_ = now_ms; next_mash_ms_ = now_ms; remaining_ = 0; }
+                const bool met = valid && s.have_world && std::memcmp(st.text == "area" ? s.area : s.world, st.id, 16) == 0;
+                if (met) { pressing_ = 0; advance(); continue; }
+                const int64_t to_ms = st.timeout < 0 ? 600000 : st.timeout;
+                if (to_ms > 0 && static_cast<int64_t>(now_ms - start_ms_) >= to_ms) { pressing_ = 0; fail(st, "timeout waiting for " + st.text + " " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1)); return; }
+                // The press lasts 250 ms of host time: in deterministic mode a frame is a tiny slice of host time and the front end runs on the host clock.
+                if (remaining_ > 0) { if (now_ms >= mash_release_ms_) { remaining_ = 0; pressing_ = 0; } }
+                else if (now_ms >= next_mash_ms_) { pressing_ = st.buttons; remaining_ = 1; mash_release_ms_ = now_ms + 250; next_mash_ms_ = now_ms + static_cast<uint64_t>(st.x); }
+                return;
+            }
+            case StepKind::Give:
+                if (!detail::give_item(static_cast<int>(st.x), static_cast<int>(st.y))) { fail(st, "@give: the player state is not readable yet"); return; }
+                advance();
+                continue;
+            case StepKind::WaitMs: {
+                const uint64_t now_ms = GetTickCount64();
+                if (first) start_ms_ = now_ms;
+                if (static_cast<double>(now_ms - start_ms_) >= st.x) { advance(); continue; }
+                return;
+            }
             case StepKind::Warp: {
                 if (!warped_) {
                     if (detail::warp(c, st.id2, st.id)) {
@@ -203,34 +248,13 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 advance();
                 continue;
             }
-            case StepKind::PlayTime: {
-                if (first) igt_base_ = -1;
-                bool met = false;
-                if (valid && s.have_igt) {
-                    if (igt_base_ < 0 || s.igt < igt_base_) igt_base_ = s.igt;     // (re)baseline: a new game state restarts the clock
-                    met = s.igt - igt_base_ >= st.x;
-                }
-                char b[64];
-                std::snprintf(b, sizeof b, "%.1f s of play time", st.x);
-                if (st.soft && !met) {
-                    const int64_t to = timeout_of();
-                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) {
-                        NXLOG_W("script", "SOFT-TIMEOUT line %d: no %s within %lld frames, going on", st.line, b, static_cast<long long>(to));
-                        advance();
-                        continue;
-                    }
-                    return;
-                }
-                r = wait_cond(met, b);
-                break;
-            }
-            case StepKind::Mash: {
+            case StepKind::PressUntil: {
                 std::string d;
                 if (valid && eval_assert(st, s, valid, &d)) { pressing_ = 0; advance(); continue; }
                 const int64_t to = timeout_of();
                 if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) {
                     pressing_ = 0;
-                    fail(st, "timeout after " + std::to_string(to) + " frames waiting for the @mash condition (" + d + ")");
+                    fail(st, "timeout after " + std::to_string(to) + " frames waiting for the @mashuntil condition (" + d + ")");
                     return;
                 }
                 pressing_ = ((k - start_frame_) % static_cast<uint64_t>(st.count)) < 4 ? st.buttons : 0;
