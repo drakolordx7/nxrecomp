@@ -27,6 +27,7 @@ Rules:
 | `process` | `program_id` | `0` | `NXRT_PROCESS_PROGRAM_ID` | `src/kernel/svc_info.cpp` | Value returned by GetInfo ProgramId. |
 | `process` | `pid` | `0x51` | `NXRT_PROCESS_PID` | `src/kernel/svc_info.cpp` | Process id returned by GetProcessId. The InitialProcessIdRange query uses the built-in `0x51` and ignores this key. |
 | `threads` | `host_stack_mb` | `64` | `NXRT_THREADS_HOST_STACK_MB` | `src/kernel/thread.cpp` | Host stack reservation per guest thread, in MiB. Values below 1: 64. |
+| `eh` | `call_what` | `true` | `NXRT_EH_CALL_WHAT` | `src/eh/unwind.cpp` | The uncaught-exception report calls `what()` of exception types derived from `std::exception` (a guest call). `false` prints the type only. |
 
 ## Environment variables read directly
 

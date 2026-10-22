@@ -7,12 +7,15 @@
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/eh.h"
+#include "nxrt/hooks.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memguard.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
+#include "nxrt/nxmodule.h"
 #include "nxrt/svc.h"
 #include "nxrt/symbols.h"
 
@@ -62,6 +65,14 @@ std::string summary() {
         }
     }
     s += "hle: " + std::to_string(hle_count()) + " thunks, " + std::to_string(stubs) + " logging stubs (" + std::to_string(called_stubs) + " called)\n";
+    {
+        eh::Stats e = eh::stats();
+        s += "lifted modules: " + std::to_string(nxmodules().size()) + ", imports through the registry: " + std::to_string(import_calls()) + ", site hooks: " +
+             std::to_string(hook_count()) + " (calls: inline " + std::to_string(hook_site_calls(HookKind::Inline)) + ", mid " + std::to_string(hook_site_calls(HookKind::Mid)) +
+             ", entry " + std::to_string(hook_site_calls(HookKind::Entry)) + ")\n";
+        s += "c++ exceptions: " + std::to_string(e.raised) + " raised, " + std::to_string(e.resumed) + " resumed, " + std::to_string(e.caught) + " caught, " +
+             std::to_string(e.cleanups) + " cleanup landings, " + std::to_string(e.uncaught) + " uncaught, " + std::to_string(e.frames_walked) + " frames walked\n";
+    }
     s += "lifted functions: " + std::to_string(fn_count()) + ", modules: " + std::to_string(modules().size()) + ", threads created: " +
          std::to_string(kernel::threads().size()) + ", handles open: " + std::to_string(kernel::handle_count()) + "\n";
     return s;

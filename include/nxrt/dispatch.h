@@ -38,6 +38,7 @@ std::vector<HleInfo> hle_list();                          // every thunk, in cre
 void hle_clear();                                         // tests only
 // Name of the HLE function the calling thread is currently inside, or nullptr.
 const char* hle_current_name();
+void hle_restore_current(const char* name);               // after a longjmp out of an HLE handler (eh/catch_call.cpp): sets what hle_current_name() answers
 
 // ---- the dispatch entry used by the ABI (abi_glue.cpp defines call_indirect / guest_trap on top of it) ----------------------
 // Runs the lifted function or HLE thunk at `addr` on `c`; an unknown target is a guest trap (GUEST TRAP report, exception

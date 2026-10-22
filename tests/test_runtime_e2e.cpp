@@ -42,7 +42,7 @@ void lifted_fn_a(::Ctx* c) {
     c->fn = g_base + kFnA;                 // the lifted prologue records the function it is in
     c->x[0] = 40;
     c->x[1] = 2;
-    host_import(c, 0);                     // dyn_syms[0] = hle_add
+    host_import(c, NX_IMPORT_ID(0, 0));    // module index 0, dyn_syms[0] = hle_add
     g_import_result = c->x[0];
     c->x[30] = 0x1234;
     // indirect call through the table, as BLR does
@@ -117,7 +117,7 @@ NXTEST(bring_up_load_run_ipc_shutdown) {
     g_base = m->base();
     FnEntry fns[] = {{m->base() + kFnA, lifted_fn_a}, {m->base() + kFnB, lifted_fn_b}};
     static DynSym syms[] = {{"hle_add", 0, 0}};
-    NxModule nx = {"fixture", m->base(), m->base() + 0x3000, fns, 2, syms, 1, nullptr, 0, nullptr};
+    NxModule nx = {"fixture", 0u, m->base(), m->base() + 0x3000, fns, 2, syms, 1, nullptr, 0, nullptr};
     CHECK_EQ(module_register_nxmodule(m, &nx), 2u);
 
     // 1. lifted code calling an import and an indirect call

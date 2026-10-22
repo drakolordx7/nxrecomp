@@ -9,7 +9,7 @@ constexpr uint16_t ET_EXEC = 2, ET_DYN = 3;
 constexpr uint16_t EM_AARCH64 = 183;
 constexpr uint32_t PT_LOAD = 1, PT_DYNAMIC = 2, PT_TLS = 7, PT_GNU_RELRO = 0x6474e552;
 constexpr uint32_t PF_X = 1, PF_W = 2, PF_R = 4;
-constexpr uint32_t SHT_DYNSYM = 11;
+constexpr uint32_t SHT_SYMTAB = 2, SHT_DYNSYM = 11;
 constexpr int64_t DT_NULL = 0, DT_PLTRELSZ = 2, DT_HASH = 4, DT_STRTAB = 5, DT_SYMTAB = 6, DT_RELA = 7, DT_RELASZ = 8, DT_RELAENT = 9,
                   DT_STRSZ = 10, DT_SYMENT = 11, DT_INIT = 12, DT_FINI = 13, DT_JMPREL = 23, DT_INIT_ARRAY = 25, DT_FINI_ARRAY = 26,
                   DT_INIT_ARRAYSZ = 27, DT_FINI_ARRAYSZ = 28, DT_GNU_HASH = 0x6ffffef5;
