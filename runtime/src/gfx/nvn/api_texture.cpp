@@ -177,6 +177,7 @@ void read_linear(const Target& r, const NVNcopyRegion& g, uint8_t* dst, int64_t 
 void write_texels(const Target& r, const NVNcopyRegion& g, const uint8_t* src, int64_t row, int64_t image) {
     if (r.L.block_linear) write_block_linear(r, g, src, row, image);
     else write_linear(r, g, src, row, image);
+    be::tev(r.t, "write_texels");
     r.t->cpu_dirty.store(true);
     gpu::mark_texture_cpu_dirty(r.t);
 }
@@ -201,6 +202,10 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
     t->b = info;
     t->fmt = L.fmt;
     t->mem = (pool->base && !pool->is_virtual) ? pool->base + info.offset : nullptr;
+    if (pool->is_virtual) {
+        t->vpool = be::Ref<MemoryPool>::share(pool);
+        t->voffset = static_cast<uint64_t>(std::max<ptrdiff_t>(0, info.offset));
+    }
     t->storage_size = L.storage_size;
     t->block_linear = L.block_linear;
     t->block_height_gobs = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;
@@ -211,18 +216,23 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
 
     if (Texture* old = tex_of(texture)) {                    // initialized twice: the old one goes
         be::texture_registry_remove(old);
+        be::texture_registry_remove_virtual(old);
         old->destroyed.store(true);
     }
     be::bind_guest(texture, t);                              // the guest object takes the one reference of t
     be::texture_registry_add(t);
+    be::texture_registry_add_virtual(t);
+    be::tev(t, "init", static_cast<uint64_t>(info.offset), t->storage_size);
     return 1;
 }
 
 void nvnTextureFinalize(NVNtexture* texture) {
     Texture* t = tex_of(texture);
     if (!t) return;
+    be::tev(t, "finalize");
     t->destroyed.store(true);
     be::texture_registry_remove(t);
+    be::texture_registry_remove_virtual(t);
     be::unbind_guest(texture);
 }
 
@@ -378,6 +388,7 @@ void nvnTextureFlushTexels(const NVNtexture* texture, const NVNtextureView* view
     (void)region;
     Texture* t = tex_of(texture);
     if (!t || !t->mem) return;
+    be::tev(t, "flush_texels");
     t->cpu_dirty.store(true);
     gpu::mark_texture_cpu_dirty(t);
 }

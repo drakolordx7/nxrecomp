@@ -43,15 +43,16 @@ const char* aim_block_name(AimBlock b) {
     return "?";
 }
 
-double yaw_of_transform(const float xf[12]) { return std::atan2(-static_cast<double>(xf[1]), static_cast<double>(xf[5])); }
+double yaw_of_transform(const float xf[12]) { return std::atan2(static_cast<double>(xf[2]), static_cast<double>(xf[0])); }
 
 void rotate_transform_yaw(const float in[12], double dyaw, float out[12]) {
     const double c = std::cos(dyaw), s = std::sin(dyaw);
+    // The game's world is Y up (forward is +Z at yaw 0: forward = (sin yaw, 0, cos yaw), + = turn left): the heading turns about Y, left-multiplied onto the rotation (rows 0 and 2 mix, row 1 stays).
     for (int col = 0; col < 3; ++col) {
-        const double r0 = in[col], r1 = in[4 + col];
-        out[col] = static_cast<float>(c * r0 - s * r1);
-        out[4 + col] = static_cast<float>(s * r0 + c * r1);
-        out[8 + col] = in[8 + col];
+        const double r0 = in[col], r2 = in[8 + col];
+        out[col] = static_cast<float>(c * r0 + s * r2);
+        out[4 + col] = in[4 + col];
+        out[8 + col] = static_cast<float>(-s * r0 + c * r2);
     }
     out[3] = in[3];
     out[7] = in[7];
@@ -147,6 +148,7 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
     if (original) original();
     const float out = static_cast<float>(pitch_);
     guest_write(player + l_.free_look_pitch, &out, sizeof out);
+    guest_write(player + l_.free_look_target, &out, sizeof out);      // else Think eases the view back toward the stick's (zero) target
     ++applied_;
     return true;
 }

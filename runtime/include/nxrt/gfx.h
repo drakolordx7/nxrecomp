@@ -17,11 +17,15 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/extras.h"
+
 // VMA handles (the allocator header is only included by the .cpp files).
 struct VmaAllocator_T;
 struct VmaAllocation_T;
 typedef struct VmaAllocator_T* VmaAllocator;
 typedef struct VmaAllocation_T* VmaAllocation;
+
+namespace nxrt::extras { class LowLatency; }
 
 namespace nxrt::gfx {
 
@@ -116,6 +120,12 @@ struct DeviceFeatures {
     bool transform_feedback = false, transform_feedback_queries = false;   // VK_EXT_transform_feedback (the feedback queries: transformFeedbackQueries)
     bool occlusion_query = false, occlusion_query_precise = false, pipeline_statistics_query = false;
     bool sparse_binding = false, sparse_residency_image2d = false, sparse_residency_image3d = false, sparse_residency_aliased = false;
+    // Display extras (stream S14): HDR swapchains and low-latency markers. Enabled whenever the GPU / driver offers them; used only when the settings ask.
+    bool swapchain_colorspace = false;    // VK_EXT_swapchain_colorspace (instance): HDR10 and scRGB colour spaces in the surface format list
+    bool hdr_metadata = false;            // VK_EXT_hdr_metadata
+    bool present_id = false;              // VK_KHR_present_id (feature presentId)
+    bool low_latency2 = false;            // VK_NV_low_latency2 (NVIDIA Reflex)
+    bool anti_lag = false;                // VK_AMD_anti_lag (AMD Anti-Lag 2)
 };
 
 struct DeviceLimitsExt {
@@ -230,6 +240,7 @@ struct FrameInfo {
     uint32_t slot = 0;                    // frame-in-flight index
     uint32_t image_index = 0;
     uint64_t frame_number = 0;            // counts successful begin_frame calls from 0
+    bool hdr_output = false;              // the target is an HDR swapchain image (HDR10 / scRGB): colours are encoded, not sRGB
 };
 
 struct RendererStats {
@@ -269,6 +280,15 @@ public:
     bool present_mode_supported(PresentMode m) const;
     // Headless mode only: change the size of the offscreen images (the resize path without a window).
     bool resize_headless(uint32_t w, uint32_t h);
+
+    // Display extras (S14). The swapchain flavour in use: SDR 8 bit, HDR10 (ST 2084 on A2B10G10R10) or scRGB (linear float16). It is decided when the
+    // renderer is created from [hdr] and what the surface offers; it can fall back to Sdr8 when the display leaves HDR mode. format_serial() changes
+    // whenever the swapchain format changed, so passes that built pipelines for the format know to rebuild them.
+    extras::OutputKind output_kind() const;
+    VkColorSpaceKHR color_space() const;
+    uint32_t format_serial() const;
+    VkSwapchainKHR swapchain() const;
+    extras::LowLatency* low_latency();                 // never null; check enabled()
 
     VkExtent2D extent() const;
     VkFormat format() const;

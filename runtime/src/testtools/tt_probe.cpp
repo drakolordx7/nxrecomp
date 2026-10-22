@@ -19,7 +19,10 @@
 // CStateManager::GameState(), SInitialState{area, -1}); CGameInstanceState::QuitGame(7) with the instance state from CStateManager::GameInstanceState().
 #include <windows.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "nxrt/dispatch.h"
@@ -62,7 +65,9 @@ constexpr uint64_t kFnUpdate = 0x3c81c8;                // CGameArchitectureSupp
 constexpr uint64_t kFnProcessInput = 0xc70334;          // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 player, x2 state manager
 constexpr int kQuitReasonWarp = 7;
 
-std::atomic<uint64_t> g_player{0}, g_mgr{0};
+std::atomic<uint64_t> g_player{0}, g_mgr{0}, g_pi_stamp{0};
+std::atomic<::Ctx*> g_call_ctx{nullptr};
+constexpr uint64_t kFnGetVelocityWR = 0xc577c4;        // CPhysicsActorMP1::GetVelocityWR(player, CStateManager const&) -> CVector3f*
 ProbeLayout g_layout;
 
 template <class T>
@@ -80,12 +85,13 @@ uint64_t guest_call(::Ctx* c, uint64_t addr, uint64_t a0 = 0, uint64_t a1 = 0, u
 }
 
 int frame_hook(::Ctx* c, uint64_t, void*) { frame_boundary(c); return 0; }
-int input_hook(::Ctx* c, uint64_t, void*) { set_player_pointers(c->x[0], c->x[2]); return 0; }
+int input_hook(::Ctx* c, uint64_t, void*) { set_player_pointers(c->x[0], c->x[2]); g_pi_stamp.store(frame()); return 0; }
 
 }  // namespace
 
 void set_probe_layout(const ProbeLayout& l) { g_layout = l; }
 void set_player_pointers(uint64_t player, uint64_t mgr) { g_player.store(player); g_mgr.store(mgr); }
+void set_call_context(::Ctx* c) { g_call_ctx.store(c); }
 
 namespace detail {
 bool have_state_manager() { return (g_layout.state_manager ? g_layout.state_manager : g_mgr.load()) != 0; }
@@ -113,6 +119,10 @@ bool read_state(GameState* out) {
         const uint64_t ps = rd64(gs + 0x20);
         float hp;
         if (ps && rd(ps + 0xc, &hp)) { g.hp = hp; g.have_hp = true; }
+        int32_t beam = -1, visor = -1, missiles = -1;
+        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x30 + 8 * 4, &missiles)) {
+            g.beam = beam; g.visor = visor; g.missiles = missiles; g.have_ps = true;
+        }
     }
     const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
     uint64_t player = g_layout.player ? g_layout.player : 0;
@@ -131,9 +141,41 @@ bool read_state(GameState* out) {
         float m[12];
         if (xf && rd(xf, &m)) {
             g.pos[0] = m[3]; g.pos[1] = m[7]; g.pos[2] = m[11];
-            g.yaw = std::atan2(-m[1], m[5]);
+            g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is +Z at 0; + = turn left)
             rd(player + 0x3f0, &g.move_state);
             g.have_player = std::isfinite(g.pos[0]) && std::isfinite(g.pos[1]) && std::isfinite(g.pos[2]);
+        }
+        if (g.have_player && mgr) {            // the first-person camera: [[[mgr + 0x4e0150] + 0x30] + 0x80]
+            const uint64_t logic = rd64(mgr + 0x4e0150);
+            const uint64_t cm = logic ? rd64(logic + 0x30) : 0;
+            const uint64_t fp = cm ? rd64(cm + 0x80) : 0;
+            float cx[12];
+            const uint64_t xfp = fp ? rd64(rd64(rd64(fp + 8) + 0x20) + 0x40) : 0;
+            if (xfp && rd(xfp, &cx) && std::isfinite(cx[2]) && std::isfinite(cx[0])) {
+                g.cam_yaw = std::atan2(cx[2], cx[0]);
+                g.cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, cx[6])));
+                g.have_cam = true;
+            }
+        }
+        if (g.have_player) {
+            float pitch = 0;
+            int32_t cs = 0, ms = 0, os = 0;
+            if (rd(player + 0x5cc, &pitch) && rd(player + 0x4d0, &cs) && rd(player + 0x4d4, &ms) && rd(player + 0x4e0, &os)) {
+                g.pitch = pitch; g.cam_state = cs; g.morph_state = ms; g.orbit_state = os; g.have_aim = true;
+            }
+            // The physics velocity needs a guest call, so only from inside the frame hook and only while the game is calling ProcessInput
+            // (the player pointer is then live; during loads it is stale).
+            ::Ctx* c = g_call_ctx.load();
+            const uint64_t mgr_now = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+            if (c && mgr_now && frame() - g_pi_stamp.load() <= 2 && fn_lookup(detail::game_base() + kFnGetVelocityWR)) {
+                const uint64_t vp = guest_call(c, detail::game_base() + kFnGetVelocityWR, player, mgr_now);
+                float v[3];
+                if (vp && rd(vp, &v) && std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])) {
+                    for (int i = 0; i < 3; i++) g.vel[i] = v[i];
+                    g.speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                    g.have_phys = true;
+                }
+            }
         }
     }
     *out = g;
@@ -149,6 +191,16 @@ void install_game_hooks() {
 }
 
 namespace detail {
+
+bool give_item(int item, int amount) {
+    if (item < 0 || item > 40) return false;
+    const uint64_t gp = g_layout.game_state_global ? g_layout.game_state_global : game_base() + kGpGameState;
+    const uint64_t gs = rd64(gp);
+    const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
+    if (!ps) return false;
+    const int32_t v[2] = {amount, amount};
+    return write_mem(ps + 0x30 + 8 * static_cast<uint64_t>(item), v, sizeof v);
+}
 
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
     const uint64_t base = game_base();
@@ -174,6 +226,60 @@ bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
     const uint64_t gis = guest_call(c, base + kFnGameInstanceState, mgr);
     if (!gis) return false;
     guest_call(c, base + kFnQuitGame, gis, static_cast<uint64_t>(kQuitReasonWarp));
+    return true;
+}
+
+bool grant(int64_t item, int32_t amount, int32_t capacity) {
+    const uint64_t gs = rd64(g_layout.game_state_global ? g_layout.game_state_global : game_base() + kGpGameState);
+    const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
+    if (!ps) return false;
+    auto put = [&](int64_t id, int32_t a, int32_t cap) {
+        const int32_t v[2] = {a, cap};
+        return write_mem(ps + 0x44 + static_cast<uint64_t>(id) * 8, v, sizeof v);
+    };
+    if (item >= 0) return put(item, amount, capacity);
+    bool ok = true;
+    for (int id : {0, 1, 2, 3, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0x1c}) ok &= put(id, 1, 1);
+    ok &= put(4, 250, 250);       // missiles
+    ok &= put(7, 8, 8);           // power bombs
+    ok &= put(0x18, 14, 14);      // energy tanks
+    return ok;
+}
+
+bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err) {
+    if (!c) { *err = "no live context (the frame source is not the game hook)"; return false; }
+    const uint64_t base = game_base();
+    const uint64_t gs = rd64(g_layout.game_state_global ? g_layout.game_state_global : base + kGpGameState);
+    const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+    uint64_t a[6] = {0, 0, 0, 0, 0, 0};
+    size_t n = 0;
+    size_t pos = 0;
+    while (pos < args.size()) {
+        while (pos < args.size() && std::isspace(static_cast<unsigned char>(args[pos]))) pos++;
+        if (pos >= args.size()) break;
+        size_t e = pos;
+        while (e < args.size() && !std::isspace(static_cast<unsigned char>(args[e]))) e++;
+        const std::string tok = args.substr(pos, e - pos);
+        pos = e;
+        if (n >= 6) { *err = "more than 6 arguments"; return false; }
+        uint64_t v = 0;
+        if (tok == "$gs") v = gs;
+        else if (tok == "$ps") v = gs ? rd64(gs + 0x20) : 0;
+        else if (tok == "$mgr") v = mgr;
+        else if (tok == "$player") { const uint64_t logic = mgr ? rd64(mgr + 0x4e0150) : 0; v = g_layout.player ? g_layout.player : (logic ? rd64(logic + 0x18) : g_player.load()); }
+        else {
+            char* end = nullptr;
+            v = std::strtoull(tok.c_str(), &end, 0);
+            if (!end || *end != 0) { *err = "bad argument '" + tok + "'"; return false; }
+        }
+        if ((tok[0] == '$') && v == 0) { *err = "argument " + tok + " is not available yet"; return false; }
+        a[n++] = v;
+    }
+    ::Ctx saved = *c;
+    for (int i = 0; i < 6; i++) c->x[i] = a[i];
+    dispatch_call(c, base + offset);
+    *result = c->x[0];
+    *c = saved;
     return true;
 }
 

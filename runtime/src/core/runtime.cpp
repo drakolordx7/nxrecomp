@@ -53,6 +53,7 @@ bool init(const InitOptions& opt) {
     svc_init();
     if (opt.services) {
         services::register_all();
+        kernel::install_busy_mutex_hle();   // the SDK's spin lock yields under the console core model
         media::install_movie_hle();   // movie:: on Media Foundation ([media] movie = off keeps the library in subsdk0)
     }
     if (opt.memguard) memguard_start();

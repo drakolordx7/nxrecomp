@@ -582,3 +582,90 @@ NXTEST(guid_malformed_text_rejected) {
     CHECK(!tt_guid_to_bytes("01234567-89ab-cdef-0123-456789abcde", b));   // too short
     CHECK(!tt_guid_to_bytes("", b));
 }
+
+NXTEST(gameplay_steps_sleep_run_mash_give_rate) {
+    Script sc;
+    REQUIRE(parse_ok("@sleep 1500\n@run 2.5 timeout=100\n@give MorphBall 1\n@give charge_beam 1\n@give 4 50\n@rate 144\n@rate 0\n@mash A 5000 area 01234567-89ab-cdef-0123-456789abcdef timeout=1000\n", sc));
+    REQUIRE(sc.steps.size() == 8);
+    CHECK_EQ(sc.steps[0].kind, StepKind::WaitMs);
+    CHECK_EQ(sc.steps[0].x, 1500.0);
+    CHECK_EQ(sc.steps[1].kind, StepKind::WaitRun);
+    CHECK_EQ(sc.steps[1].x, 2.5);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)100);
+    CHECK_EQ(sc.steps[2].kind, StepKind::Give);
+    CHECK_EQ(sc.steps[2].x, 16.0);          // MorphBall
+    CHECK_EQ(sc.steps[3].x, 10.0);          // ChargeBeam
+    CHECK_EQ(sc.steps[4].x, 4.0);
+    CHECK_EQ(sc.steps[4].y, 50.0);
+    CHECK_EQ(sc.steps[5].kind, StepKind::Rate);
+    CHECK_EQ(sc.steps[5].x, 144.0);
+    CHECK_EQ(sc.steps[6].x, 0.0);
+    CHECK_EQ(sc.steps[7].kind, StepKind::Mash);
+    CHECK_EQ(sc.steps[7].x, 5000.0);
+    CHECK_EQ(sc.steps[7].timeout, (int64_t)1000);
+    expect_err("@rate -1\n", 1, "@rate hz");
+    expect_err("@give Nonsense 1\n", 1, "unknown item");
+    expect_err("@mash A 5000 room x\n", 1, "@mash");
+}
+
+// ---- S15 steps: @mash, @run, @grant, @call ----------------------------------------------------------------
+
+NXTEST(mashuntil_parses_keys_interval_condition_and_timeout) {
+    Script sc;
+    REQUIRE(parse_ok("@mashuntil A+B every 90 until health > 0 timeout=500\n@mashuntil START every 5 until state >= 0\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::PressUntil);
+    CHECK_EQ(sc.steps[0].buttons, bit(0) | bit(1));
+    CHECK_EQ(sc.steps[0].count, (int64_t)90);
+    CHECK_EQ(sc.steps[0].field, AssertField::Health);
+    CHECK_EQ(sc.steps[0].op, AssertOp::Gt);
+    CHECK_EQ(sc.steps[0].x, 0.0);
+    CHECK_EQ(sc.steps[0].timeout, (int64_t)500);
+    CHECK_EQ(sc.steps[1].field, AssertField::State);
+    CHECK_EQ(sc.steps[1].op, AssertOp::Ge);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)-1);
+}
+
+NXTEST(mashuntil_errors) {
+    expect_err("@mashuntil A every 90 until health\n", 1, "@mashuntil <keys> every");
+    expect_err("@mashuntil A every 3 until health > 0\n", 1, "at least 5");
+    expect_err("@mashuntil A every 90 until bogus > 0\n", 1, "unknown assert field");
+    expect_err("@mashuntil A each 90 until health > 0\n", 1, "@mashuntil <keys> every");
+}
+
+NXTEST(run_parses_seconds_and_timeout) {
+    Script sc;
+    REQUIRE(parse_ok("@run 2.5\n@run 0 timeout=40\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::WaitRun);
+    CHECK_EQ(sc.steps[0].x, 2.5);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)40);
+    expect_err("@run -1\n", 1, "must be >= 0");
+}
+
+NXTEST(grant_names_numbers_and_all) {
+    Script sc;
+    REQUIRE(parse_ok("@grant MorphBall\n@grant missiles 250 250\n@grant Charge_Beam\n@grant 0x12 1\n@grant all\n", sc));
+    REQUIRE(sc.steps.size() == 5);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Grant);
+    CHECK_EQ(sc.steps[0].count, (int64_t)0x10);
+    CHECK_EQ(sc.steps[0].x, 1.0);
+    CHECK_EQ(sc.steps[1].count, (int64_t)4);
+    CHECK_EQ(sc.steps[1].x, 250.0);
+    CHECK_EQ(sc.steps[1].y, 250.0);
+    CHECK_EQ(sc.steps[2].count, (int64_t)0xa);
+    CHECK_EQ(sc.steps[3].count, (int64_t)0x12);
+    CHECK_EQ(sc.steps[4].count, (int64_t)-1);
+    expect_err("@grant sword\n", 1, "unknown item");
+}
+
+NXTEST(call_parses_offset_and_argument_text) {
+    Script sc;
+    REQUIRE(parse_ok("@call 0xb03a58 $mgr\n@call 0xc88f30 $ps 4 250\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Call);
+    CHECK_EQ(sc.steps[0].count, (int64_t)0xb03a58);
+    CHECK_EQ(sc.steps[0].text, std::string("$mgr"));
+    CHECK_EQ(sc.steps[1].text, std::string("$ps 4 250"));
+    expect_err("@call\n", 1, "@call <offset>");
+}

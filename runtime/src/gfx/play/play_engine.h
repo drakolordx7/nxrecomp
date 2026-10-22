@@ -47,6 +47,10 @@ public:
     void mouse_button(int button, bool down, uint64_t now_ns);    // 1 left .. 5, the numbering of input.h
     void wheel(int dir, uint64_t now_ns);                          // +1 up, -1 down: one notch
     void release_all(uint64_t now_ns);                             // focus lost: everything is released (no taps fire)
+    // One call per game frame (the frame-boundary hook). Once it has been called, a select pulse also stays on for at least `kPulseFrames` frame
+    // boundaries after the first poll that reported it: the game samples its input once per tick and other readers poll the pad in between, so
+    // a pulse that is only a few milliseconds of one frame can be eaten before the tick sees it.
+    void frame_tick();
 
     // What the game knows: the beam currently selected (0 power, 1 wave, 2 ice, 3 plasma; -1 = unknown) and a bit mask of the beams the player owns.
     // The game's view is adopted only when no select of ours is pending or recent (the game needs a frame or two to act on a pulse).
@@ -88,12 +92,17 @@ private:
     std::vector<BindRt> rt_;
     std::vector<int> cur_;                                // indices of the bindings that apply in ctx_
     std::map<InputId, InState> in_;
-    struct Sel { Act act; uint64_t start, end; };
+    // `seen` = a poll of output() has reported it: a pulse always lasts until the first poll at or after its end, so a slow game frame (100 ms or more)
+    // cannot miss it, and only the head of the queue is ever reported (two selects never show in one poll).
+    struct Sel { Act act; uint64_t start, end; bool seen = false; uint64_t seen_frame = 0; };
     std::vector<Sel> sels_;                               // select pulses, queued so that two selects never overlap
     uint64_t acts_[kActCount] = {};
     Act last_ = Act::None;
     int beam_ = 0;
     uint64_t last_select_ns_ = 0;
+    uint64_t frame_ = 0;
+    bool frames_used_ = false;
+    static constexpr uint64_t kPulseFrames = 2;
     unsigned beam_mask_ = 0x0f;
 };
 

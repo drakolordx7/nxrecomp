@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_framework.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <set>
 
@@ -31,6 +32,9 @@ void skip(const char* why) {
 int main(int argc, char** argv) {
     using namespace nxtest;
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    // The runtime opens its shader cache only from [nvn] shader_cache / NXRT_NVN_SHADER_CACHE (no work-folder fallback),
+    // so the test process points it at the game's cache unless the environment already sets it.
+    if (!std::getenv("NXRT_NVN_SHADER_CACHE")) _putenv_s("NXRT_NVN_SHADER_CACHE", "D:/AI/Active/Metroid-Prime/work/shader_cache/spirv");
     if (argc >= 2 && !std::strcmp(argv[1], "--list")) {
         std::set<std::string> groups;
         for (auto& c : cases()) groups.insert(c.group);

@@ -280,7 +280,7 @@ private:
 };
 
 // The process-wide cache. Opens itself on first use from config [nvn] shader_cache (environment NXRT_NVN_SHADER_CACHE);
-// if that is empty, the first of ./shader_cache/spirv and D:/AI/Active/Metroid-Prime/work/shader_cache/spirv that has a
+// if that is empty, the first of ./shader_cache/spirv and <executable folder>/shader_cache/spirv that has a
 // results.tsv. A failed open is logged once and every find returns null.
 ShaderCache& shader_cache();
 
