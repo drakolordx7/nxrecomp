@@ -3,7 +3,7 @@
 Host-side half of the test tooling. The runtime half (scripted runs, traces, deterministic mode, record/replay) is `runtime/docs/S5.md`. Python is `tools\.venv\Scripts\python` (numpy and Pillow only); tests are stdlib `unittest`:
 
     cd tools\test
-    ..\.venv\Scripts\python -I -m unittest discover -s tests -v        everything below (114 tests, no game needed)
+    ..\.venv\Scripts\python -I -m unittest discover -s tests -v        everything below (163 tests, no game needed)
 
 ## Scripted runs against mpr.exe
 
@@ -35,4 +35,6 @@ Eden v0.2.1 (`toolchain/eden`) runs in portable mode from `work\eden` (a `user\`
 | `edengdb.py info\|state\|trace` | GDB remote client for Eden's stub. `state` reads the same fields as the runtime's probes (same offsets), `trace` writes a per-frame JSONL by breaking on `CGameArchitectureSupport::Update`. |
 | `wincap.py` | Window capture (PrintWindow / BitBlt / screen). Only useful in an interactive session: in a disconnected one Eden's window comes out black, which is why frames come from the Vulkan layer. |
 
-Facts the harness is built on (research notes in `runtime/docs/debug/10x.md`): a GDB client connecting pauses the game and it stays paused until a continue; `monitor get info` prints the module list (main is the module `GameFramework.nss`); `monitor` replies are hex-encoded text; the screenshot layer is driven by `VK_SCREENSHOT_FRAMES` (a comma list of present numbers; its range syntax did not produce files) and `VK_SCREENSHOT_DIR`.
+Facts the harness is built on (research notes in `runtime/docs/debug/10x.md`): a GDB client connecting pauses the game and it stays paused until a continue; `monitor get info` prints the module list (main is the module `GameFramework.nss`); `monitor` replies are hex-encoded text; the screenshot layer is driven by `VK_SCREENSHOT_FRAMES` (a comma list of present numbers) and `VK_SCREENSHOT_DIR`; with the GDB stub switched on Eden WAITS at start for a client (eden_run.py switches it on only for runs that sample state); the main module base changes from run to run (ASLR), `edengdb` asks for it.
+
+Reference captures: `collect_refs.py timelines/refs_session1.json` copies named frames from the exploration sessions into `work\eden_refef` (boot logo, title, main menu, file select, difficulty, loading, the Frigate intro cinematic, an attract-mode gameplay clip, plus a GDB state read `eden_state_frigate_hangar.json` and a per-frame GDB trace). `contact_sheet.py` makes one overview image of a session. Timeline files: `timelines/*.json`. A new game takes 12 to 35 minutes of wall time to reach the Frigate in Eden on this machine (level loading, shader building), so a session is long; first gameplay frames were not reached (see the S5 report).
