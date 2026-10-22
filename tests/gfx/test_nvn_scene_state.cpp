@@ -701,7 +701,7 @@ NXTEST(logic_op_xor_on_white) {
 
 // 10. Partial clear mask (KNOWN GAP: the back end clears all four channels, see do_clear_color in nvn_replay.cpp). Background
 // black (0,0,0,1), then ClearColor of (1,1,1,0) with mask R|B, read back from an RGBA8 target. Correct result: (255, 0, 255, 255).
-// This assertion is the correct one and is expected to FAIL until the gap is closed.
+// This assertion is the correct one; the gap is closed (masked clears are a draw with a colour write mask, nvn_mask_clear.cpp).
 NXTEST(clear_color_partial_mask_known_gap) {
     App app;
     App::Opts o;
@@ -850,5 +850,88 @@ NXTEST(clear_depth_stencil_partial_stencil_mask_with_depth) {
     }
     CHECK(ok);
     ok = report(app, s0, std::size(checks), false) && ok;
+    app.shutdown();
+}
+
+// 6. Occlusion counter (NVN_COUNTER_TYPE_SAMPLES_PASSED). Colour target from make_readback, D32F depth, depth test LESS throughout.
+// Depth write is on only for the occluder A (z 0.25, columns 16..31, rows 12..35). Each ResetCounter / ReportCounter pair brackets the
+// draws of one slot in a 16-byte report: the sample count is the first 8 bytes, a timestamp the second 8 bytes. Expected counts:
+//   slot 0: B (z 0.75, columns 19..28, fully behind A, depth write off)                   -> 0
+//   slot 1: C (z 0.5, columns 40..55, rows 12..35, free screen, depth write off)         -> 384 (+-8 accepted)
+//   slot 2: D (z 0.75, columns 24..39, rows 12..35, columns 24..31 behind A)             -> 8 * 24 = 192
+//   slot 3: ResetCounter and ReportCounter with nothing drawn in between                  -> 0
+NXTEST(occlusion_counter_counts_passing_samples) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    App app;
+    App::Opts o;
+    o.width = kW;
+    o.height = kH;
+    REQUIRE(app.init(o));
+    Progs sh;
+    REQUIRE(sh.load(app));
+    Readback rb = make_readback(app);
+    REQUIRE(rb.tex != nullptr);
+    auto depth = app.make_texture_2d(NVN_FORMAT_DEPTH32F, kW, kH, NVN_TEXTURE_FLAGS_COMPRESSIBLE, 1, false);
+    REQUIRE(depth != nullptr);
+    App::Buf rep = app.make_buffer(64);   // four 16-byte reports, slot i at rep.address + 16 * i
+    std::memset(rep.ptr, 0, 64);
+    auto cb = begin_frame(app, {rb.tex->obj.get()}, depth->obj.get(), kW, kH);
+    REQUIRE(cb != nullptr);
+    NVNcommandBuffer* c = cb->obj.get();
+    auto& api = app.api;
+    const float black[4] = {0, 0, 0, 1};
+    api.nvnCommandBufferClearColor(c, 0, black, NVN_CLEAR_COLOR_MASK_RGBA);
+    api.nvnCommandBufferClearDepthStencil(c, 1.0f, 1, 0, 0xFF);
+    const auto s0 = nxrt::nvn::backend_stats();
+
+    // Two state objects, both kept alive for the whole frame: ga writes depth (occluder A), gr does not (the counted draws).
+    Gfx ga, gr;
+    ga.defaults(app);
+    api.nvnDepthStencilStateSetDepthTestEnable(&ga.ds, 1);
+    api.nvnDepthStencilStateSetDepthWriteEnable(&ga.ds, 1);
+    api.nvnDepthStencilStateSetDepthFunc(&ga.ds, NVN_DEPTH_FUNC_LESS);
+    gr.defaults(app);
+    api.nvnDepthStencilStateSetDepthTestEnable(&gr.ds, 1);
+    api.nvnDepthStencilStateSetDepthWriteEnable(&gr.ds, 0);
+    api.nvnDepthStencilStateSetDepthFunc(&gr.ds, NVN_DEPTH_FUNC_LESS);
+
+    // occluder A: depth write on, not counted
+    ga.bind(app, c);
+    draw_quads(app, c, sh.p_mag.get(), quad(-0.5f, 0.0f, -0.5f, 0.5f, 0.25f));
+
+    gr.bind(app, c);
+    // slot 0: B, fully behind A
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    draw_quads(app, c, sh.p_red.get(), quad(-0.4f, -0.1f, -0.4f, 0.4f, 0.75f));
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 0);
+    // slot 1: C, free screen area
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    draw_quads(app, c, sh.p_mag.get(), quad(0.25f, 0.75f, -0.5f, 0.5f, 0.5f));
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 16);
+    // slot 2: D, half hidden by A
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    draw_quads(app, c, sh.p_red.get(), quad(-0.25f, 0.25f, -0.5f, 0.5f, 0.75f));
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 32);
+    // slot 3: nothing drawn
+    api.nvnCommandBufferResetCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    api.nvnCommandBufferReportCounter(c, NVN_COUNTER_TYPE_SAMPLES_PASSED, rep.address + 48);
+
+    app.end_and_submit(*cb);
+    app.finish();
+    uint64_t cnt[4] = {}, ts[4] = {};
+    for (int i = 0; i < 4; ++i) {
+        std::memcpy(&cnt[i], rep.ptr + 16 * i, 8);
+        std::memcpy(&ts[i], rep.ptr + 16 * i + 8, 8);
+        std::printf("    slot %d: samples passed %llu, timestamp %llu\n", i, static_cast<unsigned long long>(cnt[i]),
+                    static_cast<unsigned long long>(ts[i]));
+    }
+    // slot 1 is accepted within 384 +- 8 (rasterisation rules at the edges); the other slots are exact
+    if (cnt[1] != 384ull) std::printf("    slot 1 is not exactly 384: %llu\n", static_cast<unsigned long long>(cnt[1]));
+    CHECK_EQ(cnt[0], 0ull);
+    CHECK(cnt[1] >= 376ull && cnt[1] <= 392ull);
+    CHECK_EQ(cnt[2], 192ull);
+    CHECK_EQ(cnt[3], 0ull);
+    for (int i = 0; i < 4; ++i) CHECK(ts[i] != 0ull);
+    report(app, s0, 4, false);
     app.shutdown();
 }

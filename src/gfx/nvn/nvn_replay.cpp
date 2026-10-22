@@ -32,7 +32,7 @@ enum Stage { kVertex = 0, kFragment = 1, kGeometry = 2, kTessCtl = 3, kTessEval 
 struct GState {
     const ShaderInfo* stage[6] = {};
     struct Bind { uint64_t addr = 0, size = 0; };
-    Bind vtx[16], ubo[6][16], ssbo[6][16];
+    Bind vtx[16], ubo[6][16], ssbo[6][16], xfb[4];
     uint64_t tex[6][64] = {};
     uint64_t img[6][16] = {};
     Ref<TexturePool> tpool;
@@ -142,6 +142,7 @@ bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in t
 
 // [nvn] trace_frame = N (NXRT_NVN_TRACE_FRAME): every draw, clear, copy and dispatch of the frame that is presented as number N is logged
 // at Info ("trace ..." lines): programs, render targets, sampled textures, blend and depth state. For finding out what a frame does.
+bool g_xfb_active = false;
 bool g_trace = false;
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
@@ -630,6 +631,16 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                     }
                     break;
                 }
+                case NvnSource::UniformAsStorage: {
+                    // a compute shader that reads uniform block n through its c[0] descriptor: the block's buffer as a storage buffer
+                    const int idx = b.nvn.index;
+                    if (idx >= 0 && idx < 16 && S.ubo[d.nvn_stage][idx].addr) {
+                        const GState::Bind& bind = S.ubo[d.nvn_stage][idx];
+                        BufRef br = resolve_buffer(bind.addr, bind.size);
+                        bi = {br.buffer, br.offset, std::min<VkDeviceSize>(bind.size ? bind.size : br.avail, br.avail)};
+                    }
+                    break;
+                }
                 default:
                     note_unsupported("shader buffer binding of an unknown NVN source");
                     break;
@@ -906,6 +917,12 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             TRACE("    %s set%u b%u %s -> %s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
                   d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.has_sampler ? "" : " (no sampler)");
         }
+    }
+    if (g_xfb_active) {
+        static std::unordered_map<std::string, bool> seen;
+        if (seen.emplace(S.stage[kVertex]->hash, true).second)
+            NXLOG_I("nvn.xfb", "draw under transform feedback: vs %s mode %d attrs %u xfb0 %llx/%llu", S.stage[kVertex]->hash.c_str(), mode, S.attr_count,
+                    static_cast<unsigned long long>(S.xfb[0].addr), static_cast<unsigned long long>(S.xfb[0].size));
     }
     if (g_pipe != g_bound_pipeline) {
         vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
@@ -1332,7 +1349,7 @@ void run_list(const CmdList& list, int depth) {
                     if (p.kind == kBufVertex && k < 16) S.vtx[k] = {rg[i].address, rg[i].size};
                     else if (p.kind == kBufUniform && p.stage < 6 && k < 16) S.ubo[p.stage][k] = {rg[i].address, rg[i].size};
                     else if (p.kind == kBufStorage && p.stage < 6 && k < 16) S.ssbo[p.stage][k] = {rg[i].address, rg[i].size};
-                    else if (p.kind == kBufXfb) note_unsupported("transform feedback buffers");
+                    else if (p.kind == kBufXfb && k < 4) S.xfb[k] = {rg[i].address, rg[i].size};
                 }
                 break;
             }
@@ -1562,6 +1579,20 @@ void run_list(const CmdList& list, int depth) {
             }
             case Op::DiscardColor: case Op::DiscardDepthStencil: break;
             case Op::ResolveDepth: note_unsupported("ResolveDepthBuffer"); break;
+            case Op::BeginXfb: case Op::EndXfb: case Op::PauseXfb: case Op::ResumeXfb: {
+                const auto& p = r.payload<P_Counter>();
+                static std::unordered_map<std::string, bool> seen;
+                const std::string key = std::string(op_name(r.op())) + (S.stage[kVertex] ? S.stage[kVertex]->hash : "-");
+                if (seen.emplace(key, true).second)
+                    NXLOG_I("nvn.xfb", "%s control %llx vs %s xfb buffer0 %llx/%llu", op_name(r.op()), static_cast<unsigned long long>(p.address),
+                            S.stage[kVertex] ? S.stage[kVertex]->hash.c_str() : "-", static_cast<unsigned long long>(S.xfb[0].addr),
+                            static_cast<unsigned long long>(S.xfb[0].size));
+                TRACE("%s control %llx", op_name(r.op()), static_cast<unsigned long long>(p.address));
+                if (r.op() == Op::BeginXfb) g_xfb_active = true;
+                else if (r.op() == Op::EndXfb) g_xfb_active = false;
+                note_unsupported("transform feedback (recorded; the vertex shader stream-out is not executed)");
+                break;
+            }
             default: note_unsupported(op_name(r.op())); break;
         }
     }
