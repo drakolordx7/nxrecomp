@@ -148,6 +148,9 @@ bool g_pipe_xfb = false;             // the bound pipeline is a stream-out varia
 bool g_xfb_began = false;            // vkCmdBeginTransformFeedbackEXT is in effect in the open pass
 bool g_xfb_have_counter = false;     // a counter buffer holds the bytes written so far: the next begin continues after them
 gfx::Buffer g_xfb_counter;
+// Primitive counters (NVN_COUNTER_TYPE_PRIMITIVES_GENERATED = 13, TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN = 14): counted on the CPU by every
+// draw (count_primitives), process-wide like the console's, zeroed by ResetCounter of their type, dropped at shutdown.
+uint64_t g_prims_generated = 0, g_prims_xfb = 0;
 VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
 bool g_trace = false;
 struct TraceSnap { int index; int draw; std::string name; std::string desc; };
@@ -1129,7 +1132,17 @@ void trace_snap_after_draw() {
     }
 }
 
+// Counts a draw for the primitive counters, before the replay decides whether to skip it: the console generates the primitives of every
+// draw it runs, and a draw of a feedback section also writes them (14). A draw with rendering disabled is not run by the console: not counted.
+void count_primitives(uint32_t mode, uint32_t count, uint32_t instances) {
+    if (!S.render_enable) return;
+    const uint64_t prims = primitives_for(static_cast<int>(mode), count) * std::max<uint32_t>(1, instances);
+    g_prims_generated += prims;
+    if (g_xfb_active) g_prims_xfb += prims;
+}
+
 void do_draw_arrays(const P_DrawArrays& p) {
+    count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), false, 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
@@ -1168,6 +1181,7 @@ void do_draw_arrays(const P_DrawArrays& p) {
 }
 
 void do_draw_elements(const P_DrawElements& p) {
+    count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), true, static_cast<int>(p.type), &topo)) { counters().draws_skipped.fetch_add(1); return; }
     const uint32_t isz = index_size_bytes(static_cast<int>(p.type));
@@ -1216,6 +1230,8 @@ void do_draw_elements(const P_DrawElements& p) {
 }
 
 void do_draw_indirect(const P_DrawIndirect& p) {
+    static bool noted_indirect = false;   // the primitive counts of indirect draws are not known to the replay: nothing is counted
+    if (!noted_indirect) { noted_indirect = true; note_unsupported("primitive counters (13, 14) do not count indirect draws"); }
     const bool indexed = p.type != 0xffffffffu;
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), indexed, indexed ? static_cast<int>(p.type) : 0, &topo)) { counters().draws_skipped.fetch_add(1); return; }
@@ -1698,7 +1714,12 @@ void run_list(const CmdList& list, int depth) {
                     }
                     break;
                 }
-                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed (reported as non-zero)");
+                if (p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED || p.type == NVN_COUNTER_TYPE_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN) {
+                    rep.counter = p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED ? g_prims_generated : g_prims_xfb;
+                    if (p.address) do_write_memory(p.address, &rep, sizeof rep);
+                    break;
+                }
+                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed, primitives generated and feedback primitives written are reported as non-zero");
                 if (p.type == NVN_COUNTER_TYPE_TIMESTAMP) rep.counter = 0;
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
@@ -1719,6 +1740,10 @@ void run_list(const CmdList& list, int depth) {
                     vkCmdBeginQuery(F->cb, g_occ_pool, slot, device().features().occlusion_query_precise ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
                     g_occ_active = static_cast<int32_t>(slot);
                     g_occ_last = -1;
+                } else if (p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED) {
+                    g_prims_generated = 0;
+                } else if (p.type == NVN_COUNTER_TYPE_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN) {
+                    g_prims_xfb = 0;
                 }
                 break;
             }
@@ -1867,6 +1892,7 @@ void replay_shutdown() {
     g_occ_pool = VK_NULL_HANDLE;
     g_occ_tried = false;
     g_occ_active = g_occ_last = -1;
+    g_prims_generated = g_prims_xfb = 0;
     g_mask.shutdown();
     g_mask_ready = false;
     pipeline_shutdown();
