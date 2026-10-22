@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Play mode: from a gamepad as SDL reports it to the Switch pad the game expects. Pure functions, no SDL calls, no state.
+#pragma once
+#include "nxrt/input_source.h"
+#include "nxrt/platform.h"
+#include "play_types.h"
+
+namespace nxrt::play {
+
+// Fills out->buttons, out->left and out->right from the raw pad. Other fields of *out (connected, style, six_axis, colours) are untouched.
+//  buttons   Switch button bits (hid::btn(hid::kBtnA) ...).
+//            Face buttons: cfg.label_abxy = true maps by the printed label (raw.face_label: label A -> Switch A, B -> B, X -> X, Y -> Y), so an
+//            Xbox pad's bottom button (label A) is Switch A; false maps by position: SOUTH -> B, EAST -> A, WEST -> Y, NORTH -> X.
+//            LEFT_SHOULDER -> L, RIGHT_SHOULDER -> R, START -> PLUS, BACK -> MINUS, LEFT_STICK -> LStick click, RIGHT_STICK -> RStick click,
+//            DPAD_* -> Up/Down/Left/Right. Triggers: axis value / 32767 >= cfg.trigger_threshold -> ZL / ZR. GUIDE and MISC1 do nothing.
+//  sticks    raw axis / 32768 (clamped to -1..1), y flipped (SDL y down = +, hid y up = +), radial dead zone cfg.stick_deadzone with the
+//            remaining travel rescaled to 0..1 ((len - dz) / (1 - dz)), then * 32767 rounded; the result is within +-32767.
+void map_pad(const platform::GamepadRaw& raw, const PadSettings& cfg, hid::NpadInput* out);
+
+// Gyro and accelerometer in SDL axes (m/s^2, rad/s) to the six-axis sample the hid service stores (G, revolutions per second), the
+// mapping that smo-recomp uses: accel = (-ax, ay, -az) / 9.80665, gyro = (-gx, gy, -gz) / (2 pi) * cfg.gyro_scale. A pad lying still, face up
+// (SDL accel (0, 0, +9.80665)) gives accel (0, 0, -1). at_rest = |gyro| < 0.01 rev/s on every axis. cfg.gyro = false gives the rest sample
+// (accel (0, 0, -1), gyro 0, at_rest).
+void map_sensors(const float accel_sdl[3], const float gyro_sdl[3], const PadSettings& cfg, hid::SixAxisSample* out);
+
+// Rumble: the Switch gives an amplitude/frequency pair per hand (nn::hid::VibrationValue: low band and high band). Returns the two SDL
+// motor strengths (0..65535): low = low band amplitude, high = high band amplitude, both clamped to 0..1, times cfg.rumble_scale, clamped
+// again, times 65535 and rounded. cfg.rumble = false gives (0, 0).
+void map_rumble(float amp_low, float amp_high, const PadSettings& cfg, uint16_t* low, uint16_t* high);
+
+}  // namespace nxrt::play

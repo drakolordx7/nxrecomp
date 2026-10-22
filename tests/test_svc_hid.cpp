@@ -258,3 +258,55 @@ NXTEST(hid_touch_screen_entry) {
     CHECK_EQ(rd32(last, kTouch0X), 640u);
     CHECK_EQ(rd32(last, kTouch0Y), 360u);
 }
+
+// ---- vibration sink: SendVibrationValue (cmd 201) forwards the value to nxrt::hid::set_vibration_sink ---------------------------------
+namespace {
+
+struct VibrationSeen {
+    int calls = 0;
+    uint32_t slot = 0;
+    int hand = -1;
+    hid::VibrationValue v;
+};
+void record_vibration(uint32_t slot, int hand, const hid::VibrationValue& v, void* user) {
+    auto* seen = static_cast<VibrationSeen*>(user);
+    seen->calls++;
+    seen->slot = slot;
+    seen->hand = hand;
+    seen->v = v;
+}
+// Removes the vibration sink when a REQUIRE returns early.
+struct VibrationSinkGuard {
+    ~VibrationSinkGuard() { hid::set_vibration_sink(nullptr); }
+};
+
+}  // namespace
+
+NXTEST(hid_send_vibration_value_reaches_sink) {
+    nxsvc::Env env;
+    services::hid_set_background_sampling(false);
+    VibrationSinkGuard guard;
+    VibrationSeen seen;
+    hid::set_vibration_sink(&record_vibration, &seen);
+    Hid h;
+    REQUIRE(open_hid(h));
+    // Handle (u32): device type 3 (FullKey / LRA), npad id 0 (player 1), position 0 (left). Then the VibrationValue (amp_low, freq_low,
+    // amp_high, freq_high) and the aruid, which the service does not use.
+    constexpr uint32_t kHandleP1Left = 0x3;
+    auto send = [&]() {
+        return h.service.call(201, nxsvc::Args().with_pid().u32(kHandleP1Left).f32(0.5f).f32(160.0f).f32(0.25f).f32(320.0f).align(8).u64(kAruid));
+    };
+    REQUIRE(send().ok());
+    CHECK_EQ(seen.calls, 1);
+    CHECK_EQ(seen.slot, 0u);
+    CHECK_EQ(seen.hand, 0);
+    CHECK_EQ(seen.v.amp_low, 0.5f);
+    CHECK_EQ(seen.v.freq_low, 160.0f);
+    CHECK_EQ(seen.v.amp_high, 0.25f);
+    CHECK_EQ(seen.v.freq_high, 320.0f);
+
+    // Sink removed: the command is still accepted and nothing is delivered.
+    hid::set_vibration_sink(nullptr);
+    REQUIRE(send().ok());
+    CHECK_EQ(seen.calls, 1);
+}
