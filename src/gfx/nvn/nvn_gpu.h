@@ -39,6 +39,8 @@ void destroy_pool_gpu(PoolGpu* p);
 void prefetch_pool(MemoryPool* p);
 // A program got its shaders: queue the recorded pipelines that use exactly these shaders (nvn_prewarm.cpp). A no-op without a back end.
 void prewarm_program_shaders(const ShaderInfo* const stages[6]);
+// A command buffer was recorded with this program bound (nvn_gpl.cpp): the shader parts of its pipelines are compiled first. Any thread.
+void program_bound(const ShaderInfo* const stages[6]);
 // The CPU wrote texture memory (nvnMemoryPoolFlushMappedRange, nvnTextureWriteTexels ...): upload again before the next use.
 void mark_texture_cpu_dirty(Texture* t);
 // A texture is about to be sampled: it was put into a texture pool (nvnTexturePoolRegisterTexture / Image) or its handle was bound while a command

@@ -92,6 +92,7 @@ void ensure_cache() {
 
 void save_cache() {
     if (!g_cache || g_cache_path.empty()) return;
+    NXFT("pipe.cache.save");
     g_cache_dirty.store(false);
     size_t n = 0;
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, nullptr) != VK_SUCCESS || !n) return;
@@ -147,6 +148,25 @@ static VkShaderModule create_module(const std::vector<uint32_t>& words, const ch
             fixed.erase(fixed.begin() + static_cast<std::ptrdiff_t>(cap_at), fixed.begin() + static_cast<std::ptrdiff_t>(cap_at) + 2);
             code = &fixed;
         }
+    }
+    // [nvn] spirv_salt (measurement only): an OpSourceExtension with the salt in every module gives the driver a new shader hash, so a run
+    // compiles every shader from scratch without touching the driver's own cache on disk.
+    static const std::string salt = config_get_str("nvn", "spirv_salt", "");
+    std::vector<uint32_t> salted;
+    if (!salt.empty() && code->size() > 5) {
+        salted = *code;
+        size_t at = 5;
+        while (at < salted.size()) {
+            const uint32_t op = salted[at] & 0xffff, len = salted[at] >> 16;
+            if (len == 0) break;
+            if (op != 17 && op != 10 && op != 11 && op != 14 && op != 15 && op != 16 && op != 331) break;   // capability .. execution mode
+            at += len;
+        }
+        std::vector<uint32_t> ins((salt.size() + 1 + 3) / 4 + 1, 0);
+        ins[0] = (static_cast<uint32_t>(ins.size()) << 16) | 4u;                 // OpSourceExtension
+        std::memcpy(&ins[1], salt.c_str(), salt.size());
+        salted.insert(salted.begin() + static_cast<std::ptrdiff_t>(at), ins.begin(), ins.end());
+        code = &salted;
     }
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     ci.codeSize = code->size() * 4;
@@ -356,13 +376,8 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
     return &g_layouts.emplace(key, std::move(pl)).first->second;
 }
 
-VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
-    ensure_cache();
-    const auto t0 = std::chrono::steady_clock::now();
-
-    VkPipelineShaderStageCreateInfo stages[3] = {};
-    uint32_t ns = 0;
-    const VkShaderStageFlagBits bits[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
+bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
+    *out = StageModules{};
     // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
     const int feeder = key.stage[2] ? 2 : 0;
     // vertex inputs the shader declares as floats but the game feeds with integer attributes (key formats UINT / SINT)
@@ -385,12 +400,8 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
         if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
         if (key.xfb) {
             VkShaderModule m = xfb_variant(key.stage[0]).first;
-            if (!m) return VK_NULL_HANDLE;
-            stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-            stages[ns].stage = bits[0];
-            stages[ns].module = m;
-            stages[ns].pName = "main";
-            ++ns;
+            if (!m) return false;
+            out->m[0] = m;
             continue;
         }
         VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1], i == 0 ? int_slots : std::vector<SpvIntSlot>())
@@ -399,10 +410,51 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
                            : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
                            : (i == 1)                    ? hdr_fragment_module(key.stage[i])
                                                          : shader_module(key.stage[i]);
-        if (!m) return VK_NULL_HANDLE;
+        if (!m) return false;
+        out->m[i] = m;
+    }
+    return true;
+}
+
+const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state() {
+    static const VkDynamicState dyn[] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
+        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
+        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
+        VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
+    static const VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
+                                                        sizeof(dyn) / sizeof(dyn[0]), dyn};
+    return &dy;
+}
+
+VkPipelineCache pipeline_cache_handle() {
+    ensure_cache();
+    return g_cache;
+}
+
+void note_pipeline_created(double ms, const char* what) {
+    counters().pipelines_created.fetch_add(1);
+    g_cache_dirty.store(true, std::memory_order_relaxed);
+    NXLOG_D(kTag, "%s created in %.1f ms", what, ms);
+}
+
+VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
+    ensure_cache();
+    const auto t0 = std::chrono::steady_clock::now();
+
+    VkPipelineShaderStageCreateInfo stages[3] = {};
+    uint32_t ns = 0;
+    const VkShaderStageFlagBits bits[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
+    StageModules sm;
+    if (!resolve_stage_modules(key, &sm)) return VK_NULL_HANDLE;
+    for (int i = 0; i < 3; ++i) {
+        if (!sm.m[i]) continue;
         stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         stages[ns].stage = bits[i];
-        stages[ns].module = m;
+        stages[ns].module = sm.m[i];
         stages[ns].pName = "main";
         ++ns;
     }
@@ -468,18 +520,6 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     cb.attachmentCount = key.color_count;
     cb.pAttachments = cba;
 
-    static const VkDynamicState dyn[] = {
-        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
-        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
-        VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
-        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
-        VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
-        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
-    VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dy.dynamicStateCount = sizeof(dyn) / sizeof(dyn[0]);
-    dy.pDynamicStates = dyn;
-
     VkFormat cf[8];
     for (uint32_t i = 0; i < key.color_count && i < 8; ++i) cf[i] = static_cast<VkFormat>(key.color_format[i]);
     VkPipelineRenderingCreateInfo ri = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
@@ -499,7 +539,7 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     gi.pMultisampleState = &ms;
     gi.pDepthStencilState = &ds;
     gi.pColorBlendState = &cb;
-    gi.pDynamicState = &dy;
+    gi.pDynamicState = pipeline_dynamic_state();
     gi.layout = layout.layout;
     VkPipeline pipe = VK_NULL_HANDLE;
     const VkResult r = vkCreateGraphicsPipelines(vkdev(), g_cache, 1, &gi, nullptr, &pipe);
@@ -530,6 +570,13 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     VkPipeline pipe = VK_NULL_HANDLE;
     if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
         ++g_pipeline_count;
+        bucket.emplace_back(key, pipe);
+        return pipe;
+    }
+    pipe = gpl_link(key, layout);                // linked from shader parts compiled ahead (null: not eligible or a part failed)
+    if (pipe) {
+        ++g_pipeline_count;
+        prewarm_record(key);                     // the next run builds the whole pipeline ahead of the draw
         bucket.emplace_back(key, pipe);
         return pipe;
     }
@@ -606,11 +653,13 @@ size_t pipeline_count() { return g_pipeline_count; }
 void pipeline_shutdown() {
     VkDevice d = vkdev();
     prewarm_shutdown();
+    gpl_stop();
     save_cache();
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket)
             if (e.second) vkDestroyPipeline(d, e.second, nullptr);
     g_gfx.clear();
+    gpl_shutdown();                              // the parts the pipelines were linked from
     for (auto& [k, p] : g_compute)
         if (p) vkDestroyPipeline(d, p, nullptr);
     g_compute.clear();
