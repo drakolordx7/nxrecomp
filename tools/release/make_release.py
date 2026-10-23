@@ -4,12 +4,15 @@
     python tools/release/make_release.py [--out DIR] [--version V] [--no-shader-pack] [--strict-paths]
                                          [--deny-hash-dir DIR ...] [--repo DIR] [--exe F] [--setup-bin DIR]
                                          [--shader-pack F] [--templates DIR] [--controls F] [--license F] [--notices F]
+                                         [--prompts-dir DIR]
 
 Output, in --out (default <repo>/work/release_out):
     mpr-<version>-windows-x64/              the release folder
     mpr-<version>-windows-x64.zip           the same folder zipped: one top-level folder, sorted entries, fixed timestamps
     mpr-<version>-windows-x64.manifest.txt  the audit table and totals (written only on success)
 Without the shader pack the folder and the zip get the suffix -noshaders.
+The prompt icon pack prompts/prompt_icons.pak and its licence prompts/LICENSE-Kenney-InputPrompts.txt are required,
+read from --prompts-dir (default <repo>/runtime/assets/prompts).
 
 Exit codes: 0 built and audited; 1 an I/O error; 2 a missing input or a bad option; 3 refused by the audit.
 A refused or failed build leaves none of its output behind. The .pdb and .map beside mpr.exe are never copied.
@@ -38,6 +41,9 @@ DLL_GLOB = 'astcdec-*-shared.dll'
 DLL_COUNT = 3
 PACK_NAME = 'shader_cache.mprshc'
 PACK_MAGIC = b'MPRSHC01'
+PROMPT_FILES = ('prompt_icons.pak', 'LICENSE-Kenney-InputPrompts.txt')   # required, shipped as prompts/<name>
+PROMPT_PACK = 'prompts/prompt_icons.pak'        # the only .pak the audit allows, by exact release path
+PROMPT_MAGIC = b'MPIP'                          # header of the prompt icon pack (scripts/build_prompt_pack.py)
 MANIFEST = 'MANIFEST.sha256'
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
 VERSION_RE = r'[A-Za-z0-9][A-Za-z0-9._-]*'
@@ -54,7 +60,8 @@ FONT_FILES = [
 ]
 
 # Size sanity, bytes (min, max or None). Tests replace these with tiny values.
-SIZE_RULES = {'exe': (10 * MIB, 400 * MIB), 'setup': (100 * KIB, None), 'pack': (100 * MIB, 1 * GIB)}
+SIZE_RULES = {'exe': (10 * MIB, 400 * MIB), 'setup': (100 * KIB, None), 'pack': (100 * MIB, 1 * GIB),
+              'prompt': (KIB, 4 * MIB - 1)}
 
 DENY_EXT = ('.nsp', '.xci', '.nsz', '.xcz', '.nca', '.nso', '.nro', '.npdm', '.pak', '.bntx', '.keys', '.tik',
             '.cnmt', '.romfs', '.pdb', '.map', '.obj', '.lib', '.ilk', '.exp')
@@ -135,6 +142,8 @@ def parse_args(argv):
     ap.add_argument('--controls', help='controls file shipped as controls.ini (default templates/controls.ini when present)')
     ap.add_argument('--license', help='GPL-3.0 licence text (default <repo>/LICENSE)')
     ap.add_argument('--notices', help='THIRD_PARTY_NOTICES.txt (default templates/THIRD_PARTY_NOTICES.txt; required)')
+    ap.add_argument('--prompts-dir', help='folder with prompt_icons.pak and LICENSE-Kenney-InputPrompts.txt, shipped under prompts/ '
+                                          '(default <repo>/runtime/assets/prompts; both required)')
     ap.add_argument('--deny-hash-dir', action='append', default=[], metavar='DIR',
                     help='refuse any release file whose sha256 equals a file directly inside DIR (repeatable, not recursive)')
     ap.add_argument('--strict-paths', action='store_true',
@@ -159,6 +168,7 @@ def resolve(o):
     o.templates = os.path.abspath(o.templates or under_repo('tools', 'release', 'templates'))
     o.license = os.path.abspath(o.license or under_repo('LICENSE'))
     o.notices = os.path.abspath(o.notices or os.path.join(o.templates, 'THIRD_PARTY_NOTICES.txt'))
+    o.prompts_dir = os.path.abspath(o.prompts_dir or under_repo('runtime', 'assets', 'prompts'))
     o.controls = os.path.abspath(o.controls) if o.controls else None
     o.out = os.path.abspath(o.out or under_repo('work', 'release_out'))
     o.version = o.version or default_version(o.repo)
@@ -193,6 +203,8 @@ def plan_items(o):
         items.append(('mpr.ini.example', os.path.join(o.templates, 'mpr.ini.example')))
     items.append(('LICENSE', need(o.license, 'LICENSE')))
     items.append(('THIRD_PARTY_NOTICES.txt', need(o.notices, 'THIRD_PARTY_NOTICES.txt')))
+    for name in PROMPT_FILES:
+        items.append(('prompts/' + name, need(os.path.join(o.prompts_dir, name), 'prompt icon file %s' % name)))
     for src, dst, required in LICENSE_FILES:
         p = os.path.join(o.repo, *src.split('/'))
         if os.path.isdir(p):
@@ -320,7 +332,7 @@ def denied_name(rel):
     if low in DENY_NAMES:
         return 'key file name'
     ext = os.path.splitext(low)[1]
-    if ext in DENY_EXT:
+    if ext in DENY_EXT and not (ext == '.pak' and '/'.join(parts) == PROMPT_PACK):
         return 'file type %s' % ext
     for p in parts:
         if p.lower() in DENY_PARTS:
@@ -331,6 +343,10 @@ def denied_name(rel):
 def magic_problems(rel, head):
     if rel == PACK_NAME:
         return [] if head.startswith(PACK_MAGIC) else ['%s does not start with MPRSHC01' % rel]
+    if rel == PROMPT_PACK:
+        out = [] if head.startswith(PROMPT_MAGIC) else ['%s does not start with MPIP (prompt icon pack)' % rel]
+        out += ['%s starts with %s' % (rel, label) for magic, label in MAGIC_DENY if head.startswith(magic)]
+        return out
     root = '/' not in rel
     exempt = root and (rel == EXE_NAME or rel.lower().endswith('.dll') or fnmatch.fnmatch(rel.lower(), 'mpr_setup*.exe'))
     if exempt:
@@ -362,6 +378,8 @@ def size_problem(rel, size):
         key = 'setup'
     elif rel == PACK_NAME:
         key = 'pack'
+    elif rel == PROMPT_PACK:
+        key = 'prompt'
     else:
         return None
     lo, hi = SIZE_RULES[key]
