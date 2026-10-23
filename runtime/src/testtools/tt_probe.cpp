@@ -18,12 +18,16 @@
 // The warp: SetCurrentWorldId(gpGameState, world); CurrentWorldState()->SetDesiredAreaAssetId(area); CGameState::ContinueWithNewInitialState(
 // CStateManager::GameState(), SInitialState{area, -1}); CGameInstanceState::QuitGame(7) with the instance state from CStateManager::GameInstanceState().
 #include <windows.h>
+#include <psapi.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
@@ -45,8 +49,14 @@ bool read_mem(uint64_t addr, void* out, size_t n) {
 }
 bool write_mem(uint64_t addr, const void* in, size_t n) {
     if (addr < 0x10000) return false;
-    SIZE_T got = 0;
-    return WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(addr), in, n, &got) && got == n;
+    uint8_t probe[64];
+    if (n > sizeof probe || !read_mem(addr, probe, n)) return false;
+    __try {          // a direct store: WriteProcessMemory costs tens of milliseconds for an address in the guest heap (see play_aim.cpp)
+        std::memcpy(reinterpret_cast<void*>(addr), in, n);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 }  // namespace detail
 
@@ -120,7 +130,7 @@ bool read_state(GameState* out) {
         float hp;
         if (ps && rd(ps + 0xc, &hp)) { g.hp = hp; g.have_hp = true; }
         int32_t beam = -1, visor = -1, missiles = -1;
-        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x30 + 8 * 4, &missiles)) {
+        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x2c + 8 * 4, &missiles)) {
             g.beam = beam; g.visor = visor; g.missiles = missiles; g.have_ps = true;
         }
     }
@@ -199,7 +209,7 @@ bool give_item(int item, int amount) {
     const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
     if (!ps) return false;
     const int32_t v[2] = {amount, amount};
-    return write_mem(ps + 0x30 + 8 * static_cast<uint64_t>(item), v, sizeof v);
+    return write_mem(ps + 0x2c + 8 * static_cast<uint64_t>(item), v, sizeof v);       // CPlayerStateMP1: {amount, capacity} per item from +0x2c (CPlayerStateMP1::SetPowerUp)
 }
 
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
@@ -235,7 +245,7 @@ bool grant(int64_t item, int32_t amount, int32_t capacity) {
     if (!ps) return false;
     auto put = [&](int64_t id, int32_t a, int32_t cap) {
         const int32_t v[2] = {a, cap};
-        return write_mem(ps + 0x44 + static_cast<uint64_t>(id) * 8, v, sizeof v);
+        return write_mem(ps + 0x2c + static_cast<uint64_t>(id) * 8, v, sizeof v);
     };
     if (item >= 0) return put(item, amount, capacity);
     bool ok = true;
@@ -283,5 +293,207 @@ bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* re
     return true;
 }
 
+
+// ---- @watch: hardware write watch on the player's velocity.y / position.y (S25) ------------------------------------------------------------
+// Debug registers DR0 (velocity.y) and DR1 (position.y) are set on every thread; the write traps into a vectored handler that records the writing
+// instruction pointer, the value written and the module-range return addresses on the stack (guest functions are native frames of the lifted code).
+// Hits are logged once per frame; resolve the addresses with llvm-symbolizer against mpr.exe / mpr.pdb.
+namespace {
+struct WatchHit { uint64_t rip; uint64_t addr; float value; int slot; int nstack; uint64_t stack[10]; DWORD tid; };
+constexpr int kMaxHits = 4096;
+WatchHit g_hits[kMaxHits];
+std::atomic<int> g_hit_count{0};
+std::atomic<int> g_hit_logged{0};
+std::atomic<bool> g_watch_on{false};
+uint64_t g_watch_addr[2] = {0, 0};
+void* g_veh = nullptr;
+uint64_t g_mod_lo = 0, g_mod_hi = 0;
+
+LONG CALLBACK watch_veh(PEXCEPTION_POINTERS ep) {
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !g_watch_on.load()) return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* cx = ep->ContextRecord;
+    const DWORD64 dr6 = cx->Dr6;
+    if (!(dr6 & 0x3)) return EXCEPTION_CONTINUE_SEARCH;
+    for (int slot = 0; slot < 2; slot++) {
+        if (!(dr6 & (1u << slot))) continue;
+        const int i = g_hit_count.fetch_add(1);
+        if (i >= kMaxHits) continue;
+        WatchHit& h = g_hits[i];
+        h.rip = cx->Rip; h.slot = slot; h.addr = g_watch_addr[slot]; h.tid = GetCurrentThreadId();
+        h.value = *reinterpret_cast<volatile float*>(g_watch_addr[slot]);
+        h.nstack = 0;
+        const uint64_t* sp = reinterpret_cast<const uint64_t*>(cx->Rsp);
+        for (int k = 0; k < 512 && h.nstack < 10; k++) {
+            uint64_t v = 0;
+            if (IsBadReadPtr(sp + k, 8)) break;
+            v = sp[k];
+            if (v >= g_mod_lo && v < g_mod_hi) h.stack[h.nstack++] = v;
+        }
+    }
+    cx->Dr6 = 0;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+void set_debug_regs(bool on) {
+    const DWORD pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    THREADENTRY32 te{};
+    te.dwSize = sizeof te;
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid) continue;
+        HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, te.th32ThreadID);
+        if (!th) continue;
+        const bool self = te.th32ThreadID == GetCurrentThreadId();
+        if (!self) SuspendThread(th);
+        CONTEXT cx{};
+        cx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        if (GetThreadContext(th, &cx)) {
+            cx.Dr0 = on ? g_watch_addr[0] : 0;
+            cx.Dr1 = on ? g_watch_addr[1] : 0;
+            DWORD64 d7 = 0;
+            if (on) {
+                if (g_watch_addr[0]) d7 |= (1ull << 0) | (1ull << 16) | (3ull << 18);      // slot 0: local enable, write, 4 bytes
+                if (g_watch_addr[1]) d7 |= (1ull << 2) | (1ull << 20) | (3ull << 22);      // slot 1
+            }
+            cx.Dr7 = d7;
+            cx.Dr6 = 0;
+            SetThreadContext(th, &cx);
+        }
+        if (!self) ResumeThread(th);
+        CloseHandle(th);
+    }
+    CloseHandle(snap);
+}
+}  // namespace
+
+bool watch_start(::Ctx* c, int what) {
+    uint64_t player = g_layout.player ? g_layout.player : g_player.load();
+    const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+    if (!c || !player || !mgr) return false;
+    if (g_watch_on.load()) watch_stop();
+    g_watch_addr[0] = g_watch_addr[1] = 0;
+    if (what & 1) {
+        const uint64_t vp = guest_call(c, detail::game_base() + kFnGetVelocityWR, player, mgr);
+        if (!vp) return false;
+        g_watch_addr[0] = vp + 4;
+    }
+    if (what & 2) {
+        const uint64_t xf = rd64(rd64(rd64(player + 8) + 0x20) + 0x40);
+        if (!xf) return false;
+        g_watch_addr[1] = xf + 28;
+    }
+    HMODULE m = GetModuleHandleA(nullptr);
+    MODULEINFO mi{};
+    GetModuleInformation(GetCurrentProcess(), m, &mi, sizeof mi);
+    g_mod_lo = reinterpret_cast<uint64_t>(mi.lpBaseOfDll);
+    g_mod_hi = g_mod_lo + mi.SizeOfImage;
+    g_hit_count = 0; g_hit_logged = 0;
+    if (!g_veh) g_veh = AddVectoredExceptionHandler(1, watch_veh);
+    g_watch_on = true;
+    set_debug_regs(true);
+    NXLOG_I("tt", "watch: on (vel.y at 0x%llx, pos.y at 0x%llx), module base 0x%llx (frame %llu)", static_cast<unsigned long long>(g_watch_addr[0]),
+            static_cast<unsigned long long>(g_watch_addr[1]), static_cast<unsigned long long>(g_mod_lo), static_cast<unsigned long long>(frame()));
+    return true;
+}
+
+void watch_flush(uint64_t fr) {
+    if (!g_watch_on.load()) return;
+    const int n = std::min(g_hit_count.load(), kMaxHits);
+    for (int i = g_hit_logged.load(); i < n; i++) {
+        const WatchHit& h = g_hits[i];
+        char b[512];
+        int o = std::snprintf(b, sizeof b, "watch: frame %llu %s=%g rip=+0x%llx tid=%lu stack:", static_cast<unsigned long long>(fr), h.slot == 0 ? "vel.y" : "pos.y", h.value,
+                              static_cast<unsigned long long>(h.rip - g_mod_lo), h.tid);
+        for (int k = 0; k < h.nstack && o < 480; k++) o += std::snprintf(b + o, sizeof b - o, " +0x%llx", static_cast<unsigned long long>(h.stack[k] - g_mod_lo));
+        NXLOG_I("tt", "%s", b);
+    }
+    g_hit_logged = n;
+}
+
+void watch_stop() {
+    if (!g_watch_on.load()) return;
+    watch_flush(frame());
+    set_debug_regs(false);
+    g_watch_on = false;
+    NXLOG_I("tt", "watch: off, %d hits", g_hit_count.load());
+}
+
+// ---- @objs: list the live objects of a class by scanning memory for its vtable pointer (S25) ---------------------------------------------------
+// Every guest object starts with its vtable pointer (main + vtable symbol + 16). The actor transform is read through the same chain the player probe uses:
+// [[[obj + 8] + 0x20] + 0x40] = 3x4 matrix. Used to find doors, docks, pickups and save stations so a script knows where to walk.
+bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err) {
+    struct Cls { const char* name; uint64_t vtable; };
+    static const Cls kCls[] = {{"door", 0x20e9fc0}, {"dock", 0x20e9df8}, {"pickup", 0x20f8300}, {"special", 0x20efdb0}, {"actor", 0x20ed470},
+                               {"platform", 0x20edda8}, {"trigger", 0x20ea188}, {"relay", 0x2105700}};
+    const uint64_t base = detail::game_base();
+    std::vector<std::pair<std::string, uint64_t>> want;
+    size_t pos = 0;
+    while (pos < classes.size()) {
+        while (pos < classes.size() && std::isspace(static_cast<unsigned char>(classes[pos]))) pos++;
+        size_t e = pos;
+        while (e < classes.size() && !std::isspace(static_cast<unsigned char>(classes[e]))) e++;
+        if (e > pos) {
+            const std::string tok = classes.substr(pos, e - pos);
+            bool found = false;
+            for (const Cls& c : kCls) if (tok == c.name) { want.push_back({tok, base + c.vtable + 16}); found = true; }
+            if (!found && tok == "player") {
+                const uint64_t pl = g_layout.player ? g_layout.player : g_player.load();
+                if (pl) { want.push_back({tok, rd64(pl)}); found = true; NXLOG_I("tt", "objs: player object 0x%llx vptr 0x%llx (+0x%llx)", static_cast<unsigned long long>(pl), static_cast<unsigned long long>(rd64(pl)), static_cast<unsigned long long>(rd64(pl) - base)); }
+            }
+            if (!found) {
+                char* end = nullptr;
+                const uint64_t off = std::strtoull(tok.c_str(), &end, 0);
+                if (end && !*end) { want.push_back({tok, base + off + 16}); found = true; }
+            }
+            if (!found) { *err = "unknown class '" + tok + "'"; return false; }
+        }
+        pos = e;
+    }
+    if (want.empty()) { *err = "no class given"; return false; }
+    FILE* f = std::fopen(out_path.c_str(), "wb");
+    if (!f) { *err = "cannot write " + out_path; return false; }
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    uint8_t* a = static_cast<uint8_t*>(si.lpMinimumApplicationAddress);
+    size_t hits = 0;
+    uint64_t scanned = 0;
+    std::vector<uint8_t> buf;
+    while (a < static_cast<uint8_t*>(si.lpMaximumApplicationAddress)) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(a, &mbi, sizeof mbi)) break;
+        uint8_t* next = static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
+        const bool readable = mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) && (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY));
+        if (readable && mbi.RegionSize >= 64) {
+            scanned += mbi.RegionSize;
+            for (size_t off = 0; off < mbi.RegionSize; off += (64u << 20)) {
+                const size_t n = std::min<size_t>(64u << 20, mbi.RegionSize - off);
+                buf.resize(n);
+                SIZE_T got = 0;
+                if (!ReadProcessMemory(GetCurrentProcess(), static_cast<uint8_t*>(mbi.BaseAddress) + off, buf.data(), n, &got) || got < 8) continue;
+                for (size_t i = 0; i + 8 <= got; i += 8) {
+                    uint64_t v;
+                    std::memcpy(&v, &buf[i], 8);
+                    for (const auto& w : want) {
+                        if (v != w.second) continue;
+                        const uint64_t obj = reinterpret_cast<uint64_t>(mbi.BaseAddress) + off + i;
+                        const uint64_t xf = rd64(rd64(rd64(obj + 8) + 0x20) + 0x40);
+                        float m[12];
+                        if (xf && rd(xf, &m) && std::isfinite(m[3]) && std::isfinite(m[7]) && std::isfinite(m[11]))
+                            std::fprintf(f, "%s %.2f %.2f %.2f 0x%llx\n", w.first.c_str(), m[3], m[7], m[11], static_cast<unsigned long long>(obj));
+                        else
+                            std::fprintf(f, "%s - - - 0x%llx\n", w.first.c_str(), static_cast<unsigned long long>(obj));
+                        hits++;
+                    }
+                }
+            }
+        }
+        if (next <= a) break;
+        a = next;
+    }
+    std::fclose(f);
+    NXLOG_I("tt", "objs: %zu objects of '%s' written to %s (scanned %llu MB, game base 0x%llx, wanted vptrs +0x%llx...)", hits, classes.c_str(), out_path.c_str(), static_cast<unsigned long long>(scanned >> 20), static_cast<unsigned long long>(base), static_cast<unsigned long long>(want[0].second - base));
+    return true;
+}
 }  // namespace detail
 }  // namespace nxrt::tt

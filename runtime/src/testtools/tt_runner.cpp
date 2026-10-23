@@ -7,12 +7,20 @@
 #include <cmath>
 #include <cstring>
 
+#include <chrono>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <thread>
+
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "tt_internal.h"
 
 namespace nxrt::tt::detail {
 
 namespace {
+std::string tt_guid_text_safe(const uint8_t id[16], bool have) { return have ? tt_guid_to_text(id) : std::string(); }
 int16_t to_stick(double v) {
     const double c = v < -1 ? -1 : v > 1 ? 1 : v;
     return static_cast<int16_t>(std::lround(c * 32767.0));
@@ -30,6 +38,10 @@ bool Runner::load(const std::string& script_file, const RegionTable* regions, st
     fail_line_ = 0;
     igt_base_ = -1;
     has_keys_ = false;
+    regions_ = regions;
+    live_path_ = config_get_str("test", "live", "");
+    live_off_ = 0;
+    live_lines_ = 0;
     const bool ok = parse_script_file(script_file, regions, &script_, err);
     for (const Step& st : script_.steps) {
         if (st.kind == StepKind::Key || st.kind == StepKind::KeyDown || st.kind == StepKind::KeyUp) has_keys_ = true;
@@ -99,11 +111,103 @@ bool Runner::eval_assert(const Step& st, const GameState& s, bool valid, std::st
     return false;
 }
 
+bool Runner::write_live_status(uint64_t k, const GameState& s, bool valid, const char* note_in) {
+    std::string note_s(note_in);
+    for (char& ch : note_s) if (ch == 92 || ch == 34 || static_cast<unsigned char>(ch) < 32) ch = 32;       // keep the JSON line valid (paths have backslashes)
+    const char* note = note_s.c_str();
+    char b[1024];
+    std::snprintf(b, sizeof b,
+                  "{\"lines\":%d,\"frame\":%llu,\"valid\":%d,\"world\":\"%s\",\"area\":\"%s\",\"igt\":%.3f,\"hp\":%.1f,\"pos\":[%.3f,%.3f,%.3f],\"vel\":[%.3f,%.3f,%.3f],"
+                  "\"yaw\":%.4f,\"pitch\":%.4f,\"state\":%u,\"cam\":%d,\"morph\":%d,\"orbit\":%d,\"beam\":%d,\"visor\":%d,\"missiles\":%d,\"note\":\"%s\"}\n",
+                  live_lines_, static_cast<unsigned long long>(k), valid ? 1 : 0, tt_guid_text_safe(s.world, s.have_world).c_str(), tt_guid_text_safe(s.area, s.have_world).c_str(),
+                  s.igt, s.hp, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.yaw, s.pitch, s.move_state, s.cam_state, s.morph_state, s.orbit_state,
+                  s.beam, s.visor, s.missiles, note);
+    const std::string tmp = live_path_ + ".status.tmp", fin = live_path_ + ".status";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f << b;
+    }
+    return MoveFileExA(tmp.c_str(), fin.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;       // fails while a reader has the old file open: the caller retries
+}
+
+bool Runner::poll_live(uint64_t k, const GameState& s, bool valid) {
+    bool wrote = false;
+    for (;;) {
+        std::string text;
+        {
+            std::ifstream f(live_path_, std::ios::binary);
+            if (f) {
+                f.seekg(0, std::ios::end);
+                const size_t size = static_cast<size_t>(f.tellg());
+                if (size > live_off_) {
+                    f.seekg(static_cast<std::streamoff>(live_off_));
+                    text.resize(size - live_off_);
+                    f.read(&text[0], static_cast<std::streamsize>(text.size()));
+                    text.resize(static_cast<size_t>(f.gcount()));
+                }
+            }
+        }
+        const size_t nl = text.rfind('\n');
+        if (nl != std::string::npos) {
+            text.resize(nl + 1);
+            live_off_ += text.size();
+            int n = 0;
+            for (char ch : text) if (ch == '\n') n++;
+            Script add;
+            std::string err;
+            if (!parse_script(text, live_path_, regions_, &add, &err)) {
+                NXLOG_E("tt", "live: %s (these %d lines are skipped)", err.c_str(), n);
+                live_lines_ += n;
+                wrote = write_live_status(k, s, valid, ("parse error: " + err).c_str());
+                continue;
+            }
+            live_lines_ += n;
+            for (Step& st : add.steps) {
+                st.line += 0;
+                script_.steps.push_back(st);
+            }
+            if (!add.steps.empty()) return true;       // the status is written when these have run and the runner is idle again
+            wrote = write_live_status(k, s, valid, "ok");        // comments and blank lines only
+            continue;
+        }
+        if (!wrote) wrote = write_live_status(k, s, valid, "idle");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
 void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
     if (done_) return;
+    detail::watch_flush(k);
     mouse_x_ = mouse_y_ = 0;       // the impulse lasts for the frame of the step that sets it
+    if (!live_path_.empty()) {         // express lane of live mode: a file <live>.shot holding a name asks for a screenshot now, whatever step is running
+        const std::string abort_req = live_path_ + ".abort";       // drops every step that has not finished (a wait that can never be met), releases the pad
+        if (GetFileAttributesA(abort_req.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileA(abort_req.c_str());
+            NXLOG_W("tt", "live: abort requested, dropping %zu pending steps", script_.steps.size() - idx_);
+            idx_ = script_.steps.size();
+            started_ = false;
+            remaining_ = 0;
+            held_ = pressing_ = 0;
+            std::memset(stick_, 0, sizeof stick_);
+            stick_override_ = false;
+            warped_ = false;
+        }
+        const std::string req = live_path_ + ".shot";
+        if (GetFileAttributesA(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            std::string name;
+            { std::ifstream f(req, std::ios::binary); std::getline(f, name); }
+            DeleteFileA(req.c_str());
+            while (!name.empty() && (name.back() == 13 || name.back() == ' ')) name.pop_back();
+            std::string why;
+            if (!name.empty() && !take_shot(name, &why)) NXLOG_W("tt", "live shot %s: %s", name.c_str(), why.c_str());
+        }
+    }
     for (int guard = 0; guard < 100000; guard++) {
         if (done_) return;
+        if (idx_ >= script_.steps.size() && !live_path_.empty()) {
+            if (poll_live(k, s, valid)) continue;
+            if (done_) return;
+        }
         if (idx_ >= script_.steps.size()) {
             done_ = true;
             end_run(0, "pass", "script finished");
@@ -238,6 +342,17 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                     return;                       // retry next frame (the game may not have a player state yet)
                 }
                 NXLOG_I("tt", "grant %s: amount %d capacity %d", st.text.c_str(), static_cast<int>(st.x), static_cast<int>(st.y));
+                advance();
+                continue;
+            case StepKind::Objs: {
+                std::string why;
+                if (!detail::dump_objects(st.text, out_dir() + "/objs.txt", &why)) { fail(st, "@objs: " + why); return; }
+                advance();
+                continue;
+            }
+            case StepKind::Watch:
+                if (st.text == "off") detail::watch_stop();
+                else if (!detail::watch_start(c, static_cast<int>(st.y))) { fail(st, "@watch: the player is not readable (not in a level, or not called from the game hook)"); return; }
                 advance();
                 continue;
             case StepKind::Call: {

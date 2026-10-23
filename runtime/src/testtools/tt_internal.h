@@ -19,7 +19,7 @@ void set_game_base(uint64_t b);
 // The warp sequence of the practice mod (docs/mpr/hooks.md section 8), executed with the live context. false: not possible now (no state manager yet).
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
 bool have_state_manager();
-// @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x44, 8 bytes per item); item -1 = every upgrade.
+// @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x2c, 8 bytes per item: amount at +0, capacity at +4); item -1 = every upgrade.
 bool grant(int64_t item, int32_t amount, int32_t capacity);
 // @call: the guest function at main+offset with arguments (numbers, $gs $ps $mgr $player); false and *err when an argument is bad or the game is not ready.
 bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err);
@@ -50,7 +50,7 @@ public:
     size_t steps_total() const { return script_.steps.size(); }
     size_t steps_done() const { return idx_; }
     int fail_line() const { return fail_line_; }
-    bool has_key_steps() const { return has_keys_; }    // the loaded script has at least one key / keydown / keyup step
+    bool has_key_steps() const { return has_keys_ || !live_path_.empty(); }    // the loaded script has at least one key / keydown / keyup step
 
 private:
     Script script_;
@@ -70,6 +70,14 @@ private:
     float mouse_x_ = 0, mouse_y_ = 0;
     int fail_line_ = 0;
     double igt_base_ = -1;                               // @play: the play time at the first readable frame of the step
+    // live mode ([test] live = file, env NXRT_TEST_LIVE): when the script runs out of steps the runner waits for more lines appended to that
+    // file (so a person or a driver can play the game step by step), writing <file>.status (JSON, one line) each time it goes idle.
+    std::string live_path_;
+    const RegionTable* regions_ = nullptr;
+    size_t live_off_ = 0;
+    int live_lines_ = 0;
+    bool poll_live(uint64_t k, const GameState& s, bool valid);       // true when new steps were appended
+    bool write_live_status(uint64_t k, const GameState& s, bool valid, const char* note);
     void advance() { idx_++; started_ = false; remaining_ = 0; }
     void fail(const Step& st, const std::string& msg);
     bool eval_assert(const Step& st, const GameState& s, bool valid, std::string* detail);
@@ -78,6 +86,10 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
+bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err);   // tt_probe.cpp: @objs
+bool watch_start(::Ctx* c, int what);      // tt_probe.cpp: arm the debug-register write watch (1 vel.y, 2 pos.y, 3 both); false when the player is not readable yet
+void watch_stop();                          // disarm and log the hits
+void watch_flush(uint64_t frame);           // log the hits recorded since the last call (once per frame)
 bool give_item(int item, int amount);      // tt_probe.cpp: writes amount and capacity of one item of CPlayerStateMP1
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
