@@ -156,6 +156,11 @@ struct Texture : Obj {
     uint32_t id = 0;                        // unique, for logs
     std::atomic<bool> cpu_dirty{true};      // the CPU may have written the storage since the last upload
     std::atomic<bool> destroyed{false};     // finalized by the game
+    // Background preparation of the upload data (nvn_texprep.cpp). prep_gen counts the CPU-write notifications; a prepared result is only used
+    // when the count has not moved since the job read the storage.
+    std::atomic<uint32_t> prep_gen{0};
+    std::atomic<uint8_t> prep_flags{0};     // bit 0: the render thread uploaded it at least once
+    std::atomic<uint32_t> prep_sched{0};    // 0x80000000 | prep_gen when a background job was requested for that generation
     TexGpu* gpu = nullptr;                  // render thread only
 };
 
@@ -193,11 +198,25 @@ void texture_registry_remove(Texture* t);
 void texture_registry_detach_gpu();   // sets Texture::gpu to null on every registered texture (the images are being freed: gpu::tex_shutdown)
 void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
 size_t texture_registry_size();
+// Frame-trace mark with the texture id as its argument (a no-op unless [prof] trace is on): tx.init, tx.write, tx.flush, tx.reg, tx.use.
+void tx_mark(const char* what, const Texture* t);
 // Sparse textures: registered by the virtual pool they live in. A remap of tiles (nvnMemoryPoolMapVirtual) or a write to the physical
 // memory behind a tile marks the textures over it CPU-written; texture_gather_virtual builds the bytes of the storage out of the mapped
 // tiles (unmapped tiles are zeros).
 void texture_registry_add_virtual(Texture* t);
 void texture_registry_remove_virtual(Texture* t);
+// Hash of the bytes texture_gather_virtual would copy (mapped tiles and their positions), without copying them. False for a texture that is not sparse.
+bool texture_hash_virtual(const Texture& t, uint64_t& hash);
+// When the whole range of a sparse texture is one piece of one physical pool: a pointer to it (kept valid by `keep`), else null (use texture_gather_virtual).
+const uint8_t* texture_virtual_direct(const Texture& t, Ref<MemoryPool>& keep);
+// Background preparation (nvn_texprep.h): handles just bound in a command list recorded with texture pool tp; the textures behind them that the CPU wrote are
+// queued for preparation. tp must stay alive for the call (the list being recorded holds it).
+void textures_note_bound(TexturePool* tp, const uint64_t* handles, int count);
+// Bumped whenever a texture may have become a candidate for background preparation (a texture was initialized or registered in a pool, or the CPU wrote one).
+// textures_note_bound remembers, per thread, which handles it has looked at since the last bump: a command list binds thousands of handles per frame and
+// nearly all of them are textures that were looked at long ago.
+extern std::atomic<uint64_t> g_tex_scan_epoch;
+extern std::atomic<bool> g_tex_prep_on;       // background texture preparation is running ([nvn] tex_prep); set by nvn_texprep.cpp when it starts
 void virtual_textures_remapped(const MemoryPool* vpool, uint64_t voff, uint64_t size);
 bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out);
 // Another initialized texture whose storage starts at the same address and has the same shape (target, size, levels, format, layout),

@@ -29,6 +29,8 @@ void destroy_pool_gpu(PoolGpu*) {}
 void prefetch_pool(MemoryPool*) {}
 void prewarm_program_shaders(const ShaderInfo* const*) {}
 void mark_texture_cpu_dirty(Texture*) {}
+void texture_bound(Texture*) {}
+void texture_registered(Texture*) {}
 bool download_texture(Texture*) { return false; }
 void set_window_modes(int, int) {}
 uint64_t timestamp_ns() {

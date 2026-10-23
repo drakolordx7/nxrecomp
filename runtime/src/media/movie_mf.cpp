@@ -83,6 +83,7 @@ constexpr size_t kVideoQueueMax = 6, kAudioQueueMax = 64, kOtherQueueMax = 8;
 constexpr int kWaitMs = 8000;                         // longest the extractor makes a game thread wait for the worker
 
 bool g_log = false;
+bool g_lookahead = true, g_preroll = true, g_async_close = true;   // S21: [media] movie_lookahead, movie_preroll, movie_async_close
 std::atomic<uint64_t> s_extractors_created{0}, s_extractors_destroyed{0}, s_decoders_created{0}, s_decoders_destroyed{0}, s_frames{0},
     s_audio_blocks{0}, s_audio_bytes{0}, s_samples{0}, s_read_errors{0};
 
@@ -297,6 +298,17 @@ struct Ext {
     bool seek_pending = false;
     bool reading = false;            // set by the first request for data: the game has selected its tracks by then (a stream selected after reading began would start late)
     int64_t seek_us = 0;
+    // Loop look-ahead (S21): when every selected track has reached its end the worker positions the reader at the start and decodes the first
+    // samples into `nx`, so a SeekTo(0) that follows (a looping movie) swaps them in at once instead of waiting for the decoder to start again.
+    struct Ahead {
+        std::deque<Item> q;
+        bool eos = false, failed = false;
+        int64_t last_us = INT64_MIN;
+    };
+    std::vector<Ahead> nx;
+    int ahead = 0;                   // 0 off, 1 the worker is positioning the reader, 2 the reader is at the start and fills nx
+    bool ahead_tried = false;        // one attempt per end of stream
+    uint32_t swaps = 0;              // look-aheads swapped in so far: a sample read for the look-ahead while it was swapped in belongs to the queue that replaced it
     // the current sample as NuMediaExtractor defines it: the earliest head among the selected tracks
     bool cur_valid = false;
     int cur_track = -1;
@@ -474,6 +486,9 @@ int ext_select_locked(Ext* e, int i, bool on) {
     {
         std::lock_guard<std::mutex> lk(e->m);
         t.selected = on && SUCCEEDED(hr);
+        e->nx.clear();
+        e->ahead = 0;
+        e->ahead_tried = false;
         t.eos = false;
         t.failed = false;
         t.q.clear();
@@ -504,17 +519,60 @@ void worker_main(Ext* e) {
             }
             lk.lock();
             for (Track& t : e->tr) { t.q.clear(); t.eos = false; t.failed = false; t.last_us = INT64_MIN; }
+            e->nx.clear();
+            e->ahead = 0;
+            e->ahead_tried = false;
             e->cur_valid = false;
             e->seek_pending = false;
             NXLOG_I("movie", "SeekTo(%.3f s) 0x%08lx", us / 1e6, static_cast<unsigned long>(hr));
             e->cv_data.notify_all();
             continue;
         }
+        if (g_lookahead && e->reading && e->ahead == 0 && !e->ahead_tried && !e->seek_pending) {
+            bool any = false, all_done = true;
+            for (const Track& t : e->tr) {
+                if (!t.selected) continue;
+                any = true;
+                if (!t.eos || t.failed) all_done = false;
+            }
+            if (any && all_done) {
+                e->ahead_tried = true;
+                e->ahead = 1;
+                lk.unlock();
+                HRESULT hr;
+                {
+                    std::lock_guard<std::mutex> rl(e->reader_mu);
+                    PROPVARIANT var;
+                    PropVariantInit(&var);
+                    var.vt = VT_I8;
+                    var.hVal.QuadPart = 0;
+                    hr = e->rd->SetCurrentPosition(GUID_NULL, var);
+                }
+                lk.lock();
+                if (e->ahead == 1 && SUCCEEDED(hr) && !e->seek_pending && !e->stop) {
+                    e->nx.assign(e->tr.size(), Ext::Ahead());
+                    e->ahead = 2;
+                    NXLOG_D("movie", "end of stream: the start is being decoded ahead for a loop");
+                } else {
+                    e->ahead = 0;
+                }
+                e->cv_data.notify_all();
+                continue;
+            }
+        }
+        const bool ah_read = e->ahead == 2;          // the sample about to be read belongs to the look-ahead
+        const uint32_t swaps0 = e->swaps;
+        const bool ah_pick = ah_read;
+        bool ah = ah_pick;
         Track* pick = nullptr;
         for (Track& t : e->tr) {
             if (!e->reading) break;
-            if (!t.selected || t.eos || t.failed || t.q.size() >= t.limit()) continue;
-            if (!pick || t.last_us < pick->last_us) pick = &t;
+            const size_t k = static_cast<size_t>(&t - e->tr.data());
+            const bool t_eos = ah ? e->nx[k].eos : t.eos, t_failed = ah ? e->nx[k].failed : t.failed;
+            const size_t qn = ah ? e->nx[k].q.size() : t.q.size();
+            const int64_t last = ah ? e->nx[k].last_us : t.last_us;
+            if (!t.selected || t_eos || t_failed || qn >= t.limit()) continue;
+            if (!pick || last < (ah ? e->nx[static_cast<size_t>(pick - e->tr.data())].last_us : pick->last_us)) pick = &t;
         }
         if (!pick) { e->cv_work.wait(lk); continue; }
         const int mf_index = pick->mf_index;
@@ -533,19 +591,28 @@ void worker_main(Ext* e) {
         }
         lk.lock();
         if (e->seek_pending || e->stop) continue;   // the sample belongs to the old position
+        if ((e->ahead == 2) != ah_pick) {
+            // the look-ahead changed while the read ran: swapped in (the sample is the next one of the queue that replaced it) or dropped (it belongs to a position nobody wants)
+            if (ah_pick && e->swaps != swaps0) ah = false;
+            else continue;
+        }
         Track& t = e->tr[ti];
+        std::deque<Item>& Q = ah ? e->nx[ti].q : t.q;
+        bool& EOS = ah ? e->nx[ti].eos : t.eos;
+        bool& FAIL = ah ? e->nx[ti].failed : t.failed;
+        int64_t& LAST = ah ? e->nx[ti].last_us : t.last_us;
         if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) {
             s_read_errors++;
             NXLOG_W("movie", "ReadSample(track %zu) failed (0x%08lx, flags 0x%lx) after %llu samples: treated as its end", ti, static_cast<unsigned long>(hr), flags,
                     static_cast<unsigned long long>(e->samples_read));
-            t.failed = t.eos = true;
+            FAIL = EOS = true;
             e->cv_data.notify_all();
             continue;
         }
         if (g_log) NXLOG_I("movie", "ReadSample(track %zu): flags 0x%lx ts %lld sample %p", ti, flags, static_cast<long long>(ts), static_cast<void*>(s.Get()));
         if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
-            NXLOG_D("movie", "track %zu: end of stream after %zu queued", ti, t.q.size());
-            t.eos = true;
+            NXLOG_D("movie", "track %zu: end of stream after %zu queued", ti, Q.size());
+            EOS = true;
             e->cv_data.notify_all();
             continue;
         }
@@ -572,8 +639,8 @@ void worker_main(Ext* e) {
             }
         }
         if (keep) {
-            t.last_us = it.us;
-            t.q.push_back(std::move(it));
+            LAST = it.us;
+            Q.push_back(std::move(it));
         }
         e->cv_data.notify_all();
     }
@@ -595,6 +662,37 @@ void ext_destroy(Ext* e) {
     if (e->worker.joinable()) e->worker.join();
     e->rd.Reset();
     e->bs.Reset();
+}
+
+// The game's destructor call returns at once (S21): the worker may be inside a ReadSample and tearing a source reader down stops its decoder
+// (60 to 80 ms), which would otherwise stall the game thread that closes the movie. A short-lived thread does the join and the release.
+void ext_destroy_async(Ext* e) {
+    {
+        std::lock_guard<std::mutex> lk(e->m);
+        e->stop = true;
+    }
+    e->cv_work.notify_all();
+    e->cv_data.notify_all();
+    try {
+        std::thread([e] {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            log_set_thread_name("movie-close");
+            ext_destroy(e);
+            delete e;
+            CoUninitialize();
+        }).detach();
+    } catch (...) {
+        ext_destroy(e);
+        delete e;
+    }
+}
+
+// True when every selected track that has not ended has a decoded sample queued. Caller holds e->m.
+bool ext_ready_locked(const Ext* e) {
+    if (e->seek_pending) return false;
+    for (const Track& t : e->tr)
+        if (t.selected && t.q.empty() && !t.eos && !t.failed) return false;
+    return true;
 }
 
 // The extractor's current sample: the one with the smallest timestamp among the next samples of the selected tracks. Waits (bounded)
@@ -646,8 +744,12 @@ void ext_dtor(::Ctx* c) {
     wr64(A0 + 8, 0);
     wr64(A0, 0);
     NXLOG_I("movie", "Extractor destroyed (%llu samples read)", static_cast<unsigned long long>(e->samples_read));
-    ext_destroy(e);
-    delete e;
+    if (g_async_close) {
+        ext_destroy_async(e);
+    } else {
+        ext_destroy(e);
+        delete e;
+    }
     s_extractors_destroyed++;
 }
 
@@ -721,10 +823,39 @@ void ext_track_config(::Ctx* c) {            // GetTrackConfiguration(int track,
     RET(ST_OK);
 }
 
+// Called when a track has just been selected (S21). Once every audio and video track is selected, decoding starts here and the call waits for
+// the first decoded samples, on the thread that sets the movie up (the game's loader), so that the first GetSampleTime of the game's main thread finds
+// them queued. The wait is bounded. With only some of the tracks selected nothing happens: a track selected after reading began would start late.
+void ext_preroll(Ext* e) {
+    if (!g_preroll) return;
+    std::unique_lock<std::mutex> lk(e->m);
+    if (e->reading) return;
+    bool any = false;
+    for (const Track& t : e->tr) {
+        if (t.kind == 2) continue;
+        if (!t.selected) return;
+        any = true;
+    }
+    if (!any) return;
+    const auto t0 = std::chrono::steady_clock::now();
+    e->reading = true;
+    e->cv_work.notify_all();
+    const auto deadline = t0 + std::chrono::milliseconds(2000);
+    while (!ext_ready_locked(e)) {
+        if (e->cv_data.wait_until(lk, deadline) == std::cv_status::timeout) {
+            NXLOG_W("movie", "preroll: no decoded sample after 2 s");
+            return;
+        }
+    }
+    NXLOG_I("movie", "preroll: first samples decoded in %.1f ms", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+}
+
 void ext_select(::Ctx* c) {
     Ext* e = ext_of(A0);
     if (!e) { RET(ST_INVALID); return; }
-    RET(ext_select_locked(e, static_cast<int>(A1), true));
+    const int r = ext_select_locked(e, static_cast<int>(A1), true);
+    if (r == ST_OK) ext_preroll(e);
+    RET(r);
 }
 
 void ext_seek(::Ctx* c) {                    // SeekTo(int64 timeUs)
@@ -737,6 +868,35 @@ void ext_seek(::Ctx* c) {                    // SeekTo(int64 timeUs)
     } else {
         us = 0;
     }
+    if (us == 0 && e->ahead != 0) {                // a loop: the start was decoded ahead
+        const auto wait_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(kWaitMs);
+        while (e->ahead == 1 && e->cv_data.wait_until(lk, wait_until) != std::cv_status::timeout) {}
+        if (e->ahead == 2 && !e->seek_pending && e->nx.size() == e->tr.size()) {
+            size_t n = 0;
+            for (size_t i = 0; i < e->tr.size(); i++) {
+                Track& t = e->tr[i];
+                Ext::Ahead& a = e->nx[i];
+                t.q = std::move(a.q);
+                t.eos = a.eos;
+                t.failed = a.failed;
+                t.last_us = a.last_us;
+                n += t.q.size();
+            }
+            e->nx.clear();
+            e->ahead = 0;
+            e->ahead_tried = false;
+            e->swaps++;
+            e->cur_valid = false;
+            NXLOG_I("movie", "SeekTo(0): loop restart from the samples decoded ahead (%zu queued)", n);
+            lk.unlock();
+            e->cv_work.notify_all();
+            RET(ST_OK);
+            return;
+        }
+    }
+    e->nx.clear();
+    e->ahead = 0;
+    e->ahead_tried = false;
     e->seek_us = us;
     e->seek_pending = true;
     e->cur_valid = false;
@@ -1269,6 +1429,9 @@ bool install_movie_hle() {
             return;
         }
         g_log = config_get_bool("media", "movie_log", false);
+        g_lookahead = config_get_bool("media", "movie_lookahead", true);
+        g_preroll = config_get_bool("media", "movie_preroll", true);
+        g_async_close = config_get_bool("media", "movie_async_close", true);
         for (const Import& im : kImports) {
             hle_register(im.name, im.fn);
             module_override_symbol(im.name);
