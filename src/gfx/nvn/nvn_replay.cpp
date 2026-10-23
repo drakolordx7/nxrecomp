@@ -541,8 +541,11 @@ bool samples_depth_target(const ProgLayout& pl) {
 // A colour attachment cannot be sampled in the pass that renders to it (no feedback loops): the binding gets the dummy view.
 bool is_color_feedback(Texture* t) {
     if (!t) return false;
-    for (uint32_t i = 0; i < S.ncolor; ++i)
-        if (shares_image(t, S.color_tex[i].get())) return true;
+    for (uint32_t i = 0; i < S.ncolor; ++i) {
+        Texture* a = S.color_tex[i].get();
+        if (a && !a->gpu) tex_gpu(a);   // an attachment gets its image (or the one it shares) here, not later in ensure_pass: the check runs before the pass begins (S4g)
+        if (shares_image(t, a)) return true;
+    }
     return false;
 }
 
@@ -585,6 +588,7 @@ void feedback_prepare(const ProgLayout& pl) {
         Texture* c = feedback_clone(r.tex);
         if (!c) continue;
         end_pass();
+        tex_ensure_current(r.tex, *F);                                    // storage the game wrote since the image was made reaches the copy too
         tex_transition(r.tex, *F, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);   // the next pass moves it back to the attachment layout and loads it
         tex_transition(c, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         std::vector<VkImageCopy> regions;
