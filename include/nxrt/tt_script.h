@@ -44,6 +44,10 @@
 //                                     ops: == != < <= > >=. area/world compare ids (== and != only); the others compare numbers
 //   @mashuntil <keys> every <n> until <field> <op> <value> [timeout=<n>]   press the buttons for 4 frames every n frames until the condition
 //                                     (same fields and operators as @assert) holds, e.g. `@mashuntil A every 120 until state >= 0` drives menus
+//   @watch on [vely|posy|both] | off    hardware write watch (debug registers) on the player's physics velocity.y and/or transform position.y; every write is logged with
+//                                     the writing instruction, the frame and the value (lines `watch:` in the log); off stops it and logs how many hits were seen
+//   @objs <class>...                  list every live object of the named classes with its position (door dock pickup special actor platform trigger player, or a main-module
+//                                     vtable offset): a memory scan for the vtable pointer; result in <out>/objs.txt, one `class x y z addr` line per object
 //   @timeout <n>                      default timeout (frames) of every later wait; initial 3600; 0 = none
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
@@ -89,6 +93,8 @@ enum class StepKind : uint8_t {
     KeyUp,       // text = input name
     Grant,       // text = item name (or 'all'), count = item id (-1 for all), x = amount, y = capacity (written into the player state's power-up array)
     Call,        // count = main-module offset of a guest function, text = its arguments (numbers or $gs $ps $mgr $player), run in the frame hook
+    Objs,        // text = class names (door dock pickup special actor platform trigger, or a vtable offset): scan memory for instances, write <out>/objs.txt
+    Watch,       // text = on|off|dump, y = 1 velocity.y, 2 position.y, 3 both (hardware write watch on the player, see tt_probe.cpp)
     PressUntil,  // buttons pressed 4 frames every `count` frames until the condition (field/op/x/id, as Assert) holds; timeout
 };
 
