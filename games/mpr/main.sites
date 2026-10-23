@@ -51,3 +51,5 @@ entryhook 0x7100211c60
 # camera transform is turned: free look about the eye (first person, Alt held), the morph ball camera orbited about the ball.
 entryhook 0x7100d72314   # CFirstPersonCameraMP1::Think(float, CStateManager&): x0 = the camera
 entryhook 0x7100cff7ec   # CBallCameraMP1::Think(float, CStateManager&): x0 = the camera
+#   CPlayerStuckTrackerMP1::AddState (S25): one sample per 1/60 s of game time, so the 20 sample window of the stuck test keeps its length at high frame rates
+entryhook 0x7100d801d8
