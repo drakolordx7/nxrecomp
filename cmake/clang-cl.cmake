@@ -7,6 +7,9 @@ set(CMAKE_CXX_COMPILER "C:/Program Files/LLVM/bin/clang-cl.exe")
 set(CMAKE_LINKER "C:/Program Files/LLVM/bin/lld-link.exe")
 set(CMAKE_RC_COMPILER "C:/Program Files/LLVM/bin/llvm-rc.exe")
 set(CMAKE_MT "C:/Program Files/LLVM/bin/llvm-mt.exe")
+# static MSVC runtime (/MT): the lifted libraries and the runtime that links them must agree, and players then need no
+# Visual C++ Redistributable (CMake needs policy CMP0091 NEW, i.e. cmake_minimum_required 3.15 or later, for this to apply)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 # the debug info format of an exe built here is not useful to the oracles: keep objects small
 set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "")
 if(NOT DEFINED ENV{NX_NO_SCCACHE})
