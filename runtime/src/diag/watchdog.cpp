@@ -32,6 +32,7 @@ constexpr size_t kMaxFrames = 48;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<uint64_t> g_frames{0};
+std::atomic<uint64_t> g_progress{0};   // heartbeats that are not frames (diag_progress)
 std::atomic<uint32_t> g_fires{0};
 std::atomic<bool> g_running{false};
 
@@ -44,6 +45,7 @@ struct ThreadDump {
     Status status = Status::NoSuspend;
     bool have_guest = false;
     uint64_t guest_lr = 0, guest_sp = 0, guest_fp = 0;
+    uint64_t cpu_user_ms = 0, cpu_kernel_ms = 0;   // CPU time the thread has used so far: two dumps tell a busy thread from a waiting one
     size_t nframes = 0;
     uint64_t frames[kMaxFrames] = {};
 };
@@ -72,6 +74,13 @@ void collect_threads(std::vector<ThreadDump>& out) {
     }
     for (ThreadDump& d : out) {
         HANDLE h = static_cast<HANDLE>(d.rec.host_handle);
+        if (h) {
+            FILETIME created, exited, kernel_t, user_t;
+            if (GetThreadTimes(h, &created, &exited, &kernel_t, &user_t)) {
+                d.cpu_kernel_ms = ((static_cast<uint64_t>(kernel_t.dwHighDateTime) << 32) | kernel_t.dwLowDateTime) / 10000;
+                d.cpu_user_ms = ((static_cast<uint64_t>(user_t.dwHighDateTime) << 32) | user_t.dwLowDateTime) / 10000;
+            }
+        }
         if (h == nullptr || SuspendThread(h) == static_cast<DWORD>(-1)) {
             d.status = Status::NoSuspend;
             continue;  // not suspended, nothing to resume
@@ -117,6 +126,7 @@ std::string format_threads(const std::vector<ThreadDump>& threads) {
         out += " guest_tid=";
         appendf(out, "%llu", static_cast<unsigned long long>(d.rec.guest_tid));
         out += '\n';
+        appendf(out, "  cpu: user %llu ms, kernel %llu ms\n", static_cast<unsigned long long>(d.cpu_user_ms), static_cast<unsigned long long>(d.cpu_kernel_ms));
         if (d.status == Status::NoSuspend) {
             out += "  (could not suspend)\n";
             continue;
@@ -193,12 +203,27 @@ void write_report(const std::string& path, const std::string& text) {
     std::fclose(f);
 }
 
+std::mutex g_report_mu;
+std::vector<std::string (*)()> g_reports;
+
+std::string extra_reports() {
+    std::vector<std::string (*)()> fns;
+    {
+        std::lock_guard<std::mutex> lk(g_report_mu);
+        fns = g_reports;
+    }
+    std::string out;
+    for (auto fn : fns) out += fn();
+    return out;
+}
+
 // Header line, then the thread dump. Goes to the log and the report file; returns the full text for on_fire.
 std::string emit_dump(const std::string& report_path, const std::string& header) {
     std::string text = header;
     text += '\n';
     text += dump_text();
     text += kernel::sync_wait_report();
+    text += extra_reports();
     log_lines(text);
     write_report(report_path, text);
     return text;
@@ -249,6 +274,7 @@ void run_loop(Control* c) {
     log_set_thread_name("watchdog");
     Clock::time_point last_change = Clock::now();  // idle time counts from the start, then from the last tick
     uint64_t last_seen = g_frames.load(std::memory_order_relaxed);
+    uint64_t last_progress = g_progress.load(std::memory_order_relaxed);
     bool fired = false;
     for (;;) {
         {
@@ -257,10 +283,12 @@ void run_loop(Control* c) {
         }
         const Clock::time_point now = Clock::now();
         const uint64_t frames = g_frames.load(std::memory_order_relaxed);
-        if (frames != last_seen) {
+        const uint64_t progress = g_progress.load(std::memory_order_relaxed);
+        if (frames != last_seen || progress != last_progress) {
             last_seen = frames;
+            last_progress = progress;
             last_change = now;
-            fired = false;  // a tick re-arms the watchdog
+            fired = false;  // a tick (or a progress heartbeat) re-arms the watchdog
         }
         // <exe dir>\dump_threads (whichever process sees it first) or <exe dir>\dump_threads.<pid> (this process only)
         const std::string own_request = c->request_path + "." + std::to_string(GetCurrentProcessId());
@@ -270,6 +298,13 @@ void run_loop(Control* c) {
             std::string header;
             appendf(header, "THREAD DUMP REQUESTED (frame count %llu)", static_cast<unsigned long long>(frames));
             emit_dump(c->report_path, header);
+            const double resample = config_get_double("diag", "freeze_resample_s", 0.0);   // a second sample: what changed in the meantime
+            if (resample > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int64_t>(resample * 1000)));
+                std::string h2;
+                appendf(h2, "THREAD DUMP SECOND SAMPLE %.1f s later (frame count %llu)", resample, static_cast<unsigned long long>(g_frames.load(std::memory_order_relaxed)));
+                emit_dump(c->report_path, h2);
+            }
         }
         const double idle_s = std::chrono::duration<double>(now - last_change).count();
         if (!fired && idle_s >= c->threshold_s) {
@@ -339,6 +374,7 @@ namespace {
 std::atomic<void (*)()> g_frame_listener{nullptr};
 }
 void diag_set_frame_listener(void (*fn)()) { g_frame_listener.store(fn); }
+void diag_progress() { g_progress.fetch_add(1, std::memory_order_relaxed); }
 void diag_frame_tick_nolisten() { g_frames.fetch_add(1, std::memory_order_relaxed); }
 void diag_frame_tick() {
     g_frames.fetch_add(1, std::memory_order_relaxed);
@@ -350,5 +386,10 @@ uint64_t diag_frame_count() { return g_frames.load(std::memory_order_relaxed); }
 uint32_t watchdog_fire_count() { return g_fires.load(std::memory_order_relaxed); }
 
 std::string diag_thread_dump() { return dump_text(); }
+
+void diag_add_report(std::string (*fn)()) {
+    std::lock_guard<std::mutex> lk(g_report_mu);
+    g_reports.push_back(fn);
+}
 
 }  // namespace nxrt

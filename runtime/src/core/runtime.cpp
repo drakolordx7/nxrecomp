@@ -51,6 +51,8 @@ bool init(const InitOptions& opt) {
         ok = false;
     }
     svc_init();
+    kernel::install_spin_hint();
+    kernel::starvation_guard_start();
     if (opt.services) {
         services::register_all();
         kernel::install_busy_mutex_hle();   // the SDK's spin lock yields under the console core model
@@ -100,6 +102,7 @@ void shutdown() {
     timestep::shutdown();
     tt::shutdown();
     watchdog_stop();
+    kernel::starvation_guard_stop();
     memguard_stop();
     log_flush();
     g_up = false;
