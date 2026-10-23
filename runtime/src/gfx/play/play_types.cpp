@@ -78,6 +78,38 @@ bool parse_trig(const std::string& s, Trig* out) {
     return false;
 }
 
+// ---- button prompts ---------------------------------------------------------------------------------------------------------------
+
+namespace {
+const char* const kPromptNames[] = {"switch", "xbox", "playstation", "keyboard", "auto"};
+static_assert(sizeof(kPromptNames) / sizeof(kPromptNames[0]) == kPromptStyleCount, "one name per PromptStyle");
+
+// Every spelling parse_prompt_style accepts (the canonical names are in the table too).
+struct PromptAlias {
+    const char* name;
+    PromptStyle style;
+};
+const PromptAlias kPromptAliases[] = {
+    {"switch", PromptStyle::Switch},          {"xbox", PromptStyle::Xbox},           {"playstation", PromptStyle::PlayStation},
+    {"ps", PromptStyle::PlayStation},         {"ps4", PromptStyle::PlayStation},     {"ps5", PromptStyle::PlayStation},
+    {"dualsense", PromptStyle::PlayStation},  {"keyboard", PromptStyle::Keyboard},   {"kbm", PromptStyle::Keyboard},
+    {"keyboard_mouse", PromptStyle::Keyboard}, {"mouse", PromptStyle::Keyboard},     {"auto", PromptStyle::Auto},
+};
+}  // namespace
+
+const char* prompt_style_name(PromptStyle s) { return kPromptNames[static_cast<int>(s)]; }
+
+bool parse_prompt_style(const std::string& s, PromptStyle* out) {
+    const std::string key = name_key(s);
+    for (const PromptAlias& a : kPromptAliases) {
+        if (key == a.name) {
+            if (out) *out = a.style;
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---- actions -----------------------------------------------------------------------------------------------------------------
 
 // One row per Act, in enum order (checked by the static_assert below and by the unit tests).

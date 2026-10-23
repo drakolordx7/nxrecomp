@@ -209,7 +209,7 @@ NXTEST(set_shaders_vertex_and_fragment_from_cache) {
     fin(&prog);
 }
 
-NXTEST(unknown_block_returns_zero_and_leaves_program_unlinked) {
+NXTEST(unknown_block_leaves_program_unlinked_and_reports_success) {
     if (!cache_ready()) {
         nxtest::skip("shader cache or corpus missing");
         return;
@@ -230,7 +230,8 @@ NXTEST(unknown_block_returns_zero_and_leaves_program_unlinked) {
     std::vector<uint8_t> zeros(v.code.size(), 0);
     CHECK(shader_hash(zeros.data(), static_cast<uint32_t>(zeros.size())) != v.hash);
     const NVNshaderData d = shader_data(zeros, v.ctrl);
-    CHECK_EQ(set_shaders(&prog, 1, &d), 0);
+    // [nvn] accept_unlinked (default on): a block the cache lacks still reports success, so the game does not rebuild the shader on every bind (S18); the program stays unlinked
+    CHECK_EQ(set_shaders(&prog, 1, &d), 1);
     be::Program* hp = be::host_of<be::Program>(&prog);
     CHECK(hp != nullptr);
     if (hp) {
@@ -260,7 +261,7 @@ NXTEST(found_stages_are_kept_when_another_is_missing) {
     init(&prog, nullptr);
     std::vector<uint8_t> zeros(v.code.size(), 0);
     const NVNshaderData d[2] = {shader_data(v.code, v.ctrl), shader_data(zeros, v.ctrl)};
-    CHECK_EQ(set_shaders(&prog, 2, d), 0);
+    CHECK_EQ(set_shaders(&prog, 2, d), 1);      // accept_unlinked, see above
     be::Program* hp = be::host_of<be::Program>(&prog);
     CHECK(hp != nullptr);
     if (hp) {

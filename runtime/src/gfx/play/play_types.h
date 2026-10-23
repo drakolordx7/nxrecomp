@@ -144,12 +144,24 @@ struct DisplaySettings {
     bool chromatic_aberration = true;
 };
 
+// ---- button prompts ----------------------------------------------------------------------------------------------------------------
+// Which button icons the game's prompts show: the game's own Switch icons, or those of another pad or the keyboard. Auto follows the
+// last input device used.
+enum class PromptStyle : uint8_t { Switch = 0, Xbox, PlayStation, Keyboard, Auto };
+constexpr int kPromptStyleCount = 5;
+const char* prompt_style_name(PromptStyle s);          // "switch" "xbox" "playstation" "keyboard" "auto"
+bool parse_prompt_style(const std::string& s, PromptStyle* out);   // case-insensitive; also accepts ps, ps4, ps5, dualsense, kbm, keyboard_mouse, mouse
+struct PromptSettings {
+    PromptStyle style = PromptStyle::Switch;   // the game's own icons by default
+};
+
 struct Settings {
     MouseSettings mouse;
     PadSettings pad;
     TimingSettings timing;
     DisplaySettings display;
     extras::Settings extras;       // the [hdr] [upscale] [latency] sections (nxrt/extras.h): HDR output, upscaling, low latency
+    PromptSettings prompts;
     Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
 };
@@ -172,6 +184,7 @@ const char* default_settings_text();
 //   [upscale]  mode (off fsr1 fsr3 dlss xess; spatial = fsr1) sharpness (0..1) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
 //              frame_generation (1/0)
 //   [latency]  mode (off auto on boost) log_timings (1/0)
+//   [prompts]  style = switch|xbox|playstation|keyboard|auto   (which button icons the game's prompts show; auto follows the last used input device)
 //   [switch]   <action> = <output>      e.g.  fire = ZR    beam_1 = X+UP    (missing actions keep the default)
 //   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = fire    Left Ctrl = morph hold 250    Space = jump toggle
 //                      ctx is one of all gameplay morph map menu scan. The same input may appear several times in a section.

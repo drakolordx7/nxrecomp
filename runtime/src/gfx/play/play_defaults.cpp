@@ -70,6 +70,9 @@ bloom = 1
 # Chromatic aberration post effect.
 chromatic_aberration = 1
 
+[prompts]
+style = switch
+
 [bindings.all]
 W = move_forward
 S = move_back
