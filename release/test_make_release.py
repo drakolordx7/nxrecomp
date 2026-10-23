@@ -17,7 +17,7 @@ EXPECTED = sorted([
     'mpr.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll',
     'mpr_setup.exe', 'mpr_setup_cli.exe', 'shader_cache.mprshc', 'README.txt', 'controls.ini',
     'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
-    'fonts/DejaVuSans.ttf', MANIFEST,
+    'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
 TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None)}
 EXE_REL = 'game-build/build/release/mpr.exe'
@@ -53,6 +53,13 @@ def make_fake_repo(root):
     return root
 
 
+def make_fake_prompts(folder):
+    """The two prompt files the release needs: a tiny pack with the real MPIP magic, and a licence text."""
+    write(os.path.join(folder, 'prompt_icons.pak'), mr.PROMPT_MAGIC + b'\x00' * 1024)
+    write(os.path.join(folder, 'LICENSE-Kenney-InputPrompts.txt'), b'CC0 1.0 fake text for the test\n')
+    return folder
+
+
 def read_bytes(path):
     with open(path, 'rb') as f:
         return f.read()
@@ -68,9 +75,11 @@ class BuildTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = make_fake_repo(os.path.join(self.tmp, 'repo'))
         self.out = os.path.join(self.tmp, 'out')
+        self.prompts = make_fake_prompts(os.path.join(self.tmp, 'prompts'))
 
-    def run_build(self, extra=(), repo=None, out=None, hook=None, real_sizes=False):
-        argv = ['--repo', repo or self.repo, '--out', out or self.out, '--version', 'test'] + list(extra)
+    def run_build(self, extra=(), repo=None, out=None, hook=None, real_sizes=False, prompts=None):
+        argv = ['--repo', repo or self.repo, '--out', out or self.out, '--version', 'test',
+                '--prompts-dir', prompts or self.prompts] + list(extra)
         buf = io.StringIO()
         rules = mock.patch.dict(mr.SIZE_RULES, {}) if real_sizes else mock.patch.dict(mr.SIZE_RULES, TINY_RULES)
         with rules, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
@@ -203,6 +212,57 @@ class BuildTests(unittest.TestCase):
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
         self.assertEqual(self.leftovers(self.out), [])
+
+    def test_release_carries_prompt_pack_and_licence(self):
+        code, log = self.run_build()
+        self.assertEqual(code, 0, log)
+        with zipfile.ZipFile(os.path.join(self.out, ROOT + '.zip')) as z:
+            names = z.namelist()
+            pak = z.read(ROOT + '/prompts/prompt_icons.pak')
+            lic = z.read(ROOT + '/prompts/LICENSE-Kenney-InputPrompts.txt')
+        self.assertIn(ROOT + '/prompts/prompt_icons.pak', names)
+        self.assertIn(ROOT + '/prompts/LICENSE-Kenney-InputPrompts.txt', names)
+        self.assertEqual(pak, read_bytes(os.path.join(self.prompts, 'prompt_icons.pak')))
+        self.assertEqual(lic, read_bytes(os.path.join(self.prompts, 'LICENSE-Kenney-InputPrompts.txt')))
+
+    def test_missing_prompt_files_are_usage_errors(self):
+        code, log = self.run_build(prompts=os.path.join(self.tmp, 'no-such-prompts'))
+        self.assertEqual(code, 2, log)
+        self.assertIn('prompt icon', log)
+        self.assertEqual(self.leftovers(self.out), [])
+        os.remove(os.path.join(self.prompts, 'LICENSE-Kenney-InputPrompts.txt'))
+        code, log = self.run_build()
+        self.assertEqual(code, 2, log)
+        self.assertIn('LICENSE-Kenney-InputPrompts.txt', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_pak_under_any_other_path_is_refused(self):
+        def hook(folder):
+            write(os.path.join(folder, 'prompts', 'other.pak'), mr.PROMPT_MAGIC + b'\x00' * 64)
+            write(os.path.join(folder, 'prompts', 'sub', 'prompt_icons.pak'), mr.PROMPT_MAGIC + b'\x00' * 64)
+            write(os.path.join(folder, 'licenses', 'game.pak'), b'\x00' * 64)
+        code, log = self.run_build(hook=hook)
+        self.assertEqual(code, 3, log)
+        for rel in ('prompts/other.pak', 'prompts/sub/prompt_icons.pak', 'licenses/game.pak'):
+            self.assertIn('denylist: %s: file type .pak' % rel, log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_prompt_pack_too_large_or_wrong_magic_is_refused(self):
+        pak = os.path.join(self.prompts, 'prompt_icons.pak')
+        write(pak, mr.PROMPT_MAGIC + b'\x00' * mr.MIB * 4)           # 4 MiB + 4 bytes: over the limit
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('prompts/prompt_icons.pak is', log)
+        self.assertEqual(self.leftovers(self.out), [])
+        for head, label in ((b'XXXX', None), (mr.PACK_MAGIC, None), (b'NSO0', 'NSO0 (game executable)')):
+            with self.subTest(head=head):
+                write(pak, head + b'\x00' * 1024)
+                code, log = self.run_build()
+                self.assertEqual(code, 3, log)
+                self.assertIn('prompts/prompt_icons.pak does not start with MPIP', log)
+                if label:
+                    self.assertIn(label, log)
+                self.assertEqual(self.leftovers(self.out), [])
 
 
 if __name__ == '__main__':

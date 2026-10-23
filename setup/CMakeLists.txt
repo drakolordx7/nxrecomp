@@ -51,6 +51,10 @@ mprs_lib(mprs_core keys.cpp nca.cpp container.cpp nso.cpp texcache.cpp shadercac
 if(TARGET mprs_core)
     target_link_libraries(mprs_core PUBLIC mprs_base mprs_crypto mprs_fs mprs_pak tegra_tiling astc2bc7 shlwapi ole32 shell32)
     add_dependencies(mprs_core astc2bc7_cli)   # builds the three astcenc decoder DLLs next to the executables
+    # BC5 encoder (rgbcx) and the reference BC7 decoder (the oracle's): two-channel normal maps and the RGBA8 fallback of texcache.cpp
+    set(BC7_TP ${MPRS_TEXTURES_DIR}/third_party/bc7enc_rdo)
+    target_sources(mprs_core PRIVATE ${BC7_TP}/rgbcx.cpp ${BC7_TP}/bc7decomp_ref.cpp)
+    target_include_directories(mprs_core PRIVATE ${BC7_TP})
 endif()
 
 # zstd (BSD-3-Clause; tools/setup/scripts/fetch_zstd.ps1 puts it in third_party/zstd): NCZ/NSZ/XCZ support and shader packs
@@ -103,7 +107,7 @@ endif()
 # mpr_texq: real-data BC7 quality probe (tools/texq.cpp); uses the oracle's reference BC7 decoder.
 if(TARGET mprs_core AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tools/texq.cpp)
     set(BC7_TP ${MPRS_TEXTURES_DIR}/third_party/bc7enc_rdo)
-    add_executable(mpr_texq tools/texq.cpp ${BC7_TP}/bc7decomp_ref.cpp)
+    add_executable(mpr_texq tools/texq.cpp)
     target_include_directories(mpr_texq PRIVATE ${S} ${BC7_TP})
     target_link_libraries(mpr_texq PRIVATE mprs_core)
     target_compile_definitions(mpr_texq PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
