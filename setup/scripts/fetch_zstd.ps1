@@ -33,7 +33,8 @@ try {
     $ex = Join-Path $work 'x'
     New-Item -ItemType Directory -Force -Path $ex | Out-Null
     # Only lib/ and LICENSE are extracted: the tarball's tests/ tree holds symlinks that Windows tar cannot create.
-    & tar.exe -xzf $tgz -C $ex "zstd-$Version/lib" "zstd-$Version/LICENSE"
+    # the Windows tar by full path: a GNU tar earlier on PATH (Git Bash) reads "C:" as a host name
+    & "$env:SystemRoot\System32\tar.exe" -xzf $tgz -C $ex "zstd-$Version/lib" "zstd-$Version/LICENSE"
     if ($LASTEXITCODE) { throw "tar failed extracting zstd-$Version (exit $LASTEXITCODE)" }
 
     if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }

@@ -149,13 +149,12 @@ COMPONENTS WITH A LICENCE TEXT IN THE LICENSES FOLDER
     Used in:    mpr.exe (exception handling code)
     File:       licenses\LICENSE.libcxxabi.Apache-2.0-LLVM-exception.txt
 
-19. Microsoft Visual C++ runtime (linked as DLLs; the DLLs are not in the release)
+19. Microsoft Visual C++ runtime (linked statically; no Microsoft runtime file is in the release)
     Version:    Visual Studio runtime 14.51.36247.0 (as found on the build PC); built with
                 Visual Studio Build Tools 2026 (18.11.1)
     Licence:    Microsoft Software License Terms
     Copyright:  Copyright Microsoft Corporation. All rights reserved.
-    Used in:    mpr.exe, mpr_setup.exe, mpr_setup_cli.exe and the astcdec DLLs (loaded at
-                run time; the player installs the runtime, see the file below)
+    Used in:    mpr.exe, mpr_setup.exe, mpr_setup_cli.exe and the astcdec DLLs (compiled in)
     File:       licenses\NOTICE.MSVC-runtime.txt
 
 20. Kenney Input Prompts 1.5a
