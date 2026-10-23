@@ -28,7 +28,7 @@ void sleep_ns(int64_t ns) {
     static thread_local HANDLE timer = nullptr;
     static thread_local bool no_timer = false;
     if (ns <= 0) {
-        SwitchToThread();
+        yield_host();
         return;
     }
     if (!timer && !no_timer) {

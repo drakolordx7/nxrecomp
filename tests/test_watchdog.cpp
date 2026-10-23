@@ -189,6 +189,28 @@ NXTEST(ticking_prevents_firing) {
     CHECK(!nxrt::watchdog_running());
 }
 
+NXTEST(progress_heartbeats_prevent_firing_without_counting_frames) {
+    const uint32_t base = nxrt::watchdog_fire_count();
+    FireCapture cap;
+    nxrt::WatchdogOptions opt;
+    opt.seconds = 1.0;
+    opt.poll_ms = 50;
+    opt.report_path = "";
+    opt.on_fire = capture_fire;
+    opt.user = &cap;
+    const uint64_t f0 = nxrt::diag_frame_count();
+    nxrt::watchdog_start(opt);
+    const auto end = steady_clock::now() + seconds(3);
+    while (steady_clock::now() < end) {
+        nxrt::diag_progress();                    // long work that moves (a texture transcode), not a presented frame
+        std::this_thread::sleep_for(milliseconds(100));
+    }
+    CHECK_EQ(nxrt::watchdog_fire_count() - base, 0u);
+    CHECK_EQ(cap.calls.load(), 0);
+    CHECK_EQ(nxrt::diag_frame_count(), f0);
+    nxrt::watchdog_stop();
+}
+
 NXTEST(rearms_after_a_tick) {
     FireCapture cap;
     nxrt::WatchdogOptions opt;

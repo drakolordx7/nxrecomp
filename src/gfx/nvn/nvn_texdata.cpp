@@ -15,6 +15,7 @@
 #include <thread>
 
 #include <nxrt/config.h>
+#include <nxrt/diag.h>
 #include <nxrt/log.h>
 
 #include "astc2bc7.h"
@@ -512,6 +513,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
                 }
                 if (st != A2B_OK)
                     return fail(std::string("ASTC ") + (bc7 ? "transcode" : "decode") + " failed: " + a2b_status_string(st));
+                diag_progress();   // a cold cache transcodes on the render thread for minutes: slow, not frozen (debug note 421)
             }
     }
     NXLOG_I(kTag, "texture %u: %s %ux%u, %u levels, %u layers: %.1f ms", t.id, bc7 ? "ASTC -> BC7" : "ASTC -> RGBA8",
