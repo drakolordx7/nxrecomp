@@ -30,6 +30,11 @@ public:
     // in nanoseconds of the monotonic clock now_ns().
     uint64_t begin_frame();
 
+    // The same wait without the pre-frame hook, for a limiter that runs on the thread that samples input (the game's main thread) while the hook
+    // still has to run on the presenting thread: that thread calls run_pre_frame_hook() itself (S18).
+    uint64_t begin_frame_nohook();
+    void run_pre_frame_hook();
+
     // Restart the schedule (after a pause, a minimise, a mode change).
     void reset_schedule();
 

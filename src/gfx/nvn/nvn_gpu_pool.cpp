@@ -15,6 +15,7 @@
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
 #include "nvn_gpu_internal.h"
 
 namespace nxrt::nvn::be {
@@ -25,6 +26,7 @@ struct PoolGpu {
     uint8_t* base = nullptr;          // aligned start of the import
     VkDeviceSize size = 0;            // aligned size of the import
     bool failed = false;
+    void* view = nullptr;             // private small view of the heap section the import goes through (nullptr: imported at base)
 };
 
 MemoryPool::~MemoryPool() {
@@ -68,9 +70,23 @@ PoolGpu* import_pool(MemoryPool* p) {
     g->base = reinterpret_cast<uint8_t*>(start);
     g->size = size;
 
+    // Import through a small private view of the same section pages when the pool lies in the heap's primary view (see mem::heap_private_view).
+    uint8_t* import_ptr = g->base;
+    static const bool use_view = config_get_bool("nvn", "pool_view", true);      // [nvn] pool_view = 0: import the pool's own address (slow)
+    if (use_view && mem::heap_exists() && start >= mem::kHeapBase && end <= mem::kHeapBase + mem::heap_reserved()) {
+        const uint64_t off = start - mem::kHeapBase;
+        const uint64_t voff = off & ~(mem::kAllocGranularity - 1);
+        const uint64_t delta = off - voff;
+        const uint64_t vsize = (delta + size + mem::kAllocGranularity - 1) & ~(mem::kAllocGranularity - 1);
+        if (void* v = mem::heap_private_view(voff, std::min<uint64_t>(vsize, mem::heap_reserved() - voff))) {
+            g->view = v;
+            import_ptr = static_cast<uint8_t*>(v) + delta;
+        }
+    }
+
     VkMemoryHostPointerPropertiesEXT hp = {VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
     VkResult r;
-    { NXFT("pool.hostprops"); r = vkGetMemoryHostPointerPropertiesEXT(dev.device(), VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, g->base, &hp); }
+    { NXFT("pool.hostprops"); r = vkGetMemoryHostPointerPropertiesEXT(dev.device(), VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, import_ptr, &hp); }
     if (r != VK_SUCCESS || !hp.memoryTypeBits) {
         NXLOG_E(kTag, "vkGetMemoryHostPointerPropertiesEXT failed (%d) for %p", static_cast<int>(r), static_cast<void*>(g->base));
         g->failed = true;
@@ -80,7 +96,7 @@ PoolGpu* import_pool(MemoryPool* p) {
     while (!(hp.memoryTypeBits & (1u << ty))) ++ty;
     VkImportMemoryHostPointerInfoEXT imp = {VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT};
     imp.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-    imp.pHostPointer = g->base;
+    imp.pHostPointer = import_ptr;
     VkMemoryAllocateInfo mai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &imp};
     mai.allocationSize = size;
     mai.memoryTypeIndex = ty;
@@ -261,6 +277,7 @@ void pool_gpu_destroy(PoolGpu* p) {
     gfx::Device& dev = device();
     if (p->buffer) vkDestroyBuffer(dev.device(), p->buffer, nullptr);
     if (p->mem) vkFreeMemory(dev.device(), p->mem, nullptr);
+    if (p->view) mem::heap_private_view_unmap(p->view);
     delete p;
 }
 
