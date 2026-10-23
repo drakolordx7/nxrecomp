@@ -7,6 +7,8 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nxrt/ftrace.h"
+#include "nvn_texdata.h"
 #include "nxrt/log.h"
 #include "nvn_format.h"
 #include "nvn_gpu.h"
@@ -30,6 +32,10 @@ void texture_registry_remove(Texture* t) {
     auto r = g_by_start.equal_range(reinterpret_cast<uint64_t>(t->mem));
     for (auto it = r.first; it != r.second; ++it)
         if (it->second == t) { g_by_start.erase(it); break; }
+}
+
+void tx_mark(const char* what, const Texture* t) {
+    if (t && ft::on()) ft::mark(what, t->id);
 }
 
 void tev(const Texture* t, const char* what, uint64_t a, uint64_t b) {
@@ -70,10 +76,18 @@ void virtual_textures_remapped(const MemoryPool* vpool, uint64_t voff, uint64_t 
     mark_dirty_list(hit, voff, voff + size);
 }
 
-bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out) {
+namespace {
+// The mapped pieces of a sparse texture's range, in map order. The physical pools are kept alive by the references, so the copy or the hash can run
+// without the pool's lock (several textures of one virtual pool are prepared at the same time by the background workers).
+struct VSeg {
+    uint64_t at;                 // offset in the texture's storage
+    const uint8_t* ptr;
+    uint64_t len;
+    Ref<MemoryPool> keep;
+};
+bool virtual_segments(const Texture& t, std::vector<VSeg>& out) {
     MemoryPool* vp = t.vpool.get();
     if (!vp || !t.storage_size) return false;
-    out.assign(static_cast<size_t>(t.storage_size), 0);
     const uint64_t t0 = t.voffset, t1 = t.voffset + t.storage_size;
     std::lock_guard<std::mutex> lk(vp->vmu);
     for (const MemoryPool::VirtualMap& m : vp->vmaps) {
@@ -81,8 +95,37 @@ bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out) {
         if (a >= b || !m.phys || !m.phys->base) continue;
         const int64_t src = m.poff + static_cast<int64_t>(a - m.voff);
         if (src < 0 || static_cast<uint64_t>(src) + (b - a) > m.phys->size) continue;
-        std::memcpy(out.data() + (a - t0), m.phys->base + src, static_cast<size_t>(b - a));
+        out.push_back({a - t0, m.phys->base + src, b - a, m.phys});
     }
+    return true;
+}
+}  // namespace
+
+bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out) {
+    std::vector<VSeg> segs;
+    if (!virtual_segments(t, segs)) return false;
+    out.assign(static_cast<size_t>(t.storage_size), 0);
+    for (const VSeg& s : segs) std::memcpy(out.data() + s.at, s.ptr, static_cast<size_t>(s.len));
+    return true;
+}
+
+const uint8_t* texture_virtual_direct(const Texture& t, Ref<MemoryPool>& keep) {
+    std::vector<VSeg> segs;
+    if (!virtual_segments(t, segs) || segs.empty()) return nullptr;
+    // a later map over the same range wins in the gather; the direct pointer is only used when the range is one piece
+    if (segs.size() != 1 || segs[0].at != 0 || segs[0].len != t.storage_size) return nullptr;
+    keep = segs[0].keep;
+    return segs[0].ptr;
+}
+
+bool texture_hash_virtual(const Texture& t, uint64_t& hash) {
+    MemoryPool* vp = t.vpool.get();
+    if (!vp || !t.storage_size) return false;
+    std::vector<VSeg> segs;
+    if (!virtual_segments(t, segs)) return false;
+    uint64_t h = 0x9E3779B97F4A7C15ull ^ t.storage_size;
+    for (const VSeg& s : segs) h = hash_bytes(s.ptr, static_cast<size_t>(s.len)) ^ (h * 0xC2B2AE3D27D4EB4Full + s.at);   // the position of the segment is part of the hash
+    hash = h;
     return true;
 }
 
@@ -116,6 +159,7 @@ void textures_cpu_wrote(const void* lo, uint64_t size) {
         }
     }
     for (auto& t : hit) {
+        tx_mark("tx.flush", t.get());
         tev(t.get(), "cpu_wrote", reinterpret_cast<uint64_t>(lo), size);
         t->cpu_dirty.store(true);
         gpu::mark_texture_cpu_dirty(t.get());
@@ -160,6 +204,32 @@ void textures_mark_override_candidates_dirty() {
     for (auto& t : hit) {
         t->cpu_dirty.store(true);
         gpu::mark_texture_cpu_dirty(t.get());
+    }
+}
+
+std::atomic<uint64_t> g_tex_scan_epoch{1};
+std::atomic<bool> g_tex_prep_on{false};
+
+void textures_note_bound(TexturePool* tp, const uint64_t* handles, int count) {
+    if (!tp || !handles || count <= 0 || !g_tex_prep_on.load(std::memory_order_relaxed) || !gpu::active()) return;
+    thread_local uint64_t t_epoch = 0;
+    thread_local uint64_t t_seen[256];
+    const uint64_t ep = g_tex_scan_epoch.load(std::memory_order_relaxed);
+    if (ep != t_epoch) {
+        std::memset(t_seen, 0, sizeof t_seen);
+        t_epoch = ep;
+    }
+    std::shared_lock<std::shared_mutex> lk(tp->lock, std::defer_lock);
+    for (int i = 0; i < count; ++i) {
+        const uint64_t key = handles[i] * 0x9E3779B97F4A7C15ull ^ reinterpret_cast<uint64_t>(tp);
+        uint64_t& slot = t_seen[(key >> 56) & 255];
+        if (slot == key) continue;                         // looked at since the last bump: nothing new can be waiting behind it
+        slot = key;
+        if (!lk.owns_lock()) lk.lock();
+        const uint32_t tid = handle_texture_id(handles[i]);
+        if (static_cast<int>(tid) >= tp->count || tid >= tp->entries.size()) continue;
+        const TexturePool::Entry& e = tp->entries[tid];
+        if (e.used && e.tex) gpu::texture_bound(e.tex.get());
     }
 }
 
