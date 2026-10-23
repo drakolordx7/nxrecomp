@@ -496,6 +496,29 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    if (kw == "@objs") {
+        if (n < 2) return usage(msg, "@objs <class>... (door dock pickup special actor platform trigger player or a vtable offset)");
+        Step s = make(StepKind::Objs);
+        s.text = rest_after_first_word(body);
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@watch") {
+        if (n < 2 || n > 3) return usage(msg, "@watch on [vely|posy|both] | @watch off");
+        Step s = make(StepKind::Watch);
+        s.text = lower(t[1]);
+        if (s.text != "on" && s.text != "off") return fail_with(msg, "@watch: expected on or off, got '" + t[1] + "'");
+        s.y = 3;
+        if (n == 3) {
+            const std::string w = lower(t[2]);
+            if (w == "vely") s.y = 1; else if (w == "posy") s.y = 2; else if (w == "both") s.y = 3;
+            else return fail_with(msg, "@watch on: expected vely, posy or both, got '" + t[2] + "'");
+        }
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "@run") {
         std::vector<std::string> pos;
         int64_t timeout = -1;

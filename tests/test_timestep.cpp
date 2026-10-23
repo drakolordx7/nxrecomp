@@ -583,3 +583,76 @@ NXTEST(update_loop_runs_one_tick_per_frame) {
         CHECK_NEAR(elapsed_in_game, 50.0 / hz, 50.0 / hz * 0.01);
     }
 }
+
+// The stuck tracker takes one sample per 1/60 s of game time: the entry hook returns nonzero ("handled", the call is skipped) for the calls
+// in between and 0 for the calls that take a sample.
+NXTEST(stuck_tracker_samples_once_per_tick_at_240hz) {
+    Guard guard;
+    ts::set_clock_for_tests(&fake_clock);
+    ts::set_deterministic_for_tests(1.0 / 240.0);
+    ts::Config c = base_cfg(ts::Mode::Real);
+    ts::install(c);
+    const uint64_t b = c.game_base;
+    ::Ctx ctx{};
+
+    // One frame publishes the step; the tracker is then called once per player tick (every call here).
+    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_NEAR(ts::current_dt(), 1.0 / 240.0, 1e-7);
+
+    int zeros = 0;
+    for (int i = 1; i <= 12; i++) {
+        const int r = nx_hook_entry(&ctx, b + ts::site::kStuckAddState);
+        if (r == 0) zeros++;
+        if (i % 4 == 0) CHECK_EQ(r, 0);
+        else CHECK(r != 0);
+    }
+    CHECK_EQ(zeros, 3);
+}
+
+NXTEST(stuck_tracker_samples_every_call_at_60hz) {
+    Guard guard;
+    ts::set_clock_for_tests(&fake_clock);
+    ts::set_deterministic_for_tests(1.0 / 60.0);
+    ts::Config c = base_cfg(ts::Mode::Real);
+    ts::install(c);
+    const uint64_t b = c.game_base;
+    ::Ctx ctx{};
+
+    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_NEAR(ts::current_dt(), 1.0 / 60.0, 1e-7);
+    for (int i = 0; i < 24; i++) CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kStuckAddState), 0);
+}
+
+NXTEST(stuck_tracker_samples_60_of_144) {
+    Guard guard;
+    ts::set_clock_for_tests(&fake_clock);
+    ts::set_deterministic_for_tests(1.0 / 144.0);
+    ts::Config c = base_cfg(ts::Mode::Real);
+    ts::install(c);
+    const uint64_t b = c.game_base;
+    ::Ctx ctx{};
+
+    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_NEAR(ts::current_dt(), 1.0 / 144.0, 1e-7);
+    int zeros = 0;
+    for (int i = 0; i < 144; i++)
+        if (nx_hook_entry(&ctx, b + ts::site::kStuckAddState) == 0) zeros++;
+    CHECK_NEAR(zeros, 60, 1);
+}
+
+NXTEST(stuck_tracker_off_by_config) {
+    Guard guard;
+    ts::set_clock_for_tests(&fake_clock);
+    nxrt::config_load_string("[time]\nfix_stuck_tracker = 0\n");
+    ts::Config c = ts::load_config();
+    CHECK(!c.fix_stuck_tracker);
+    // 1/240 s would be handled by 3 of 4 calls with the fix on; with the fix off every call goes through.
+    ts::set_deterministic_for_tests(1.0 / 240.0);
+    ts::install(c);
+    const uint64_t b = c.game_base;
+    ::Ctx ctx{};
+
+    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    for (int i = 0; i < 12; i++) CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kStuckAddState), 0);
+    nxrt::config_clear();
+}
