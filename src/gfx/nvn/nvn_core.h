@@ -205,6 +205,7 @@ bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out);
 Ref<Texture> texture_registry_find_alias(const Texture* t);
 // [nvn] trace_tex_events = 1: logs the life of block-compressed 128x128 cube textures (init, writes by the CPU, copies, uploads) as nvn.tev lines.
 void tev(const Texture* t, const char* what, uint64_t a = 0, uint64_t b = 0);
+void textures_mark_override_candidates_dirty();   // small BC7 sRGB textures: upload again (nxrt/tex_override.h)
 
 // NVNtextureHandle = (sampler id << 20) | texture id
 constexpr uint64_t make_texture_handle(uint32_t tex_id, uint32_t sampler_id) { return (static_cast<uint64_t>(sampler_id) << 20) | (tex_id & 0xfffffu); }

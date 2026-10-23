@@ -139,6 +139,24 @@ Ref<Texture> texture_registry_find_alias(const Texture* t) {
     return Ref<Texture>();
 }
 
+void textures_mark_override_candidates_dirty() {
+    std::vector<Ref<Texture>> hit;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        for (auto& kv : g_by_start) {
+            Texture* t = kv.second;
+            if (t->destroyed.load() || !t->fmt || t->fmt->vk != VK_FORMAT_BC7_SRGB_BLOCK || t->levels != 1 || t->layers != 1) continue;
+            if (t->b.width > 128 || t->b.height > 128 || t->b.samples > 1) continue;
+            t->ref();
+            hit.emplace_back(t);
+        }
+    }
+    for (auto& t : hit) {
+        t->cpu_dirty.store(true);
+        gpu::mark_texture_cpu_dirty(t.get());
+    }
+}
+
 size_t texture_registry_size() {
     std::lock_guard<std::mutex> lk(g_mu);
     return g_by_start.size();

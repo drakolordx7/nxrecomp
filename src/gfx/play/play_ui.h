@@ -17,6 +17,7 @@ struct LiveStatus {
     int pads = 0;                      // open gamepads
     std::string pad_name;              // the first one
     bool pad_gyro = false, pad_rumble = false;
+    const char* prompt_now = "";       // the button prompt style shown right now ("xbox" when Auto follows an Xbox pad); the Controller tab shows it under Auto
     double fps = 0;                    // presented frames per second (measured over the last second)
     const char* present_mode = "";     // "fifo" "mailbox" "immediate" ...
     const char* window_mode = "";      // "windowed" "borderless" "exclusive" (what the window is, not what the settings ask)
