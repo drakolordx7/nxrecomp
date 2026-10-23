@@ -19,7 +19,7 @@ void set_game_base(uint64_t b);
 // The warp sequence of the practice mod (docs/mpr/hooks.md section 8), executed with the live context. false: not possible now (no state manager yet).
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
 bool have_state_manager();
-// @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x44, 8 bytes per item); item -1 = every upgrade.
+// @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x2c, 8 bytes per item: amount at +0, capacity at +4); item -1 = every upgrade.
 bool grant(int64_t item, int32_t amount, int32_t capacity);
 // @call: the guest function at main+offset with arguments (numbers, $gs $ps $mgr $player); false and *err when an argument is bad or the game is not ready.
 bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err);
@@ -50,7 +50,7 @@ public:
     size_t steps_total() const { return script_.steps.size(); }
     size_t steps_done() const { return idx_; }
     int fail_line() const { return fail_line_; }
-    bool has_key_steps() const { return has_keys_; }    // the loaded script has at least one key / keydown / keyup step
+    bool has_key_steps() const { return has_keys_ || !live_path_.empty(); }    // the loaded script has at least one key / keydown / keyup step
 
 private:
     Script script_;

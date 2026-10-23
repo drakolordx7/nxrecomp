@@ -16,10 +16,19 @@ bool guest_read(uint64_t addr, void* out, size_t n) {
     return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(addr), out, n, &got) && got == n;
 }
 
+// A direct store (after a read that proves the page is mapped, under an exception guard). WriteProcessMemory looks the region up first (NtQueryVirtualMemory) and for an address in the guest heap that
+// lookup takes tens of milliseconds (measured 56 ms per call against the player object, 3 to 10 us elsewhere), once per frame: the game ran at 8 frames
+// per second. ReadProcessMemory has no such lookup (2 us).
 bool guest_write(uint64_t addr, const void* in, size_t n) {
     if (addr < 0x10000) return false;
-    SIZE_T got = 0;
-    return WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(addr), in, n, &got) && got == n;
+    uint8_t probe[64];
+    if (n > sizeof probe || !guest_read(addr, probe, n)) return false;      // unmapped or reserved: a read says so in 2 us (a fault here would reach the runtime's own handler first)
+    __try {
+        std::memcpy(reinterpret_cast<void*>(addr), in, n);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 
 namespace {

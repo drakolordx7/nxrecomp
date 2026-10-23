@@ -8,6 +8,9 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <vector>
+
+#include <windows.h>
 
 #include "play/play_aim.h"
 
@@ -513,4 +516,27 @@ NXTEST(aim_block_names_nonempty) {
         CHECK(name != nullptr);
         CHECK_MSG(name != nullptr && name[0] != '\0', "block " + std::to_string(i) + " has no name");
     }
+}
+
+NXTEST(guest_write_stores_bytes) {
+    std::vector<uint8_t> buf(8, 0);
+    const uint8_t src[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    CHECK(play::guest_write(A(buf.data()), src, sizeof src));
+    for (size_t i = 0; i < sizeof src; ++i) CHECK_EQ(buf[i], src[i]);
+}
+
+NXTEST(guest_write_rejects_low_addresses) {
+    const uint8_t src[8] = {9, 9, 9, 9, 9, 9, 9, 9};
+    CHECK(!play::guest_write(0, src, sizeof src));
+    CHECK(!play::guest_write(0x8000, src, sizeof src));
+}
+
+NXTEST(guest_write_fails_on_reserved_page) {
+    // address space reserved but never committed: there is nothing to write into
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+    REQUIRE(page != nullptr);
+    CHECK(A(page) >= 0x10000);
+    const uint8_t src[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    CHECK(!play::guest_write(A(page), src, sizeof src));
+    CHECK(VirtualFree(page, 0, MEM_RELEASE));
 }
