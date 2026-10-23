@@ -514,6 +514,15 @@ TexResolved resolve_image(const BindingDesc& d) {
     return r;
 }
 
+// True when two texture objects are the same image: the object itself, or another object over the same storage (S4f: objects over one piece of
+// memory share one image, so the one the pass renders to and the one a shader samples can be two objects).
+bool shares_image(Texture* a, const Texture* b) {
+    if (!a || !b) return false;
+    if (a == b) return true;
+    if (!tex_gpu(a)) return false;
+    return a->gpu != nullptr && a->gpu == b->gpu;
+}
+
 // True when a texture the program samples is the depth attachment of the current target set: the draw then runs in a pass whose depth
 // attachment is read-only (DEPTH_STENCIL_READ_ONLY_OPTIMAL serves as attachment and as sampled layout).
 bool samples_depth_target(const ProgLayout& pl) {
@@ -522,16 +531,16 @@ bool samples_depth_target(const ProgLayout& pl) {
         if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
         const DescriptorBinding& b = d.shader->refl.bindings[d.index];
         if (b.nvn.source != NvnSource::SamplerBinding && b.nvn.source != NvnSource::HandleInUniform) continue;
-        if (resolve_texture(d).tex == S.depth_tex.get()) return true;
+        if (shares_image(resolve_texture(d).tex, S.depth_tex.get())) return true;
     }
     return false;
 }
 
 // A colour attachment cannot be sampled in the pass that renders to it (no feedback loops): the binding gets the dummy view.
-bool is_color_feedback(const Texture* t) {
+bool is_color_feedback(Texture* t) {
     if (!t) return false;
     for (uint32_t i = 0; i < S.ncolor; ++i)
-        if (S.color_tex[i].get() == t) return true;
+        if (shares_image(t, S.color_tex[i].get())) return true;
     return false;
 }
 
@@ -552,7 +561,7 @@ void prepare_textures(const ProgLayout& pl) {
         TexResolved r = resolve_texture(d);
         if (!r.tex) continue;
         if (!tex_gpu(r.tex)) continue;
-        if (r.tex == S.depth_tex.get() || is_color_feedback(r.tex)) continue;   // owned by the pass
+        if (shares_image(r.tex, S.depth_tex.get()) || is_color_feedback(r.tex)) continue;   // owned by the pass
         if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != tex_sampled_layout(r.tex)) need.push_back(r.tex);
     }
     if (need.empty() && need_storage.empty()) return;
@@ -969,7 +978,7 @@ void scene_upscale_for_draw(const ProgLayout& pl) {
         if (b.nvn.source != NvnSource::SamplerBinding && b.nvn.source != NvnSource::HandleInUniform) continue;
         if (view_type_for(b) != VK_IMAGE_VIEW_TYPE_2D) continue;
         TexResolved r = resolve_texture(d);
-        if (!r.tex || !tex_gpu(r.tex) || r.tex == S.depth_tex.get()) continue;
+        if (!r.tex || !tex_gpu(r.tex) || shares_image(r.tex, S.depth_tex.get())) continue;
         const VkExtent3D se = tex_extent(r.tex, 0);
         if (se.width >= te.width && se.height >= te.height) return;          // nothing to enlarge
         extras::Fsr1Spatial* su = extras::scene_upscaler(&device());
