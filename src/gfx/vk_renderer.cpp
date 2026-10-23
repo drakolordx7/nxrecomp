@@ -8,8 +8,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <thread>
 
 #include "nxrt/config.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/gfx.h"
 #include "nxrt/log.h"
 #include "nxrt/lowlat.h"
@@ -186,6 +188,43 @@ struct Renderer::Impl {
     uint32_t* cap_h = nullptr;
 
     RendererStats st;
+
+    // latency probe (S18): with the frame trace on, the present submission also signals a timeline semaphore and a watcher thread
+    // marks "lat.gpudone" (arg = frame id) when the GPU has finished that frame's present command buffer (and so, in queue order, the frame).
+    VkSemaphore probe_sem = VK_NULL_HANDLE;
+    uint64_t probe_next = 0;
+    uint64_t probe_ids[256] = {};
+    std::thread probe_th;
+    std::atomic<bool> probe_stop{false};
+    std::atomic<uint64_t> probe_published{0};
+
+    void probe_init() {
+        if (probe_sem || headless || !ft::on()) return;
+        VkSemaphoreTypeCreateInfo tci = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+        tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+        VkSemaphoreCreateInfo ci = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci};
+        if (vkCreateSemaphore(vk(), &ci, nullptr, &probe_sem) != VK_SUCCESS) { probe_sem = VK_NULL_HANDLE; return; }
+        probe_th = std::thread([this] {
+            log_set_thread_name("lat-watch");
+            static const uint16_t z = ft::zone_id("lat.gpudone");
+            uint64_t v = 1;
+            while (!probe_stop.load()) {
+                if (probe_published.load() < v) { std::this_thread::sleep_for(std::chrono::microseconds(200)); continue; }
+                VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
+                wi.semaphoreCount = 1;
+                wi.pSemaphores = &probe_sem;
+                wi.pValues = &v;
+                if (vkWaitSemaphores(vk(), &wi, 50ull * 1000 * 1000) != VK_SUCCESS) continue;
+                const uint64_t t = ft::now_ns();
+                ft::event(z, t, t, static_cast<uint32_t>(probe_ids[v % 256]));
+                ++v;
+            }
+        });
+    }
+    void probe_stop_join() {
+        if (probe_th.joinable()) { probe_stop.store(true); probe_th.join(); }
+        if (probe_sem) { vkDestroySemaphore(vk(), probe_sem, nullptr); probe_sem = VK_NULL_HANDLE; }
+    }
 
     VkDevice vk() const { return dev->device(); }
 
@@ -484,6 +523,7 @@ struct Renderer::Impl {
 
     void destroy_all() {
         dev->wait_idle();
+        probe_stop_join();
         for (auto& s : slots) {
             if (s.queries) vkDestroyQueryPool(vk(), s.queries, nullptr);
             if (s.acquire) vkDestroySemaphore(vk(), s.acquire, nullptr);
@@ -663,22 +703,34 @@ void Renderer::end_frame() {
     VkSubmitInfo2 si = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
     si.commandBufferInfoCount = 1;
     si.pCommandBufferInfos = &cb;
+    VkSemaphoreSubmitInfo signals[2] = {signal, {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO}};
     if (!s.headless) {
         si.waitSemaphoreInfoCount = 1;
         si.pWaitSemaphoreInfos = &wait;
         si.signalSemaphoreInfoCount = 1;
-        si.pSignalSemaphoreInfos = &signal;
+        si.pSignalSemaphoreInfos = signals;
     }
     // low latency markers go outside the queue lock (they take it themselves: the validation layer wants calls on one swapchain from different threads apart)
     uint64_t present_id = 0;
+    uint64_t probe_value = 0;
     if (!s.headless && s.latency) {
         const uint64_t id = s.latency->present_begin();
         if (s.latency->enabled() && s.latency->backend() == extras::LowLatency::Backend::Reflex) present_id = id;
+        s.probe_init();
+        if (s.probe_sem) {
+            probe_value = ++s.probe_next;
+            s.probe_ids[probe_value % 256] = s.latency->present_sim_id();
+            signals[1].semaphore = s.probe_sem;
+            signals[1].value = probe_value;
+            signals[1].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            si.signalSemaphoreInfoCount = 2;
+        }
     }
     {
         std::lock_guard<std::mutex> lk(s.dev->queue_mutex());
         VkResult r = vkQueueSubmit2(s.dev->queue(), 1, &si, slot.fence);
         if (r != VK_SUCCESS) NXLOG_E(kTag, "vkQueueSubmit2 failed (%d)", static_cast<int>(r));
+        else if (probe_value) s.probe_published.store(probe_value);
         if (!s.headless) {
             VkPresentInfoKHR pi = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
             pi.waitSemaphoreCount = 1;

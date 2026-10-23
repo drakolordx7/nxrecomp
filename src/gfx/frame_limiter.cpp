@@ -119,8 +119,16 @@ void FrameLimiter::set_pre_frame_hook(PreFrameFn fn, void* user) {
     impl_->pre_fn.store(fn, std::memory_order_release);
 }
 
-uint64_t FrameLimiter::begin_frame() {
+void FrameLimiter::run_pre_frame_hook() {
     if (PreFrameFn fn = impl_->pre_fn.load(std::memory_order_acquire)) fn(impl_->pre_user.load(std::memory_order_relaxed));
+}
+
+uint64_t FrameLimiter::begin_frame() {
+    run_pre_frame_hook();
+    return begin_frame_nohook();
+}
+
+uint64_t FrameLimiter::begin_frame_nohook() {
     Impl& s = *impl_;
     const uint64_t entry = now_ns();
     const double fps = s.target_fps.load();
