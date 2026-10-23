@@ -1,6 +1,11 @@
 # mpr_setup: first-run setup for Metroid Prime Remastered PC (dump -> game folder). Windows x64, clang-cl + Ninja.
 #   pwsh -File tools\setup\scripts\build.ps1 [-Clean]
 cmake_minimum_required(VERSION 3.20)
+# Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
+# included, uses it; the libraries this one links must agree (a mismatch is a link error).
+if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 project(mpr_setup C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

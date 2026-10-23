@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+# Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
+# included, uses it; the libraries this one links must agree (a mismatch is a link error).
+if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 project(bc7dec LANGUAGES CXX)
 
 # Standalone BC7 decoder for the oracle. Uses the reference decoder (bc7decomp_ref.cpp) from the
