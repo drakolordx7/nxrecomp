@@ -87,6 +87,10 @@ private:
 
 namespace nxrt::tt::detail {
 bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err);   // tt_probe.cpp: @objs
+bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // tt_probe.cpp: @probe
+bool poke_memory(const std::string& in_path, std::string* err);   // tt_probe.cpp: @poke
+bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err);   // tt_probe.cpp: @peek
+bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // tt_probe.cpp: @rays
 bool watch_start(::Ctx* c, int what);      // tt_probe.cpp: arm the debug-register write watch (1 vel.y, 2 pos.y, 3 both); false when the player is not readable yet
 void watch_stop();                          // disarm and log the hits
 void watch_flush(uint64_t frame);           // log the hits recorded since the last call (once per frame)
