@@ -243,6 +243,7 @@ struct Program : Obj {
     uint64_t code_hash[6] = {};
     bool linked = false;
     uint32_t serial = 0;
+    std::atomic<uint8_t> gpl_bound{0};      // 1 once a command buffer was recorded with these shaders (the shader parts are queued first); reset by SetShaders
     std::string label;
 };
 
