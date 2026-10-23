@@ -48,6 +48,11 @@
 //                                     the writing instruction, the frame and the value (lines `watch:` in the log); off stops it and logs how many hits were seen
 //   @objs <class>...                  list every live object of the named classes with its position (door dock pickup special actor platform trigger player, or a main-module
 //                                     vtable offset): a memory scan for the vtable pointer; result in <out>/objs.txt, one `class x y z addr` line per object
+//   @rays <in> <out>                  batch of ray casts against the static collision of the loaded areas (the game's own NCollisionMP1::RayStaticIntersection): in = lines `x y z dx dy dz len`
+//                                     (dir is a unit vector), out = lines `hit t px py pz nx ny nz` (hit 0/1). Runs in the frame hook, the game stands still meanwhile
+//   @probe <in> <out>                 the player's own collision box against the static world at positions: in = lines `x y z`, out = `0` free / `1` collides per line
+//   @poke <in>                        write guest memory: lines `addr [off ...] : hexbytes` (pointers followed as in @peek; a token `+N` adds N without following); a development aid, e.g. to restore health
+//   @peek <in> <out>                  read guest memory: in = lines `addr len [off ...]` (hex addr; each off follows a 64-bit pointer first), out = one hex line per request (`-` on failure)
 //   @timeout <n>                      default timeout (frames) of every later wait; initial 3600; 0 = none
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
@@ -95,6 +100,10 @@ enum class StepKind : uint8_t {
     Call,        // count = main-module offset of a guest function, text = its arguments (numbers or $gs $ps $mgr $player), run in the frame hook
     Objs,        // text = class names (door dock pickup special actor platform trigger, or a vtable offset): scan memory for instances, write <out>/objs.txt
     Watch,       // text = on|off|dump, y = 1 velocity.y, 2 position.y, 3 both (hardware write watch on the player, see tt_probe.cpp)
+    Probe,       // text = "IN OUT": does the player's collision box collide with the static world at these positions (S26)
+    Poke,        // text = in-file: write guest memory (S26, development aid)
+    Peek,        // text = "IN OUT": read guest memory (S26)
+    Rays,        // text = "IN OUT": batch of static-collision ray casts (S26)
     PressUntil,  // buttons pressed 4 frames every `count` frames until the condition (field/op/x/id, as Assert) holds; timeout
 };
 

@@ -350,6 +350,33 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 advance();
                 continue;
             }
+            case StepKind::Probe: {
+                std::string why;
+                const size_t sp = st.text.find(' ');
+                if (sp == std::string::npos || !detail::probe_positions(c, st.text.substr(0, sp), st.text.substr(sp + 1), &why)) { fail(st, "@probe: " + why); return; }
+                advance();
+                continue;
+            }
+            case StepKind::Poke: {
+                std::string why;
+                if (!detail::poke_memory(st.text, &why)) { fail(st, "@poke: " + why); return; }
+                advance();
+                continue;
+            }
+            case StepKind::Peek: {
+                std::string why;
+                const size_t sp = st.text.find(' ');
+                if (sp == std::string::npos || !detail::peek_memory(st.text.substr(0, sp), st.text.substr(sp + 1), &why)) { fail(st, "@peek: " + why); return; }
+                advance();
+                continue;
+            }
+            case StepKind::Rays: {
+                std::string why;
+                const size_t sp = st.text.find(' ');
+                if (sp == std::string::npos || !detail::cast_rays(c, st.text.substr(0, sp), st.text.substr(sp + 1), &why)) { fail(st, "@rays: " + why); return; }
+                advance();
+                continue;
+            }
             case StepKind::Watch:
                 if (st.text == "off") detail::watch_stop();
                 else if (!detail::watch_start(c, static_cast<int>(st.y))) { fail(st, "@watch: the player is not readable (not in a level, or not called from the game hook)"); return; }
