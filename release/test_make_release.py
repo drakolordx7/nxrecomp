@@ -4,6 +4,7 @@ import hashlib
 import io
 import os
 import shutil
+import struct
 import tempfile
 import unittest
 import zipfile
@@ -67,6 +68,45 @@ def read_bytes(path):
 
 def sha(path):
     return hashlib.sha256(read_bytes(path)).hexdigest()
+
+
+def make_pe(imports=(), delay=()):
+    """A minimal PE32+ file with one section; its import and delay-import tables name the given DLLs."""
+    imp_rva = 0x1000
+    dly_rva = imp_rva + 20 * (len(imports) + 1)
+    str_rva = dly_rva + 32 * (len(delay) + 1)
+    names = list(imports) + list(delay)
+    strings, rvas = b'', []
+    for n in names:
+        rvas.append(str_rva + len(strings))
+        strings += n.encode() + b'\0'
+    sec = b''
+    for i in range(len(imports)):
+        sec += struct.pack('<IIIII', 0, 0, 0, rvas[i], 0)          # OriginalFirstThunk, Time, Forwarder, Name, FirstThunk
+    sec += bytes(20)
+    for j in range(len(delay)):
+        sec += struct.pack('<IIIIIIII', 1, rvas[len(imports) + j], 0, 0, 0, 0, 0, 0)   # Attributes=1: RVA form
+    sec += bytes(32) + strings
+    assert len(sec) <= 0x200
+    dos = bytearray(0x40)
+    dos[0:2] = b'MZ'
+    struct.pack_into('<I', dos, 0x3C, 0x40)
+    coff = struct.pack('<HHIIIHH', 0x8664, 1, 0, 0, 0, 240, 0x0022)
+    opt = bytearray(240)
+    struct.pack_into('<H', opt, 0, 0x20B)
+    struct.pack_into('<Q', opt, 24, 0x140000000)
+    struct.pack_into('<II', opt, 32, 0x1000, 0x200)
+    struct.pack_into('<I', opt, 56, 0x2000)
+    struct.pack_into('<I', opt, 60, 0x200)
+    struct.pack_into('<I', opt, 108, 16)
+    struct.pack_into('<II', opt, 112 + 8, imp_rva, 20 * (len(imports) + 1))          # directory 1: imports
+    if delay:
+        struct.pack_into('<II', opt, 112 + 8 * 13, dly_rva, 32 * (len(delay) + 1))   # directory 13: delay imports
+    sect = bytearray(40)
+    sect[:8] = b'.idata\0\0'
+    struct.pack_into('<IIIIIIHHI', sect, 8, len(sec), 0x1000, 0x200, 0x200, 0, 0, 0, 0, 0x40000040)
+    head = bytes(dos) + b'PE\0\0' + bytes(coff) + bytes(opt) + bytes(sect)
+    return head + bytes(0x200 - len(head)) + sec
 
 
 class BuildTests(unittest.TestCase):
@@ -263,6 +303,75 @@ class BuildTests(unittest.TestCase):
                 if label:
                     self.assertIn(label, log)
                 self.assertEqual(self.leftovers(self.out), [])
+
+    def test_exe_importing_only_kernel32_passes(self):
+        write(os.path.join(self.repo, *EXE_REL.split('/')), make_pe(['kernel32.dll']))
+        code, log = self.run_build()
+        self.assertEqual(code, 0, log)
+        self.assertNotIn('crt-import', log)
+
+    def test_exe_importing_vcruntime_is_refused(self):
+        write(os.path.join(self.repo, *EXE_REL.split('/')), make_pe(['kernel32.dll', 'vcruntime140.dll']))
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('crt-import: mpr.exe imports vcruntime140.dll', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_exe_importing_ucrt_api_set_is_refused(self):
+        write(os.path.join(self.repo, *EXE_REL.split('/')), make_pe(['api-ms-win-crt-runtime-l1-1-0.dll']))
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('crt-import: mpr.exe imports api-ms-win-crt-runtime-l1-1-0.dll', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_dll_with_crt_delay_import_is_refused(self):
+        dll = os.path.join(self.repo, 'game-build', 'build', 'release', 'astcdec-avx2-shared.dll')
+        write(dll, make_pe(['kernel32.dll'], delay=['MSVCP140.dll']))
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('crt-import: astcdec-avx2-shared.dll imports msvcp140.dll', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_unreadable_dll_is_a_warning_only(self):
+        dll = os.path.join(self.repo, 'game-build', 'build', 'release', 'astcdec-avx2-shared.dll')
+        for label, data in (('not a PE file', b'plain text, not a program'),
+                            ('cut short', make_pe(['vcruntime140.dll'])[:300])):
+            with self.subTest(label):
+                write(dll, data)
+                code, log = self.run_build()
+                self.assertEqual(code, 0, log)
+                self.assertIn('astcdec-avx2-shared.dll is not a readable PE file', log)
+                self.assertNotIn('crt-import', log)
+
+
+class PeImportTests(unittest.TestCase):
+    def test_reader_returns_normal_and_delay_imports_lower_cased_in_order(self):
+        data = make_pe(['KERNEL32.dll', 'vcruntime140.dll', 'kernel32.DLL'],
+                       delay=['API-MS-WIN-CRT-runtime-l1-1-0.dll', 'Vulkan-1.dll'])
+        self.assertEqual(mr.pe_imports(data), ['kernel32.dll', 'vcruntime140.dll',
+                                               'api-ms-win-crt-runtime-l1-1-0.dll', 'vulkan-1.dll'])
+
+    def test_reader_gives_none_for_data_that_is_not_a_readable_pe(self):
+        self.assertIsNone(mr.pe_imports(b''))
+        self.assertIsNone(mr.pe_imports(b'plain text, not a program'))
+        self.assertIsNone(mr.pe_imports(make_pe(['kernel32.dll'])[:300]))
+        self.assertIsNone(mr.pe_imports(make_pe(['kernel32.dll'])[:0x50]))
+
+    def test_reader_handles_a_pe_with_no_imports(self):
+        self.assertEqual(mr.pe_imports(make_pe([])), [])
+
+    def test_zip_side_audit_refuses_crt_import_once_per_dll(self):
+        tmp = tempfile.mkdtemp(prefix='mpr-crt-zip-')
+        self.addCleanup(shutil.rmtree, tmp, True)
+        zpath = os.path.join(tmp, 'release.zip')
+        with zipfile.ZipFile(zpath, 'w') as z:
+            z.writestr(ROOT + '/mpr.exe', make_pe(['vcruntime140.dll', 'msvcp140.dll'], delay=['vcruntime140.dll']))
+        with zipfile.ZipFile(zpath) as z, mock.patch.dict(mr.SIZE_RULES, TINY_RULES):
+            zip_problems = []
+            a = mr.audit_files(mr.zip_refs(z, ROOT, zip_problems), {'mpr.exe'}, {})
+        self.assertEqual(zip_problems, [])
+        self.assertEqual(a.problems, ['crt-import: mpr.exe imports vcruntime140.dll',
+                                      'crt-import: mpr.exe imports msvcp140.dll'])
 
 
 if __name__ == '__main__':
