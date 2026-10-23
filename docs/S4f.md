@@ -36,7 +36,7 @@ New groups or cases: `gfx_nvn_prim_counters`, `gfx_nvn_layered_target`, `gfx_nvn
 ## Open
 
 * First-person arm cannon: the integer-attribute fix should place it; the last run reached the cutscene Samus (correct, lit and skinned) but the first-person frame was not checked before the session ended. Look at frame 9300 onward in `work/run_nvn3/shots`.
-* Engine fire jets of the gunship still need a check against Eden (compare with `[time] mode = off` and the display defaults).
+* Engine fire jets of the gunship: checked at 60 and 240 steps per second and in an ultrawide window, no offset from the nozzles found (debug note 445).
 * The black spike below the gunship: not isolated (it may have been a skinned-mesh artefact; look again).
 * Eden comparison metrics: the Eden capture and `align_frames.py` are ready; the dense run for numbers was not done.
 * The sweep of the first rooms against Eden (needs stick input on both sides).
