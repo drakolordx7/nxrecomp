@@ -87,9 +87,11 @@ class MiscOps:
     i_hint = i_nop
     i_prfm = i_nop
     i_prfum = i_nop
-    i_yield = i_nop
+    def i_yield(self, f, i, ops):
+        return "nx_spin_hint(0);"
 
-    i_wfe = i_nop
+    def i_wfe(self, f, i, ops):
+        return "nx_spin_hint(1);"
     i_wfi = i_nop
     i_sev = i_nop
     i_sevl = i_nop
