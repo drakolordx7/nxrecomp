@@ -221,6 +221,8 @@ class Fn:
                 self.has_br_fallback = True
                 return '{ jt = %s; goto L_dispatch; }' % X(rn)
             raise Unimpl('br%d' % opc)
+        if w == 0xd503205f or w == 0xd503203f:           # wfe / yield: a spin-wait hint; the runtime may give the host thread away
+            return 'nx_spin_hint(%d);' % (1 if w == 0xd503205f else 0)
         if (w & 0xfffff01f) == 0xd503201f:
             return ';'                                   # nop / hint
         if (w & 0xffe0001f) == 0xd4000001:
