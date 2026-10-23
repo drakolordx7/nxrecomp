@@ -16,11 +16,11 @@ ROOT = 'mpr-test-windows-x64'
 MANIFEST = mr.MANIFEST
 EXPECTED = sorted([
     'mpr.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll',
-    'mpr_setup.exe', 'mpr_setup_cli.exe', 'shader_cache.mprshc', 'README.txt', 'controls.ini',
+    'mpr_setup.exe', 'mpr_setup_cli.exe', 'mpr_launcher.exe', 'shader_cache.mprshc', 'README.txt', 'controls.ini',
     'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
-TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None)}
+TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None), 'launcher': (0, None)}
 EXE_REL = 'game-build/build/release/mpr.exe'
 
 
@@ -43,6 +43,7 @@ def make_fake_repo(root):
         w('game-build/build/release/' + n, b'MZ fake dll')
     w('tools/setup/build/release/bin/mpr_setup.exe', b'MZ fake setup')
     w('tools/setup/build/release/bin/mpr_setup_cli.exe', b'MZ fake setup cli')
+    w('game-build/build/release/mpr_launcher.exe', b'MZ fake launcher')
     w('tools/setup/build/release/bin/astc2bc7.exe', b'MZ tool that must not ship')
     w('work/setup_test/shader_cache.mprshc', mr.PACK_MAGIC + b'\x00' * 1024)
     w('tools/release/templates/README.txt', b'readme\n')
@@ -117,11 +118,13 @@ class BuildTests(unittest.TestCase):
         self.out = os.path.join(self.tmp, 'out')
         self.prompts = make_fake_prompts(os.path.join(self.tmp, 'prompts'))
 
-    def run_build(self, extra=(), repo=None, out=None, hook=None, real_sizes=False, prompts=None):
+    def run_build(self, extra=(), repo=None, out=None, hook=None, real_sizes=False, prompts=None, size_rules=None):
         argv = ['--repo', repo or self.repo, '--out', out or self.out, '--version', 'test',
                 '--prompts-dir', prompts or self.prompts] + list(extra)
         buf = io.StringIO()
-        rules = mock.patch.dict(mr.SIZE_RULES, {}) if real_sizes else mock.patch.dict(mr.SIZE_RULES, TINY_RULES)
+        if size_rules is None:
+            size_rules = {} if real_sizes else TINY_RULES
+        rules = mock.patch.dict(mr.SIZE_RULES, size_rules)
         with rules, contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             code = mr.main(argv, stage_hook=hook)
         return code, buf.getvalue()
@@ -247,6 +250,36 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(code, 2, log)
         self.assertEqual(self.leftovers(self.out), [])
 
+    def test_launcher_ships_beside_mpr_exe_and_in_the_zip(self):
+        code, log = self.run_build()
+        self.assertEqual(code, 0, log)
+        src = os.path.join(self.repo, 'game-build', 'build', 'release', 'mpr_launcher.exe')
+        self.assertTrue(os.path.isfile(os.path.join(self.out, ROOT, 'mpr_launcher.exe')))
+        with zipfile.ZipFile(os.path.join(self.out, ROOT + '.zip')) as z:
+            self.assertIn(ROOT + '/mpr_launcher.exe', z.namelist())
+            self.assertEqual(z.read(ROOT + '/mpr_launcher.exe'), read_bytes(src))
+
+    def test_missing_launcher_is_a_usage_error(self):
+        os.remove(os.path.join(self.repo, 'game-build', 'build', 'release', 'mpr_launcher.exe'))
+        code, log = self.run_build()
+        self.assertEqual(code, 2, log)
+        self.assertIn('mpr_launcher.exe not found', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_launcher_importing_vcruntime_is_refused(self):
+        write(os.path.join(self.repo, 'game-build', 'build', 'release', 'mpr_launcher.exe'),
+              make_pe(['kernel32.dll', 'vcruntime140.dll']))
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('crt-import: mpr_launcher.exe imports vcruntime140.dll', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_launcher_below_size_minimum_is_refused(self):
+        code, log = self.run_build(size_rules=dict(TINY_RULES, launcher=(100 * mr.KIB, 40 * mr.MIB)))
+        self.assertEqual(code, 3, log)
+        self.assertIn('size: mpr_launcher.exe is', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
     def test_missing_notices_is_a_usage_error(self):
         os.remove(os.path.join(self.repo, 'tools', 'release', 'templates', 'THIRD_PARTY_NOTICES.txt'))
         code, log = self.run_build()
@@ -342,6 +375,15 @@ class BuildTests(unittest.TestCase):
                 self.assertEqual(code, 0, log)
                 self.assertIn('astcdec-avx2-shared.dll is not a readable PE file', log)
                 self.assertNotIn('crt-import', log)
+
+
+class LauncherSizeRuleTests(unittest.TestCase):
+    def test_launcher_size_limits_are_the_shipped_rule(self):
+        self.assertEqual(mr.SIZE_RULES['launcher'], (100 * mr.KIB, 40 * mr.MIB))
+        self.assertIn('outside the allowed', mr.size_problem('mpr_launcher.exe', 100 * mr.KIB - 1))
+        self.assertIsNone(mr.size_problem('mpr_launcher.exe', 100 * mr.KIB))
+        self.assertIsNone(mr.size_problem('mpr_launcher.exe', 40 * mr.MIB))
+        self.assertIn('outside the allowed', mr.size_problem('mpr_launcher.exe', 40 * mr.MIB + 1))
 
 
 class PeImportTests(unittest.TestCase):
