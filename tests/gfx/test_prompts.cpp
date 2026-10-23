@@ -17,6 +17,7 @@
 #include "nvn_texdata.h"
 #include "nvn_texture_layout.h"
 #include "nxrt/config.h"
+#include "nxrt/input_source.h"
 #include "nxrt/tex_override.h"
 #include "pak.h"
 #include "play/play_types.h"
@@ -137,6 +138,51 @@ NXTEST(keyboard_style_follows_a_rebind) {
     CHECK_EQ(name_of(t, PromptStyle::Keyboard, Ctx::Gameplay, Icon::A), std::string("kbm/space"));
     // a context binding beats the `all` layer for the same input: Space confirms in menus, so it is not the key of jump there
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::B), std::string("kbm/escape"));
+}
+
+NXTEST(keyboard_style_follows_a_rebound_jump_key) {
+    // the one binding of jump (Space in gameplay) moves to G: the B prompt follows it
+    Settings s = default_settings();
+    InputId g;
+    CHECK(parse_input("G", &g));
+    int changed = 0;
+    for (Binding& b : s.bindings) {
+        if (b.act != Act::Jump) continue;
+        b.in = g;
+        ++changed;
+    }
+    CHECK_EQ(changed, 1);
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::B), std::string("kbm/g"));
+}
+
+NXTEST(pad_styles_follow_a_pad_remap) {
+    // South remapped to the Switch X button: the X icon is the bottom button, which prints A (Xbox) or cross (PlayStation)
+    Settings s = default_settings();
+    s.pad.remap[static_cast<int>(PadSrc::South)] = hid::btn(hid::kBtnX);
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::X), std::string("xbox/a"));
+    CHECK_EQ(name_of(s, PromptStyle::PlayStation, Ctx::Menu, Icon::X), std::string("ps/cross"));
+    // South was the only pad button of Switch A (label mode): no pad button presses A now, so the game keeps its own icon
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::A), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::PlayStation, Ctx::Menu, Icon::A), std::string());
+    // the buttons that are not remapped keep their icons
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::B), std::string("xbox/b"));
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::Y), std::string("xbox/y"));
+    // by position Switch B was South: now nothing presses it
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::B, false), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::A, false), std::string("xbox/b"));
+}
+
+NXTEST(a_switch_button_nothing_presses_has_no_pad_icon) {
+    Settings s = default_settings();
+    s.pad.remap[static_cast<int>(PadSrc::LeftShoulder)] = 0;   // remapped to nothing: L has no pad button now
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::L), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::PlayStation, Ctx::Menu, Icon::L), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::R), std::string("xbox/rb"));
+    // a stick click has no icon of its own: a Switch button remapped to a stick click gets no icon
+    Settings t = default_settings();
+    t.pad.remap[static_cast<int>(PadSrc::LeftStick)] = hid::btn(hid::kBtnX);
+    CHECK_EQ(name_of(t, PromptStyle::Xbox, Ctx::Menu, Icon::X), std::string());
+    CHECK_EQ(name_of(t, PromptStyle::Xbox, Ctx::Menu, Icon::Y), std::string("xbox/y"));
 }
 
 NXTEST(auto_follows_the_last_used_device) {

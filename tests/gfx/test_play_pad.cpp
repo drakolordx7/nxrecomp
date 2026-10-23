@@ -68,6 +68,20 @@ hid::StickValue right_stick(int16_t x, int16_t y) {
 
 bool approx(double a, double b, double eps = 1e-5) { return std::fabs(a - b) <= eps; }
 
+// A pad with the given SDL button bits down and the Xbox face labels.
+platform::GamepadRaw xbox_buttons(uint32_t buttons) {
+    platform::GamepadRaw raw = pad_buttons(buttons);
+    for (int i = 0; i < 4; ++i) raw.face_label[i] = kXboxLabels[i];
+    return raw;
+}
+
+// Default settings with one physical source remapped to `bits`.
+play::PadSettings remapped(play::PadSrc src, uint64_t bits) {
+    play::PadSettings cfg;
+    cfg.remap[static_cast<int>(src)] = bits;
+    return cfg;
+}
+
 struct ButtonCase {
     uint32_t sdl;
     uint64_t expect;
@@ -305,4 +319,79 @@ NXTEST(rumble_off_gives_zero) {
     play::map_rumble(1.0f, 1.0f, cfg, &lo, &hi);
     CHECK_EQ(lo, 0);
     CHECK_EQ(hi, 0);
+}
+
+// ---- pad button remapping ----------------------------------------------------------------------------------------------------------
+NXTEST(default_remap_adds_built_in_buttons_together) {
+    // Four presses at once, label mode and the default labels: each adds its built-in buttons.
+    platform::GamepadRaw raw = xbox_buttons((1u << kSouth) | (1u << kEast) | (1u << kLeftShoulder) | (1u << kStart));
+    raw.axes[4] = 32767;
+    const uint64_t expect = hid::btn(hid::kBtnA) | hid::btn(hid::kBtnB) | hid::btn(hid::kBtnL) | hid::btn(hid::kBtnPlus) | hid::btn(hid::kBtnZL);
+    CHECK_EQ(run(raw, play::PadSettings{}).buttons, expect);
+}
+
+NXTEST(remapped_face_button_presses_the_remap) {
+    // South remapped to X: the bottom button gives X only, and East keeps its built-in B.
+    const play::PadSettings cfg = remapped(play::PadSrc::South, hid::btn(hid::kBtnX));
+    CHECK_EQ(run(xbox_buttons(1u << kSouth), cfg).buttons, hid::btn(hid::kBtnX));
+    CHECK_EQ(run(xbox_buttons(1u << kEast), cfg).buttons, hid::btn(hid::kBtnB));
+}
+
+NXTEST(remapped_source_drops_its_built_in_buttons) {
+    // Start remapped to A: no Plus. LeftShoulder remapped to ZR: no L.
+    CHECK_EQ(run(pad_buttons(1u << kStart), remapped(play::PadSrc::Start, hid::btn(hid::kBtnA))).buttons, hid::btn(hid::kBtnA));
+    CHECK_EQ(run(pad_buttons(1u << kLeftShoulder), remapped(play::PadSrc::LeftShoulder, hid::btn(hid::kBtnZR))).buttons,
+             hid::btn(hid::kBtnZR));
+}
+
+NXTEST(remapped_left_trigger_to_a) {
+    // LeftTrigger remapped to A: the trigger gives A and no ZL. The right trigger keeps ZR.
+    const play::PadSettings cfg = remapped(play::PadSrc::LeftTrigger, hid::btn(hid::kBtnA));
+    platform::GamepadRaw raw = pad_buttons(0);
+    raw.axes[4] = 32767;
+    CHECK_EQ(run(raw, cfg).buttons, hid::btn(hid::kBtnA));
+    raw.axes[5] = 32767;
+    CHECK_EQ(run(raw, cfg).buttons, hid::btn(hid::kBtnA) | hid::btn(hid::kBtnZR));
+}
+
+NXTEST(remap_to_zero_does_nothing) {
+    CHECK_EQ(run(xbox_buttons(1u << kSouth), remapped(play::PadSrc::South, 0)).buttons, 0ull);
+    platform::GamepadRaw raw = pad_buttons(0);
+    raw.axes[4] = 32767;
+    CHECK_EQ(run(raw, remapped(play::PadSrc::LeftTrigger, 0)).buttons, 0ull);
+}
+
+NXTEST(remap_to_two_buttons_gives_both) {
+    // East remapped to ZL + L: one press gives both bits, and not B.
+    const uint64_t zl_l = hid::btn(hid::kBtnZL) | hid::btn(hid::kBtnL);
+    CHECK_EQ(run(xbox_buttons(1u << kEast), remapped(play::PadSrc::East, zl_l)).buttons, zl_l);
+}
+
+NXTEST(pad_default_buttons_label_and_position) {
+    using S = play::PadSrc;
+    // label mode: the printed letters; position mode: South B, East A, West Y, North X
+    CHECK_EQ(play::pad_default_buttons(S::South, true), hid::btn(hid::kBtnA));
+    CHECK_EQ(play::pad_default_buttons(S::East, true), hid::btn(hid::kBtnB));
+    CHECK_EQ(play::pad_default_buttons(S::West, true), hid::btn(hid::kBtnX));
+    CHECK_EQ(play::pad_default_buttons(S::North, true), hid::btn(hid::kBtnY));
+    CHECK_EQ(play::pad_default_buttons(S::South, false), hid::btn(hid::kBtnB));
+    CHECK_EQ(play::pad_default_buttons(S::East, false), hid::btn(hid::kBtnA));
+    CHECK_EQ(play::pad_default_buttons(S::West, false), hid::btn(hid::kBtnY));
+    CHECK_EQ(play::pad_default_buttons(S::North, false), hid::btn(hid::kBtnX));
+    // the other sources do not depend on the label question
+    CHECK_EQ(play::pad_default_buttons(S::LeftShoulder, true), hid::btn(hid::kBtnL));
+    CHECK_EQ(play::pad_default_buttons(S::RightShoulder, false), hid::btn(hid::kBtnR));
+    CHECK_EQ(play::pad_default_buttons(S::LeftTrigger, true), hid::btn(hid::kBtnZL));
+    CHECK_EQ(play::pad_default_buttons(S::RightTrigger, false), hid::btn(hid::kBtnZR));
+    CHECK_EQ(play::pad_default_buttons(S::Start, true), hid::btn(hid::kBtnPlus));
+    CHECK_EQ(play::pad_default_buttons(S::Back, true), hid::btn(hid::kBtnMinus));
+    CHECK_EQ(play::pad_default_buttons(S::LeftStick, true), hid::btn(hid::kBtnStickL));
+    CHECK_EQ(play::pad_default_buttons(S::RightStick, false), hid::btn(hid::kBtnStickR));
+    CHECK_EQ(play::pad_default_buttons(S::DpadUp, true), hid::btn(hid::kBtnUp));
+    CHECK_EQ(play::pad_default_buttons(S::DpadDown, true), hid::btn(hid::kBtnDown));
+    CHECK_EQ(play::pad_default_buttons(S::DpadLeft, false), hid::btn(hid::kBtnLeft));
+    CHECK_EQ(play::pad_default_buttons(S::DpadRight, false), hid::btn(hid::kBtnRight));
+    // and map_pad with the built-in mapping gives exactly these bits
+    CHECK_EQ(face(kSouth, kXboxLabels, false), play::pad_default_buttons(S::South, false));
+    CHECK_EQ(face(kNorth, kXboxLabels, true), play::pad_default_buttons(S::North, true));
 }

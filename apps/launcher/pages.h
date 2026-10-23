@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The tabs of the launcher. Each factory returns a page the window owns.
+#pragma once
+#include <memory>
+
+#include "ui.h"
+
+namespace mprl {
+
+std::unique_ptr<Page> make_display_page();      // window, frame rate, picture                       (page_display.cpp)
+std::unique_ptr<Page> make_extras_page();      // HDR, low latency, frame rate counter                               (page_display.cpp)
+std::unique_ptr<Page> make_controls_page();     // mouse and button prompts                           (page_controls.cpp)
+std::unique_ptr<Page> make_keys_page();         // keyboard and mouse bindings                        (page_keys.cpp)
+std::unique_ptr<Page> make_pad_page();          // controller options and button remapping           (page_pad.cpp)
+
+}  // namespace mprl

@@ -94,3 +94,6 @@ if(NXRT_BUILD_TESTS)
     endif()
     message(STATUS "nxrt gfx test groups: ${NXRT_GFX_GROUPS}")
 endif()
+
+# The launcher (apps/launcher).
+include(${CMAKE_CURRENT_LIST_DIR}/launcher.cmake)
