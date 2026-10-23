@@ -110,6 +110,41 @@ bool parse_prompt_style(const std::string& s, PromptStyle* out) {
     return false;
 }
 
+// ---- pad sources and the counter corner ---------------------------------------------------------------------------------------------
+
+namespace {
+const char* const kPadSrcNames[kPadSrcCount] = {"south",         "east",           "west",       "north",      "left_shoulder", "right_shoulder",
+                                                "left_trigger", "right_trigger",  "start",      "back",       "left_stick",    "right_stick",
+                                                "dpad_up",      "dpad_down",      "dpad_left",  "dpad_right"};
+const char* const kCornerNames[] = {"top_left", "top_right", "bottom_left", "bottom_right"};
+}  // namespace
+
+const char* pad_src_name(PadSrc s) { return kPadSrcNames[static_cast<int>(s)]; }
+
+bool parse_pad_src(const std::string& name, PadSrc* out) {
+    const std::string key = name_key(name);
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        if (key == kPadSrcNames[i]) {
+            if (out) *out = static_cast<PadSrc>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+const char* corner_name(Corner c) { return kCornerNames[static_cast<int>(c)]; }
+
+bool parse_corner(const std::string& name, Corner* out) {
+    const std::string key = name_key(name);
+    for (int i = 0; i < 4; ++i) {
+        if (key == kCornerNames[i]) {
+            if (out) *out = static_cast<Corner>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
 // ---- actions -----------------------------------------------------------------------------------------------------------------
 
 // One row per Act, in enum order (checked by the static_assert below and by the unit tests).

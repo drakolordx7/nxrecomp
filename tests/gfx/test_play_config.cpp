@@ -116,6 +116,12 @@ bool same_settings(const Settings& a, const Settings& b) {
         return false;
     if (!(ea.latency.mode == eb.latency.mode && ea.latency.log_timings == eb.latency.log_timings && ea.latency.frames_ahead == eb.latency.frames_ahead)) return false;
     if (a.prompts.style != b.prompts.style) return false;
+    const FpsSettings &fa = a.fps, &fb = b.fps;
+    if (!(fa.show == fb.show && fa.key == fb.key && fa.corner == fb.corner && fa.detail == fb.detail && fa.in_screenshots == fb.in_screenshots))
+        return false;
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        if (a.pad.remap[i] != b.pad.remap[i]) return false;
+    }
     for (int i = 0; i < kActCount; ++i) {
         if (!(a.out[i] == b.out[i])) return false;
     }
@@ -1091,10 +1097,10 @@ NXTEST(extras_sections_written_after_display) {
 
 // ---- button prompts ----------------------------------------------------------------------------------------------------------------
 
-NXTEST(prompt_style_default_is_switch) {
+NXTEST(prompt_style_default_is_auto) {
     Settings s;
-    CHECK(s.prompts.style == PromptStyle::Switch);
-    CHECK(default_settings().prompts.style == PromptStyle::Switch);
+    CHECK(s.prompts.style == PromptStyle::Auto);
+    CHECK(default_settings().prompts.style == PromptStyle::Auto);
 }
 
 NXTEST(prompt_style_names) {
@@ -1161,6 +1167,130 @@ NXTEST(prompt_style_round_trip_every_style) {
 
 NXTEST(default_settings_text_has_prompts_section) {
     const std::string text = default_settings_text();
-    CHECK(text.find("[prompts]") != std::string::npos);
-    CHECK(text.find("[prompts]\nstyle = switch\n") != std::string::npos);
+    const size_t at = text.find("[prompts]");
+    REQUIRE_MSG(at != std::string::npos, "[prompts] section");
+    CHECK(text.find("style = auto\n", at) != std::string::npos);
+}
+
+// ---- frame rate counter and pad remap ----------------------------------------------------------------------------------------------
+
+NXTEST(fps_defaults) {
+    const Settings s = default_settings();
+    CHECK(!s.fps.show);
+    CHECK(s.fps.key == key_id(kScancodeF2));
+    CHECK_EQ(s.fps.key.code, 59);   // SDL_SCANCODE_F2
+    CHECK(s.fps.corner == Corner::TopLeft);
+    CHECK_EQ(s.fps.detail, 1);
+    CHECK(!s.fps.in_screenshots);
+}
+
+NXTEST(padmap_defaults) {
+    const Settings s = default_settings();
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        CHECK(s.pad.remap[i] == kPadDefault);
+    }
+}
+
+NXTEST(default_settings_text_fps_and_padmap_match_defaults) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> warnings;
+    REQUIRE_MSG(parse_settings(default_settings_text(), &s, &err, &warnings), err);
+    CHECK(warnings.empty());
+    CHECK(!s.fps.show);
+    CHECK(s.fps.key == key_id(kScancodeF2));
+    CHECK(s.fps.corner == Corner::TopLeft);
+    CHECK_EQ(s.fps.detail, 1);
+    CHECK(!s.fps.in_screenshots);
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        CHECK(s.pad.remap[i] == kPadDefault);
+    }
+}
+
+NXTEST(format_writes_fps_and_padmap_sections) {
+    const std::string text = format_settings(default_settings());
+    CHECK(text.find("\n[fps]\n") != std::string::npos);
+    CHECK(text.find("\n[padmap]\n") != std::string::npos);
+    CHECK(text.find("\nsouth = default\n") != std::string::npos);
+}
+
+NXTEST(fps_and_padmap_file_round_trip) {
+    const std::string file_text = "[fps]\nshow = 1\nkey = Tab\ncorner = bottom_right\ndetail = 2\nin_screenshots = 1\n"
+                                  "[padmap]\neast = A\nleft_trigger = ZL+L\nstart = none\n";
+    Settings s;
+    std::string err;
+    std::vector<std::string> warnings;
+    REQUIRE_MSG(parse_settings(file_text, &s, &err, &warnings), err);
+    CHECK(warnings.empty());
+    CHECK(s.fps.show);
+    CHECK(s.fps.key == key_id(SDL_SCANCODE_TAB));
+    CHECK(s.fps.corner == Corner::BottomRight);
+    CHECK_EQ(s.fps.detail, 2);
+    CHECK(s.fps.in_screenshots);
+    CHECK(s.pad.remap[static_cast<int>(PadSrc::East)] == btn(kBtnA));
+    CHECK(s.pad.remap[static_cast<int>(PadSrc::LeftTrigger)] == (btn(kBtnZL) | btn(kBtnL)));
+    CHECK(s.pad.remap[static_cast<int>(PadSrc::Start)] == 0u);
+    CHECK(s.pad.remap[static_cast<int>(PadSrc::West)] == kPadDefault);
+
+    const std::string text = format_settings(s);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(same_settings(s, r));
+    CHECK_EQ(format_settings(r), text);
+}
+
+NXTEST(fps_key_and_corner_spellings) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[fps]\nkey = f2\ncorner = Top-Right\n", &s, &err), err);
+    CHECK(s.fps.key == key_id(kScancodeF2));
+    CHECK(s.fps.corner == Corner::TopRight);
+}
+
+NXTEST(fps_and_padmap_bad_values_are_errors) {
+    struct Case {
+        const char* text;
+        const char* names;   // a word the message must contain
+    };
+    const Case cases[] = {
+        {"[fps]\ndetail = 3\n", "detail"},
+        {"[fps]\nkey = Mouse1\n", "key"},
+        {"[fps]\nkey = WheelUp\n", "key"},
+        {"[fps]\ncorner = middle\n", "corner"},
+        {"[padmap]\nwest = LS_UP\n", "west"},
+        {"[padmap]\nwest = Q\n", "'Q'"},
+    };
+    for (const Case& c : cases) {
+        Settings s;
+        std::string err;
+        CHECK(!parse_settings(c.text, &s, &err));
+        CHECK(err.find("line 2") != std::string::npos);
+        CHECK(err.find(c.names) != std::string::npos);
+    }
+}
+
+NXTEST(padmap_unknown_button_warns_only) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[padmap]\ntriangle = A\n", &s, &err, &w), err);
+    REQUIRE_MSG(w.size() == 1u, "one warning");
+    CHECK_EQ(w[0], std::string("line 2: unknown key 'triangle' in [padmap]"));
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        CHECK(s.pad.remap[i] == kPadDefault);
+    }
+}
+
+NXTEST(file_without_fps_and_padmap_keeps_defaults) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n[timing]\ntap_ms = 150\n", &s, &err), err);
+    CHECK(!s.fps.show);
+    CHECK(s.fps.key == key_id(kScancodeF2));
+    CHECK(s.fps.corner == Corner::TopLeft);
+    CHECK_EQ(s.fps.detail, 1);
+    CHECK(!s.fps.in_screenshots);
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        CHECK(s.pad.remap[i] == kPadDefault);
+    }
 }

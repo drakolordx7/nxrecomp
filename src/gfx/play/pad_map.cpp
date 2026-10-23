@@ -24,13 +24,15 @@ constexpr hid::NpadButtonBit kPosBtn[4] = {hid::kBtnB, hid::kBtnA, hid::kBtnY, h
 
 struct ButtonMap {
     int sdl;
+    PadSrc src;
     hid::NpadButtonBit btn;
 };
 constexpr ButtonMap kOtherButtons[] = {
-    {kSdlLeftShoulder, hid::kBtnL},   {kSdlRightShoulder, hid::kBtnR}, {kSdlStart, hid::kBtnPlus},
-    {kSdlBack, hid::kBtnMinus},       {kSdlLeftStick, hid::kBtnStickL}, {kSdlRightStick, hid::kBtnStickR},
-    {kSdlDpadUp, hid::kBtnUp},        {kSdlDpadDown, hid::kBtnDown},    {kSdlDpadLeft, hid::kBtnLeft},
-    {kSdlDpadRight, hid::kBtnRight},
+    {kSdlLeftShoulder, PadSrc::LeftShoulder, hid::kBtnL},   {kSdlRightShoulder, PadSrc::RightShoulder, hid::kBtnR},
+    {kSdlStart, PadSrc::Start, hid::kBtnPlus},              {kSdlBack, PadSrc::Back, hid::kBtnMinus},
+    {kSdlLeftStick, PadSrc::LeftStick, hid::kBtnStickL},    {kSdlRightStick, PadSrc::RightStick, hid::kBtnStickR},
+    {kSdlDpadUp, PadSrc::DpadUp, hid::kBtnUp},              {kSdlDpadDown, PadSrc::DpadDown, hid::kBtnDown},
+    {kSdlDpadLeft, PadSrc::DpadLeft, hid::kBtnLeft},        {kSdlDpadRight, PadSrc::DpadRight, hid::kBtnRight},
 };
 
 // SDL stick axis (-32768..32767) to -1..1.
@@ -67,25 +69,49 @@ uint16_t motor(float amp, double scale) {
 
 void map_pad(const platform::GamepadRaw& raw, const PadSettings& cfg, hid::NpadInput* out) {
     uint64_t bits = 0;
+    // A pressed source adds its remap, or its built-in buttons when it has none (kPadDefault).
+    auto press = [&](PadSrc src, uint64_t builtin) {
+        const uint64_t remap = cfg.remap[static_cast<int>(src)];
+        bits |= remap == kPadDefault ? builtin : remap;
+    };
 
     for (int pos = 0; pos < 4; ++pos) {
         if (!(raw.buttons & (1u << pos))) continue;
         const uint8_t label = raw.face_label[pos];
         // An out-of-range label has no meaning; fall back to the position.
         const bool by_label = cfg.label_abxy && label < 4;
-        bits |= hid::btn(by_label ? kLabelBtn[label] : kPosBtn[pos]);
+        press(static_cast<PadSrc>(pos), hid::btn(by_label ? kLabelBtn[label] : kPosBtn[pos]));
     }
     for (const ButtonMap& m : kOtherButtons) {
-        if (raw.buttons & (1u << m.sdl)) bits |= hid::btn(m.btn);
+        if (raw.buttons & (1u << m.sdl)) press(m.src, hid::btn(m.btn));
     }
 
-    if (raw.axes[kAxisLeftTrigger] / 32767.0 >= cfg.trigger_threshold) bits |= hid::btn(hid::kBtnZL);
-    if (raw.axes[kAxisRightTrigger] / 32767.0 >= cfg.trigger_threshold) bits |= hid::btn(hid::kBtnZR);
+    if (raw.axes[kAxisLeftTrigger] / 32767.0 >= cfg.trigger_threshold) press(PadSrc::LeftTrigger, hid::btn(hid::kBtnZL));
+    if (raw.axes[kAxisRightTrigger] / 32767.0 >= cfg.trigger_threshold) press(PadSrc::RightTrigger, hid::btn(hid::kBtnZR));
 
     const double dz = std::clamp(cfg.stick_deadzone, 0.0, 0.9);
     out->buttons = bits;
     out->left = stick(norm_axis(raw.axes[kAxisLeftX]), -norm_axis(raw.axes[kAxisLeftY]), dz);
     out->right = stick(norm_axis(raw.axes[kAxisRightX]), -norm_axis(raw.axes[kAxisRightY]), dz);
+}
+
+uint64_t pad_default_buttons(PadSrc src, bool label_abxy) {
+    switch (src) {
+        case PadSrc::South:
+        case PadSrc::East:
+        case PadSrc::West:
+        case PadSrc::North: {
+            const int pos = static_cast<int>(src);
+            return hid::btn(label_abxy ? kLabelBtn[pos] : kPosBtn[pos]);
+        }
+        case PadSrc::LeftTrigger: return hid::btn(hid::kBtnZL);
+        case PadSrc::RightTrigger: return hid::btn(hid::kBtnZR);
+        default: break;
+    }
+    for (const ButtonMap& m : kOtherButtons) {
+        if (m.src == src) return hid::btn(m.btn);
+    }
+    return 0;
 }
 
 void map_sensors(const float accel_sdl[3], const float gyro_sdl[3], const PadSettings& cfg, hid::SixAxisSample* out) {

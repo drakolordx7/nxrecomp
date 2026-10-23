@@ -32,11 +32,13 @@ struct ResolveIn {
     PromptStyle style = PromptStyle::Switch;   // never Auto: the caller resolves Auto first
     bool label_abxy = true;                    // [pad] label_abxy: Xbox A is Switch A (true) or by position (false)
     Ctx ctx = Ctx::Menu;                       // where the player is
-    const Settings* settings = nullptr;        // bindings and the [switch] table (only the keyboard style reads them)
+    const Settings* settings = nullptr;        // bindings (keyboard style) and the pad remap (pad styles); null: the built-in mapping
 };
 
 // The name of the prompt pack entry that replaces the game's icon: "xbox/a", "ps/cross", "kbm/space", with "_pressed" appended for a
-// pressed icon. Empty: keep the game's own icon (Switch style, or a keyboard style button no input is bound to).
+// pressed icon. Pad styles show the physical button that presses the Switch button, following settings->pad.remap. Empty: keep the
+// game's own icon (Switch style, a keyboard style button no input is bound to, or a pad style where nothing presses the button or the
+// pad source is a stick click or the d-pad).
 std::string resolve_icon(const ResolveIn& in, Icon icon);
 
 // Keyboard and mouse: the input that presses this Switch button in the given context, following the bindings of the settings.

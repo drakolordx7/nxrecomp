@@ -301,6 +301,8 @@ public:
     // (tightly packed RGBA8 rows) into *out, filled when end_frame of that frame returns.
     void request_screenshot(const std::string& png_path);
     void capture_next_frame(std::vector<uint8_t>* rgba, uint32_t* width, uint32_t* height);
+    // True while a screenshot or a frame capture is requested and has not been taken yet (safe from any thread).
+    bool capture_pending() const;
 
     RendererStats stats() const;
     void wait_idle();

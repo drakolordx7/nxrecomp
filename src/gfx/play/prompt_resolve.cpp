@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "nxrt/input_source.h"
+#include "play/pad_map.h"
 
 namespace nxrt::play {
 
@@ -67,28 +68,48 @@ uint64_t button_bit(Btn b) {
     }
 }
 
-// Pad icons: the Xbox or PlayStation button that presses the Switch button.
-const char* pad_name(PromptStyle style, bool label_abxy, Btn b) {
-    const bool xbox = style == PromptStyle::Xbox;
-    // Face buttons: by label A = Switch A, B = B, X = X, Y = Y (PlayStation: cross, circle, square, triangle). By position the east
-    // button is Switch A, the south button B, the west button Y and the north button X (pad_map.h).
-    static const char* const kXbox[4] = {"xbox/a", "xbox/b", "xbox/x", "xbox/y"};   // by label: A B X Y
-    static const char* const kPs[4] = {"ps/cross", "ps/circle", "ps/square", "ps/triangle"};
-    const char* const* f = xbox ? kXbox : kPs;
-    switch (b) {
-        case Btn::A: return label_abxy ? f[0] : f[1];     // by position Switch A is the east button: Xbox B, circle
-        case Btn::B: return label_abxy ? f[1] : f[0];     // south: Xbox A, cross
-        case Btn::X: return label_abxy ? f[2] : f[3];     // north: Xbox Y, triangle
-        case Btn::Y: return label_abxy ? f[3] : f[2];     // west: Xbox X, square
-        case Btn::L: return xbox ? "xbox/lb" : "ps/l1";
-        case Btn::R: return xbox ? "xbox/rb" : "ps/r1";
-        case Btn::ZL: return xbox ? "xbox/lt" : "ps/l2";
-        case Btn::ZR: return xbox ? "xbox/rt" : "ps/r2";
-        case Btn::Plus: return xbox ? "xbox/menu" : "ps/options";
-        case Btn::Minus: return xbox ? "xbox/view" : "ps/create";
-        case Btn::DPad: return xbox ? "xbox/dpad" : "ps/dpad";
-        default: return "";
+// The pad source that presses Switch button `bit`, in this order: the lowest source whose remap is exactly that bit; the lowest source
+// with a remap that contains it; the source whose built-in button it is, if that source is not remapped. False: nothing presses it.
+bool source_for_button(const PadSettings& pad, bool label_abxy, uint64_t bit, PadSrc* out) {
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        if (pad.remap[i] == bit) {
+            *out = static_cast<PadSrc>(i);
+            return true;
+        }
     }
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        if (pad.remap[i] != kPadDefault && (pad.remap[i] & bit)) {
+            *out = static_cast<PadSrc>(i);
+            return true;
+        }
+    }
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        if (pad.remap[i] == kPadDefault && pad_default_buttons(static_cast<PadSrc>(i), label_abxy) == bit) {
+            *out = static_cast<PadSrc>(i);
+            return true;
+        }
+    }
+    return false;
+}
+
+// Pad icons: the Xbox or PlayStation button that presses the Switch button. The icon names the physical button (South is the Xbox A,
+// cross), so it is the same whatever the label question says; the label question only decides which source a Switch button comes from.
+// Stick clicks and the d-pad have no icon of their own here: "" (the game keeps its icon). The d-pad icon is always the d-pad.
+const char* pad_name(PromptStyle style, const PadSettings& pad, bool label_abxy, Btn b) {
+    const bool xbox = style == PromptStyle::Xbox;
+    if (b == Btn::DPad) return xbox ? "xbox/dpad" : "ps/dpad";
+    PadSrc src = PadSrc::South;
+    if (!source_for_button(pad, label_abxy, button_bit(b), &src)) return "";
+    // Indexed by PadSrc: the four face buttons, the shoulders, the triggers, Start, Back; the sticks and the d-pad have no icon.
+    static const char* const kXbox[kPadSrcCount] = {
+        "xbox/a", "xbox/b", "xbox/x", "xbox/y", "xbox/lb", "xbox/rb", "xbox/lt", "xbox/rt", "xbox/menu", "xbox/view",
+        "", "", "", "", "", "",
+    };
+    static const char* const kPs[kPadSrcCount] = {
+        "ps/cross", "ps/circle", "ps/square", "ps/triangle", "ps/l1", "ps/r1", "ps/l2", "ps/r2", "ps/options", "ps/create",
+        "", "", "", "", "", "",
+    };
+    return (xbox ? kXbox : kPs)[static_cast<int>(src)];
 }
 
 // Does binding b apply in context c? A binding of c applies; an `all` binding applies unless the same input has a binding of c itself.
@@ -142,11 +163,13 @@ bool input_for_button(const Settings& s, Ctx ctx, Btn b, InputId* out) {
 
 std::string resolve_icon(const ResolveIn& in, Icon icon) {
     const Btn b = icon_button(icon);
+    const PadSettings no_pad{};
+    const PadSettings& pad = in.settings ? in.settings->pad : no_pad;
     std::string base;
     switch (in.style) {
         case PromptStyle::Xbox:
         case PromptStyle::PlayStation:
-            base = pad_name(in.style, in.label_abxy, b);
+            base = pad_name(in.style, pad, in.label_abxy, b);
             break;
         case PromptStyle::Keyboard: {
             if (!in.settings) return {};
