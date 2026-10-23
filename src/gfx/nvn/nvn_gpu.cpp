@@ -460,11 +460,36 @@ bool serial_done(uint64_t serial) {
     return read_completed() >= serial;
 }
 
+namespace {
+std::atomic<uint64_t> g_waits_begun{0}, g_waits_done{0};   // sync waits entered and left: a live graphics thread moves both
+std::atomic<int> g_waiters{0};                 // game threads inside wait_serial (freeze report)
+std::atomic<uint64_t> g_wait_serial{0}, g_wait_timeout{0};   // the latest wait: serial and timeout
+
+std::string gpu_report() {
+    if (!g) return {};
+    uint64_t v = 0;
+    if (g->timeline) vkGetSemaphoreCounterValue(g->dev->device(), g->timeline, &v);
+    char b[400];
+    size_t q = 0;
+    bool got = false;
+    if (g->qmu.try_lock()) { q = g->queue.size(); got = true; g->qmu.unlock(); }
+    std::snprintf(b, sizeof b, "NVN back end: last submitted serial %llu, timeline value %llu, %d game thread(s) in a sync wait (latest wait: serial %llu, timeout %llu ns), sync waits begun %llu done %llu, submits %llu, presents %llu, render queue %s%zu\n",
+                  static_cast<unsigned long long>(g->last_submitted.load()), static_cast<unsigned long long>(v), g_waiters.load(),
+                  static_cast<unsigned long long>(g_wait_serial.load()), static_cast<unsigned long long>(g_wait_timeout.load()),
+                  static_cast<unsigned long long>(g_waits_begun.load()), static_cast<unsigned long long>(g_waits_done.load()),
+                  static_cast<unsigned long long>(g->ctr.submits.load()), static_cast<unsigned long long>(g->ctr.presents.load()), got ? "" : "(busy) ", q);
+    return b;
+}
+}  // namespace
+
 bool wait_serial(uint64_t serial, uint64_t timeout_ns) {
     if (!g || !serial) return true;
     if (serial_done(serial)) return true;
     if (timeout_ns == 0) return false;
     NXFT("sync.wait");
+    g_wait_serial.store(serial);
+    g_wait_timeout.store(timeout_ns);
+    struct Counted { Counted() { g_waiters++; g_waits_begun++; } ~Counted() { g_waiters--; g_waits_done++; } } counted;
     VkSemaphoreWaitInfo wi = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
     wi.semaphoreCount = 1;
     wi.pSemaphores = &g->timeline;
@@ -564,6 +589,8 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
         const uint64_t sub = g->last_submitted.load();
         return sub > v ? sub - v : 0;
     });
+    static const bool report_registered = (diag_add_report(gpu_report), true);   // the freeze dump shows the GPU state
+    (void)report_registered;
     gp->th = std::thread(render_loop);
     // wait for the thread id to be published
     for (int i = 0; i < 1000 && gp->tid == std::thread::id(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
