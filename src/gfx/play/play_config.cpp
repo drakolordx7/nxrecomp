@@ -146,7 +146,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Hdr, Upscale, Latency, Switch, Bindings };
+enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Hdr, Upscale, Latency, Prompts, Switch, Bindings };
 
 const char* sec_label(Sec s) {
     switch (s) {
@@ -157,6 +157,7 @@ const char* sec_label(Sec s) {
         case Sec::Hdr: return "[hdr]";
         case Sec::Upscale: return "[upscale]";
         case Sec::Latency: return "[latency]";
+        case Sec::Prompts: return "[prompts]";
         case Sec::Switch: return "[switch]";
         default: return "";
     }
@@ -282,6 +283,15 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "hold_ms") return set_int(1, 5000, &s->timing.hold_ms);
             if (k == "double_ms") return set_int(1, 5000, &s->timing.double_ms);
             if (k == "pulse_ms") return set_int(1, 5000, &s->timing.pulse_ms);
+            break;
+        case Sec::Prompts:
+            if (k == "style") {
+                if (!parse_prompt_style(v, &s->prompts.style)) {
+                    *msg = "style must be switch, xbox, playstation, keyboard or auto, got '" + v + "'";
+                    return false;
+                }
+                return true;
+            }
             break;
         case Sec::Display:
             if (k == "window_mode") {
@@ -461,6 +471,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             else if (key == "hdr") sec = Sec::Hdr;
             else if (key == "upscale") sec = Sec::Upscale;
             else if (key == "latency") sec = Sec::Latency;
+            else if (key == "prompts") sec = Sec::Prompts;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -623,6 +634,8 @@ std::string format_settings(const Settings& s) {
     kv("mode", kLatencyWords[static_cast<int>(s.extras.latency.mode)]);
     kv("frames_ahead", std::to_string(s.extras.latency.frames_ahead));
     kv("log_timings", flag(s.extras.latency.log_timings));
+    o += "\n[prompts]\n";
+    kv("style", prompt_style_name(s.prompts.style));
 
     o += "\n[switch]\n";
     for (int a = 1; a < kActCount; ++a) {   // every action except none

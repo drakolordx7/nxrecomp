@@ -45,6 +45,7 @@ public:
     void set_cap_fps(double fps);
 
     // Main thread.
+    void wait_in_flight();        // blocks while more than frames_ahead earlier frames are unpresented (no-op when the wait is off); sim_begin() calls it too
     void sim_begin();
     void input_sample();
     void sim_end();
@@ -52,6 +53,7 @@ public:
     void submit_begin();
     uint64_t present_begin();     // the id for VkPresentIdKHR (0 when disabled)
     void present_end();
+    uint32_t present_sim_id() const;   // simulation id the present in progress shows (0: none); for the frame trace probe
 
     // Timings. Reflex: the driver's own frame reports; always: the host proxy input sample -> present returned.
     struct Stats {
@@ -73,8 +75,17 @@ private:
     bool enabled_ = false;
 };
 
+// Frame pacing placement (S18, [latency] pace = main | present, env NXRT_LATENCY_PACE; default main). With "main" the frame limiter waits at the game's frame
+// boundary, before the input is sampled, and not inside the present call: the frame that is shown was simulated one render time before, not one
+// queue depth before. The presenting thread still runs the limiter for a present that no boundary paced (loading screens, movies).
+bool pace_in_main();
+void pace_boundary_done();        // main thread: the boundary hook ran the limiter wait for the frame it starts
+bool pace_boundary_consume();     // presenting thread: true (and clears one) if a boundary wait covers this present, so it must not wait again
+
 // The instance of the running renderer (set by the renderer when it creates one; null otherwise). Hooks and the replay code go through it.
 LowLatency* lowlat();
 void lowlat_set(LowLatency* l);
+// Frame trace probe (S18): the GPU submissions still unfinished, read at each simulation start (set by the NVN back end).
+void lowlat_set_backlog_fn(uint64_t (*fn)());
 
 }  // namespace nxrt::extras

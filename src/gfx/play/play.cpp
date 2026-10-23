@@ -50,6 +50,7 @@
 #include "play_selftest.h"
 #include "play_types.h"
 #include "play_ui.h"
+#include "prompts.h"
 #include "pad_map.h"
 
 namespace nxrt::play {
@@ -175,6 +176,11 @@ struct G {
     bool mouse1 = false;
     uint64_t last_status_ns = 0;
     bool warned_thread = false;
+
+    // button prompts: the device the player used last (Auto style) and a counter that changes with the bindings
+    LastDevice last_dev = LastDevice::None;
+    int last_pad_kind = 0;
+    uint64_t settings_epoch = 1;
 
     // pads
     uint64_t last_rumble_ns = 0;
@@ -393,6 +399,8 @@ void handle_event(const input::Event& e, uint64_t now) {
     }
     if (st.overlay && st.overlay->handle_event(e)) return;
     const bool menu_blocked = st.overlay && st.overlay->visible();
+    if ((e.type == EventType::KeyDown && !(e.flags & input::kFlagRepeat)) || e.type == EventType::MouseButtonDown || e.type == EventType::MouseWheel)
+        st.last_dev = LastDevice::KeyboardMouse;
     switch (e.type) {
         case EventType::Quit:
             if (st.quit_on_close) quit_now("window closed");
@@ -463,6 +471,13 @@ void poll_pads(uint64_t now) {
         if (!platform::gamepad_poll(infos[i].id, &raw)) continue;
         hid::NpadInput tmp;
         map_pad(raw, st.settings.pad, &tmp);
+        {   // a pressed button or a stick well off centre makes this the pad the prompts follow
+            auto off_centre = [](hid::StickValue v) { return static_cast<int64_t>(v.x) * v.x + static_cast<int64_t>(v.y) * v.y > 20000ll * 20000ll; };
+            if (tmp.buttons != 0 || off_centre(tmp.left) || off_centre(tmp.right)) {
+                st.last_dev = LastDevice::Pad;
+                st.last_pad_kind = static_cast<int>(infos[i].kind);
+            }
+        }
         pf.buttons |= tmp.buttons;
         auto big = [](hid::StickValue a, hid::StickValue b) {
             return static_cast<int64_t>(a.x) * a.x + static_cast<int64_t>(a.y) * a.y >= static_cast<int64_t>(b.x) * b.x + static_cast<int64_t>(b.y) * b.y ? a : b;
@@ -489,6 +504,13 @@ void poll_pads(uint64_t now) {
 int update_hook(::Ctx*, uint64_t, void*) {
     G& st = g();
     ft::mark("main.update");
+    // frame pacing (S18): the limiter waits here, before the input is sampled, so the picture shown is the one simulated one render time
+    // earlier. The wait for frames still in flight comes first, then the limiter's schedule.
+    if (extras::pace_in_main()) {
+        if (extras::LowLatency* ll = extras::lowlat()) ll->wait_in_flight();
+        { NXFT("limiter.main"); st.limiter.begin_frame_nohook(); }
+        extras::pace_boundary_done();
+    }
     // low latency (S14): the sleep that lets the frame start as late as the GPU allows, then the input sample marker; the events are pumped right after
     if (extras::LowLatency* ll = extras::lowlat()) {
         ll->sim_begin();
@@ -514,6 +536,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             st.have_pending = false;
             const std::string old_mode = st.settings.display.window_mode;
             st.settings = s;
+            st.settings_epoch++;
             lk.unlock();
             st.engine->set_settings(s, now);
             apply_frame_cap(s);
@@ -562,6 +585,19 @@ int update_hook(::Ctx*, uint64_t, void*) {
     else if (st.hints.visor == 2) ctx = Ctx::Scan;
     else ctx = Ctx::Gameplay;
     st.engine->set_context(ctx, now);
+
+    {   // button prompts: the style that shows, and the icon textures behind it
+        PromptInputs pin;
+        pin.requested = st.settings.prompts.style;
+        pin.label_abxy = st.settings.pad.label_abxy;
+        pin.ctx = ctx;
+        pin.settings_epoch = st.settings_epoch;
+        pin.last = st.last_dev;
+        pin.last_pad_kind = st.last_pad_kind;
+        input::GamepadInfo pads[1];
+        pin.connected_pad_kind = input::gamepad_list(pads, 1) > 0 ? static_cast<int>(pads[0].kind) : -1;
+        prompts_update(st.settings, pin);
+    }
 
     const bool overlay_visible = st.overlay && st.overlay->visible();
     if (overlay_visible && !st.overlay_was_visible) st.engine->release_all(now);
@@ -750,6 +786,7 @@ public:
         LiveStatus s;
         s.ctx = st.engine ? st.engine->context() : Ctx::Menu;
         s.aim = aim_block_name(st.aim->last_block());
+        s.prompt_now = prompts_effective_name();
         if (st.pi_calls.load() == 0) s.aim = "not in game";
         s.mouse_captured = st.window && platform::relative_mouse();
         input::GamepadInfo infos[4];
@@ -815,7 +852,9 @@ public:
         else if (key == "pitch_source") s.mouse.pitch_rad = rad_per_count(d);
         else if (key == "invert_y") s.mouse.invert_y = d != 0;
         else if (key == "invert_x") s.mouse.invert_x = d != 0;
-        else return false;
+        else if (key == "prompt_style") {
+            if (!parse_prompt_style(value, &s.prompts.style)) return false;
+        } else return false;
         g_host.apply(s);
         (void)st;
         return true;

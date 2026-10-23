@@ -18,6 +18,7 @@
 #include "nvn_gpu.h"
 #include "nvn_impl.h"
 #include "nvn_shaders.h"
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 
 namespace nxrt::nvn {
@@ -108,6 +109,7 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     if (count > 0 && !shaders) return 0;
 
     bool all_found = true;
+    bool addresses_ok = true;     // every stage had a code and a control address (the block is just not in the cache)
     for (int k = 0; k < count; ++k) {
         const uint8_t* code = host_ptr(shaders[k].data);
         const uint8_t* control = static_cast<const uint8_t*>(shaders[k].control);
@@ -115,6 +117,7 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
         if (!si) {
             report_missing(code, control);
             all_found = false;
+            if (!code || !control) addresses_ok = false;
             continue;
         }
         const int stage = nvn_stage_of(si->stage);
@@ -129,7 +132,11 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     }
     p->linked = all_found;
     if (all_found && gpu::active()) gpu::prewarm_program_shaders(p->stage);
-    return all_found ? 1 : 0;
+    // A block missing from the shader cache leaves the program unlinked (its draws are skipped). The call still reports success: the game treats a
+    // failed SetShaders as "shader not built" and rebuilds it (programs, buffer allocations out of its pool allocator) on every bind, which costs
+    // milliseconds per attempt under the allocator's lock and grows without bound (S18). [nvn] accept_unlinked = 0 restores the old return value.
+    static const bool accept_unlinked = config_get_bool("nvn", "accept_unlinked", true);
+    return (all_found || (accept_unlinked && addresses_ok)) ? 1 : 0;
 }
 
 NVNboolean nvnProgramSetSubroutineLinkage(NVNprogram* program, int stage, const NVNsubroutineLinkageMapPtr* map) {
