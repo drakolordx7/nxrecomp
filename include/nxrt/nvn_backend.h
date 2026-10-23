@@ -35,6 +35,9 @@ bool backend_installed();
 // Writes the on-disk caches (the pipeline cache) now. For the paths that end the process without shutting the back end down (window closed).
 void backend_flush_caches();
 
+// Traces the next whole presented frame like [nvn] trace_frame (the scripted `@shot nvntrace_<name>` calls this).
+void backend_trace_next_frame();
+
 struct BackendStats {
     uint64_t submits = 0, lists_replayed = 0, draws = 0, draws_skipped = 0, dispatches = 0, clears = 0, copies = 0, presents = 0;
     uint64_t passes = 0, pass_breaks = 0, pipelines_created = 0, pipeline_cache_hits = 0, descriptor_sets = 0;

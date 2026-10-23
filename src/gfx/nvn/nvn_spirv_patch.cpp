@@ -418,9 +418,9 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
 namespace nxrt::nvn::be::gpu {
 
 bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<SpvIntSlot>& slots, std::vector<uint32_t>& out) {
-    enum : uint32_t { OpTypeIntOp = 21, OpTypeFloatOp = 22, OpTypeVectorOp = 23, OpTypePointerOp = 32, OpVariableOp = 59, OpLoadOp = 61, OpStoreOp = 62,
-                      OpAccessChainOp = 65, OpInBoundsAccessChainOp = 66, OpDecorateOp = 71, OpBitcastOp = 124, OpEntryPointOp = 15, OpFunctionOp = 54,
-                      DecComponent = 31, StorageInputC = 1, StoragePrivateC = 6 };
+    enum : uint32_t { OpTypeIntOp = 21, OpTypeFloatOp = 22, OpTypeVectorOp = 23, OpTypeArrayOp = 28, OpTypePointerOp = 32, OpConstantOp = 43, OpVariableOp = 59,
+                      OpLoadOp = 61, OpStoreOp = 62, OpAccessChainOp = 65, OpInBoundsAccessChainOp = 66, OpDecorateOp = 71, OpCompositeConstructOp = 80,
+                      OpBitcastOp = 124, OpEntryPointOp = 15, OpFunctionOp = 54, DecComponent = 31, StorageInputC = 1, StoragePrivateC = 6 };
     if (slots.empty() || in.size() < 5) return false;
     std::vector<Inst> insts;
     for (size_t i = 5; i < in.size();) {
@@ -435,11 +435,14 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     std::map<uint32_t, uint32_t> ptr_pointee, location, var_type;
     std::map<uint32_t, size_t> type_at;
     std::map<uint32_t, uint32_t> vec4_of;                         // scalar type id -> its vec4 id
+    std::map<uint32_t, uint32_t> array_elem, array_len_id, const_value;   // array type -> element type / length constant; constant -> value
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
         if (n.op == OpTypeFloatOp && n.len >= 3 && w[2] == 32) { f32 = w[1]; type_at[w[1]] = n.at; }
         else if (n.op == OpTypeIntOp && n.len == 4 && w[2] == 32) { (w[3] ? s32 : u32) = w[1]; type_at[w[1]] = n.at; }
         else if (n.op == OpTypeVectorOp && n.len == 4 && w[3] == 4) { vec4_of[w[2]] = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypeArrayOp && n.len == 4) { array_elem[w[1]] = w[2]; array_len_id[w[1]] = w[3]; type_at[w[1]] = n.at; }
+        else if (n.op == OpConstantOp && n.len == 4) const_value[w[2]] = w[3];
         else if (n.op == OpTypePointerOp && n.len == 4) { ptrs[{w[2], w[3]}] = w[1]; ptr_pointee[w[1]] = w[3]; type_at[w[1]] = n.at; }
         else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
         else if (n.op == OpVariableOp && n.len >= 4) var_type[w[2]] = w[1];
@@ -447,20 +450,40 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     }
     if (!f32 || !vec4_of.count(f32) || !entry_id) return false;
     v4 = vec4_of[f32];
-    struct Work { uint32_t location; bool is_signed; uint32_t old_var, old_ptr, new_var; size_t var_at; };
+    // One piece of work per input variable that changes. A plain variable is one vec4 at its Location; the translator also declares an Input
+    // array of vec4 (a shader that indexes its attributes with a computed index), which covers Locations base .. base + length - 1.
+    struct Elem { uint32_t location; int kind; uint32_t new_var; };   // kind 0 float, 1 uint, 2 sint
+    struct Work { uint32_t old_var, old_ptr, array_type; size_t var_at; std::vector<Elem> elems; };
     std::vector<Work> work;
     size_t first_var_at = SIZE_MAX;
+    std::map<uint32_t, int> slot_kind;                            // Location -> 1 uint / 2 sint
+    for (const SpvIntSlot& sl : slots) slot_kind[sl.location] = sl.is_signed ? 2 : 1;
+    std::map<uint32_t, size_t> work_of_var;
     for (const SpvIntSlot& sl : slots) {
         uint32_t var = 0;
         size_t at = 0;
+        uint32_t array_type = 0, base = 0, len = 0;
         for (const Inst& n : insts) {
             const uint32_t* w = &in[n.at];
-            if (n.op == OpVariableOp && n.len >= 4 && w[3] == StorageInputC && location.count(w[2]) && location[w[2]] == sl.location) { var = w[2]; at = n.at; }
+            if (n.op != OpVariableOp || n.len < 4 || w[3] != StorageInputC || !location.count(w[2])) continue;
+            const uint32_t loc = location[w[2]], ptr = w[1];
+            if (loc == sl.location && ptr_pointee.count(ptr) && ptr_pointee[ptr] == v4) { var = w[2]; at = n.at; array_type = 0; }
+            else if (ptr_pointee.count(ptr) && array_elem.count(ptr_pointee[ptr]) && array_elem[ptr_pointee[ptr]] == v4 &&
+                     const_value.count(array_len_id[ptr_pointee[ptr]])) {
+                const uint32_t n_elems = const_value[array_len_id[ptr_pointee[ptr]]];
+                if (sl.location >= loc && sl.location < loc + n_elems) { var = w[2]; at = n.at; array_type = ptr_pointee[ptr]; base = loc; len = n_elems; }
+            }
         }
         if (!var) return false;
-        const uint32_t ptr = var_type[var];
-        if (!ptr_pointee.count(ptr) || ptr_pointee[ptr] != v4) return false;   // only a plain vec4 input
-        work.push_back({sl.location, sl.is_signed, var, ptr, 0, at});
+        if (work_of_var.count(var)) continue;                      // the array of an earlier slot
+        Work wk{var, var_type[var], array_type, at, {}};
+        if (array_type) {
+            for (uint32_t e = 0; e < len; ++e) wk.elems.push_back({base + e, slot_kind.count(base + e) ? slot_kind[base + e] : 0, 0});
+        } else {
+            wk.elems.push_back({sl.location, sl.is_signed ? 2 : 1, 0});
+        }
+        work_of_var[var] = work.size();
+        work.push_back(std::move(wk));
         first_var_at = std::min(first_var_at, at);
     }
     // the types the new variables need have to be declared before the first variable that changes
@@ -499,14 +522,20 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     uint32_t v4u = 0, v4i = 0;
     for (size_t i = 0; i < work.size(); ++i) {
         Work& wk = work[i];
-        const uint32_t sc = need_scalar(wk.is_signed);
-        if (!sc) return false;
-        uint32_t& vv = wk.is_signed ? v4i : v4u;
-        if (!vv) vv = vec4_for(sc);
-        const uint32_t in_ptr = ptr_for(StorageInputC, vv);
-        wk.new_var = bound++;
-        decls_after_types.insert(decls_after_types.end(), {(4u << 16) | OpVariableOp, in_ptr, wk.new_var, StorageInputC});
-        decos.insert(decos.end(), {(4u << 16) | OpDecorateOp, wk.new_var, DecorationLocation, wk.location});
+        for (Elem& el : wk.elems) {
+            uint32_t vec = v4;
+            if (el.kind) {
+                const uint32_t sc = need_scalar(el.kind == 2);
+                if (!sc) return false;
+                uint32_t& vv = el.kind == 2 ? v4i : v4u;
+                if (!vv) vv = vec4_for(sc);
+                vec = vv;
+            }
+            const uint32_t in_ptr = ptr_for(StorageInputC, vec);
+            el.new_var = bound++;
+            decls_after_types.insert(decls_after_types.end(), {(4u << 16) | OpVariableOp, in_ptr, el.new_var, StorageInputC});
+            decos.insert(decos.end(), {(4u << 16) | OpDecorateOp, el.new_var, DecorationLocation, el.location});
+        }
         private_of(wk.old_ptr);
         old_to_work[wk.old_var] = static_cast<uint32_t>(i);
     }
@@ -537,11 +566,30 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     if (!insert_at) return false;
     std::vector<uint32_t> init;
     for (const Work& wk : work) {
-        const uint32_t vec = wk.is_signed ? v4i : v4u;
-        const uint32_t loaded = bound++, cast = bound++;
-        init.insert(init.end(), {(4u << 16) | OpLoadOp, vec, loaded, wk.new_var});
-        init.insert(init.end(), {(4u << 16) | OpBitcastOp, v4, cast, loaded});
-        init.insert(init.end(), {(3u << 16) | OpStoreOp, wk.old_var, cast});
+        std::vector<uint32_t> values;
+        for (const Elem& el : wk.elems) {
+            if (!el.kind) {                                        // a float element: the new input holds the same value
+                const uint32_t loaded = bound++;
+                init.insert(init.end(), {(4u << 16) | OpLoadOp, v4, loaded, el.new_var});
+                values.push_back(loaded);
+                continue;
+            }
+            const uint32_t vec = el.kind == 2 ? v4i : v4u;
+            const uint32_t loaded = bound++, cast = bound++;
+            init.insert(init.end(), {(4u << 16) | OpLoadOp, vec, loaded, el.new_var});
+            init.insert(init.end(), {(4u << 16) | OpBitcastOp, v4, cast, loaded});
+            values.push_back(cast);
+        }
+        if (!wk.array_type) {
+            init.insert(init.end(), {(3u << 16) | OpStoreOp, wk.old_var, values[0]});
+        } else {
+            const uint32_t whole = bound++;
+            init.push_back(((3u + static_cast<uint32_t>(values.size())) << 16) | OpCompositeConstructOp);
+            init.push_back(wk.array_type);
+            init.push_back(whole);
+            init.insert(init.end(), values.begin(), values.end());
+            init.insert(init.end(), {(3u << 16) | OpStoreOp, wk.old_var, whole});
+        }
     }
 
     out.clear();
@@ -566,12 +614,22 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
         } else if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && old_to_work.count(w[3])) {
             c[1] = private_of(w[1]);                                                       // a pointer into the old input is a Private pointer now
         } else if (n.op == OpEntryPointOp) {
-            // OpEntryPoint model id name... interface ids: the name is a literal string
+            // OpEntryPoint model id name... interface ids: the name is a literal string. The old input leaves the interface and its new
+            // inputs join it.
             const char* nm = reinterpret_cast<const char*>(&c[3]);
             size_t chars = 0;
             while (chars < (c.size() - 3) * 4 && nm[chars]) ++chars;
-            for (size_t k = 3 + chars / 4 + 1; k < c.size(); ++k)
-                if (old_to_work.count(c[k])) c[k] = work[old_to_work[c[k]]].new_var;
+            const size_t iface = 3 + chars / 4 + 1;
+            std::vector<uint32_t> nc(c.begin(), c.begin() + static_cast<std::ptrdiff_t>(iface));
+            for (size_t k = iface; k < c.size(); ++k) {
+                if (old_to_work.count(c[k])) {
+                    for (const Elem& el : work[old_to_work[c[k]]].elems) nc.push_back(el.new_var);
+                } else {
+                    nc.push_back(c[k]);
+                }
+            }
+            nc[0] = (static_cast<uint32_t>(nc.size()) << 16) | (nc[0] & 0xffff);
+            c = std::move(nc);
         }
         out.insert(out.end(), c.begin(), c.end());
     }

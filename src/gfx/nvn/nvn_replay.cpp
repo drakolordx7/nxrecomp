@@ -6,6 +6,7 @@
 // Lessons applied from SuperMarioWonderRecomp docs/nvn/DEBUG.md and DEBUG-2.md (see work notes in docs/S4d.md): viewport flip by a
 // negative-height viewport, a memory barrier after every pass, textures sampled by a draw are made current before the pass,
 // handles never dropped by count, deferred bind arrays read at record time.
+#include <atomic>
 #include <algorithm>
 #include <cstdio>
 #include <chrono>
@@ -173,6 +174,7 @@ std::string g_trigger_fs;
 bool g_trigger_read = false, g_trigger_seen = false, g_trigger_done = false;
 int64_t g_trigger_present = -1;
 int g_trace_n = 0;
+std::atomic<bool> g_trace_req{false};   // backend_trace_next_frame(): trace the first whole frame after this flag is seen
 #define TRACE(...) do { if (g_trace) NXLOG_I("nvn.trace", __VA_ARGS__); } while (0)
 
 const char* tex_desc(const Texture* t, char* buf, size_t n) {
@@ -528,11 +530,73 @@ bool samples_depth_target(const ProgLayout& pl) {
 }
 
 // A colour attachment cannot be sampled in the pass that renders to it (no feedback loops): the binding gets the dummy view.
+// Texture objects over the same storage share one image (texture_registry_find_alias), so the images are compared, not the objects.
 bool is_color_feedback(const Texture* t) {
     if (!t) return false;
-    for (uint32_t i = 0; i < S.ncolor; ++i)
-        if (S.color_tex[i].get() == t) return true;
+    for (uint32_t i = 0; i < S.ncolor; ++i) {
+        const Texture* a = S.color_tex[i].get();
+        if (a == t || (a && a->gpu && a->gpu == t->gpu)) return true;
+    }
     return false;
+}
+
+// A draw that samples its own colour attachment (the bloom composite of some frames reads the tone-mapped picture while it writes it back, one
+// pixel at a time): the console allows that, Vulkan has no such loop. The draw samples a copy of the image made just before it, which holds the
+// same values a pointwise read sees on the hardware (and the right ones when the shader reads another mip level of the attachment).
+std::unordered_map<Texture*, Ref<Texture>> g_fb_clone;     // attachment -> its copy (same shape, no storage in game memory)
+std::unordered_map<Texture*, Texture*> g_fb_use;           // attachment -> the copy the current draw samples
+bool g_fb_seen = false;                                    // the last check found a feedback binding: check every draw until it goes away
+
+Texture* feedback_clone(Texture* t) {
+    Ref<Texture>& c = g_fb_clone[t];
+    if (c && (c->b.width != t->b.width || c->b.height != t->b.height || c->b.depth != t->b.depth || c->fmt != t->fmt || c->levels != t->levels || c->layers != t->layers))
+        c = Ref<Texture>();                                 // the game made another texture at this address
+    if (!c) {
+        Texture* n = new Texture();
+        n->b = t->b;
+        n->fmt = t->fmt;
+        n->levels = t->levels;
+        n->layers = t->layers;
+        n->block_linear = t->block_linear;
+        n->cpu_dirty.store(false);
+        c = Ref<Texture>(n);
+        static uint32_t next_id = 0x7f000000;
+        n->id = next_id++;
+    }
+    return tex_gpu(c.get()) ? c.get() : nullptr;
+}
+
+void feedback_prepare(const ProgLayout& pl) {
+    g_fb_use.clear();
+    bool any = false;
+    for (const BindingDesc& d : pl.bindings) {
+        if (d.type != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) continue;
+        const DescriptorBinding& b = d.shader->refl.bindings[d.index];
+        if (b.nvn.source != NvnSource::SamplerBinding && b.nvn.source != NvnSource::HandleInUniform) continue;
+        const TexResolved r = resolve_texture(d);
+        if (!r.tex || !tex_gpu(r.tex) || !is_color_feedback(r.tex) || r.tex->b.samples > 1 || g_fb_use.count(r.tex)) continue;
+        any = true;
+        Texture* c = feedback_clone(r.tex);
+        if (!c) continue;
+        end_pass();
+        tex_transition(r.tex, *F, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);   // the next pass moves it back to the attachment layout and loads it
+        tex_transition(c, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        std::vector<VkImageCopy> regions;
+        for (uint32_t lv = 0; lv < tex_levels(r.tex); ++lv) {
+            const VkExtent3D e = tex_extent(r.tex, lv);
+            VkImageCopy rc = {};
+            rc.srcSubresource = {tex_aspect(r.tex), lv, 0, tex_layers(r.tex)};
+            rc.dstSubresource = {tex_aspect(c), lv, 0, tex_layers(c)};
+            rc.extent = e;
+            regions.push_back(rc);
+        }
+        vkCmdCopyImage(F->cb, tex_image(r.tex), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tex_image(c), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
+        tex_mark_gpu_written(c);
+        tex_transition(c, *F, tex_sampled_layout(c));
+        g_fb_use[r.tex] = c;
+        counters().copies.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_fb_seen = any;
 }
 
 // Makes the textures a draw samples current (uploaded, in their sampled layout) and the storage images it binds writable (GENERAL).
@@ -718,6 +782,10 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
         } else if (d.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
             VkDescriptorImageInfo ii = {dummy_sampler(), dummy_view(view_type_for(b), b.image.depth), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             TexResolved r = resolve_texture(d);
+            if (r.tex) {
+                const auto fb = g_fb_use.find(r.tex);
+                if (fb != g_fb_use.end()) r.tex = fb->second;      // a feedback draw samples the copy made before it
+            }
             if (r.tex && tex_gpu(r.tex) && !is_color_feedback(r.tex)) {
                 VkImageView v = tex_sampled_view(r.tex, make_request(b, r));
                 if (v) {
@@ -731,6 +799,17 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                 }
             } else if (r.tex && is_color_feedback(r.tex)) {
                 log_once("color-feedback", "a texture is sampled while it is a colour attachment of the pass: the dummy texture is bound");
+                static int reported = 0;
+                if (reported < 40) {   // which draw: the texture, the attachment's subresource, the sampled view, the shaders (S4g)
+                    ++reported;
+                    char tb[96];
+                    uint32_t lvl = 0, lay = 0, nlay = 0;
+                    for (uint32_t i = 0; i < S.ncolor; ++i) if (S.color_tex[i].get() == r.tex) { lvl = S.color_level[i]; lay = S.color_layer[i]; nlay = S.color_layers[i]; }
+                    NXLOG_I("nvn.replay", "feedback: %s binding %s vs %s fs %s | attachment level %u layer %u layers %u | sampled view levels %d+%d layers %d+%d", tex_desc(r.tex, tb, sizeof tb),
+                            b.name.c_str(), S.stage[kVertex] ? S.stage[kVertex]->hash.c_str() : "-", S.stage[kFragment] ? S.stage[kFragment]->hash.c_str() : "-", lvl, lay, nlay,
+                            r.has_view && r.view.has_levels ? r.view.min_level : -1, r.has_view && r.view.has_levels ? r.view.num_levels : -1,
+                            r.has_view && r.view.has_layers ? r.view.min_layer : -1, r.has_view && r.view.has_layers ? r.view.num_layers : -1);
+                }
             }
             iinfo.push_back(ii);
             w.pImageInfo = &iinfo.back();
@@ -1022,6 +1101,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         }
         scene_upscale_for_draw(*pl);
     }
+    if (g_fb_seen || (g_dirty & (kDesc | kPipe))) feedback_prepare(*pl);
     if (!ensure_pass(g_want_depth_ro)) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
     const VkPrimitiveTopology topo = vk_topology(mode);
     if ((g_dirty & kPipe) || topo != g_pipe_topo || !g_pipe) {
@@ -1949,6 +2029,7 @@ void replay_begin_submit(Frame& f) {
             g_trace_frame = static_cast<int64_t>(counters().presents.load());
         }
     }
+    if (g_trace_req.exchange(false)) g_trace_frame = static_cast<int64_t>(counters().presents.load()) + 1;   // armed from a script (@shot nvntrace_*)
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     for (int64_t e : g_trace_extra) g_trace |= static_cast<int64_t>(counters().presents.load()) == e;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }
@@ -1964,6 +2045,8 @@ void replay_begin_submit(Frame& f) {
     g_restart_valid = false;
     g_vb_bound_in_cb = false;
     g_want_depth_ro = false;
+    g_fb_use.clear();
+    g_fb_seen = false;
     g_key_dummy_binding = 0;
     // one support buffer per submission (Ryujinx SupportBuffer: render scales 1.0, no BGRA remap)
     g_support = f.upload(sizeof(SupportBuffer), 256);
@@ -1978,6 +2061,8 @@ void replay_lists(Frame& f, const std::vector<Ref<CmdList>>& lists) {
     for (const Ref<CmdList>& l : lists)
         if (l) run_list(*l, 0);
 }
+
+void replay_request_trace() { g_trace_req.store(true); }
 
 void trace_dump_targets() {
     for (const TraceSnap& sn : g_trace_snaps) {
@@ -2023,6 +2108,8 @@ void replay_shutdown() {
     S = GState();
     P = Pass();
     g_set_cache.clear();
+    g_fb_use.clear();
+    g_fb_clone.clear();
 }
 
 }  // namespace nxrt::nvn::be::gpu
