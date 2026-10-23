@@ -218,3 +218,16 @@ NXTEST(capture_hint_and_result_are_consumed) {
     CHECK(host.queued.empty());   // the page takes the result even when it did not ask for one
     CHECK_EQ(host.applies, 0);
 }
+
+// The frame rate counter is live: the game's hotkey can flip fps.show after the page has loaded. Drawing every tab after that must not
+// hand anything to the host, and the page keeps drawing.
+NXTEST(fps_flip_after_load_draws_without_apply) {
+    Headless ui;
+    FakeHost host;
+    CHECK(draw_all_tabs(host));
+    host.settings_.fps.show = true;
+    host.settings_.fps.corner = play::Corner::BottomRight;
+    CHECK(draw_all_tabs(host));
+    CHECK_EQ(host.applies, 0);
+    CHECK_EQ(host.begins, 0);
+}

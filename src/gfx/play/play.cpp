@@ -374,6 +374,20 @@ bool touch_point(float px, float py, Touch* t) {
     return true;
 }
 
+void toggle_fps_counter();       // defined after the settings page host
+
+// Tells the overlay how the frame rate counter should look (the overlay draws it; nothing happens while it is off).
+void apply_fps_counter(const FpsSettings& f) {
+    G& st = g();
+    if (!st.overlay) return;
+    gfx::Overlay::CounterConfig c;
+    c.show = f.show;
+    c.corner = static_cast<int>(f.corner);
+    c.detail = f.detail;
+    c.in_screenshots = f.in_screenshots;
+    st.overlay->set_counter(c);
+}
+
 void handle_event(const input::Event& e, uint64_t now) {
     G& st = g();
     using input::EventType;
@@ -399,6 +413,12 @@ void handle_event(const input::Event& e, uint64_t now) {
         }
         if (cancel) { st.capture_state.store(0); return; }
         if (e.type == EventType::KeyDown || e.type == EventType::KeyUp) return;    // nothing reaches the game while capturing
+    }
+    // The frame rate counter hotkey: flips the counter and never reaches the game (press, repeat and release).
+    if (st.overlay && (e.type == EventType::KeyDown || e.type == EventType::KeyUp) && st.settings.fps.key.kind == InKind::Key &&
+        e.u.key.scancode == st.settings.fps.key.code) {
+        if (e.type == EventType::KeyDown && !(e.flags & input::kFlagRepeat)) toggle_fps_counter();
+        return;
     }
     if (st.overlay && st.overlay->handle_event(e)) return;
     const bool menu_blocked = st.overlay && st.overlay->visible();
@@ -548,6 +568,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             display_apply(s.display);
             extras::set_settings(s.extras);
             extras::hdr_refresh_levels();
+            apply_fps_counter(s.fps);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -846,6 +867,12 @@ public:
 };
 Host g_host;
 
+void toggle_fps_counter() {
+    Settings s = g_host.settings();
+    s.fps.show = !s.fps.show;
+    g_host.apply(s);
+}
+
 // The self-test's window onto play mode: the same entry points the settings page uses.
 class SelfTestHostImpl : public SelfTestHost {
 public:
@@ -860,6 +887,11 @@ public:
         else if (key == "pitch_source") s.mouse.pitch_rad = rad_per_count(d);
         else if (key == "invert_y") s.mouse.invert_y = d != 0;
         else if (key == "invert_x") s.mouse.invert_x = d != 0;
+        else if (key == "fps") s.fps.show = d != 0;
+        else if (key == "fps_in_shots") s.fps.in_screenshots = d != 0;
+        else if (key == "fps_corner") {
+            if (!parse_corner(value, &s.fps.corner)) return false;
+        } else if (key == "fps_detail") s.fps.detail = std::clamp(static_cast<int>(d), 0, 2);
         else if (key == "prompt_style") {
             if (!parse_prompt_style(value, &s.prompts.style)) return false;
         } else return false;
@@ -1014,6 +1046,7 @@ bool start(const StartOptions& opt) {
             } else {
                 st.overlay->add_panel("Controls", [] { draw_settings_page(g_host); });
                 st.overlay->install_on_renderer();
+                apply_fps_counter(st.settings.fps);
             }
         }
     }

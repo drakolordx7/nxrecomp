@@ -71,7 +71,40 @@ bloom = 1
 chromatic_aberration = 1
 
 [prompts]
-style = switch
+# Button icons in the game's prompts: switch (the game's own), xbox, playstation, keyboard, or auto (follows the last device used; keyboard icons
+# until a controller is used).
+style = auto
+
+[fps]
+# Frame rate counter in a corner of the screen. show = 1 starts with it on; key flips it in the game.
+show = 0
+key = F2
+# top_left, top_right, bottom_left or bottom_right.
+corner = top_left
+# 0 = frame rate only, 1 = frame rate and frame time, 2 = also the 1% low and the worst frame.
+detail = 1
+# 1 = the counter also appears in screenshots taken by the test tooling.
+in_screenshots = 0
+
+[padmap]
+# What each controller button presses on the Switch pad: default (the built-in mapping), none, or Switch buttons joined by +, like A or ZL+L.
+# Buttons are named by position: south is the bottom face button (A on an Xbox pad), east the right one, west the left one, north the top one.
+south = default
+east = default
+west = default
+north = default
+left_shoulder = default
+right_shoulder = default
+left_trigger = default
+right_trigger = default
+start = default
+back = default
+left_stick = default
+right_stick = default
+dpad_up = default
+dpad_down = default
+dpad_left = default
+dpad_right = default
 
 [bindings.all]
 W = move_forward

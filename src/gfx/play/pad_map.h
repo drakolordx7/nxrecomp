@@ -9,6 +9,8 @@ namespace nxrt::play {
 
 // Fills out->buttons, out->left and out->right from the raw pad. Other fields of *out (connected, style, six_axis, colours) are untouched.
 //  buttons   Switch button bits (hid::btn(hid::kBtnA) ...).
+//            Each pressed physical source adds cfg.remap[source] when that is not kPadDefault (the bits of the value; 0 adds nothing, and the
+//            built-in mapping of that source is then not added). A source with kPadDefault adds the built-in mapping below.
 //            Face buttons: cfg.label_abxy = true maps by the printed label (raw.face_label: label A -> Switch A, B -> B, X -> X, Y -> Y), so an
 //            Xbox pad's bottom button (label A) is Switch A; false maps by position: SOUTH -> B, EAST -> A, WEST -> Y, NORTH -> X.
 //            LEFT_SHOULDER -> L, RIGHT_SHOULDER -> R, START -> PLUS, BACK -> MINUS, LEFT_STICK -> LStick click, RIGHT_STICK -> RStick click,
@@ -16,6 +18,11 @@ namespace nxrt::play {
 //  sticks    raw axis / 32768 (clamped to -1..1), y flipped (SDL y down = +, hid y up = +), radial dead zone cfg.stick_deadzone with the
 //            remaining travel rescaled to 0..1 ((len - dz) / (1 - dz)), then * 32767 rounded; the result is within +-32767.
 void map_pad(const platform::GamepadRaw& raw, const PadSettings& cfg, hid::NpadInput* out);
+
+// The Switch button bits the built-in mapping gives a physical source (the kPadDefault case of map_pad), for a pad with the printed labels
+// A B X Y on SOUTH EAST WEST NORTH (label_abxy true: South A, East B, West X, North Y; false: South B, East A, West Y, North X).
+// LEFT_TRIGGER -> ZL, RIGHT_TRIGGER -> ZR, the other sources as in map_pad. Returns 0 for kCount.
+uint64_t pad_default_buttons(PadSrc src, bool label_abxy);
 
 // Gyro and accelerometer in SDL axes (m/s^2, rad/s) to the six-axis sample the hid service stores (G, revolutions per second), the
 // mapping that smo-recomp uses: accel = (-ax, ay, -az) / 9.80665, gyro = (-gx, gy, -gz) / (2 pi) * cfg.gyro_scale. A pad lying still, face up

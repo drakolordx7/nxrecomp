@@ -146,18 +146,20 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Mouse, Pad, Timing, Display, Hdr, Upscale, Latency, Prompts, Switch, Bindings };
+enum class Sec { None, Unknown, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Bindings };
 
 const char* sec_label(Sec s) {
     switch (s) {
         case Sec::Mouse: return "[mouse]";
         case Sec::Pad: return "[pad]";
+        case Sec::PadMap: return "[padmap]";
         case Sec::Timing: return "[timing]";
         case Sec::Display: return "[display]";
         case Sec::Hdr: return "[hdr]";
         case Sec::Upscale: return "[upscale]";
         case Sec::Latency: return "[latency]";
         case Sec::Prompts: return "[prompts]";
+        case Sec::Fps: return "[fps]";
         case Sec::Switch: return "[switch]";
         default: return "";
     }
@@ -293,6 +295,48 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
                 return true;
             }
             break;
+        case Sec::Fps:
+            if (k == "show") return set_bool(&s->fps.show);
+            if (k == "key") {
+                InputId id;
+                if (!parse_input(v, &id) || id.kind != InKind::Key) {
+                    *msg = "key must be a keyboard key name (F2, Tab, Left Ctrl ...), got '" + v + "'";
+                    return false;
+                }
+                s->fps.key = id;
+                return true;
+            }
+            if (k == "corner") {
+                if (!parse_corner(v, &s->fps.corner)) {
+                    *msg = "corner must be top_left, top_right, bottom_left or bottom_right, got '" + v + "'";
+                    return false;
+                }
+                return true;
+            }
+            if (k == "detail") return set_int(0, 2, &s->fps.detail);
+            if (k == "in_screenshots") return set_bool(&s->fps.in_screenshots);
+            break;
+        case Sec::PadMap: {
+            PadSrc src;
+            if (!parse_pad_src(k, &src)) break;   // unknown pad button name: a warning
+            uint64_t& dst = s->pad.remap[static_cast<int>(src)];
+            if (lower(v) == "default") {
+                dst = kPadDefault;
+                return true;
+            }
+            Output o;
+            std::string perr;
+            if (!parse_output(v, &o, &perr)) {
+                *msg = perr;
+                return false;
+            }
+            if (o.lx != 0 || o.ly != 0 || o.rx != 0 || o.ry != 0) {
+                *msg = k + " can press Switch buttons only (no stick directions), got '" + v + "'";
+                return false;
+            }
+            dst = o.buttons;
+            return true;
+        }
         case Sec::Display:
             if (k == "window_mode") {
                 const std::string l = lower(v);
@@ -466,12 +510,14 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             const std::string key = lower(name);
             if (key == "mouse") sec = Sec::Mouse;
             else if (key == "pad") sec = Sec::Pad;
+            else if (key == "padmap") sec = Sec::PadMap;
             else if (key == "timing") sec = Sec::Timing;
             else if (key == "display") sec = Sec::Display;
             else if (key == "hdr") sec = Sec::Hdr;
             else if (key == "upscale") sec = Sec::Upscale;
             else if (key == "latency") sec = Sec::Latency;
             else if (key == "prompts") sec = Sec::Prompts;
+            else if (key == "fps") sec = Sec::Fps;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -590,6 +636,13 @@ std::string format_settings(const Settings& s) {
     kv("rumble", flag(s.pad.rumble));
     kv("rumble_scale", num(s.pad.rumble_scale));
 
+    o += "\n[padmap]\n";
+    for (int i = 0; i < kPadSrcCount; ++i) {
+        Output out;
+        out.buttons = s.pad.remap[i];
+        kv(pad_src_name(static_cast<PadSrc>(i)), s.pad.remap[i] == kPadDefault ? std::string("default") : output_text(out));
+    }
+
     o += "\n[timing]\n";
     kv("tap_ms", std::to_string(s.timing.tap_ms));
     kv("hold_ms", std::to_string(s.timing.hold_ms));
@@ -636,6 +689,13 @@ std::string format_settings(const Settings& s) {
     kv("log_timings", flag(s.extras.latency.log_timings));
     o += "\n[prompts]\n";
     kv("style", prompt_style_name(s.prompts.style));
+
+    o += "\n[fps]\n";
+    kv("show", flag(s.fps.show));
+    kv("key", input_name(s.fps.key));
+    kv("corner", corner_name(s.fps.corner));
+    kv("detail", std::to_string(s.fps.detail));
+    kv("in_screenshots", flag(s.fps.in_screenshots));
 
     o += "\n[switch]\n";
     for (int a = 1; a < kActCount; ++a) {   // every action except none

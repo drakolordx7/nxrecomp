@@ -110,7 +110,24 @@ struct MouseSettings {
     bool menu_touch = true;                        // in menus the left click is a touch on the Switch touch screen
     bool wheel_beams = true;                       // the wheel cycles beams (the BeamNext / BeamPrev bindings stay either way)
 };
+// ---- pad button remapping ------------------------------------------------------------------------------------------------------------
+// The physical buttons of an SDL gamepad, named by position (the face buttons by where they sit, so the names do not depend on the printed
+// letters). Each one presses a Switch button; `default` (kPadDefault) keeps the built-in mapping of pad_map.h.
+enum class PadSrc : uint8_t {
+    South = 0, East, West, North,                         // face buttons: bottom, right, left, top
+    LeftShoulder, RightShoulder, LeftTrigger, RightTrigger,
+    Start, Back, LeftStick, RightStick,                   // the two sticks are clicks
+    DpadUp, DpadDown, DpadLeft, DpadRight,
+    kCount
+};
+constexpr int kPadSrcCount = static_cast<int>(PadSrc::kCount);
+const char* pad_src_name(PadSrc s);                      // the file's word: "south" "east" "west" "north" "left_shoulder" ... "dpad_right"
+bool parse_pad_src(const std::string& name, PadSrc* out);   // case-insensitive, '-' and ' ' equal '_'
+constexpr uint64_t kPadDefault = ~0ull;                  // PadSettings::remap value: the built-in mapping
+
 struct PadSettings {
+    uint64_t remap[kPadSrcCount] = {kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault,
+                                    kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault};
     bool label_abxy = true;        // true: buttons by the label printed on them (Xbox A = Switch A); false: by position (bottom = Switch B)
     double stick_deadzone = 0.10;  // radial, 0..0.5, applied before the game's own dead zone
     double trigger_threshold = 0.35;   // analog trigger travel (0..1) that counts as ZL / ZR pressed
@@ -152,7 +169,21 @@ constexpr int kPromptStyleCount = 5;
 const char* prompt_style_name(PromptStyle s);          // "switch" "xbox" "playstation" "keyboard" "auto"
 bool parse_prompt_style(const std::string& s, PromptStyle* out);   // case-insensitive; also accepts ps, ps4, ps5, dualsense, kbm, keyboard_mouse, mouse
 struct PromptSettings {
-    PromptStyle style = PromptStyle::Switch;   // the game's own icons by default
+    PromptStyle style = PromptStyle::Auto;     // follows the last used device: keyboard icons until a pad is used (or when none is connected)
+};
+
+// ---- frame rate counter ------------------------------------------------------------------------------------------------------------
+// The small corner overlay with the frame rate and the frame time. Off by default; a hotkey (and the F1 page and the launcher) switches it.
+enum class Corner : uint8_t { TopLeft = 0, TopRight, BottomLeft, BottomRight };
+const char* corner_name(Corner c);                       // "top_left" "top_right" "bottom_left" "bottom_right"
+bool parse_corner(const std::string& s, Corner* out);    // case-insensitive, '-' and ' ' equal '_'
+constexpr int32_t kScancodeF2 = 59;                      // SDL_SCANCODE_F2
+struct FpsSettings {
+    bool show = false;                                   // [fps] show
+    InputId key = {InKind::Key, kScancodeF2};            // [fps] key: the hotkey that flips `show` (a keyboard key; never reaches the game)
+    Corner corner = Corner::TopLeft;                     // [fps] corner
+    int detail = 1;                                      // [fps] detail: 0 frame rate only, 1 frame rate and frame time, 2 also the 1% low and the worst frame
+    bool in_screenshots = false;                         // [fps] in_screenshots: the counter is drawn into screenshots too (test tooling asks for this)
 };
 
 struct Settings {
@@ -162,6 +193,7 @@ struct Settings {
     DisplaySettings display;
     extras::Settings extras;       // the [hdr] [upscale] [latency] sections (nxrt/extras.h): HDR output, upscaling, low latency
     PromptSettings prompts;
+    FpsSettings fps;
     Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
 };
@@ -184,7 +216,10 @@ const char* default_settings_text();
 //   [upscale]  mode (off fsr1 fsr3 dlss xess; spatial = fsr1) sharpness (0..1) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
 //              frame_generation (1/0)
 //   [latency]  mode (off auto on boost) log_timings (1/0)
-//   [prompts]  style = switch|xbox|playstation|keyboard|auto   (which button icons the game's prompts show; auto follows the last used input device)
+//   [prompts]  style = switch|xbox|playstation|keyboard|auto   (which button icons the game's prompts show; auto, the default, follows the last used input device)
+//   [fps]      show (1/0) key (a keyboard key, F2) corner (top_left top_right bottom_left bottom_right) detail (0..2) in_screenshots (1/0)
+//   [padmap]   <south east west north left_shoulder right_shoulder left_trigger right_trigger start back left_stick right_stick dpad_up dpad_down
+//              dpad_left dpad_right> = default | none | <Switch buttons joined by '+', e.g. A or ZL+L>   (the pad button presses those Switch buttons)
 //   [switch]   <action> = <output>      e.g.  fire = ZR    beam_1 = X+UP    (missing actions keep the default)
 //   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = fire    Left Ctrl = morph hold 250    Space = jump toggle
 //                      ctx is one of all gameplay morph map menu scan. The same input may appear several times in a section.
