@@ -235,12 +235,15 @@ void apply_frame_cap(const Settings& s) {
     G& st = g();
     double cap = s.display.fps_cap;
     if (s.display.vsync) {
-        // the display paces; a cap only matters when it is below the refresh rate
+        // The display paces; a cap only matters when it is below the refresh rate. With no cap below the refresh rate, the frame limiter still keeps just
+        // under it (stream S21, [latency] vsync_cap): the game otherwise renders as fast as the swapchain takes frames, the queue behind the display
+        // fills (three images) and every picture is shown one to two frames after it was simulated; just under the refresh rate the queue stays empty.
         const float hz = st.window ? platform::display_refresh_hz() : 0.f;
-        if (cap <= 0 || (hz > 0 && cap >= hz)) cap = 0;
+        static const bool vsync_cap = config_get_bool("latency", "vsync_cap", true);
+        if (cap <= 0 || (hz > 0 && cap >= hz)) cap = (vsync_cap && hz > 0) ? static_cast<double>(hz) * 0.9995 : 0;
     }
     st.limiter.set_target_fps(cap);
-    if (extras::LowLatency* ll = extras::lowlat()) ll->set_cap_fps(cap);     // Reflex / Anti-Lag pace to the same cap
+    extras::lowlat_note_cap(cap);     // Reflex / Anti-Lag pace to the same cap (remembered for a renderer that is created later)
 }
 
 // ---- hooks ----------------------------------------------------------------------------------------------------------------------------
@@ -506,8 +509,10 @@ int update_hook(::Ctx*, uint64_t, void*) {
     // frame pacing (stream S18): the limiter waits here, before the input is sampled, so the picture shown is the one simulated one render time
     // earlier. The wait for frames still in flight comes first, then the limiter's schedule.
     if (extras::pace_in_main()) {
-        if (extras::LowLatency* ll = extras::lowlat()) ll->wait_in_flight();
-        { NXFT("limiter.main"); st.limiter.begin_frame_nohook(); }
+        extras::LowLatency* ll = extras::lowlat();
+        if (ll) ll->wait_in_flight();
+        // With Reflex on and a frame cap, the Reflex sleep that follows is the limiter (minimum interval between simulation starts)
+        if (!(ll && ll->paces_frames())) { NXFT("limiter.main"); st.limiter.begin_frame_nohook(); }
         extras::pace_boundary_done();
     }
     // low latency (stream S14): the sleep that lets the frame start as late as the GPU allows, then the input sample marker; the events are pumped right after
@@ -543,7 +548,10 @@ int update_hook(::Ctx*, uint64_t, void*) {
             extras::set_settings(s.extras);
             extras::hdr_refresh_levels();
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
-            if (s.display.window_mode != old_mode) set_window_mode(s.display.window_mode);
+            if (s.display.window_mode != old_mode) {
+                set_window_mode(s.display.window_mode);
+                apply_frame_cap(s);                        // another window mode can mean another refresh rate (vsync cap)
+            }
             std::string err;
             if (!save_settings(st.path, s, &err)) NXLOG_W(kTag, "cannot save %s: %s", st.path.c_str(), err.c_str());
             else NXLOG_I(kTag, "settings applied and saved to %s", st.path.c_str());
@@ -966,6 +974,7 @@ bool start(const StartOptions& opt) {
     st.renderer = opt.renderer;
     st.device = opt.device;
     st.window = opt.window && platform::has_window();
+    apply_frame_cap(st.settings);                      // the display's refresh rate is known now (vsync cap)
     kernel::sched_set_process_priority(st.window);     // a person is playing: keep the frame out of the background load
     st.pump_thread = std::this_thread::get_id();
     st.engine = std::make_unique<Engine>(st.settings);

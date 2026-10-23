@@ -82,7 +82,13 @@ void emit_handles(NVNcommandBuffer* c, Op op, NVNshaderStage stage, int first, i
     if (count <= 0 || !handles) return;
     const P_BindTextures p{static_cast<uint32_t>(stage), static_cast<uint32_t>(first), static_cast<uint32_t>(count), 0};
     const uint32_t bytes = static_cast<uint32_t>(count) * 8u;
-    with_rec(c, [&](CmdList& l) { l.emit(op, p, handles, bytes); });
+    with_rec(c, [&](CmdList& l) {
+        l.emit(op, p, handles, bytes);
+        if (op == Op::BindTextures) {      // background texture preparation (nvn_texprep.h): the textures behind these handles are about to be sampled
+            CommandBuffer* cb = cb_of(c);
+            if (cb && cb->tpool) textures_note_bound(cb->tpool, handles, count);
+        }
+    });
 }
 
 // Fills a render target entry: the texture (or null) and its view when one was given.
@@ -183,7 +189,11 @@ void nvnCommandBufferSetCommandMemoryCallbackEnabled(NVNcommandBuffer*, NVNboole
 void nvnCommandBufferSetTexturePool(NVNcommandBuffer* c, const NVNtexturePool* pool) {
     TexturePool* tp = host_of<TexturePool>(pool);
     const P_Pool p{tp};
-    with_rec(c, [&](CmdList& l) { l.hold(tp); l.emit(Op::SetTexturePool, p); });
+    with_rec(c, [&](CmdList& l) {
+        l.hold(tp);
+        l.emit(Op::SetTexturePool, p);
+        if (CommandBuffer* cb = cb_of(c)) cb->tpool = tp;
+    });
 }
 void nvnCommandBufferSetSamplerPool(NVNcommandBuffer* c, const NVNsamplerPool* pool) {
     SamplerPool* sp = host_of<SamplerPool>(pool);

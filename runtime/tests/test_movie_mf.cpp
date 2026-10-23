@@ -353,6 +353,60 @@ std::vector<std::string> load_lines(const std::string& path) {
 
 }  // namespace
 
+// Plays the shortest movie of the oracle folder through the extractor only (no decoders) to its end, seeks to 0 like a looping movie does and plays it again:
+// both passes must hold the same samples with the same timestamps, whether the loop restart came from the samples decoded ahead (S21) or from a fresh seek.
+NXTEST(movie_loop_restart) {
+    const char* dirv = std::getenv("NXRT_MOVIE_DIR");
+    if (!dirv || !*dirv) { nxtest::skip("NXRT_MOVIE_DIR is not set (run tools/media/movie_oracle.py)"); return; }
+    REQUIRE(media::install_movie_hle());
+    std::vector<Expected> all = load_expected(dirv);
+    REQUIRE(!all.empty());
+    const Expected* pick = &all[0];
+    for (const Expected& e : all) if (e.frames < pick->frames && e.frames > 30) pick = &e;
+    const std::vector<uint8_t> file = read_file(std::string(dirv) + "/" + pick->id + ".mp4");
+    REQUIRE(!file.empty());
+    t_file = &file;
+    FakeReader reader;
+    alignas(16) uint8_t ext[16] = {};
+    call(kExtCtor, {P(ext), 1, 2});
+    REQUIRE(call(kExtSetSource, {P(ext), P(&reader), P("movie.mp4")}) == 0);
+    int n = 0;
+    call(kExtTrackCount, {P(ext), P(&n)});
+    REQUIRE(n >= 1);
+    for (int i = 0; i < n; i++) REQUIRE(call(kExtSelect, {P(ext), static_cast<uint64_t>(i)}) == 0);   // the last selection prerolls
+    auto pass = [&](std::vector<std::pair<uint64_t, int64_t>>& out) {
+        for (int guard = 0; guard < 200000; guard++) {
+            uint64_t track = ~0ull;
+            const uint64_t rc = call(kExtTrackFor, {P(ext), P(&track)});
+            if (rc == 0x2000) return true;
+            if (rc != 0) return false;
+            int64_t ts = -1;
+            if (call(kExtSampleTime, {P(ext), P(&ts)}) != 0) return false;
+            out.emplace_back(track, ts);
+            call(kExtAdvance, {P(ext)});
+        }
+        return false;
+    };
+    std::vector<std::pair<uint64_t, int64_t>> a, b, c;
+    CHECK(pass(a));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));   // the worker has the start decoded ahead by now
+    CHECK(call(kExtSeek, {P(ext), 0}) == 0);
+    CHECK(pass(b));
+    CHECK(call(kExtSeek, {P(ext), 0}) == 0);                       // at once: the look-ahead may not be ready
+    CHECK(pass(c));
+    CHECK(!a.empty());
+    CHECK_MSG(a == b, "the second pass differs from the first (" + std::to_string(a.size()) + " vs " + std::to_string(b.size()) + " samples)");
+    CHECK_MSG(a == c, "the third pass differs from the first (" + std::to_string(a.size()) + " vs " + std::to_string(c.size()) + " samples)");
+    if (a != c) {
+        size_t i = 0;
+        while (i < a.size() && i < c.size() && a[i] == c[i]) ++i;
+        std::printf("    first difference at sample %zu: first pass (%llu, %lld), third pass (%llu, %lld)\n", i, i < a.size() ? (unsigned long long)a[i].first : 0ull,
+                    i < a.size() ? (long long)a[i].second : -1ll, i < c.size() ? (unsigned long long)c[i].first : 0ull, i < c.size() ? (long long)c[i].second : -1ll);
+    }
+    call(kExtDtor, {P(ext)});
+    t_file = nullptr;
+}
+
 NXTEST(movie_import_table) {
     CHECK(media::install_movie_hle());
     size_t n = 0;

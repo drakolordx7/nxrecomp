@@ -21,6 +21,7 @@ constexpr const char* kTag = "lowlat";
 std::atomic<LowLatency*> g_instance{nullptr};
 std::atomic<uint64_t (*)()> g_backlog_fn{nullptr};
 std::atomic<int> g_boundary_paced{0};
+std::atomic<double> g_cap_fps{0};
 
 uint64_t now_us() { return FrameLimiter::now_ns() / 1000ull; }
 double ms_since(uint64_t t_ns) { return static_cast<double>(FrameLimiter::now_ns() - t_ns) * 1e-6; }
@@ -155,12 +156,17 @@ bool pace_boundary_consume() {
 }
 
 void lowlat_set_backlog_fn(uint64_t (*fn)()) { g_backlog_fn.store(fn); }
+void lowlat_note_cap(double fps) {
+    g_cap_fps.store(fps > 0 ? fps : 0);
+    if (LowLatency* l = g_instance.load(std::memory_order_acquire)) l->set_cap_fps(fps);
+}
 LowLatency* lowlat() { return g_instance.load(std::memory_order_acquire); }
 void lowlat_set(LowLatency* l) { g_instance.store(l, std::memory_order_release); }
 
 LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
     Impl& s = *impl_;
     s.dev = &dev;
+    s.cap_fps = g_cap_fps.load();
     s.cfg = settings().latency;
     const gfx::DeviceFeatures& f = dev.features();
     if (s.cfg.mode != LatencyMode::Off) {
@@ -323,6 +329,14 @@ void LowLatency::input_sample() {
     s.input_ns_for[id % 64].store(FrameLimiter::now_ns(), std::memory_order_relaxed);
     ft::mark("lat.input", static_cast<uint32_t>(id));
     s.marker(VK_LATENCY_MARKER_INPUT_SAMPLE_NV, id);
+}
+
+bool LowLatency::paces_frames() const {
+    static const bool keep_limiter = config_get_bool("latency", "reflex_limiter", false);
+    const Impl& s = *impl_;
+    if (keep_limiter || !s.reflex || !enabled_) return false;
+    std::lock_guard<std::mutex> lk(const_cast<std::mutex&>(s.mu));
+    return s.mode_set && s.live_on && s.cap_fps > 0;
 }
 
 void LowLatency::sim_end() {
