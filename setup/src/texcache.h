@@ -15,6 +15,15 @@
 // tegra::compute_layout with a TextureDesc built exactly like runtime/src/gfx/nvn/nvn_texture_layout.cpp does for the block-linear
 // case (gob_blocks_y = tegra::default_gob_blocks_y(blocks_y); 3D: gob_blocks_y 1 and gob_blocks_z 16).
 // File path: <cache_dir>/<first two hex digits of the key>/<16 hex digits, lower case>.bc7 .
+//
+// WHAT AN ENTRY HOLDS. The header names the Vulkan format of the data and the runtime builds its image in that format (docs/S4f.md,
+// "Texture cache entries"). The key does not depend on it. Three kinds, picked per texture from its pixels:
+//   BC7 (VK_FORMAT_BC7_UNORM/SRGB_BLOCK)   the default, same sRGB-ness as the ASTC format.
+//   BC5 (VK_FORMAT_BC5_UNORM_BLOCK)        a linear texture whose level 0 is fully opaque with a blue channel of at most 2 (two-channel
+//                                          normal maps): R and G in two 8-value ramps per 4x4 block, sampled as (R, G, 0, 1).
+//   RGBA8 (VK_FORMAT_R8G8B8A8_UNORM/SRGB)  a texture BC7 cannot hold: the BC7 result of level 0 layer 0 is under kRgba8PsnrDb dB
+//                                          against the ASTC decode (the white-noise lookup texture is at 19 dB). Tight texels, levels
+//                                          back to back, all layers of a level together.
 #pragma once
 #include <functional>
 #include <string>
@@ -53,7 +62,17 @@ std::string texcache_path(const std::string& cache_dir_utf8, u64 key);
 // Revision of the ASTC -> BC7 conversion. A bc7_cache folder made by another revision is rebuilt by setup (it carries a marker file,
 // bc7_cache\encoder.txt); the runtime's own cache format and key are unchanged. 1: first version (opaque blocks without mode 6 and
 // without channel rotation); 2: opaque alpha kept exactly 255 by pinning, rotation allowed (RG normal maps 2 to 12 dB better).
-constexpr int kTextureEncoderRev = 2;
+// 3: the block height follows the console's rule (1.5 times the block rows against 16/32/64/128, the runtime's console_block_height), which
+// changes the key and the untiling of the textures where it differs from the smallest covering height; two-channel normal maps become
+// BC5 entries and textures BC7 cannot hold become RGBA8 entries.
+constexpr int kTextureEncoderRev = 3;
+
+// BC7 results under this PSNR (dB, all four channels, level 0 layer 0 against the ASTC decode) make the entry RGBA8. Measured over the
+// 4,413 ASTC textures of the game at quality 3: the white-noise lookup texture 19.2 dB, every other texture 33.6 dB or more.
+constexpr double kRgba8PsnrDb = 28.0;
+
+// The format class of a cache entry.
+enum class TexCacheKind { Bc7, Bc5, Rgba8 };
 
 // Level 0, layer 0, slice 0 of an ASTC texture as raw ASTC blocks (untiled, tightly packed), with its footprint. For quality
 // tools (tools/texq.cpp); false when the texture is not one the cache can hold.
@@ -64,18 +83,25 @@ struct TexLevel0 {
 };
 bool texcache_level0(const TxtrInfo& info, const u8* tiled, size_t tiled_len, TexLevel0& out);
 
-// Transcodes one texture (untile + ASTC -> BC7 per level/layer/slice with a2b_transcode, threads = 1 inside the library) and returns
-// the complete file bytes (NXB7 header + level table + data), identical in layout to nvn_texdata.cpp cache_write.
-// Throws Error on failure (never crashes on bad data).
-std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& plan, const u8* tiled, size_t tiled_len, int quality);
+// Transcodes one texture (untile, ASTC decode, then BC7, BC5 or RGBA8 as described at the top; threads = 1 inside the library) and
+// returns the complete file bytes (NXB7 header + level table + data), identical in layout to nvn_texdata.cpp cache_write. The plan's
+// geometry is the BC7/BC5 one; an RGBA8 entry has its own level table and size (texcache_rgba8_levels). kind (optional) receives the
+// kind that was written. Throws Error on failure (never crashes on bad data).
+std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& plan, const u8* tiled, size_t tiled_len, int quality,
+                                    TexCacheKind* kind = nullptr);
 
-// Cheap check that an existing cache file is complete and matches the plan (size, magic, version, key, format, level table). Does
-// not decode. This is what the runtime itself checks, so a file that passes here is accepted by the runtime.
-bool texcache_file_valid(const std::string& path_utf8, const TexCachePlan& plan);
+// The level table and total file size of an RGBA8 entry for this plan (tight 4-byte texels, all layers of a level together).
+std::vector<TexOutLevel> texcache_rgba8_levels(const TexCachePlan& plan, u64* file_bytes);
+
+// Cheap check that an existing cache file is complete and matches the plan: magic, version, key, level table and size, for whichever of
+// the three formats the header declares (BC7 as planned, BC5 for a linear texture, RGBA8 of the same sRGB-ness). Does not decode. This is
+// what the runtime itself checks, so a file that passes here is accepted by the runtime. kind (optional) receives the format found.
+bool texcache_file_valid(const std::string& path_utf8, const TexCachePlan& plan, TexCacheKind* kind = nullptr);
 
 struct TexCacheStats {
     u32 textures_total = 0;      // ASTC TXTR entries found (duplicates across paks counted once, by cache key)
     u32 converted = 0, skipped = 0, failed = 0;
+    u32 bc5 = 0, rgba8 = 0;      // of the converted: entries written as BC5 and as RGBA8 (the rest are BC7)
     u64 bytes_written = 0;
     double seconds = 0;
 };

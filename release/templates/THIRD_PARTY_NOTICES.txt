@@ -134,23 +134,38 @@ COMPONENTS WITH A LICENCE TEXT IN THE LICENSES FOLDER
     File:       licenses\LICENSE.DejaVu.txt
 
 
-COMPONENTS WITHOUT A LICENCE TEXT IN THIS RELEASE
-
-17. Eden and yuzu (code adapted in the file-system, audio and display services)
-    Version:    not pinned
-    Licence:    GPL-2.0-or-later
-    Licence text: see the upstream project
+17. yuzu and Eden (code adapted in the file-system, audio, display, nv and HID services)
+    Version:    not pinned; Eden files read from its master branch
+    Licence:    GPL-2.0-or-later (yuzu files)
+    Copyright:  Copyright 2018 yuzu Emulator Project
+    Used in:    mpr.exe (src/services/fs_romfs.cpp, audio_out.cpp, vi_nv.cpp, hid_shm.h)
+    File:       licenses\LICENSE.yuzu-Eden.GPL-2.0.txt
 
 18. LLVM libc++abi (behaviour and data layouts only; no source text copied)
     Version:    source read 2026-10-21; commit not recorded
     Licence:    Apache-2.0 with LLVM exception
+    Copyright:  not named in the licence file (LLVM Project contributors)
     Upstream licence: https://llvm.org/LICENSE.txt
-    Used in:    exception handling code of mpr.exe
+    Used in:    mpr.exe (exception handling code)
+    File:       licenses\LICENSE.libcxxabi.Apache-2.0-LLVM-exception.txt
 
-19. Microsoft Visual C++ runtime and Windows SDK libraries
-    Version:    Visual Studio Build Tools 2026 (18.11.1)
-    Licence:    Microsoft licence terms
-    Used in:    static runtime objects linked into mpr.exe
+19. Microsoft Visual C++ runtime (linked as DLLs; the DLLs are not in the release)
+    Version:    Visual Studio runtime 14.51.36247.0 (as found on the build PC); built with
+                Visual Studio Build Tools 2026 (18.11.1)
+    Licence:    Microsoft Software License Terms
+    Copyright:  Copyright Microsoft Corporation. All rights reserved.
+    Used in:    mpr.exe, mpr_setup.exe, mpr_setup_cli.exe and the astcdec DLLs (loaded at
+                run time; the player installs the runtime, see the file below)
+    File:       licenses\NOTICE.MSVC-runtime.txt
+
+20. Kenney Input Prompts 1.5a
+    Version:    1.5a
+    Licence:    CC0 1.0 (public domain, no attribution required)
+    Copyright:  Created and distributed by Kenney (www.kenney.nl)
+    Source:     https://kenney.nl/assets/input-prompts
+    Used in:    prompts\prompt_icons.pak (button prompt icons, built from the Xbox Series,
+                PlayStation Series and Keyboard & Mouse sets)
+    File:       prompts\LICENSE-Kenney-InputPrompts.txt
 
 
 NOT SHIPPED

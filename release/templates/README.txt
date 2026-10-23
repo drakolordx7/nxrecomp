@@ -67,7 +67,7 @@ Controllers: Xbox, PlayStation and Switch pads work through SDL, and can be used
 at the same time. Button names follow the printed label by default (Xbox A is Switch A). The
 settings page can switch to button position instead. The mouse aim, the Switch button layout and
 the beam and visor combinations have not been played through yet, so expect rough edges there and
-use the F1 settings page to change what feels wrong.
+use the F1 settings page to change what feels wrong. The game shows Xbox, PlayStation, keyboard or Switch button icons, chosen with [prompts] style in controls.ini (switch, xbox, playstation, keyboard or auto) or on the F1 settings page, Controller tab.
 
 Settings you can change. Each line is optional; a missing key keeps its default.
 
