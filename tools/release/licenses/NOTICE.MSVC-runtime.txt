@@ -2,47 +2,25 @@ Microsoft Visual C++ runtime: what this release contains and how it is linked
 
 WHAT IS LINKED
 
-mpr.exe uses the Visual C++ runtime as DLL files. It is not linked statically: the runtime
-code is not built into mpr.exe. Its import table (the list of DLLs Windows loads when the
-program starts) names these runtime files:
-
-  MSVCP140.dll         C++ standard library
-  VCRUNTIME140.dll     C runtime support
-  VCRUNTIME140_1.dll   C runtime support (additional functions)
-
-mpr.exe also imports the Universal C Runtime through api-ms-win-crt-*.dll names. Those
-come with Windows 10 and Windows 11 itself and are not part of this release.
-
-The other binaries in the release use the same runtime DLLs:
-
-  astcdec-avx2-shared.dll, astcdec-sse4.1-shared.dll, astcdec-sse2-shared.dll
-      need MSVCP140.dll and VCRUNTIME140.dll (loaded by mpr.exe at run time)
-  mpr_setup.exe, mpr_setup_cli.exe
-      need MSVCP140.dll, VCRUNTIME140.dll and VCRUNTIME140_1.dll
+mpr.exe, mpr_setup.exe, mpr_setup_cli.exe and the three astcdec DLLs are linked against the
+static Visual C++ runtime (the /MT option). The C and C++ runtime code they need is compiled
+into each file. None of them imports MSVCP140.dll, VCRUNTIME140.dll, VCRUNTIME140_1.dll or
+the api-ms-win-crt-*.dll names, so a player does not need the Visual C++ Redistributable.
+The release script (tools\release\make_release.py) reads the import table of every .exe and
+.dll it ships and refuses the release if one of those names appears.
 
 WHAT IS SHIPPED
 
-No Visual C++ runtime DLL is in the release. The release script
-(tools\release\make_release.py) copies only mpr.exe, the three astcdec DLLs, the two setup
-tools, the shader pack, the text files, the licences and the font. A player who does not
-already have the runtime installed gets a "was not found" error when mpr.exe starts.
-
-WHAT A PLAYER NEEDS
-
-Install the Microsoft Visual C++ Redistributable for Visual Studio 2015-2022 (x64) before
-running the release. The player installs it from Microsoft, under Microsoft's own terms:
-https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+No Microsoft runtime DLL or installer is in the release. The only Microsoft files the
+programs load are parts of Windows itself (kernel32, user32, Media Foundation, DXGI and
+similar).
 
 THE TERMS
 
-Microsoft says that distribution of the Visual C++ runtime files is limited to licensed
-Visual Studio users and is subject to the Microsoft Software License Terms. The files a
-developer may pass on are named in the "REDIST list" that the "Distributable Code" section
-of those terms refers to:
-https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#-distributable-code-files-for-visual-studio-2022
-
-Licence terms: https://visualstudio.microsoft.com/license-terms/
+The runtime libraries were linked in by the Visual Studio Build Tools 2026 C++ toolchain and
+the Windows SDK, under the Microsoft Software License Terms that come with them.
 Redistribution guidance: https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
+Licence terms: https://visualstudio.microsoft.com/license-terms/
 
-If the release is ever changed to include these DLLs, check the REDIST list first, and
-ship the files with the Microsoft terms that apply to them.
+If the release is ever changed to link the runtime as DLLs again, check the "REDIST list" of
+those terms first and ship the files with the Microsoft terms that apply to them.

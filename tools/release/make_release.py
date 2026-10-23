@@ -16,6 +16,7 @@ read from --prompts-dir (default <repo>/runtime/assets/prompts).
 
 Exit codes: 0 built and audited; 1 an I/O error; 2 a missing input or a bad option; 3 refused by the audit.
 A refused or failed build leaves none of its output behind. The .pdb and .map beside mpr.exe are never copied.
+The audit also refuses a shipped .exe or .dll that imports the dynamic MSVC or UCRT runtime (see CRT_PREFIXES).
 """
 import argparse
 import fnmatch
@@ -24,6 +25,7 @@ import hashlib
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -87,6 +89,10 @@ KEY_TEXT = [
 ]
 LEAK_FILES = (EXE_NAME,) + SETUP_EXES
 LEAK_PATTERNS = []   # matched case-insensitively, as ASCII and as UTF-16LE
+
+
+PE_EXT = ('.exe', '.dll')                       # files whose import tables the audit reads
+CRT_PREFIXES = ('vcruntime', 'msvcp', 'msvcr', 'vcomp', 'concrt', 'ucrtbase', 'api-ms-win-crt-')   # dynamic MSVC / UCRT runtime
 
 
 class UsageError(Exception):
@@ -371,6 +377,91 @@ def text_problems(rel, body):
     return out
 
 
+def pe_imports(data):
+    """Lower-case DLL names in the import and delay-import directories of a PE32+ file, in order, each once.
+
+    None when data is not a PE32+ file or is cut short. The caller treats None as unreadable, not as clean.
+    """
+    try:
+        return _pe_imports(data)
+    except (struct.error, ValueError, IndexError):
+        return None
+
+
+def _pe_imports(data):
+    if data[:2] != b'MZ':
+        return None
+    lfanew, = struct.unpack_from('<I', data, 0x3C)
+    if data[lfanew:lfanew + 4] != b'PE\0\0':
+        return None
+    nsec, = struct.unpack_from('<H', data, lfanew + 6)
+    opt_size, = struct.unpack_from('<H', data, lfanew + 20)
+    opt = lfanew + 24
+    if struct.unpack_from('<H', data, opt)[0] != 0x20B:          # PE32+ only: the release is x64
+        return None
+    image_base, = struct.unpack_from('<Q', data, opt + 24)
+    ndirs, = struct.unpack_from('<I', data, opt + 108)
+    dirs = opt + 112
+    sections = []
+    for i in range(nsec):
+        vsize, va, rawsize, rawptr = struct.unpack_from('<IIII', data, opt + opt_size + 40 * i + 8)
+        sections.append((va, max(vsize, rawsize), rawptr))
+
+    def offset(rva):
+        for va, span, raw in sections:
+            if va <= rva < va + span:
+                return rva - va + raw
+        raise ValueError('rva %#x is outside every section' % rva)
+
+    def name_at(rva):
+        o = offset(rva)
+        return data[o:data.index(b'\0', o)].decode('ascii', 'replace').lower()
+
+    def directory(index):
+        return struct.unpack_from('<II', data, dirs + 8 * index) if index < ndirs else (0, 0)
+
+    names = []
+
+    def add(name):
+        if name not in names:
+            names.append(name)
+
+    rva, _ = directory(1)                                       # normal imports: 20-byte descriptors
+    while rva:
+        desc = data[offset(rva):offset(rva) + 20]
+        if len(desc) != 20:
+            raise ValueError('truncated import descriptor')
+        if desc == bytes(20):
+            break
+        add(name_at(struct.unpack_from('<I', desc, 12)[0]))
+        rva += 20
+
+    rva, _ = directory(13)                                      # delay imports: 32-byte descriptors
+    while rva:
+        desc = data[offset(rva):offset(rva) + 32]
+        if len(desc) != 32:
+            raise ValueError('truncated delay-import descriptor')
+        if desc == bytes(32):
+            break
+        attrs, dll = struct.unpack_from('<II', desc, 0)
+        if not attrs & 1:                                       # old form: the name is an absolute address
+            dll -= image_base
+        add(name_at(dll))
+        rva += 32
+    return names
+
+
+def crt_problems(rel, data, a):
+    """Refuse a shipped .exe or .dll that imports the dynamic MSVC or UCRT runtime; warn when it cannot be read."""
+    names = pe_imports(data)
+    if names is None:
+        a.warnings.append('%s is not a readable PE file, so its imports were not checked' % rel)
+        return
+    for name in names:
+        if name.startswith(CRT_PREFIXES):
+            a.problems.append('crt-import: %s imports %s' % (rel, name))
+
+
 def size_problem(rel, size):
     if rel == EXE_NAME:
         key = 'exe'
@@ -451,6 +542,9 @@ def audit_files(refs, expected, deny, leak=False, strict=False):
             a.problems.append('size: ' + sp)
         if sha in deny:
             a.problems.append('deny-hash: %s has the same sha256 as %s' % (rel, deny[sha]))
+        if rel.lower().endswith(PE_EXT):
+            with ref.opener() as f:
+                crt_problems(rel, f.read(), a)
     if MANIFEST in have and manifest_text is not None:
         for p in manifest_problems(manifest_text, a.hashes):
             a.problems.append(p)
