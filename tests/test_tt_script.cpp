@@ -669,3 +669,38 @@ NXTEST(call_parses_offset_and_argument_text) {
     CHECK_EQ(sc.steps[1].text, std::string("$ps 4 250"));
     expect_err("@call\n", 1, "@call <offset>");
 }
+
+// ---- S25 step: @watch -------------------------------------------------------------------------------
+
+NXTEST(watch_on_defaults_to_both_axes) {
+    Script sc;
+    REQUIRE(parse_ok("@watch on\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Watch);
+    CHECK_EQ(sc.steps[0].text, std::string("on"));
+    CHECK_EQ(sc.steps[0].y, 3.0);
+}
+
+NXTEST(watch_on_selects_vely_or_posy) {
+    Script sc;
+    REQUIRE(parse_ok("@watch on vely\n@watch on posy\n@watch on both\n", sc));
+    REQUIRE(sc.steps.size() == 3);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Watch);
+    CHECK_EQ(sc.steps[0].y, 1.0);
+    CHECK_EQ(sc.steps[1].y, 2.0);
+    CHECK_EQ(sc.steps[2].y, 3.0);
+}
+
+NXTEST(watch_off_parses) {
+    Script sc;
+    REQUIRE(parse_ok("@watch off\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Watch);
+    CHECK_EQ(sc.steps[0].text, std::string("off"));
+}
+
+NXTEST(watch_errors) {
+    expect_err("@watch\n", 1, "@watch on [vely|posy|both]");
+    expect_err("@watch maybe\n", 1, "expected on or off");
+    expect_err("@watch on bogus\n", 1, "expected vely, posy or both");
+}

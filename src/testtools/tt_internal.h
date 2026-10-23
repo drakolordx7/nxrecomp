@@ -70,6 +70,14 @@ private:
     float mouse_x_ = 0, mouse_y_ = 0;
     int fail_line_ = 0;
     double igt_base_ = -1;                               // @play: the play time at the first readable frame of the step
+    // live mode ([test] live = file, env NXRT_TEST_LIVE): when the script runs out of steps the runner waits for more lines appended to that
+    // file (so a person or a driver can play the game step by step), writing <file>.status (JSON, one line) each time it goes idle.
+    std::string live_path_;
+    const RegionTable* regions_ = nullptr;
+    size_t live_off_ = 0;
+    int live_lines_ = 0;
+    bool poll_live(uint64_t k, const GameState& s, bool valid);       // true when new steps were appended
+    bool write_live_status(uint64_t k, const GameState& s, bool valid, const char* note);
     void advance() { idx_++; started_ = false; remaining_ = 0; }
     void fail(const Step& st, const std::string& msg);
     bool eval_assert(const Step& st, const GameState& s, bool valid, std::string* detail);
@@ -78,6 +86,10 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
+bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err);   // tt_probe.cpp: @objs
+bool watch_start(::Ctx* c, int what);      // tt_probe.cpp: arm the debug-register write watch (1 vel.y, 2 pos.y, 3 both); false when the player is not readable yet
+void watch_stop();                          // disarm and log the hits
+void watch_flush(uint64_t frame);           // log the hits recorded since the last call (once per frame)
 bool give_item(int item, int amount);      // tt_probe.cpp: writes amount and capacity of one item of CPlayerStateMP1
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame

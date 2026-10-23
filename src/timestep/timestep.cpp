@@ -55,6 +55,7 @@ Config load_config() {
     c.fix_render_timings = config_get_bool("time", "fix_render_timings", true);
     c.fix_streaming = config_get_bool("time", "fix_streaming", true);
     c.fix_budget = config_get_bool("time", "fix_budget", true);
+    c.fix_stuck_tracker = config_get_bool("time", "fix_stuck_tracker", true);
     c.movie_max = std::clamp(config_get_double("time", "movie_max", 0.5), 0.01, 5.0);
     c.log_every = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "log_every", 0), 0, 1000000));
     c.csv = config_get_str("time", "csv", "");
@@ -156,6 +157,7 @@ struct G {
     // render timings
     bool render_init = false;
     double render_frames = 0;
+    double stuck_acc = 0.0;        // game time since the last stuck-tracker sample
     uint64_t render_addr = 0;
 
     // statistics
@@ -353,6 +355,26 @@ int hook_render_timings(::Ctx* c, uint64_t, void*) {
     return 1;
 }
 
+// ---- CPlayerStuckTrackerMP1::AddState: one sample per 1/60 s of game time ----------------------------------------------------------
+// The tracker keeps the last 20 samples (positions, velocities, states, one added per player tick) and IsPlayerStuck judges the path length and the
+// bounding box of those 20. Written for 60 ticks per second the window is 1/3 s; at 240 ticks per second it is 1/12 s, the top of a jump (speed
+// about 1.4 units/s) covers less than the 1/30 unit threshold, the test says "stuck" and ProcessInput calls CPhysicsActorMP1::Stop on the player:
+// vertical speed 0 for one frame, a jump 4 % longer. Taking a sample only when 1/60 s of game time has passed keeps the window as it was made.
+int hook_stuck_add_state(::Ctx*, uint64_t, void*) {
+    G& s = g();
+    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_stuck_tracker) return 0;
+    const double dt = read_dt();
+    if (dt >= kGameStep * 0.999) {
+        s.stuck_acc = 0.0;
+        return 0;
+    }
+    s.stuck_acc += dt;
+    if (s.stuck_acc < static_cast<double>(kGameStep) - 1e-5) return 1;        // too early for a sample: handled, x0 (this) is the result
+    s.stuck_acc -= kGameStep;
+    if (s.stuck_acc > kGameStep) s.stuck_acc = 0.0;
+    return 0;
+}
+
 // ---- CMovieList::Update(float): the movie clock is real time ---------------------------------------------------------------------------
 int hook_movie(::Ctx* c, uint64_t, void*) {
     G& s = g();
@@ -389,6 +411,7 @@ void add_hooks(const Config& c) {
     M(site::kStreamB1, kStream2, 9);
     E(site::kTickRenderTimings, &hook_render_timings);
     E(site::kMovieUpdate, &hook_movie);
+    E(site::kStuckAddState, &hook_stuck_add_state);
 }
 
 }  // namespace
@@ -425,9 +448,9 @@ void install(const Config& cfg) {
     }
     if (cfg.mode != Mode::Off || cfg.off_rate > 0.0) add_hooks(cfg);
     s.installed = true;
-    NXLOG_I(kTag, "mode %s (%s), rate %.0f, clamp %.0f..%.0f Hz, smooth %d, pace %d, fixes: friction %d render_timings %d streaming %d budget %d movie %d, %zu hooks at base 0x%llx",
+    NXLOG_I(kTag, "mode %s (%s), rate %.0f, clamp %.0f..%.0f Hz, smooth %d, pace %d, fixes: friction %d render_timings %d streaming %d budget %d stuck_tracker %d movie %d, %zu hooks at base 0x%llx",
             mode_name(cfg.mode), s.det ? "deterministic" : "host clock", cfg.mode == Mode::Fixed ? cfg.rate : 0.0, cfg.min_rate, cfg.max_rate, cfg.smooth,
-            cfg.pace, cfg.fix_friction, cfg.fix_render_timings, cfg.fix_streaming, cfg.fix_budget, cfg.movie_real, s.hooks.size(),
+            cfg.pace, cfg.fix_friction, cfg.fix_render_timings, cfg.fix_streaming, cfg.fix_budget, cfg.fix_stuck_tracker, cfg.movie_real, s.hooks.size(),
             static_cast<unsigned long long>(cfg.game_base));
 }
 
