@@ -59,6 +59,11 @@ uint64_t heap_committed();                      // bytes committed through heap_
 // (in the section) before they are touched through any view.
 uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at = 0, Prot p = Prot::RW);
 bool heap_alias_unmap(uint64_t view_addr);      // unmap a view returned by heap_alias
+// A view of section pages [offset, offset+size) at an address the system picks, outside the guest-visible alias region (the guest never sees it).
+// offset must be a multiple of kAllocGranularity. The GPU import of a pool goes through such a view: the driver walks the whole mapping that
+// contains the imported range, so importing 64 KB of the multi-gigabyte primary view cost tens of milliseconds, a small view costs 0.05 ms (S18).
+void* heap_private_view(uint64_t offset, uint64_t size);
+bool heap_private_view_unmap(void* view);
 size_t heap_alias_count();
 // Section offset of an address inside the primary view or an alias view made by heap_alias; false when it is neither.
 bool heap_offset_of(uint64_t addr, uint64_t* offset);
