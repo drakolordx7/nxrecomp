@@ -1217,11 +1217,14 @@ NXTEST(render_to_texture_then_sample) {
     if (same.bad == 0 && magenta > 360 && magenta < 410) reference_check("texture_render_to_texture", px);
 }
 
-// The game makes several texture objects over one piece of memory (S4f: they share one image). A draw that samples one of them while another
-// is the colour target of the pass is a feedback loop all the same: the binding must get the dummy texture, not the image of the pass. Before
-// the check looked at the image and not at the texture object, validation reported VUID-vkCmdDraw-imageLayout-00344 (the image was
-// COLOR_ATTACHMENT_OPTIMAL, the descriptor said SHADER_READ_ONLY_OPTIMAL) in gameplay.
-NXTEST(sampling_an_alias_of_the_pass_target_binds_the_dummy) {
+// S4g: the game makes several texture objects over one piece of memory (S4f: they share one image). A draw that samples one of them while another
+// is the colour target of the pass is a feedback loop all the same. It must sample a copy of the image made before the draw (the mip chain of
+// the environment map is built that way, one object per level), and the check has to find the loop when the object that is the target has not
+// had its image yet: the sampled object already owns the image, the target object gets it only when the pass begins. Before that was handled the
+// binding got the dummy texture and the chain stayed black; validation had reported VUID-vkCmdDraw-imageLayout-00344 even earlier.
+// Here X (holds the pattern) is sampled first, so it owns the image. The pass then renders into Y, a new object over the same storage, mirroring
+// X left to right; the window shows Y afterwards.
+NXTEST(sampling_an_alias_of_the_pass_target_reads_the_copy_made_before_the_draw) {
     if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
     App app;
     App::Opts o;
@@ -1232,27 +1235,48 @@ NXTEST(sampling_an_alias_of_the_pass_target_binds_the_dummy) {
     REQUIRE(load_quad_shaders(&qvs, &qfs));
     auto quad = app.make_program({&qvs, &qfs});
     REQUIRE(quad != nullptr);
-    auto rt = app.make_texture_2d(NVN_FORMAT_RGBA8, kW, kH);
-    REQUIRE(rt != nullptr);
+    auto x = app.make_texture_2d(NVN_FORMAT_RGBA8, 16, 16);
+    REQUIRE(x != nullptr);
+    REQUIRE(store_linear(*x, make_layout(16, 16, 1, 1, 1, 4), pattern16_linear()));
+    const uint64_t th_x = app.texture_handle(x->id, make_sampler_nearest(app));
 
-    // a second texture object over the same storage of the same pool
-    auto alias = std::make_unique<Tex>();
-    alias->obj = std::make_unique<NVNtexture>();
-    std::memset(alias->obj.get(), 0, sizeof(NVNtexture));
+    // Y: a second texture object over the storage of X; the target of the pass
+    auto y = std::make_unique<Tex>();
+    y->obj = std::make_unique<NVNtexture>();
+    std::memset(y->obj.get(), 0, sizeof(NVNtexture));
     NVNtextureBuilder b;
     app.api.nvnTextureBuilderSetDevice(&b, app.device.get());
     app.api.nvnTextureBuilderSetDefaults(&b);
     app.api.nvnTextureBuilderSetFlags(&b, 0);
     app.api.nvnTextureBuilderSetTarget(&b, NVN_TEXTURE_TARGET_2D);
-    app.api.nvnTextureBuilderSetSize2D(&b, kW, kH);
+    app.api.nvnTextureBuilderSetSize2D(&b, 16, 16);
     app.api.nvnTextureBuilderSetFormat(&b, NVN_FORMAT_RGBA8);
     app.api.nvnTextureBuilderSetLevels(&b, 1);
-    app.api.nvnTextureBuilderSetStorage(&b, rt->pool->obj.get(), static_cast<ptrdiff_t>(rt->offset));
-    REQUIRE(app.api.nvnTextureInitialize(alias->obj.get(), &b));
-    alias->id = app.next_tex_id++;
-    app.api.nvnTexturePoolRegisterTexture(app.tex_pool.get(), alias->id, alias->obj.get(), nullptr);
-    const uint64_t th = app.texture_handle(alias->id, make_sampler_nearest(app));
+    app.api.nvnTextureBuilderSetStorage(&b, x->pool->obj.get(), static_cast<ptrdiff_t>(x->offset));
+    REQUIRE(app.api.nvnTextureInitialize(y->obj.get(), &b));
+    y->id = app.next_tex_id++;
+    app.api.nvnTexturePoolRegisterTexture(app.tex_pool.get(), y->id, y->obj.get(), nullptr);
+    const uint64_t th_y = app.texture_handle(y->id, make_sampler_nearest(app));
 
+    // first submission: X is sampled onto the window, so X owns its image (and the pattern is checked on the way)
+    {
+        auto cb0 = app.make_cmdbuf();
+        REQUIRE(cb0 != nullptr);
+        NVNcommandBuffer* c0 = cb0->obj.get();
+        const int i0 = app.acquire();
+        REQUIRE(i0 >= 0);
+        app.api.nvnCommandBufferBeginRecording(c0);
+        bind_common(app, c0);
+        record_pass(app, c0, app.window_textures[i0]->obj.get(), quad.get(), kW, kH);
+        draw_quad(app, c0, th_x, 0, 0, kW, kH, 0, 0, 1, 1);
+        app.end_and_submit(*cb0);
+        std::vector<uint8_t> px0;
+        REQUIRE(app.present_and_capture(i0, &px0));
+        const Cmp c0cmp = compare_rect(px0, 0, 0, kW, kH, pattern16_frame, 0);
+        report("X sampled first (exact)", c0cmp, 0);
+        CHECK_EQ(c0cmp.bad, 0);
+    }
+    // second submission: the pass renders into Y, a new object over the same storage, mirroring X; the window then shows Y
     auto cb = app.make_cmdbuf();
     REQUIRE(cb != nullptr);
     NVNcommandBuffer* c = cb->obj.get();
@@ -1260,14 +1284,23 @@ NXTEST(sampling_an_alias_of_the_pass_target_binds_the_dummy) {
     REQUIRE(idx >= 0);
     app.api.nvnCommandBufferBeginRecording(c);
     bind_common(app, c);
-    record_pass(app, c, rt->obj.get(), quad.get(), kW, kH);
-    draw_quad(app, c, th, 0, 0, kW, kH, 0, 0, 1, 1);   // samples the alias while rt is the target of this pass
+    {   // the pass on Y without the clear that record_pass records: the draw must see what the image holds
+        NVNtexture* targets[] = {y->obj.get()};
+        app.api.nvnCommandBufferSetRenderTargets(c, 1, targets, nullptr, nullptr, nullptr);
+        app.api.nvnCommandBufferSetViewport(c, 0, 0, 16, 16);
+        app.api.nvnCommandBufferSetScissor(c, 0, 0, 16, 16);
+        app.api.nvnCommandBufferBindProgram(c, quad.get(), NVN_SHADER_STAGE_VERTEX_BIT | NVN_SHADER_STAGE_FRAGMENT_BIT);
+    }
+    draw_quad(app, c, th_x, 0, 0, 16, 16, 1, 0, 0, 1);        // X, mirrored, into Y: the same image is sampled and rendered to
     record_pass(app, c, app.window_textures[idx]->obj.get(), quad.get(), kW, kH);
-    draw_quad(app, c, th, 0, 0, kW, kH, 0, 0, 1, 1);   // and now the pass is over: the same texture samples normally
+    draw_quad(app, c, th_y, 0, 0, kW, kH, 0, 0, 1, 1);
     app.end_and_submit(*cb);
     std::vector<uint8_t> px;
     REQUIRE(app.present_and_capture(idx, &px));
     app.finish();
+    const Cmp cmp = compare_rect(px, 0, 0, kW, kH, [](uint32_t px_x, uint32_t px_y) { return pattern16_frame(kW - 1 - px_x, px_y); }, 0);
+    report("frame vs the mirrored pattern (exact)", cmp, 0);
+    CHECK_EQ(cmp.bad, 0);
     check_clean(app);
 }
 
