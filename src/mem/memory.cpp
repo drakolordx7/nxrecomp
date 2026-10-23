@@ -589,6 +589,14 @@ uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at, Prot p) {
     return 0;
 }
 
+void* heap_private_view(uint64_t offset, uint64_t size) {
+    std::lock_guard lk(g_heap_mu);
+    if (!g_heap_size || size == 0 || offset % kAllocGranularity || offset > g_heap_size || size > g_heap_size - offset) return nullptr;
+    return MapViewOfFile(g_section, FILE_MAP_ALL_ACCESS, static_cast<DWORD>(offset >> 32), static_cast<DWORD>(offset & 0xFFFFFFFFu), static_cast<SIZE_T>(size));
+}
+
+bool heap_private_view_unmap(void* view) { return view && UnmapViewOfFile(view) != 0; }
+
 bool heap_alias_unmap(uint64_t view_addr) {
     std::lock_guard lk(g_heap_mu);
     auto it = g_aliases.find(view_addr);

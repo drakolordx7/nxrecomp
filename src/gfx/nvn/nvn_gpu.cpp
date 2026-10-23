@@ -19,6 +19,7 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "nxrt/lowlat.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
 #include "nvn_present_pass.h"
@@ -556,6 +557,13 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
         qi.queryCount = kSlots * 2;
         if (vkCreateQueryPool(dev.device(), &qi, nullptr, &gp->qpool) != VK_SUCCESS) gp->qpool = VK_NULL_HANDLE;
     }
+    if (ft::on()) extras::lowlat_set_backlog_fn([]() -> uint64_t {      // latency probe: submissions the GPU has not finished
+        if (!g || !g->timeline) return 0;
+        uint64_t v = 0;
+        vkGetSemaphoreCounterValue(g->dev->device(), g->timeline, &v);
+        const uint64_t sub = g->last_submitted.load();
+        return sub > v ? sub - v : 0;
+    });
     gp->th = std::thread(render_loop);
     // wait for the thread id to be published
     for (int i = 0; i < 1000 && gp->tid == std::thread::id(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));

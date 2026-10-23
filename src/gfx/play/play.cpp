@@ -488,6 +488,13 @@ void poll_pads(uint64_t now) {
 int update_hook(::Ctx*, uint64_t, void*) {
     G& st = g();
     ft::mark("main.update");
+    // frame pacing (stream S18): the limiter waits here, before the input is sampled, so the picture shown is the one simulated one render time
+    // earlier. The wait for frames still in flight comes first, then the limiter's schedule.
+    if (extras::pace_in_main()) {
+        if (extras::LowLatency* ll = extras::lowlat()) ll->wait_in_flight();
+        { NXFT("limiter.main"); st.limiter.begin_frame_nohook(); }
+        extras::pace_boundary_done();
+    }
     // low latency (stream S14): the sleep that lets the frame start as late as the GPU allows, then the input sample marker; the events are pumped right after
     if (extras::LowLatency* ll = extras::lowlat()) {
         ll->sim_begin();
