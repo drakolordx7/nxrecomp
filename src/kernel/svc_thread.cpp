@@ -54,7 +54,7 @@ void svc_exit_thread(::Ctx*) { thread_exit(); }
 void svc_sleep_thread(::Ctx* c) {              // x0 ns (0, -1, -2 = yield variants)
     int64_t ns = static_cast<int64_t>(X(c, 0));
     if (ns > 0) sleep_ns(ns);
-    else SwitchToThread();
+    else yield_host();
 }
 
 void svc_get_thread_priority(::Ctx* c) {       // w1 handle -> w1 priority

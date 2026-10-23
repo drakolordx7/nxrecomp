@@ -38,13 +38,30 @@ void lock_busy_mutex(::Ctx* c) {
         uint32_t expected = 0;
         if (word->load(std::memory_order_relaxed) == 0 && word->compare_exchange_weak(expected, 1, std::memory_order_acquire)) break;
         if (spins < 64) YieldProcessor();
-        else if (spins < 20000) SwitchToThread();
+        else if (spins < 20000) yield_host();
         else Sleep(1);
     }
     *disable = static_cast<uint16_t>(held + 1);
 }
 
+// WFE and YIELD of the lifted code (nx_spin_hint in recomp ctx.h). WFE: the thread waits for an event, so it gives the processor away at
+// once. YIELD marks a spin loop that expects the other side to run soon: a PAUSE, and every 64th call a real hand-over.
+void spin_hint(int kind) {
+    thread_local uint32_t n = 0;
+    if (kind == 1 || (++n & 63) == 0) yield_host();
+    else YieldProcessor();
+}
+
 }  // namespace
+
+void install_spin_hint() {
+    if (!config_get_bool("sched", "spin_yield", true)) {
+        NXLOG_I("sched", "[sched] spin_yield = 0: the guest's WFE and YIELD only pause the host core");
+        return;
+    }
+    nx_spin_hook = spin_hint;
+    NXLOG_I("sched", "the guest's WFE and YIELD hand the host processor to another ready thread (debug note 420)");
+}
 
 void install_busy_mutex_hle() {
     if (!config_get_bool("sched", "busy_mutex_hle", true)) {
