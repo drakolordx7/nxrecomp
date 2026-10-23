@@ -36,12 +36,15 @@ Rules:
 | `diag` | `freeze_resample_s` | `0` | `NXRT_DIAG_FREEZE_RESAMPLE_S` | `src/diag/watchdog.cpp` | When the watchdog fires, wait this many seconds and dump every thread again if there is still no frame tick (a second sample tells a stalled thread from a busy one). 0 = one dump. The sweep sets 4. |
 | `sched` | `console_cores` | `true` | `NXRT_SCHED_CONSOLE_CORES` | `src/kernel/sched.cpp` | `false` turns off the console core model. |
 | `sched` | `host_cpus` | empty | `NXRT_SCHED_HOST_CPUS` | `src/kernel/sched.cpp` | Hexadecimal mask of host processors, intersected with the process affinity. Ignored when no bit matches. Empty: the runtime picks processors itself. |
+| `sched` | `pick` | `auto` | `NXRT_SCHED_PICK` | `src/kernel/sched.cpp` | Which host processors the three console cores use when `host_cpus` is empty. `auto`: the three fastest free physical cores, one set per running nxrt process. `top`: the highest-numbered processors instead. |
 | `sched` | `busy_mutex_hle` | `true` | `NXRT_SCHED_BUSY_MUTEX_HLE` | `src/kernel/busy_mutex.cpp` | `nn::os::LockBusyMutex` runs as host code that gives the processor away while it waits (the SDK's loop is a pure spin and starved the lock holder under the console core model, debug note 240). `false` leaves the SDK code in charge. |
 | `sched` | `priority_class` | `auto` | `NXRT_SCHED_PRIORITY_CLASS` | `src/kernel/sched.cpp` | Process priority class: `auto` (high when play mode has a window, otherwise left alone), `high`, `above_normal`, `normal`. The guest threads are pinned with the wake-up boost off, so under background CPU load a woken thread waits a scheduler quantum; see debug note 221. |
 | `sched` | `spin_yield` | `true` | `NXRT_SCHED_SPIN_YIELD` | `src/kernel/busy_mutex.cpp` | The guest's `wfe` (and, every 64th time, `yield`) hand the host processor to another ready thread instead of spinning (debug note 420). `false`: a pause only. |
 | `sched` | `starvation_guard` | `true` | `NXRT_SCHED_STARVATION_GUARD` | `src/kernel/starvation_guard.cpp` | A guest thread that stays ready without running (because other programs keep the host processor busy) is boosted to top priority for 450 ms, and its yields stop handing the processor over. See debug note 422. |
 | `sched` | `starvation_ms` | `300` | `NXRT_SCHED_STARVATION_MS` | `src/kernel/starvation_guard.cpp` | How long a guest thread must stay ready and unscheduled before the guard boosts it, counted in 150 ms polls. |
 | `ipc` | `stub_result` | `0xBCBD5` | `NXRT_IPC_STUB_RESULT` | `src/ipc/stub.cpp` | Result every stub-service command answers. `0` answers success with an empty reply (bring-up probe: the guest then reads zeros, so it only maps which services it asks for next). |
+| `hle` | `trace` | empty | `NXRT_HLE_TRACE` | `src/core/dispatch.cpp` | Name prefix of the imports to log. Every call of an import whose name starts with it is logged in order (`hle-trace #n name(x0..x3) lr -> result`). Empty: off. Use it to see the order in which the game calls an API during start-up. |
+| `hle` | `trace_limit` | `20000` | `NXRT_HLE_TRACE_LIMIT` | `src/core/dispatch.cpp` | Number of traced calls logged before `hle` `trace` stops logging. |
 | `svc` | `unknown_log_limit` | `100` | `NXRT_SVC_UNKNOWN_LOG_LIMIT` | `src/kernel/svc.cpp` | Each unknown SVC number is logged for its first N calls, then every 1000th call. Read on the first unknown SVC. |
 | `process` | `entropy_seed` | `0x1234567890ABCDEF` | `NXRT_PROCESS_ENTROPY_SEED` | `src/kernel/svc_info.cpp` | Seed for GetInfo RandomEntropy, subtypes 0 to 3. |
 | `process` | `system_resource_size` | `0` | `NXRT_PROCESS_SYSTEM_RESOURCE_SIZE` | `src/kernel/svc_info.cpp` | Value returned by GetInfo SystemResourceSize. |
@@ -58,6 +61,7 @@ Rules:
 | `gfx` | `overlay_key` | `F1` | `NXRT_GFX_OVERLAY_KEY` | `src/gfx/overlay.cpp` | SDL scancode name of the key that shows and hides the ImGui overlay. |
 | `gfx` | `screenshot` | empty | `NXRT_GFX_SCREENSHOT` | `src/gfx/scene_runner.cpp` | PNG path: the frame loop writes the presented image of `screenshot_frame` there. |
 | `gfx` | `screenshot_frame` | `60` | `NXRT_GFX_SCREENSHOT_FRAME` | `src/gfx/scene_runner.cpp` | Frame number captured when `screenshot` is set. |
+| `gfx` | `log_fps` | `false` | `NXRT_GFX_LOG_FPS` | `src/gfx/vk_renderer.cpp` | `1` writes one line a second with the presented frame rate and the GPU time of the present command buffer (output pass, FSR 1). |
 | `nvn` | `log_first_calls` | `3` | `NXRT_NVN_LOG_FIRST_CALLS` | `src/gfx/nvn/nvn_loader.cpp` | Calls of each unimplemented NVN entry point logged at Info; later calls are counted and logged at Trace. |
 | `nvn` | `unknown` | `stub` | `NXRT_NVN_UNKNOWN` | `src/gfx/nvn/nvn_loader.cpp` | Answer to an NVN name that is not in the table: `stub` hands out a logging stub (logged as UNKNOWN NVN PROC), `null` returns null. |
 | `nvn` | `shader_cache` | `` | `NXRT_NVN_SHADER_CACHE` | `src/gfx/nvn/nvn_shaders.cpp` | Folder with `<code hash>.spv` and `results.tsv` (translated shaders). Empty: `./shader_cache/spirv`, then `shader_cache/spirv` beside the executable. |
@@ -68,6 +72,18 @@ Rules:
 | `nvn` | `prewarm` | `true` | `NXRT_NVN_PREWARM` | `src/gfx/nvn/nvn_prewarm.cpp` | `false` turns the pipeline prewarm (recording and building ahead) off. The pipeline cache file is still used. |
 | `nvn` | `prewarm_threads` | `max(1, min(4, cpus / 6))` | `NXRT_NVN_PREWARM_THREADS` | `src/gfx/nvn/nvn_prewarm.cpp` | Worker threads that build recorded pipelines. |
 | `nvn` | `pool_prefetch` | `true` | `NXRT_NVN_POOL_PREFETCH` | `src/gfx/nvn/nvn_gpu_pool.cpp` | Import a memory pool into Vulkan on a background thread when a buffer is created over it, instead of on the render thread at the first draw. |
+| `nvn` | `shot_dir` | `shots` | `NXRT_NVN_SHOT_DIR` | `src/gfx/nvn/nvn_present.cpp` | Folder that `shot_frames` writes to, relative to the working directory. |
+| `nvn` | `shot_frames` | empty | `NXRT_NVN_SHOT_FRAMES` | `src/gfx/nvn/nvn_present.cpp` | Presented frames to save as PNG, counted from 1: a comma list of numbers and `from:to:step` ranges (e.g. `300,1000:2000:50`). Files are `<shot_dir>/<number, 6 digits>.png`. Lets a run be compared frame by frame with a reference capture. |
+| `nvn` | `dump_missing` | empty | `NXRT_NVN_DUMP_MISSING` | `src/gfx/nvn/nvn_shaders.cpp` | Folder that receives every shader block the shader cache has no translation for, as `code_<hash>.bin`, `ctrl_<hash>.bin` and `manifest.tsv`, for `spirv_harness --batch`. Empty: off. |
+| `nvn` | `trace_frame` | empty | `NXRT_NVN_TRACE_FRAME` | `src/gfx/nvn/nvn_replay.cpp` | Presented frame number, or a comma list (`6050` or `6050,9300`). Every draw, clear, copy and dispatch of a traced frame is logged at Info under `nvn.trace`: programs, render targets, sampled textures, blend and depth state. |
+| `nvn` | `trace_after_fs` | empty | `NXRT_NVN_TRACE_AFTER_FS` | `src/gfx/nvn/nvn_replay.cpp` | Hash prefix of a fragment shader. The frame after the first one that draws with that shader is traced, so the trace follows the scene rather than a frame number (which differs between runs). Only fires after `trace_min_sec`. |
+| `nvn` | `trace_min_sec` | `0` | `NXRT_NVN_TRACE_MIN_SEC` | `src/gfx/nvn/nvn_replay.cpp` | Seconds after the first draw before `trace_after_fs` can fire. |
+| `nvn` | `trace_sec` | `0` | `NXRT_NVN_TRACE_SEC` | `src/gfx/nvn/nvn_replay.cpp` | Traces the first frame presented this many seconds after the game submits its first frame. `0`: off. |
+| `nvn` | `trace_dump_tex` | empty | `NXRT_NVN_TRACE_DUMP_TEX` | `src/gfx/nvn/nvn_replay.cpp` | Folder for the textures a traced frame samples: the texture data as prepared for the GPU, and the raw level 0 as the GPU holds it (`gpu_t<id>.bin`), to compare the two. Empty: off. |
+| `nvn` | `trace_snap` | empty | `NXRT_NVN_TRACE_SNAP` | `src/gfx/nvn/nvn_replay.cpp` | Draw numbers of the traced frame, a comma list (`253,300`). After each of those draws the colour and depth targets are copied to `snap_d<draw>_t<id>_<format>.png`. |
+| `nvn` | `trace_snap_fs` | empty | `NXRT_NVN_TRACE_SNAP_FS` | `src/gfx/nvn/nvn_replay.cpp` | Comma list of fragment-shader hash prefixes. Every draw of the traced frame whose fragment shader hash starts with one of them is snapped, as `trace_snap` does. |
+| `nvn` | `trace_snap_sampled` | `0` | `NXRT_NVN_TRACE_SNAP_SAMPLED` | `src/gfx/nvn/nvn_replay.cpp` | `1`: a snapshot draw also copies the textures that draw samples. |
+| `nvn` | `trace_tex_events` | `0` | `NXRT_NVN_TRACE_TEX_EVENTS` | `src/gfx/nvn/nvn_texture_registry.cpp` | `1`: logs the life of the 128 x 128 textures with six layers and eight levels at Info under `nvn.tev`: creation, CPU writes, uploads and copies. |
 | `prof` | `trace` | empty | `NXRT_PROF_TRACE` | `src/diag/ftrace.cpp` | Frame trace file: zones of the render path, slow SVCs and slow HLE calls with their threads and times, flushed once a second. Analyse with `scripts/prof/ftrace_report.py`. Empty: off (one relaxed load per zone). |
 | `prof` | `trace_events` | `6000000` | `NXRT_PROF_TRACE_EVENTS` | `src/diag/ftrace.cpp` | Size of the event array (24 bytes each, allocated when the trace starts); events past it are dropped. |
 | `prof` | `stall_ms` | `0` | `NXRT_PROF_STALL_MS` | `src/diag/ftrace.cpp` | With a trace on: when no frame was presented for this many milliseconds, dump every thread's stack to `<trace>.stacks` (up to four times per stall) and, when the stall ends, the CPU time each thread used in it. Analyse with `scripts/prof/stack_report.py`. |
@@ -83,6 +99,7 @@ Rules:
 | `audio` | `wav_dump` | empty | `NXRT_AUDIO_WAV_DUMP` | `src/services/audio_sink.cpp`, `src/services/audio_wav.cpp` | Path of a 16-bit PCM WAV file that receives every frame the game sends to the host sink. Empty: no file. See the audio notes below. |
 | `audio` | `volume` | `1.0` | `NXRT_AUDIO_VOLUME` | `src/services/audio_sink.cpp`, `src/services/audio_xaudio2.cpp` | Master volume, from `0.0` (silent) to `1.0`. Values outside that range are clamped. Applied by the XAudio2 sink. |
 | `audio` | `device` | `default` | `NXRT_AUDIO_DEVICE` | `src/services/audio_xaudio2.cpp`, `src/services/audio_devices.cpp` | Output device for the XAudio2 sink: `default`, an endpoint id, or part of a device's name. See the audio notes below. |
+| `audio` | `channels` | `2` | `NXRT_AUDIO_CHANNELS` | `src/services/audio.cpp`, `src/services/audren/Integration/HostAudioDevice.cpp` | Channel count the game's audio renderer works with: `6` for 5.1, any other value for stereo. |
 | `title` | `program_id` | `0x010012101468C000` | `NXRT_TITLE_PROGRAM_ID` | `src/services/common.cpp` | Title id of the game. `[process] program_id`, when set, overrides it. Also the default for `save_owner_id`. |
 | `title` | `name` | `Metroid Prime Remastered` | `NXRT_TITLE_NAME` | `src/services/common.cpp` | Title name in the control data. |
 | `title` | `display_version` | `1.0.0` | `NXRT_TITLE_DISPLAY_VERSION` | `src/services/common.cpp` | Display version string in the control data. |
@@ -117,6 +134,8 @@ Rules:
 | `play` | `log_status` | `false` | `NXRT_PLAY_LOG_STATUS` | `src/gfx/play/play.cpp` | One status line per second in the log. |
 | `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
 | `play` | `late_sample` | `true` | `NXRT_PLAY_LATE_SAMPLE` | `src/gfx/play/play.cpp` | Pump the window's events again right before the first `ProcessInput` of a frame takes the mouse counts, so the aim includes what the mouse did since the frame boundary. |
+| `prompts` | `style` | `switch` | none (controls.ini only) | `src/gfx/play/play_config.cpp` (read from `controls.ini`) | Button icons the game's prompts show: `switch` (the game's own), `xbox`, `playstation`, `keyboard` (keyboard and mouse) or `auto` (follows the last device used). Also accepts `ps`, `ps4`, `ps5`, `dualsense`, `kbm`, `mouse` and `keyboard_mouse`. Stored in `controls.ini` under `[prompts]`, not in `nxrt.ini`. Set on the F1 page (Controller tab, Button prompts), then Apply and save. It can be switched live: the icons change on the next frame, no restart. |
+| `prompts` | `dir` | empty | `NXRT_PROMPTS_DIR` | `src/gfx/play/prompts.cpp` | Folder searched first for `prompt_icons.pak`, the button icon pack. Empty: the search goes on to `prompts` beside the executable, then `assets/prompts` under the working directory, then the executable's folder. |
 | `hdr` | `mode` | `auto` | `NXRT_HDR_MODE` | `src/gfx/extras/extras_state.cpp` | HDR output: `off`, `auto` (HDR when the display and Windows offer it) or `on`. Play mode reads the `[hdr]` section of `controls.ini` instead; this key only applies to code that does not load that file. The environment variable overrides the file in play mode. Applies at the next start. |
 | `hdr` | `format` | `auto` | `NXRT_HDR_FORMAT` | `src/gfx/extras/extras_state.cpp` | Swapchain format: `auto` (HDR10 when offered, else scRGB), `hdr10` or `scrgb`. Same reading rules as `hdr` `mode`. Applies at the next start. |
 | `hdr` | `peak_nits` | `0` | `NXRT_HDR_PEAK_NITS` | `src/gfx/extras/extras_state.cpp` | Peak brightness in nits: `0` takes the display's reported peak (1000 when it reports none), otherwise 200 to 10000. Same reading rules as `hdr` `mode`. Applies live. |
@@ -132,6 +151,7 @@ Rules:
 | `latency` | `mode` | `off` | `NXRT_LATENCY_MODE` | `src/gfx/extras/extras_state.cpp` | Low latency: `off`, `auto` (whichever of NVIDIA Reflex or AMD Anti-Lag 2 the GPU has), `on` or `boost` (Reflex boost). Play mode reads the `[latency]` section of `controls.ini` instead; the environment variable overrides the file. Applies at the next start. |
 | `latency` | `frames_ahead` | `1` | `NXRT_LATENCY_FRAMES_AHEAD` | `src/gfx/extras/lowlat.cpp` | With the mode on, the simulation of a frame starts only when at most this many earlier frames are still on their way to the screen. -1 to 3 (-1 turns the wait off). Same reading rules as `latency` `mode`. Applies at the next start. |
 | `latency` | `log_timings` | `0` | `NXRT_LATENCY_LOG_TIMINGS` | `src/gfx/extras/extras_state.cpp` | `1` writes one line of Reflex timings to the log every second. Same reading rules as `latency` `mode`. Applies at the next start. |
+| `latency` | `ab_toggle_s` | `0` | `NXRT_LATENCY_AB_TOGGLE_S` | `src/gfx/extras/lowlat.cpp` | Test aid, not a user setting: flips the low-latency mode on and off every N seconds and resets the timing averages, for A/B comparisons. `0`: off. |
 | `time` | `mode` | `real` | `NXRT_TIME_MODE` | `src/timestep/timestep.cpp` | Frame step the game runs: `real` (measured frame time, clamped and smoothed), `fixed` (1/`rate` and the frame is held to it: the 60 Hz lock) or `off` (the game's own 1/60 per call). Needs the lifted game built with the S11 sites in `recomp/games/mpr/main.sites`. |
 | `time` | `rate` | `60` | `NXRT_TIME_RATE` | `src/timestep/timestep.cpp` | Steps per second in `fixed` mode (10 to 1000). |
 | `time` | `max_rate` | `480` | `NXRT_TIME_MAX_RATE` | `src/timestep/timestep.cpp` | `real` mode: the step is never shorter than 1/max_rate, and with `pace` a frame is held until then. This is also the cap of an unlimited frame rate: the game's logic never runs faster than this. |
@@ -149,6 +169,16 @@ Rules:
 | `time` | `csv` | empty | `NXRT_TIME_CSV` | `src/timestep/timestep.cpp` | Write one line per frame: frame, host time, measured elapsed, step, sum of steps, movie frames delivered, render-timing clock. |
 | `time` | `game_base` | `0x7100000000` | `NXRT_TIME_GAME_BASE` | `src/timestep/timestep.cpp` | Guest address of the main module (the hooks are keyed by it). |
 | `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
+| `boot` | `nvn` | `true` | `NXRT_BOOT_NVN` | `game-build/src/mpr_main.cpp` | `true`: the NVN front end and the graphics device are created. `false` (or `--no-nvn`): neither is. |
+| `boot` | `link` | `rtld` | `NXRT_BOOT_LINK` | `game-build/src/mpr_main.cpp` | `rtld`: the game's own loader relocates every module, as on the console. `host`: the runtime's linker does it instead, as a cross-check. |
+| `boot` | `probe` | empty | `NXRT_BOOT_PROBE` | `game-build/src/mpr_main.cpp` | `no-sdk-services`: bring-up probe that starts the game without the SDK's service initialisation. Logged as `PROBE`. |
+| `boot` | `press` | empty | `NXRT_BOOT_PRESS` | `game-build/src/mpr_main.cpp` | Scripted button presses for player 1, a comma list such as `A@12,A@20:500,PLUS@30,A#1500`. `NAME@seconds` counts from start, `NAME#frame` counts presented frames of the NVN back end, and `:ms` sets the hold (default 300). Names: A, B, X, Y, PLUS, MINUS, UP, DOWN, LEFT, RIGHT, L, R, ZL, ZR. |
+| `boot` | `screenshot_at` | `0` | `NXRT_BOOT_SCREENSHOT_AT` | `game-build/src/mpr_main.cpp` | Seconds after start to write `shot_<n>.png` of the presented frame, in the working directory. `0`: off. |
+| `boot` | `screenshot_every` | `0` | `NXRT_BOOT_SCREENSHOT_EVERY` | `game-build/src/mpr_main.cpp` | Repeats `screenshot_at` every N seconds. `0`: once only. |
+| `boot` | `max_seconds` | `0` | `NXRT_BOOT_MAX_SECONDS` | `game-build/src/mpr_main.cpp` | After this many seconds the process logs a state summary and ends with exit code 124, even if the game is still running. `0`: no limit. `--max-seconds` sets it. |
+| `boot` | `main_stack_kb` | `1024` | `NXRT_BOOT_MAIN_STACK_KB` | `game-build/src/mpr_main.cpp` | Stack of the game's main thread, in KiB. |
+| `boot` | `dump_killer` | `false` | `NXRT_BOOT_DUMP_KILLER` | `game-build/src/mpr_main.cpp` | Temporary debug hook (debug note 121). Logs two fixed memory slots on an access violation, and the thread stacks when one of them first fills. |
+| `boot` | `trace_plt` | `false` | `NXRT_BOOT_TRACE_PLT` | `game-build/src/mpr_main.cpp` | Diagnostic: logs every lazy symbol binding of the game's loader (debug note 018). |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
 
 ### Audio notes
@@ -162,6 +192,28 @@ When the sink has a clock of its own (XAudio2, or `paced`), the audio renderer k
 `device` chooses where the XAudio2 sink plays. `default` (or an empty value) uses the system's default output. Any other text is looked for first as an exact endpoint id, then as part of a device's friendly name, ignoring upper and lower case. The first match wins. If nothing matches, the log gets a warning and the default device is used. Each time the XAudio2 sink opens, the log lists the active output devices with their names and ids, so the text for this key can be copied from there.
 
 When a sink closes, it writes one line to the log with its counters: frames written, accepted, dropped, underruns (times the device ran out of audio after playback had started) and the largest number of buffers queued at once.
+
+## Keyboard beam and visor keys (`controls.ini`)
+
+These live in the play-mode file `controls.ini` (key `[play] controls`), not in `nxrt.ini`. The F1 settings page writes the same file.
+
+| Input | Action | What the game does |
+|---|---|---|
+| `1` | `beam_1` | Power beam |
+| `2` | `beam_2` | Wave beam |
+| `3` | `beam_3` | Ice beam |
+| `4` | `beam_4` | Plasma beam |
+| `5` | `visor_1` | Combat visor |
+| `6` | `visor_2` | Scan visor |
+| `7` | `visor_3` | Thermal visor |
+| `8` | `visor_4` | X-ray visor |
+| Mouse wheel up / down | `beam_prev` / `beam_next` | Cycle the beams you own, in the order power, wave, ice, plasma. Off when `[mouse] wheel_beams = 0`. |
+
+How it works: the game only knows the Switch pad, so an action is turned into pad buttons by the `[switch]` table. By default `beam_1` to `beam_4` hold X and press the d-pad (up, right, down, left), and `visor_1` to `visor_4` press the d-pad alone (up, right, down, left). The wheel skips beams the player does not have yet. In the menu and map contexts they are switched off (`1` to `8 = none` in `[bindings.menu]` and `[bindings.map]`) and the wheel moves the cursor or the map instead.
+
+To change a key, add a line `Key = action` to `[bindings.all]` (every context) or to one context (`[bindings.gameplay]`, `[bindings.morph]`, `[bindings.scan]`, `[bindings.menu]`, `[bindings.map]`). `Key = none` switches an input off in that context. Key names are SDL scancode names (`Left Ctrl`, `Page Up`, `Mouse1`, `WheelUp`).
+
+Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
 ## Environment variables read directly
 
@@ -271,6 +323,7 @@ All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment
 | Key | Default | Meaning |
 |---|---|---|
 | `script` | empty | Scripted run (`.nxs`, grammar in `include/nxrt/tt_script.h`). Exit code 0 pass, 1 fail, 2 usage/parse error, 4 crash, 5 freeze, 6 process ended early, 124 wall timeout. |
+| `enabled` | `false` | Turns the test tools on by themselves, without a script, record, replay, deterministic or trace key set. |
 | `regions` | `regions.tsv` next to the script | Name table for `@area` / `@warp` (`name<TAB>world guid<TAB>area guid`). |
 | `out` | `testout` | Output folder: `result.json`, `trace.jsonl`, `shots/`. |
 | `deterministic` | `false` | Virtual clock (one frame = `clock_step_ticks`), seeded RNG, fixed wall-clock epoch. |
@@ -278,7 +331,8 @@ All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment
 | `clock_step_ticks` | `320000` | Virtual ticks (19.2 MHz) per frame. |
 | `frame_source` | `hook` | `hook` (needs `tests/sites/mpr_testtools.sites` in the lifted game), `tick` (`diag_frame_tick`), `svc:N` (a frame every N SVCs, bring-up), `manual` (tests). |
 | `trace` | `<out>/trace.jsonl` | Per-frame JSON lines; `none` disables. |
-| `record` / `replay` | empty | Record the live pad of every frame / feed a recorded input trace (`replay_exit=1` ends the run where it ends). |
+| `record` / `replay` | empty | Record the live pad of every frame / feed a recorded input trace. |
+| `replay_exit` | `false` | With `replay`: `1` ends the run where the recorded input ends. |
 | `hash_regions` | empty | Memory folded into the frame hash: comma list of `0xADDR+0xSIZE` and `module:<name>` (the module's RW pages). |
 | `max_frames` | `0` | Fail the run after this many frames. |
 | `wall_timeout_s` | `900` with a script | End the run with exit code 124 after this long. |
