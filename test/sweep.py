@@ -36,7 +36,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1]
+ROOT = Path(os.environ.get("MPR_ROOT") or HERE.parents[1])      # MPR_ROOT: run a copy of this script (a worktree of the tools repo) against the project root
 WORLD_ORDER = ["frigate", "tallon", "chozo", "magmoor", "phendrana", "mines", "crater"]
 WORLD_TITLES = {"frigate": "Frigate Orpheon", "tallon": "Tallon Overworld", "chozo": "Chozo Ruins", "magmoor": "Magmoor Caverns",
                 "phendrana": "Phendrana Drifts", "mines": "Phazon Mines", "crater": "Impact Crater"}
@@ -188,7 +188,7 @@ def run_process(a, job, run_id, areas, log):
                 stalled = True
                 try:                                   # ask the process for a thread dump of its own (the watchdog polls this file), then end it
                     (a.exe.parent / f"dump_threads.{p.pid}").write_bytes(b"")
-                    time.sleep(6)
+                    time.sleep(14)                      # two dumps, the second one [diag] freeze_resample_s later: the CPU time of each thread between them tells a starved thread from a waiting one
                 except OSError:
                     pass
                 kill_tree(p)
@@ -215,6 +215,12 @@ def run_process(a, job, run_id, areas, log):
         verdict, reason = "hang", "watchdog freeze: no frame tick for %ss" % a.watchdog
     elif stalled:
         verdict, reason = "hang", "no progress for %d s (killed)" % (a.area_stall if booted else a.boot_stall)
+        alive = presenting_frames(outdir / "stderr.txt")
+        if alive:
+            reason += "; the game kept presenting frames (%s), so this is a load that did not finish, not a deadlock" % alive
+            starved = starved_threads(outdir / "stderr.txt")
+            if starved:
+                reason += "; ready but got no CPU between the two dumps: %s (host CPU starvation, see runtime docs/S20.md)" % ", ".join(starved)
     elif rc == 124:
         verdict, reason = "timeout", "process cap reached"
     elif rc == 1:
@@ -224,6 +230,59 @@ def run_process(a, job, run_id, areas, log):
     if rc != 0 and any(l[1] == "E" and l[2] == "crash" for l in lines) and verdict != "crash":
         verdict = "crash"
     return {"rc": rc, "wall": wall, "outdir": outdir, "verdict": verdict, "reason": reason, "booted": any(m[1] == "boot" for m in marks), "marks": marks, "lines": lines, "result": result}
+
+
+def presenting_frames(stderr_path):
+    """'N -> M' when the two thread dumps the runtime wrote for a stalled run show the presented-frame count moving, else ''."""
+    try:
+        text = Path(stderr_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    counts = [int(m.group(1)) for m in re.finditer(r"THREAD DUMP (?:REQUESTED|SECOND SAMPLE[^(]*)\(frame count (\d+)\)", text)]
+    return "%d -> %d" % (counts[0], counts[-1]) if len(counts) >= 2 and counts[-1] > counts[0] else ""
+
+
+def starved_threads(stderr_path):
+    """Names of guest threads that sit in guest code (not in a kernel wait) and used under 5% of the time between the runtime's two thread dumps."""
+    try:
+        text = Path(stderr_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    marks = list(re.finditer(r"watchdog: THREAD DUMP (REQUESTED|SECOND SAMPLE ([\d.]+) s later)", text))
+    if len(marks) < 2:
+        return []
+    first = text[marks[0].end():marks[1].start()]
+    second = text[marks[1].end():]
+    secs = float(marks[1].group(2) or 4.0)
+
+    def parse(chunk):
+        out, cur = {}, None
+        for ln in chunk.splitlines():
+            m = re.search(r"watchdog: thread (\S+) tid=", ln)
+            if m:
+                cur = m.group(1)
+                out[cur] = {"cpu": None, "wait": False, "guest": False}
+                continue
+            if cur is None:
+                continue
+            m = re.search(r"cpu: user (\d+) ms, kernel (\d+) ms", ln)
+            if m:
+                out[cur]["cpu"] = int(m.group(1)) + int(m.group(2))
+            if re.search(r"nxrt::kernel::(?:detail::block_on_wake|wait_synchronization)|SleepConditionVariable|nvn::be::gpu::(?:render_loop|wait_serial)", ln):
+                out[cur]["wait"] = True
+            if "guest call stack: f_" in ln:
+                out[cur]["guest"] = True
+        return out
+
+    a, b = parse(first), parse(second)
+    names = []
+    for k, va in a.items():
+        vb = b.get(k)
+        if not vb or va["cpu"] is None or vb["cpu"] is None or va["wait"] or vb["wait"] or not va["guest"]:
+            continue
+        if (vb["cpu"] - va["cpu"]) < 0.05 * secs * 1000:
+            names.append(k)
+    return names
 
 
 def summary_unknowns(lines):
