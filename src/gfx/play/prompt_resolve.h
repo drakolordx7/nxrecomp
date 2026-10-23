@@ -26,6 +26,7 @@ bool icon_pressed(Icon i);
 const char* icon_asset_name(Icon i);    // "TXTR_ButtonA" (the name in the game's pak, for logs)
 const char* icon_asset_uuid(Icon i);    // the asset id in its pak, canonical lower-case text
 const char* icon_pak_file(Icon i);      // pak path under the RomFS folder, "Preload/MPR1/GuiSysMP1.pak"
+const char* icon_front_uuid(Icon i);    // the id of the front end's own copy of the icon in Preload/MPRT/PreloadFrontEndMPT.pak (title, menus), or nullptr
 
 struct ResolveIn {
     PromptStyle style = PromptStyle::Switch;   // never Auto: the caller resolves Auto first

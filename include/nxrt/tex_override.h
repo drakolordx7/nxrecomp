@@ -14,8 +14,9 @@ struct TexOverrideReq {
     size_t tiled_size = 0;
 };
 
-// Returns true after writing width * height * 4 bytes of straight-alpha sRGB RGBA8 (row 0 = top) to rgba; the texture then shows
-// that image (encoded to BC7 at the same size). false: leave the game's texture alone.
+// Returns true after writing width * height * 4 bytes of straight-alpha sRGB RGBA8 to rgba, in the row order of the texture's storage (the
+// game's UI textures are stored upside down: row 0 is the bottom row of the picture); the texture then shows that image (encoded to BC7 at the
+// same size). false: leave the game's texture alone.
 using TexOverrideFn = bool (*)(const TexOverrideReq& req, uint8_t* rgba, void* user);
 
 void set_texture_override(TexOverrideFn fn, void* user);   // fn == nullptr removes the hook

@@ -190,6 +190,7 @@ struct SamplerPool : Obj {
 // that live there as CPU-written (nvn_texture_registry.cpp).
 void texture_registry_add(Texture* t);
 void texture_registry_remove(Texture* t);
+void texture_registry_detach_gpu();   // sets Texture::gpu to null on every registered texture (the images are being freed: gpu::tex_shutdown)
 void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
 size_t texture_registry_size();
 // Sparse textures: registered by the virtual pool they live in. A remap of tiles (nvnMemoryPoolMapVirtual) or a write to the physical

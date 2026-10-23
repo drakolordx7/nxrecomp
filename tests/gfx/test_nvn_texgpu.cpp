@@ -1127,3 +1127,48 @@ NXTEST(astc_with_rgba8_and_bc5_cache_entries) {
     cache_entry_case("RGBA8 cache entry: the image is R8G8B8A8_UNORM and reads back as the entry", VK_FORMAT_R8G8B8A8_UNORM);
     cache_entry_case("BC5 cache entry: the image is BC5_UNORM and the upload completes", VK_FORMAT_BC5_UNORM_BLOCK);
 }
+
+// ---- shutdown with a texture still alive: no pointer to a freed image stays behind --------------------------------------------------
+// Regression for the validation error "vkCmdPipelineBarrier2: pImageMemoryBarriers[0].image is VK_NULL_HANDLE" (and the crashes behind it)
+// in gfx_nvn_scene_state: a texture the game (or a test) never finalizes stays in the registry when the back end shuts down, and
+// gpu::tex_shutdown frees every image. The texture kept its pointer to the freed image; the next texture made over the same memory with
+// the same shape found it as an alias and used freed memory.
+NXTEST(shutdown_detaches_live_textures_from_freed_images) {
+    const TextureBuilderInfo b = info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_RGBA8);
+    Tex a;
+    {
+        Rig r;
+        if (!bring_up(r)) {
+            CHECK(false);
+            return;
+        }
+        REQUIRE(make_tex(a, b));
+        fill_random(a.lin, 7);
+        tile_into_storage(a);
+        be::texture_registry_add(a.t.get());
+        gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(a.t.get(), f); });
+        CHECK(a.t->gpu != nullptr);
+        teardown(r);   // a is still alive and registered
+        CHECK(a.t->gpu == nullptr);
+    }
+    {
+        Rig r;
+        if (!bring_up(r)) {
+            CHECK(false);
+            return;
+        }
+        Tex c;
+        REQUIRE(make_tex(c, b));
+        c.t->mem = a.mem.data();   // the same memory and shape as a: the registry offers a as an alias
+        c.lin = a.lin;
+        be::texture_registry_add(c.t.get());
+        gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(c.t.get(), f); });
+        std::vector<uint8_t> got;
+        CHECK(read_back(*r.dev, c.t.get(), c.L, got));
+        CHECK_MSG(first_diff(got, a.lin) < 0, "the new texture holds the content of the storage");
+        be::texture_registry_remove(c.t.get());
+        c.t = Ref<Texture>();
+        teardown(r);
+    }
+    be::texture_registry_remove(a.t.get());
+}

@@ -122,6 +122,12 @@ void textures_cpu_wrote(const void* lo, uint64_t size) {
     }
 }
 
+void texture_registry_detach_gpu() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    for (auto& kv : g_by_start) kv.second->gpu = nullptr;
+    for (Texture* t : g_virtual) t->gpu = nullptr;
+}
+
 Ref<Texture> texture_registry_find_alias(const Texture* t) {
     if (!t || !t->mem || t->is_display) return Ref<Texture>();
     std::lock_guard<std::mutex> lk(g_mu);

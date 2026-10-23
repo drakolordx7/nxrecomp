@@ -844,7 +844,9 @@ public:
         else if (key == "pitch_source") s.mouse.pitch_rad = rad_per_count(d);
         else if (key == "invert_y") s.mouse.invert_y = d != 0;
         else if (key == "invert_x") s.mouse.invert_x = d != 0;
-        else return false;
+        else if (key == "prompt_style") {
+            if (!parse_prompt_style(value, &s.prompts.style)) return false;
+        } else return false;
         g_host.apply(s);
         (void)st;
         return true;
