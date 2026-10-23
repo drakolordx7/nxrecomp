@@ -83,3 +83,59 @@ NXTEST(waiter_that_outranks_the_holder_does_not_starve_it) {
     CHECK_EQ(f.word()->load(), (uint32_t)1);
     CHECK_EQ((int)*f.disable(), 1);
 }
+
+// ---- WFE / YIELD of the lifted code (nx_spin_hint in recomp ctx.h; src/kernel/busy_mutex.cpp, debug note 420) ---------------------------
+
+NXTEST(spin_hint_without_a_hook_is_only_a_pause) {
+    nx_spin_hook = nullptr;
+    nx_spin_hint(0);
+    nx_spin_hint(1);                                          // no hook: nothing to call, nothing to crash
+}
+
+NXTEST(installed_hook_receives_both_kinds) {
+    nxrt::kernel::install_spin_hint();
+    REQUIRE(nx_spin_hook != nullptr);
+    static std::atomic<int> seen[2];
+    seen[0] = seen[1] = 0;
+    void (*saved)(int) = nx_spin_hook;
+    nx_spin_hook = [](int kind) { seen[kind & 1]++; };
+    nx_spin_hint(0);
+    nx_spin_hint(1);
+    nx_spin_hint(1);
+    nx_spin_hook = saved;
+    CHECK_EQ(seen[0].load(), 1);
+    CHECK_EQ(seen[1].load(), 2);
+}
+
+NXTEST(wfe_spin_loop_does_not_starve_the_thread_it_waits_for) {
+    nxrt::kernel::install_spin_hint();
+    // A guest spin loop (plain load, WFE) of a thread that outranks the one that will release it, both on one host processor.
+    alignas(64) static std::atomic<uint32_t> flag;
+    flag.store(0);
+    std::atomic<bool> done{false}, spinner_started{false};
+    const DWORD_PTR cpu = DWORD_PTR(1) << 1;
+    std::thread releaser([&] {
+        SetThreadAffinityMask(GetCurrentThread(), cpu);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+        while (!spinner_started) Sleep(1);
+        volatile uint64_t sink = 0;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+        while (std::chrono::steady_clock::now() < until) sink += 1;     // 300 ms of work before it can release the spinner
+        flag.store(1, std::memory_order_release);
+    });
+    std::thread spinner([&] {
+        SetThreadAffinityMask(GetCurrentThread(), cpu);
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+        SetThreadPriorityBoost(GetCurrentThread(), TRUE);
+        spinner_started = true;
+        while (flag.load(std::memory_order_relaxed) == 0) nx_spin_hint(1);
+        done = true;
+    });
+    const auto t0 = std::chrono::steady_clock::now();
+    while (!done && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10)) Sleep(5);
+    const bool got = done.load();
+    if (!got) flag.store(1);
+    releaser.join();
+    spinner.join();
+    CHECK_MSG(got, "the spinner was not released within 10 s: the WFE hint did not give the processor away");
+}
