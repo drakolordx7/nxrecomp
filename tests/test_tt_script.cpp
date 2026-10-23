@@ -704,3 +704,58 @@ NXTEST(watch_errors) {
     expect_err("@watch maybe\n", 1, "expected on or off");
     expect_err("@watch on bogus\n", 1, "expected vely, posy or both");
 }
+
+// ---- S26 step: @rays -------------------------------------------------------------------------------
+
+NXTEST(rays_parses_in_and_out_files) {
+    Script sc;
+    REQUIRE(parse_ok("@rays a.txt b.txt\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Rays);
+    CHECK_EQ(sc.steps[0].text, std::string("a.txt b.txt"));
+}
+
+NXTEST(rays_wrong_argument_count_is_usage_error) {
+    expect_err("@rays\n", 1, "@rays <in-file> <out-file>");
+    expect_err("@rays a.txt\n", 1, "@rays <in-file> <out-file>");
+    expect_err("@rays a b c\n", 1, "@rays <in-file> <out-file>");
+}
+
+NXTEST(objs_parses_class_list) {
+    Script sc;
+    REQUIRE(parse_ok("@objs *\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Objs);
+    CHECK_EQ(sc.steps[0].text, std::string("*"));
+}
+
+NXTEST(peek_parses_in_and_out_files) {
+    Script sc;
+    REQUIRE(parse_ok("@peek a.txt b.txt\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Peek);
+    CHECK_EQ(sc.steps[0].text, std::string("a.txt b.txt"));
+}
+
+NXTEST(peek_wrong_argument_count_is_usage_error) {
+    expect_err("@peek\n", 1, "@peek <in-file> <out-file>");
+    expect_err("@peek a.txt\n", 1, "@peek <in-file> <out-file>");
+    expect_err("@peek a b c\n", 1, "@peek <in-file> <out-file>");
+}
+
+NXTEST(probe_parses_in_and_out_files) {
+    Script sc;
+    REQUIRE(parse_ok("@probe a.txt b.txt\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Probe);
+    CHECK_EQ(sc.steps[0].text, std::string("a.txt b.txt"));
+}
+
+NXTEST(poke_parses_one_file_and_probe_needs_two) {
+    Script sc;
+    REQUIRE(parse_ok("@poke a.txt\n", sc));
+    REQUIRE(sc.steps.size() == 1);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Poke);
+    expect_err("@poke\n", 1, "@poke <in-file>");
+    expect_err("@probe a.txt\n", 1, "@probe <in-file> <out-file>");
+}
