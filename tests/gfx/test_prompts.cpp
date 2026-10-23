@@ -157,7 +157,14 @@ NXTEST(every_icon_has_an_id_and_a_pak) {
         CHECK(uuids.insert(icon_asset_uuid(ic)).second);
         CHECK(std::strstr(icon_asset_name(ic), "TXTR_") == icon_asset_name(ic));
         CHECK(std::strstr(icon_pak_file(ic), ".pak") != nullptr);
+        if (const char* front = icon_front_uuid(ic)) {   // the front end's own copy (title screen, menus)
+            CHECK_EQ(std::strlen(front), size_t(36));
+            CHECK(uuids.insert(front).second);
+        }
     }
+    int with_front = 0;
+    for (int i = 0; i < kIconCount; ++i) with_front += icon_front_uuid(static_cast<Icon>(i)) != nullptr;
+    CHECK_EQ(with_front, 16);   // every icon but the d-pad (whose id is the same in both interfaces)
 }
 
 // ---- the pack ------------------------------------------------------------------------------------------------------------------------
@@ -367,4 +374,37 @@ NXTEST(real_icon_untiles_to_valid_blocks_with_the_console_rule) {
         ++tested;
     }
     CHECK_EQ(tested, 1);
+}
+
+// Every id of the table is a 36x36 one-mip BC7 texture of 3072 bytes in its pak: the in-game copies in GuiSysMP1.pak (blue) and the front end's
+// own in PreloadFrontEndMPT.pak (red, drawn by the title screen and the menus: they were the textures the first version never recognised).
+NXTEST(real_icon_ids_exist_in_both_interfaces) {
+    const char* env = std::getenv("NXRT_FS_ROMFS");
+    const fs::path romfs = env && *env ? fs::path(env) : fs::path("C:/mpr/game/romfs");
+    if (!fs::exists(romfs / "Preload/MPR1/GuiSysMP1.pak") || !fs::exists(romfs / "Preload/MPRT/PreloadFrontEndMPT.pak")) {
+        nxtest::skip("the game's paks are not here");
+        return;
+    }
+    const auto count = [&](const char* rel, const std::set<std::string>& ids) {
+        auto pak = mprs::Pak::open(mprs::open_file_storage((romfs / rel).string()));
+        std::set<std::string> seen;
+        for (const mprs::PakEntry& e : pak->assets()) {
+            if (std::strcmp(e.type, "TXTR") != 0 || !ids.count(e.id.str())) continue;
+            const mprs::TxtrInfo info = mprs::txtr_read_info(*pak, e);
+            CHECK_EQ(info.width, 36u);
+            CHECK_EQ(info.height, 36u);
+            CHECK_EQ(info.mips, 1u);
+            CHECK_EQ(mprs::txtr_read_tiled(*pak, e, info).size(), size_t(3072));
+            seen.insert(e.id.str());
+        }
+        return seen.size();
+    };
+    std::set<std::string> gui, front;
+    for (int i = 0; i < kIconCount; ++i) {
+        const Icon ic = static_cast<Icon>(i);
+        (std::strcmp(icon_pak_file(ic), "Preload/MPR1/GuiSysMP1.pak") == 0 ? gui : front).insert(icon_asset_uuid(ic));
+        if (const char* f = icon_front_uuid(ic)) front.insert(f);
+    }
+    CHECK_EQ(count("Preload/MPR1/GuiSysMP1.pak", gui), gui.size());
+    CHECK_EQ(count("Preload/MPRT/PreloadFrontEndMPT.pak", front), front.size());
 }
