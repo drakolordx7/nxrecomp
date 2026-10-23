@@ -4,6 +4,7 @@
 // layout transitions, samplers and border colours, CPU and GPU write rules, the download of a render target, the failure path and
 // the dummy views. Each case builds its own device and textures and checks that validation reports nothing and that no VMA
 // allocation is left after shutdown.
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,7 @@
 #include "nvn_gpu.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_texdata.h"
+#include "nvn_texprep.h"
 #include "nvn_texture_layout.h"
 #include "nxrt/gfx.h"
 #include "nxrt/gfx_tuning.h"
@@ -1171,4 +1173,169 @@ NXTEST(shutdown_detaches_live_textures_from_freed_images) {
         teardown(r);
     }
     be::texture_registry_remove(a.t.get());
+}
+
+// ---- background preparation (stream S21, src/gfx/nvn/nvn_texprep.cpp) -------------------------------------------------------------
+// A bound texture is prepared on a worker; the render thread uses the result when the storage is unchanged and prepares the texture itself when the storage
+// changed under the job (content hash) or the CPU reported a write (generation). Either way the image holds exactly what the storage holds at the first use.
+NXTEST(texprep_background_upload) {
+    Rig r;
+    if (!bring_up(r)) {
+        CHECK(false);
+        return;
+    }
+    if (!r.dev->features().bc) {
+        nxtest::skip("textureCompressionBC is not available on this GPU");
+        teardown(r);
+        return;
+    }
+    namespace tp = nxrt::nvn::be::texprep;
+    {
+        const TextureBuilderInfo b = info(NVN_TEXTURE_TARGET_2D, 256, 256, 1, 5, NVN_FORMAT_BPTC_UNORM);
+        auto upload_and_compare = [&](Tex& x, const char* what) {
+            Texture* t = x.t.get();
+            gpu::run_frame_sync([&](Frame& f) { gpu::tex_ensure_current(t, f); });
+            std::vector<uint8_t> got;
+            const bool read = read_back(*r.dev, t, x.L, got);
+            CHECK_MSG(read, what);
+            const long diff = read ? first_diff(got, x.lin) : 0;
+            CHECK_MSG(diff < 0, (std::string(what) + ": first differing byte " + std::to_string(diff)).c_str());
+        };
+        // 1. bound, prepared in the background, used as prepared
+        Tex a;
+        CHECK(make_tex(a, b));
+        fill_random(a.lin, 11);
+        tile_into_storage(a);
+        const tp::Stats s0 = tp::stats();
+        gpu::texture_bound(a.t.get());
+        tp::wait_idle_for_test();
+        upload_and_compare(a, "bound, prepared in the background");
+        const tp::Stats s1 = tp::stats();
+        CHECK_EQ(s1.hits - s0.hits, 1ull);
+        // 2. the storage changes after the job without any notification: the content hash catches it
+        Tex c;
+        CHECK(make_tex(c, b));
+        fill_random(c.lin, 12);
+        tile_into_storage(c);
+        gpu::texture_bound(c.t.get());
+        tp::wait_idle_for_test();
+        fill_random(c.lin, 13);
+        tile_into_storage(c);
+        upload_and_compare(c, "storage changed after the job, no notification");
+        const tp::Stats s2 = tp::stats();
+        CHECK_EQ(s2.hits - s1.hits, 0ull);
+        CHECK(s2.stale > s1.stale);
+        // 3. the CPU reports a write after the job: the generation catches it
+        Tex d;
+        CHECK(make_tex(d, b));
+        fill_random(d.lin, 14);
+        tile_into_storage(d);
+        gpu::texture_bound(d.t.get());
+        tp::wait_idle_for_test();
+        fill_random(d.lin, 15);
+        tile_into_storage(d);
+        gpu::mark_texture_cpu_dirty(d.t.get());
+        upload_and_compare(d, "write reported after the job");
+        const tp::Stats s3 = tp::stats();
+        CHECK_EQ(s3.hits - s2.hits, 0ull);
+        // 4. a rewrite after the first upload is prepared in the background again once the texture is bound
+        fill_random(a.lin, 16);
+        tile_into_storage(a);
+        gpu::mark_texture_cpu_dirty(a.t.get());
+        gpu::texture_bound(a.t.get());
+        tp::wait_idle_for_test();
+        upload_and_compare(a, "rewritten, bound again");
+        const tp::Stats s4 = tp::stats();
+        CHECK_EQ(s4.hits - s3.hits, 1ull);
+        // 5. many textures at once, each used exactly as the storage holds it
+        std::vector<Tex> many(24);
+        for (size_t i = 0; i < many.size(); ++i) {
+            CHECK(make_tex(many[i], b));
+            fill_random(many[i].lin, 100 + static_cast<uint32_t>(i));
+            tile_into_storage(many[i]);
+            gpu::texture_bound(many[i].t.get());
+        }
+        for (size_t i = 0; i < many.size(); ++i) upload_and_compare(many[i], "burst of 24 textures");
+        // 6. a big texture comes with an upload buffer that the job already filled
+        Tex big;
+        CHECK(make_tex(big, info(NVN_TEXTURE_TARGET_2D, 1024, 1024, 1, 5, NVN_FORMAT_BPTC_UNORM)));
+        fill_random(big.lin, 200);
+        tile_into_storage(big);
+        const tp::Stats s6 = tp::stats();
+        gpu::texture_bound(big.t.get());
+        tp::wait_idle_for_test();
+        upload_and_compare(big, "big texture, upload buffer filled by the job");
+        CHECK_EQ(tp::stats().hits - s6.hits, 1ull);
+    }
+    teardown(r);
+}
+
+// ---- sparse texture helpers used by the background preparation (nvn_texture_registry.cpp) ----------------------------------------------
+// gather copies the mapped tiles (unmapped bytes are zero), direct hands out a pointer when the range is one piece of one physical pool, and
+// the hash follows both the bytes and where they sit.
+NXTEST(sparse_texture_segments) {
+    using nxrt::nvn::be::MemoryPool;
+    using nxrt::nvn::be::texture_gather_virtual;
+    using nxrt::nvn::be::texture_hash_virtual;
+    using nxrt::nvn::be::texture_virtual_direct;
+    std::vector<uint8_t> phys_a(1 << 20), phys_b(1 << 20);
+    fill_random(phys_a, 21);
+    fill_random(phys_b, 22);
+    Ref<MemoryPool> pa(new MemoryPool()), pb(new MemoryPool()), vp(new MemoryPool());
+    pa->base = phys_a.data();
+    pa->size = phys_a.size();
+    pb->base = phys_b.data();
+    pb->size = phys_b.size();
+    vp->is_virtual = true;
+    vp->size = 8u << 20;
+    Texture t;
+    t.vpool = vp;
+    t.voffset = 256 * 1024;
+    t.storage_size = 512 * 1024;
+    auto map = [&](uint64_t voff, uint64_t size, Ref<MemoryPool> phys, int64_t poff) {
+        MemoryPool::VirtualMap m;
+        m.voff = voff;
+        m.size = size;
+        m.phys = phys;
+        m.poff = poff;
+        vp->vmaps.push_back(m);
+    };
+    std::vector<uint8_t> got;
+    Ref<MemoryPool> keep;
+    uint64_t h0 = 0, h1 = 0, h2 = 0;
+    // nothing mapped: all zeros, no direct pointer
+    CHECK(texture_gather_virtual(t, got));
+    CHECK_EQ(got.size(), static_cast<size_t>(512 * 1024));
+    CHECK(std::all_of(got.begin(), got.end(), [](uint8_t b) { return b == 0; }));
+    CHECK(texture_virtual_direct(t, keep) == nullptr);
+    CHECK(texture_hash_virtual(t, h0));
+    // the whole range from one pool: direct points into it, gather equals it
+    map(0, 4u << 20, pa, 4096);
+    const uint8_t* d = texture_virtual_direct(t, keep);
+    CHECK(d != nullptr);
+    CHECK(d == phys_a.data() + 4096 + 256 * 1024);
+    CHECK(texture_gather_virtual(t, got));
+    CHECK(std::memcmp(got.data(), d, got.size()) == 0);
+    CHECK(texture_hash_virtual(t, h1));
+    CHECK(h1 != h0);
+    // a byte changes: the hash moves
+    phys_a[4096 + 256 * 1024 + 1000] ^= 0x5a;
+    CHECK(texture_hash_virtual(t, h2));
+    CHECK(h2 != h1);
+    // two pieces: no direct pointer, gather stitches them, the hash differs from the one-piece mapping
+    vp->vmaps.clear();
+    map(0, 256 * 1024 + 128 * 1024, pa, 0);
+    map(256 * 1024 + 128 * 1024, 4u << 20, pb, 0);
+    CHECK(texture_virtual_direct(t, keep) == nullptr);
+    CHECK(texture_gather_virtual(t, got));
+    CHECK(std::memcmp(got.data(), phys_a.data() + 256 * 1024, 128 * 1024) == 0);
+    CHECK(std::memcmp(got.data() + 128 * 1024, phys_b.data(), 384 * 1024) == 0);
+    uint64_t h3 = 0;
+    CHECK(texture_hash_virtual(t, h3));
+    CHECK(h3 != h2);
+    CHECK(h3 != h1);
+    // a texture that is not sparse has no virtual hash
+    Texture plain;
+    uint64_t hp = 0;
+    CHECK(!texture_hash_virtual(plain, hp));
 }

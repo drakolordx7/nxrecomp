@@ -29,6 +29,7 @@ struct TexCaps {
     bool astc = false;           // the GPU samples ASTC; ASTC data is kept
     bool bc7_transcode = true;   // when astc is false: transcode ASTC to BC7 (else decode it to RGBA8)
     VkFormat image_format = VK_FORMAT_UNDEFINED;   // the format of the image the data goes into, when it exists already: the data comes out in it
+    bool cache_only = false;     // background preparation: an ASTC texture without a disk cache entry fails quietly (error "no cache entry") instead of being transcoded
 };
 
 struct PreparedLevel {

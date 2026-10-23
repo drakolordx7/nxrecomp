@@ -3,6 +3,8 @@
 // stretch. The behaviour and the thread rules are the contract in include/nxrt/frame_limiter.h.
 #include "nxrt/frame_limiter.h"
 
+#include "nxrt/log.h"
+
 #include <windows.h>
 #include <emmintrin.h>  // _mm_pause
 
@@ -162,6 +164,11 @@ uint64_t FrameLimiter::begin_frame_nohook() {
     const bool had_to_wait = target > entry;
     s.wait_until(target);
     const uint64_t start = now_ns();
+    // A wait that ends long after its target means the thread was not scheduled (the timer fired late); a long planned wait means the schedule ran ahead.
+    // Either one is a visible freeze, so say which one it was.
+    if (start > target + 40000000ull || target > entry + static_cast<uint64_t>(4.0 * period))
+        NXLOG_W("limiter", "frame wait: planned %.1f ms, woke %.1f ms after the target (frame period %.2f ms)", static_cast<double>(target > entry ? target - entry : 0) * 1e-6,
+                static_cast<double>(start > target ? start - target : 0) * 1e-6, period * 1e-6);
     {
         std::lock_guard<std::mutex> lk(s.mu);
         s.last_wait = start - entry;
