@@ -169,6 +169,7 @@ struct CommandBuffer : Obj {
     CommandBuffer() : Obj(kKind) {}
     Ref<CmdList> rec;                 // the list being recorded (null when not recording)
     bool recording = false;
+    TexturePool* tpool = nullptr;     // the texture pool set in the list being recorded (the list holds it); background texture preparation resolves handles with it
     int64_t copy_row_stride = 0, copy_image_stride = 0;
     uint64_t callback = 0, callback_data = 0;       // guest function pointer and its data
     // command / control memory the game added

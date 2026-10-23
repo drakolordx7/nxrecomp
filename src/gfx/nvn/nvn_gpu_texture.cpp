@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/log.h"
@@ -29,6 +30,7 @@
 #include "nvn_gpu_internal.h"
 #include "extras/hdr_nvn.h"
 #include "nvn_texdata.h"
+#include "nvn_texprep.h"
 #include "nvn_texture_layout.h"
 #include "tegra_tiling.h"
 
@@ -277,7 +279,8 @@ TexGpu* create_texture_gpu(Texture* t) {
     const VkFormat bc7_format = g->fmt->srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
     // A disk cache entry that is not BC7 (RGBA8 for a texture BC7 cannot reproduce, BC5 for a two-channel normal map) makes the image in the
     // entry's format; prepare_texture is then told the image's format and delivers the entry's data (docs/S4f.md).
-    const VkFormat entry = to_bc7 ? cache_entry_format(*t) : VK_FORMAT_UNDEFINED;
+    VkFormat entry = VK_FORMAT_UNDEFINED;
+    if (to_bc7 && !texprep::peek_entry_format(t, entry)) entry = cache_entry_format(*t);   // the background job already found the cache entry
     const VkFormat want = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? entry : bc7_format) : g->fmt->vk;
     const VkFormat alt = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? bc7_format : VK_FORMAT_UNDEFINED) : g->fmt->vk_fallback;
 
@@ -354,6 +357,7 @@ TexGpu* tex_or_null(Texture* t) {
             return ag;
         }
     }
+    NXFT_MIN("tex.create", 30000);
     TexGpu* g = create_texture_gpu(t);
     return g->failed ? nullptr : g;
 }
@@ -687,11 +691,36 @@ void tex_ensure_current(Texture* t, Frame& f) {
     caps.bc7_transcode = true;
     caps.image_format = g->format;
     PreparedTexture prep;
-    bool ok;
-    { NXFT_MIN("tex.prepare", 30000); ok = prepare_texture(*t, caps, prep); }
+    bool ok = false;
+    bool from_job = false;
+    const uint64_t t_prep0 = ft::now_ns();
+    gfx::Buffer staged;                        // a big background result comes with its upload buffer already filled
+    if (texprep::take(t, prep, &staged)) {     // prepared in the background from the current storage content (nvn_texprep.h)
+        if (prep.format == g->format) {
+            ok = from_job = true;
+        } else {                               // another image format than the one it was made for (a fallback format): prepare it again
+            prep = PreparedTexture();
+            if (staged) device().destroy_buffer(staged);
+            staged = gfx::Buffer{};
+        }
+    }
+    if (!ok) {
+        static const uint16_t zid = ft::zone_id("tex.prepare");
+        ft::Scope zs(zid, 30000, t->id);
+        ok = prepare_texture(*t, caps, prep);
+    }
+    be::tx_mark("tx.use", t);
+    {
+        static const bool log_uploads = nxrt::config_get_bool("nvn", "tex_prep_log", false);      // [nvn] tex_prep_log = 1: one line per upload with where the data came from
+        if (log_uploads)
+            NXLOG_I(kTag, "upload t%u %s %ux%ux%u L%u storage %llu KB%s sched 0x%x gen %u: %s %.2f ms", t->id, t->fmt ? t->fmt->name : "?", t->b.width, t->b.height, t->b.depth, t->levels,
+                    static_cast<unsigned long long>(t->storage_size >> 10), t->vpool ? " sparse" : "", static_cast<unsigned>(t->prep_sched.load()), static_cast<unsigned>(t->prep_gen.load()),
+                    from_job ? "background" : "render thread", static_cast<double>(ft::now_ns() - t_prep0) * 1e-6);
+    }
     if (!ok || prep.format != g->format || !(g->usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
         NXLOG_E(kTag, "texture %u: not uploaded (%s): the image is cleared", t->id,
                 !ok ? prep.error.c_str() : "the image format differs from the storage format or the image cannot be written");
+        if (staged) device().destroy_buffer(staged);
         fill_zero(f, *g);
         g->uploaded = true;
         g->gpu_written = false;
@@ -703,13 +732,13 @@ void tex_ensure_current(Texture* t, Frame& f) {
         if (!prep.data.empty()) std::memcpy(&w0, prep.data.data(), std::min<size_t>(8, prep.data.size()));
         tev(t, "upload", w0, dirty ? 1 : 0);
     }
-    const uint64_t bytes = prep.data.size();
-    UploadAlloc st = f.staging(bytes);
+    const uint64_t bytes = staged ? staged.size : prep.data.size();
+    UploadAlloc st = staged ? f.adopt_staging(staged) : f.staging(bytes);
     if (!st) {
         t->cpu_dirty.store(true);                // try again next time
         return;
     }
-    std::memcpy(st.ptr, prep.data.data(), static_cast<size_t>(bytes));
+    if (!staged) std::memcpy(st.ptr, prep.data.data(), static_cast<size_t>(bytes));
     std::vector<VkBufferImageCopy> regions;
     regions.reserve(prep.level.size());
     for (uint32_t i = 0; i < prep.level.size(); ++i) {
@@ -723,6 +752,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
     copy_regions_to_image(f, *g, st.buffer, regions);
     g->uploaded = true;
     g->gpu_written = false;
+    texprep::note_uploaded(t);
     counters().texture_uploads.fetch_add(1);
     counters().texture_upload_bytes.fetch_add(bytes);
     if (prep.transcoded) counters().bc7_transcodes.fetch_add(1);
@@ -965,6 +995,7 @@ TexStats tex_stats() {
 // Frees every cached object this module made (samplers, dummy views and images). Render thread, device idle, no texture alive:
 // called by the tests before shutdown_for_test (the back end's teardown does not call it yet).
 void tex_shutdown() {
+    texprep::release_staging();       // upload buffers of finished background results belong to the device that is going away
     std::vector<TexGpu*> left;
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
@@ -1245,8 +1276,13 @@ bool dump_texture(Texture* t, const std::string& path, std::string* stats) {
 }
 
 void mark_texture_cpu_dirty(Texture* t) {
-    if (t) t->cpu_dirty.store(true);
+    if (!t) return;
+    texprep::on_flushed(t);        // before the flag: a reader that sees the flag also sees the new generation
+    t->cpu_dirty.store(true);
 }
+
+void texture_bound(Texture* t) { texprep::on_bound(t); }
+void texture_registered(Texture* t) { texprep::on_registered(t); }
 
 // Copies every level of a render target back into the game's storage (block-linear, tiled with tegra::tile). Only when the GPU
 // image holds the newest data: it exists, it was written by the GPU (or uploaded) and the CPU did not write since. Pitch-linear,

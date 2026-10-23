@@ -357,6 +357,9 @@ void texture_pool_register(const NVNtexturePool* pool, int id, const NVNtexture*
     e.view = info;
     e.has_view = view != nullptr;
     e.used = true;
+    be::tx_mark("tx.reg", t);
+    be::g_tex_scan_epoch.fetch_add(1, std::memory_order_relaxed);   // a new texture sits behind this id now
+    if (t && gpu::active()) gpu::texture_registered(t);   // registered: it is going to be sampled (background preparation, nvn_texprep.h)
 }
 
 void nvnTexturePoolRegisterTexture(const NVNtexturePool* pool, int id, const NVNtexture* texture, const NVNtextureView* view) {
