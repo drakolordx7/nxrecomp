@@ -20,6 +20,8 @@
 //   fix_render_timings = 1        NRenderUtilMPT::TickRenderTimings advances by the step (texture scroll, UV animation, water)
 //   fix_streaming = 1             texture streaming ages its entries by the step instead of 1/60
 //   fix_budget = 1                the background-work budget after the tick (14 ms) scales with the step
+//   fix_stuck_tracker = 1         CPlayerMPStuckTracker: the player's "am I stuck" test keeps 20 samples, one per tick; at more than 60 ticks per second the window
+//                                 is shorter than the test was made for and a slow moment (the top of a jump) reads as stuck. Samples are taken once per 1/60 s of game time.
 //   log_every = 0                 log one line of frame statistics every N frames (0 = off)
 //   csv = <file>                  write one line per frame: frame, host time (s), measured elapsed, step used, sum of steps, movie frames delivered, render-timing clock
 //   game_base = 0x7100000000      guest address of the main module
@@ -48,6 +50,7 @@ struct Config {
     bool fix_render_timings = true;
     bool fix_streaming = true;
     bool fix_budget = true;
+    bool fix_stuck_tracker = true;
     double movie_max = 0.5;          // longest delta handed to the movie player in one call (seconds)
     int log_every = 0;
     std::string csv;
@@ -130,6 +133,7 @@ constexpr uint64_t kTickRenderTimings = 0xc32890;   // entry, handled
 constexpr uint64_t kStreamA0 = 0xfe268, kStreamA1 = 0xfe274;   // mid: w8 = step, 2 * step
 constexpr uint64_t kStreamB0 = 0xff2fc, kStreamB1 = 0xff308;   // mid: w9 = step, 2 * step
 constexpr uint64_t kMovieUpdate = 0x3669ec;      // entry: s0 = elapsed
+constexpr uint64_t kStuckAddState = 0xd801d8;     // entry, handled: CPlayerStuckTrackerMP1::AddState(this, state, pos, vel, input); x0 = this stays as the result
 constexpr uint64_t kRenderTimingCounter = 0x459cc10;   // u32 frame counter (data); the float seconds follow at +4
 }  // namespace site
 
