@@ -470,6 +470,10 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     }
 
     if (mode == Mode::Passthrough) {
+        // button prompt icons and the like: a host hook may replace the pixels of a small single-level BC7 sRGB texture
+        if (fmt.vk == VK_FORMAT_BC7_SRGB_BLOCK && L.levels == 1 && L.layers == 1 && geo[0].d == 1 && geo[0].w <= 128 &&
+            geo[0].h <= 128 && texture_override_active() && texture_override_apply(t, geo[0].w, geo[0].h, lin))
+            NXLOG_I(kTag, "texture %u: content replaced by the host (%ux%u BC7)", t.id, geo[0].w, geo[0].h);
         out.data = std::move(lin);
         return true;
     }

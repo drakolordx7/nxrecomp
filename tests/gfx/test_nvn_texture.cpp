@@ -44,13 +44,19 @@ uint64_t ref_gobs(uint64_t rows) {
     while (g < 16 && g * 8 < rows) g *= 2;
     return g;
 }
+// Level 0 of a texture without a packaged layout: the console's rule (1.5 times the block rows against 16, 32, 64 and 128), which is the
+// layout of the game's own TXTR data. Smaller textures get a smaller block height than the smallest-fit rule above would give them.
+uint64_t ref_gobs0(uint64_t rows) {
+    const uint64_t hh = rows + rows / 2;
+    return hh >= 128 ? 16 : hh >= 64 ? 8 : hh >= 32 ? 4 : hh >= 16 ? 2 : 1;
+}
 // Bytes of one layer (all levels) and the layer alignment (512 bytes per GOB times the level-0 block height).
 struct RefLayer {
     uint64_t bytes = 0, align = 0;
 };
 RefLayer ref_2d(uint64_t w, uint64_t h, uint64_t levels, uint64_t bw, uint64_t bh, uint64_t bpb) {
     RefLayer r;
-    const uint64_t gy0 = ref_gobs(div_up(h, bh));
+    const uint64_t gy0 = ref_gobs0(div_up(h, bh));
     for (uint64_t l = 0; l < levels; ++l) {
         const uint64_t lw = std::max<uint64_t>(1, w >> l), lh = std::max<uint64_t>(1, h >> l);
         const uint64_t bx = div_up(lw, bw), by = div_up(lh, bh);
@@ -230,12 +236,13 @@ NXTEST(layout_literal_sizes) {
         {"RGBA8 64x64 L7", mk(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 7, NVN_FORMAT_RGBA8), 23552, 4096, 7},
         // BC1 256x256 (64x64 blocks of 8 bytes) with 9 levels: 32768 + 8192 + 2048 + 6 x 512 = 46080.
         {"BC1 256x256 L9", mk(NVN_TEXTURE_TARGET_2D, 256, 256, 1, 9, NVN_FORMAT_RGBA_DXT1), 46080, 4096, 9},
-        // ASTC 8x5 (16 bytes per block) 100x100: 13 x 20 blocks, rows 208 -> 256 bytes, 20 rows at block height 4: 256 * 32.
-        {"ASTC 8x5 100x100", mk(NVN_TEXTURE_TARGET_2D, 100, 100, 1, 1, NVN_FORMAT_RGBA_ASTC_8x5), 8192, 2048, 1},
+        // ASTC 8x5 (16 bytes per block) 100x100: 13 x 20 blocks, rows 208 -> 256 bytes, 20 rows at block height 2 (1.5 x 20 = 30 >= 16): 256 * 32.
+        {"ASTC 8x5 100x100", mk(NVN_TEXTURE_TARGET_2D, 100, 100, 1, 1, NVN_FORMAT_RGBA_ASTC_8x5), 8192, 1024, 1},
         // Cube RGBA8 16x16 with 5 levels: 1024 + 4 x 512 = 3072 per face, 6 faces (aligned to 1024: already aligned).
         {"cube RGBA8 16 L5", mk(NVN_TEXTURE_TARGET_CUBEMAP, 16, 16, 1, 5, NVN_FORMAT_RGBA8), 6 * 3072, 1024, 5},
-        // 2D array R8 20x20, 2 layers, 2 levels: level 0 is 2048, level 1 is 1024: 3072 per layer, aligned to 2048 -> 4096 each.
-        {"2D array R8 20x20 x2 L2", mk(NVN_TEXTURE_TARGET_2D_ARRAY, 20, 20, 2, 2, NVN_FORMAT_R8), 8192, 2048, 2},
+        // 2D array R8 20x20, 2 layers, 2 levels: block height 2 (30 >= 16): level 0 is 64 x 32 = 2048, level 1 (10 rows, still 2 GOBs) is
+        // 64 x 16 = 1024: 3072 per layer, already a multiple of the 1024 alignment -> 6144.
+        {"2D array R8 20x20 x2 L2", mk(NVN_TEXTURE_TARGET_2D_ARRAY, 20, 20, 2, 2, NVN_FORMAT_R8), 6144, 1024, 2},
         // R8 3x1 asking for 10 levels: a 3-wide texture has 2 levels (floor(log2 3) + 1), 512 each.
         {"R8 3x1 L10 clamped", mk(NVN_TEXTURE_TARGET_2D, 3, 1, 1, 10, NVN_FORMAT_R8), 1024, 512, 2},
         // 1D R8 1000 wide: one block row, 1024-byte rows, 8 rows (block height 1): 8192.
@@ -584,17 +591,17 @@ NXTEST(builder_storage_queries_match_the_texture) {
     Pool pool(1 << 20);
     NVNtextureBuilder bld;
     build(a, bld, pool, NVN_TEXTURE_TARGET_2D_ARRAY, 20, 20, 2, 2, NVN_FORMAT_R8);
-    CHECK_EQ(a.bget_size(&bld), 8192u);
-    CHECK_EQ(a.bget_align(&bld), 2048u);
+    CHECK_EQ(a.bget_size(&bld), 6144u);
+    CHECK_EQ(a.bget_align(&bld), 1024u);
     NVNtexture tex;
     std::memset(&tex, 0, sizeof tex);
     CHECK_EQ(a.init(&tex, &bld), 1);
-    CHECK_EQ(a.storage_size(&tex), 8192);
-    // Layer 1 starts one aligned layer (4096 bytes) in: the layer stride.
+    CHECK_EQ(a.storage_size(&tex), 6144);
+    // Layer 1 starts one aligned layer (3072 bytes) in: the layer stride.
     NVNtextureView v;
     a.vdefaults(&v);
     a.vlayers(&v, 1, 1);
-    CHECK_EQ(static_cast<long long>(a.view_offset(&tex, &v)), 4096ll);
+    CHECK_EQ(static_cast<long long>(a.view_offset(&tex, &v)), 3072ll);
     a.finalize(&tex);
 }
 
