@@ -16,6 +16,7 @@
 #include "astc2bc7.h"
 #include "tegra_tiling.h"
 #include "nvn_app.h"
+#include "nvn_texture_layout.h"
 NXTEST_GROUP(gfx_nvn_scene_texture)
 
 using namespace nvnapp;
@@ -246,7 +247,7 @@ Lay make_layout(uint32_t w, uint32_t h, uint32_t levels, uint32_t bw, uint32_t b
     r.d.block_w = bw;
     r.d.block_h = bh;
     r.d.bytes_per_block = bpb;
-    r.d.gob_blocks_y = tegra::default_gob_blocks_y((h + bh - 1) / bh);
+    r.d.gob_blocks_y = nxrt::nvn::be::console_block_height((h + bh - 1) / bh);
     r.d.gob_blocks_z = 1;
     r.d.linear_stride_align = 1;
     r.L = tegra::compute_layout(r.d);
@@ -1214,6 +1215,60 @@ NXTEST(render_to_texture_then_sample) {
     CHECK(magenta > 360 && magenta < 410);
     check_clean(app);
     if (same.bad == 0 && magenta > 360 && magenta < 410) reference_check("texture_render_to_texture", px);
+}
+
+// The game makes several texture objects over one piece of memory (S4f: they share one image). A draw that samples one of them while another
+// is the colour target of the pass is a feedback loop all the same: the binding must get the dummy texture, not the image of the pass. Before
+// the check looked at the image and not at the texture object, validation reported VUID-vkCmdDraw-imageLayout-00344 (the image was
+// COLOR_ATTACHMENT_OPTIMAL, the descriptor said SHADER_READ_ONLY_OPTIMAL) in gameplay.
+NXTEST(sampling_an_alias_of_the_pass_target_binds_the_dummy) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    App app;
+    App::Opts o;
+    o.width = kW;
+    o.height = kH;
+    REQUIRE(app.init(o));
+    App::ShaderBlob qvs, qfs;
+    REQUIRE(load_quad_shaders(&qvs, &qfs));
+    auto quad = app.make_program({&qvs, &qfs});
+    REQUIRE(quad != nullptr);
+    auto rt = app.make_texture_2d(NVN_FORMAT_RGBA8, kW, kH);
+    REQUIRE(rt != nullptr);
+
+    // a second texture object over the same storage of the same pool
+    auto alias = std::make_unique<Tex>();
+    alias->obj = std::make_unique<NVNtexture>();
+    std::memset(alias->obj.get(), 0, sizeof(NVNtexture));
+    NVNtextureBuilder b;
+    app.api.nvnTextureBuilderSetDevice(&b, app.device.get());
+    app.api.nvnTextureBuilderSetDefaults(&b);
+    app.api.nvnTextureBuilderSetFlags(&b, 0);
+    app.api.nvnTextureBuilderSetTarget(&b, NVN_TEXTURE_TARGET_2D);
+    app.api.nvnTextureBuilderSetSize2D(&b, kW, kH);
+    app.api.nvnTextureBuilderSetFormat(&b, NVN_FORMAT_RGBA8);
+    app.api.nvnTextureBuilderSetLevels(&b, 1);
+    app.api.nvnTextureBuilderSetStorage(&b, rt->pool->obj.get(), static_cast<ptrdiff_t>(rt->offset));
+    REQUIRE(app.api.nvnTextureInitialize(alias->obj.get(), &b));
+    alias->id = app.next_tex_id++;
+    app.api.nvnTexturePoolRegisterTexture(app.tex_pool.get(), alias->id, alias->obj.get(), nullptr);
+    const uint64_t th = app.texture_handle(alias->id, make_sampler_nearest(app));
+
+    auto cb = app.make_cmdbuf();
+    REQUIRE(cb != nullptr);
+    NVNcommandBuffer* c = cb->obj.get();
+    const int idx = app.acquire();
+    REQUIRE(idx >= 0);
+    app.api.nvnCommandBufferBeginRecording(c);
+    bind_common(app, c);
+    record_pass(app, c, rt->obj.get(), quad.get(), kW, kH);
+    draw_quad(app, c, th, 0, 0, kW, kH, 0, 0, 1, 1);   // samples the alias while rt is the target of this pass
+    record_pass(app, c, app.window_textures[idx]->obj.get(), quad.get(), kW, kH);
+    draw_quad(app, c, th, 0, 0, kW, kH, 0, 0, 1, 1);   // and now the pass is over: the same texture samples normally
+    app.end_and_submit(*cb);
+    std::vector<uint8_t> px;
+    REQUIRE(app.present_and_capture(idx, &px));
+    app.finish();
+    check_clean(app);
 }
 
 // Scene 6a: CopyBufferToTexture from a linear buffer with a padded row stride (256 bytes for 64 bytes of texels).

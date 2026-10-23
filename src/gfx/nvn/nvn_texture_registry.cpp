@@ -122,6 +122,12 @@ void textures_cpu_wrote(const void* lo, uint64_t size) {
     }
 }
 
+void texture_registry_detach_gpu() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    for (auto& kv : g_by_start) kv.second->gpu = nullptr;
+    for (Texture* t : g_virtual) t->gpu = nullptr;
+}
+
 Ref<Texture> texture_registry_find_alias(const Texture* t) {
     if (!t || !t->mem || t->is_display) return Ref<Texture>();
     std::lock_guard<std::mutex> lk(g_mu);
@@ -137,6 +143,24 @@ Ref<Texture> texture_registry_find_alias(const Texture* t) {
         return Ref<Texture>(o);
     }
     return Ref<Texture>();
+}
+
+void textures_mark_override_candidates_dirty() {
+    std::vector<Ref<Texture>> hit;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        for (auto& kv : g_by_start) {
+            Texture* t = kv.second;
+            if (t->destroyed.load() || !t->fmt || t->fmt->vk != VK_FORMAT_BC7_SRGB_BLOCK || t->levels != 1 || t->layers != 1) continue;
+            if (t->b.width > 128 || t->b.height > 128 || t->b.samples > 1) continue;
+            t->ref();
+            hit.emplace_back(t);
+        }
+    }
+    for (auto& t : hit) {
+        t->cpu_dirty.store(true);
+        gpu::mark_texture_cpu_dirty(t.get());
+    }
 }
 
 size_t texture_registry_size() {
