@@ -3,6 +3,7 @@
 // console core model), and the 19.2 MHz system tick. The SVC dispatcher lives in svc.h, IPC sessions in ipc.h.
 // Pattern from SuperMarioWonderRecomp runtime/src/kernel.cpp + kernel_state.h (MIT) and smo-recomp runtime/os/os_threads.c (GPL-3.0).
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -99,6 +100,7 @@ struct KThread : KObject {
     void* host_handle = nullptr;        // Win32 thread handle (owned by the thread object)
     uint32_t host_tid = 0;
     bool started = false, exited = false, cancel_sync = false;
+    std::atomic<bool> aged{false};      // starvation guard (starvation_guard.cpp): the host leaves this thread ready, so its yields keep the processor
     // wait state, protected by the kernel lock (kernel_sync.cpp)
     bool wake = false;
     uint32_t wait_result = 0;
@@ -156,6 +158,11 @@ int sched_current_core();
 void sched_set_process_priority(bool interactive);
 void sched_apply(KThread& t);            // (re)applies affinity + priority of t to its host thread
 std::string sync_wait_report();          // the guest threads blocked in WaitForAddress / process-wide keys / mutex hand-overs, with the word each waits on (watchdog dump; never blocks)
+void yield_host();                       // the calling thread offers its processor to another ready thread (SwitchToThread), unless the starvation guard aged it
+void starvation_guard_start();           // ages guest threads the host leaves ready but never runs (starvation_guard.cpp, [sched] starvation_guard)
+void starvation_guard_stop();
+uint64_t starvation_boosts();            // boosts given so far
+void install_spin_hint();                // WFE / YIELD of the lifted code hand the host processor over (busy_mutex.cpp, [sched] spin_yield)
 void install_busy_mutex_hle();           // nn::os::LockBusyMutex as host code that yields while it waits (busy_mutex.cpp, [sched] busy_mutex_hle)
 void sched_reset_for_tests();            // forget the slot and re-read the config at the next sched_info()
 

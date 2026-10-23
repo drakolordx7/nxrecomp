@@ -198,6 +198,12 @@ void sched_set_process_priority(bool interactive) {
     else NXLOG_W("sched", "SetPriorityClass failed, error %lu", static_cast<unsigned long>(GetLastError()));
 }
 
+void yield_host() {
+    KThread* t = current_thread();
+    if (t && t->aged.load(std::memory_order_relaxed)) YieldProcessor();   // aged: a hand-over would give its time slice to the program that starves it
+    else SwitchToThread();
+}
+
 int sched_current_core() {
     SchedInfo si = sched_info();
     KThread* t = current_thread();
