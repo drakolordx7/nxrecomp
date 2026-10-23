@@ -278,6 +278,7 @@ bool screenshot_provider(const char* path, void*) {
     G& st = g();
     if (!st.renderer || !path) return false;
     DeleteFileA(path);
+    if (std::strstr(path, "nvntrace_")) nvn::backend_trace_next_frame();   // `@shot nvntrace_<name>`: also trace the frame that is captured
     const uint64_t before = st.renderer->stats().screenshots;
     st.renderer->request_screenshot(path);
     for (int i = 0; i < 500; ++i) {

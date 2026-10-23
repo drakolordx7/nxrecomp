@@ -478,3 +478,36 @@ NXTEST(int_attributes_give_the_shader_raw_bits) {
     CHECK(!gpu::spirv_int_attributes(in, {{9, false}}, out2));
     CHECK(out2 == keep);
 }
+
+// A shader that indexes its attributes by a computed value gets one Input array of vec4 (Locations 0..15) from the translator. Its draws used to
+// be skipped (sweep: ef17e15bcbcfaa67 and seven more), so the objects they draw were missing. The array becomes Private, every Location gets its own
+// Input and the entry point builds the array from them.
+NXTEST(int_attributes_reach_an_indexed_attribute_array) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    std::vector<uint32_t> in;
+    if (!load_hash("ef17e15bcbcfaa67", in)) {
+        nxtest::skip("vertex shader ef17e15bcbcfaa67 not in the shader cache");
+        return;
+    }
+    std::vector<uint32_t> out;
+    REQUIRE(gpu::spirv_int_attributes(in, {{1, false}, {5, true}}, out));
+    std::string log;
+    const int rc = run_spirv_val(out, "spirv_patch_intattr_array", log);
+    CHECK_MSG(rc == 0, "spirv-val exit " + std::to_string(rc) + ": " + log);
+    ShaderReflection r;
+    std::string err;
+    CHECK_MSG(reflect(out, r, err), err);
+    const ShaderIo* a = find_io(r.inputs, 1);
+    const ShaderIo* b = find_io(r.inputs, 5);
+    const ShaderIo* c = find_io(r.inputs, 2);
+    CHECK_MSG(a && a->type == ScalarType::Uint, "Location 1 is not Uint");
+    CHECK_MSG(b && b->type == ScalarType::Sint, "Location 5 is not Sint");
+    CHECK_MSG(c && c->type == ScalarType::Float, "Location 2 is not Float");
+    // a slot outside the array is refused
+    std::vector<uint32_t> keep = {0xdeadbeefu, 7u}, out2 = keep;
+    CHECK(!gpu::spirv_int_attributes(in, {{40, false}}, out2));
+    CHECK(out2 == keep);
+}

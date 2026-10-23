@@ -37,7 +37,10 @@ bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOut
 // indices, say) in the float registers the translation reads, and the translated shader declares every input as a float and
 // bitcasts it where it wants an integer. A Vulkan integer format needs an integer input. For each slot the Input variable becomes a
 // Private variable and a new Input variable of uvec4 (ivec4) takes its Location; the entry point copies it over with an OpBitcast, so
-// the shader reads the same bits as on the console. The slot's input has to be a vec4 of floats. False (out untouched) otherwise.
+// the shader reads the same bits as on the console. The slot's input is a vec4 of floats, or an element of an Input array of vec4 (the
+// translation of a shader that indexes its attributes by a computed value): then the array becomes Private as a whole, every Location it
+// covers gets its own new Input (float, uvec4 or ivec4 by what the draw feeds) and the entry point builds the array from them. False (out
+// untouched) otherwise.
 struct SpvIntSlot {
     uint32_t location = 0;
     bool is_signed = false;

@@ -637,6 +637,10 @@ void backend_flush_caches() {
     if (be::gpu::active()) be::gpu::flush_caches();
 }
 
+void backend_trace_next_frame() {
+    if (be::gpu::active()) be::gpu::replay_request_trace();
+}
+
 BackendStats backend_stats() {
     BackendStats s;
     if (!be::gpu::active()) return s;
