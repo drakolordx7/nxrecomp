@@ -27,6 +27,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "nxrt/dispatch.h"
@@ -419,6 +423,187 @@ void watch_stop() {
     NXLOG_I("tt", "watch: off, %d hits", g_hit_count.load());
 }
 
+
+// ---- @rays: batch of static-collision ray casts through the game's own NCollisionMP1::RayStaticIntersection (S26) -------------------------------
+// Used by the route planner (.weaver/nav.py) to read the walkable geometry of the loaded areas without parsing any game file.
+constexpr uint64_t kFnMakeIncludeExcludeFilter = 0xcb6f0c;   // CIncludeExcludeCollisionFilterMP1::CIncludeExcludeCollisionFilterMP1(this x0, CMaterialFilterMP1 const& x1)
+constexpr uint64_t kSkPassEverything = 0x20e7818;           // CMaterialFilterMP1::skPassEverything
+// A host fault inside the guest call (a bad pointer) is caught here: the ray counts as a miss and the run goes on.
+bool seh_call(::Ctx* c, uint64_t addr) {
+    __try { dispatch_call(c, addr); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+constexpr uint64_t kFnRayStaticIntersection = 0xc7dac0;   // (CStateManager const* x0, CVector3f const* start x1, CVector3f const* dir x2, float len s0) -> result struct at x8:
+                                                          // +0 t, +4 point xyz, +16 normal xyz, +28 f, +32 hit (byte)
+bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
+    const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+    if (!c || !mgr) { *err = "no state manager (not in a level)"; return false; }
+    FILE* in = std::fopen(in_path.c_str(), "rb");
+    if (!in) { *err = "cannot read " + in_path; return false; }
+    FILE* out = std::fopen(out_path.c_str(), "wb");
+    if (!out) { std::fclose(in); *err = "cannot write " + out_path; return false; }
+    const uint64_t fn = detail::game_base() + kFnRayStaticIntersection;
+    // the filter argument (x3): CIncludeExcludeCollisionFilterMP1 built from CMaterialFilterMP1::skPassEverything (every surface passes)
+    alignas(16) uint8_t filt[512] = {};
+    {
+        ::Ctx saved = *c;
+        c->x[0] = reinterpret_cast<uint64_t>(filt); c->x[1] = detail::game_base() + kSkPassEverything;
+        dispatch_call(c, detail::game_base() + kFnMakeIncludeExcludeFilter);
+        *c = saved;
+    }
+    size_t n = 0, nhit = 0, nfault = 0;
+    float r[6], len;
+    while (std::fscanf(in, "%f %f %f %f %f %f %f", &r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &len) == 7) {
+        alignas(16) float start[4] = {r[0], r[1], r[2], 0}, dir[4] = {r[3], r[4], r[5], 0};
+        alignas(16) uint8_t res[64] = {};
+        ::Ctx saved = *c;
+        c->x[0] = mgr; c->x[1] = reinterpret_cast<uint64_t>(start); c->x[2] = reinterpret_cast<uint64_t>(dir); c->x[3] = reinterpret_cast<uint64_t>(filt);
+        c->x[8] = reinterpret_cast<uint64_t>(res);
+        c->v[0].u64[0] = 0; c->v[0].u64[1] = 0; c->v[0].f32[0] = len;
+        if (!seh_call(c, fn)) nfault++;
+        *c = saved;
+        float t, p[3], nrm[3];
+        std::memcpy(&t, res, 4); std::memcpy(p, res + 4, 12); std::memcpy(nrm, res + 16, 12);
+        const int hit = res[32] ? 1 : 0;
+        if (hit) { nhit++; std::fprintf(out, "1 %g %g %g %g %g %g %g\n", t, p[0], p[1], p[2], nrm[0], nrm[1], nrm[2]); }
+        else std::fprintf(out, "0 0 0 0 0 0 0 0\n");
+        n++;
+    }
+    std::fclose(in);
+    std::fclose(out);
+    NXLOG_I("tt", "rays: %zu cast, %zu hit, %zu faulted (%s -> %s)", n, nhit, nfault, in_path.c_str(), out_path.c_str());
+    return true;
+}
+
+
+// ---- @peek: read guest memory (S26) --------------------------------------------------------------------------------------------------------------
+// in: lines `addr len [off1 off2 ...]` (hex or decimal): follow the 64-bit pointers p = *(p + off) for each off, then read len bytes at p.
+// out: one line per request: the bytes as hex, or `-` when a read failed. Lets the route code poll the positions of objects it found with @objs
+// without scanning memory again.
+bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err) {
+    std::ifstream in(in_path);
+    if (!in) { *err = "cannot read " + in_path; return false; }
+    FILE* out = std::fopen(out_path.c_str(), "wb");
+    if (!out) { *err = "cannot write " + out_path; return false; }
+    std::string line;
+    size_t n = 0;
+    while (std::getline(in, line)) {
+        std::istringstream ss(line);
+        uint64_t addr = 0, len = 0;
+        if (!(ss >> std::hex >> addr >> std::dec >> len) || len == 0 || len > 4096) { std::fputs("-\n", out); continue; }
+        std::string tok;
+        bool ok = true;
+        uint64_t p = addr;
+        while (ss >> tok) {
+            const uint64_t off = std::strtoull(tok.c_str(), nullptr, 0);
+            uint64_t q = 0;
+            if (!rd(p + off, &q) || q == 0) { ok = false; break; }
+            p = q;
+        }
+        std::vector<uint8_t> buf(len);
+        if (ok && detail::read_mem(p, buf.data(), len)) {
+            for (uint8_t b : buf) std::fprintf(out, "%02x", b);
+            std::fputc('\n', out);
+        } else {
+            std::fputs("-\n", out);
+        }
+        n++;
+    }
+    std::fclose(out);
+    return true;
+}
+
+
+// ---- @poke: write guest memory (S26, development aid: restoring health after a death while a room is being worked out) ------------------------------
+// in: lines `addr [off ...] : hexbytes`. The pointers are followed like @peek; the bytes are stored with a read-back check of the page first.
+static void guarded_copy(uint64_t dst, const void* src, size_t n) {
+    __try { std::memcpy(reinterpret_cast<void*>(dst), src, n); } __except (EXCEPTION_EXECUTE_HANDLER) { }
+}
+
+bool poke_memory(const std::string& in_path, std::string* err) {
+    std::ifstream in(in_path);
+    if (!in) { *err = "cannot read " + in_path; return false; }
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::istringstream ss(line.substr(0, colon));
+        uint64_t addr = 0;
+        if (!(ss >> std::hex >> addr)) continue;
+        std::string tok;
+        uint64_t p = addr;
+        bool ok = true;
+        while (ss >> tok) {
+            if (tok[0] == '+') { p += std::strtoull(tok.c_str() + 1, nullptr, 0); continue; }      // `+N`: add N without following a pointer
+            uint64_t q = 0;
+            if (!rd(p + std::strtoull(tok.c_str(), nullptr, 0), &q) || q == 0) { ok = false; break; }
+            p = q;
+        }
+        std::string hex = line.substr(colon + 1);
+        std::vector<uint8_t> bytes;
+        for (size_t i = 0; i + 1 < hex.size(); ) {
+            if (!std::isxdigit(static_cast<unsigned char>(hex[i]))) { i++; continue; }
+            bytes.push_back(static_cast<uint8_t>(std::strtoul(hex.substr(i, 2).c_str(), nullptr, 16)));
+            i += 2;
+        }
+        uint8_t probe[8];
+        if (!ok || bytes.empty() || !detail::read_mem(p, probe, 1)) continue;
+        guarded_copy(p, bytes.data(), bytes.size());
+    }
+    return true;
+}
+
+
+// ---- @probe: would the player's own collision box collide with the static world at these positions? (S26) ----------------------------------------
+// NCollisionMP1::DetectStaticCollisionBoolean(mgr, rc_ptr<CCollidableObject>, CTransform4f, filter) with the player's box (CPlayerMP1::GetCollidableBox), the
+// transform a translation of the position (the player's origin is at its feet). in: lines `x y z`; out: one `0` (free) or `1` (collides) per line.
+constexpr uint64_t kFnDetectStaticCollisionBoolean = 0xc7d310;
+constexpr uint64_t kFnGetCollidableBox = 0xcf1ce0;
+bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
+    const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
+    const uint64_t player = g_layout.player ? g_layout.player : g_player.load();
+    if (!c || !mgr || !player) { *err = "no state manager or player (not in a level)"; return false; }
+    FILE* in = std::fopen(in_path.c_str(), "rb");
+    if (!in) { *err = "cannot read " + in_path; return false; }
+    FILE* out = std::fopen(out_path.c_str(), "wb");
+    if (!out) { std::fclose(in); *err = "cannot write " + out_path; return false; }
+    const uint64_t base = detail::game_base();
+    alignas(16) uint8_t filt[512] = {};
+    alignas(16) uint64_t rc[2] = {0, 0};
+    {
+        ::Ctx saved = *c;
+        c->x[0] = reinterpret_cast<uint64_t>(filt); c->x[1] = base + kSkPassEverything;
+        dispatch_call(c, base + kFnMakeIncludeExcludeFilter);
+        *c = saved;
+        c->x[0] = player; c->x[8] = reinterpret_cast<uint64_t>(rc);
+        const bool ok = seh_call(c, base + kFnGetCollidableBox);
+        *c = saved;
+        if (!ok || !rc[0]) {            // not fatal: every position reports `1` (collides) and the log says why, so a script can retry after the next frame
+            size_t m = 0; float a, b, d;
+            while (std::fscanf(in, "%f %f %f", &a, &b, &d) == 3) { std::fputs("1\n", out); m++; }
+            std::fclose(in); std::fclose(out);
+            NXLOG_W("tt", "probe: no collision box on the player (player 0x%llx), %zu positions answered `collides`", static_cast<unsigned long long>(player), m);
+            return true;
+        }
+    }
+    size_t n = 0, hit = 0;
+    float x, y, z;
+    while (std::fscanf(in, "%f %f %f", &x, &y, &z) == 3) {
+        alignas(16) float xf[16] = {1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z, 0, 0, 0, 1};
+        ::Ctx saved = *c;
+        c->x[0] = mgr; c->x[1] = reinterpret_cast<uint64_t>(rc); c->x[2] = reinterpret_cast<uint64_t>(xf); c->x[3] = reinterpret_cast<uint64_t>(filt);
+        const bool ok = seh_call(c, base + kFnDetectStaticCollisionBoolean);
+        const int r = ok ? static_cast<int>(c->x[0] & 1) : 1;
+        *c = saved;
+        std::fprintf(out, "%d\n", r);
+        n++; hit += r;
+    }
+    std::fclose(in);
+    std::fclose(out);
+    NXLOG_I("tt", "probe: %zu positions, %zu collide (%s -> %s)", n, hit, in_path.c_str(), out_path.c_str());
+    return true;
+}
+
 // ---- @objs: list the live objects of a class by scanning memory for its vtable pointer (S25) ---------------------------------------------------
 // Every guest object starts with its vtable pointer (main + vtable symbol + 16). The actor transform is read through the same chain the player probe uses:
 // [[[obj + 8] + 0x20] + 0x40] = 3x4 matrix. Used to find doors, docks, pickups and save stations so a script knows where to walk.
@@ -428,7 +613,17 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
                                {"platform", 0x20edda8}, {"trigger", 0x20ea188}, {"relay", 0x2105700}};
     const uint64_t base = detail::game_base();
     std::vector<std::pair<std::string, uint64_t>> want;
+    // "*" = every class listed in the file NXRT_TEST_VTABLES (lines `name offset`, offset = vtable symbol offset in the main module); S26
+    if (classes.find('*') != std::string::npos) {
+        const char* vf = std::getenv("NXRT_TEST_VTABLES");
+        FILE* in = vf ? std::fopen(vf, "rb") : nullptr;
+        if (!in) { *err = "'*' needs NXRT_TEST_VTABLES (file of `name offset` lines)"; return false; }
+        char nm[256]; unsigned long long off;
+        while (std::fscanf(in, "%255s %llx", nm, &off) == 2) want.push_back({nm, base + off + 16});
+        std::fclose(in);
+    }
     size_t pos = 0;
+    if (!want.empty()) pos = classes.size();
     while (pos < classes.size()) {
         while (pos < classes.size() && std::isspace(static_cast<unsigned char>(classes[pos]))) pos++;
         size_t e = pos;
@@ -453,6 +648,11 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
     if (want.empty()) { *err = "no class given"; return false; }
     FILE* f = std::fopen(out_path.c_str(), "wb");
     if (!f) { *err = "cannot write " + out_path; return false; }
+    std::unordered_set<uint64_t> want_set;
+    std::unordered_map<uint64_t, std::string> want_name;
+    if (want.size() > 8) for (const auto& w : want) { want_set.insert(w.second); want_name[w.second] = w.first; }
+    uint64_t want_lo = ~0ull, want_hi = 0;           // every wanted pointer lies in a narrow range: rejecting the rest first makes the scan an order of magnitude faster
+    for (const auto& w : want) { want_lo = std::min(want_lo, w.second); want_hi = std::max(want_hi, w.second); }
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     uint8_t* a = static_cast<uint8_t*>(si.lpMinimumApplicationAddress);
@@ -474,14 +674,23 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
                 for (size_t i = 0; i + 8 <= got; i += 8) {
                     uint64_t v;
                     std::memcpy(&v, &buf[i], 8);
-                    for (const auto& w : want) {
+                    if (v < want_lo || v > want_hi) continue;
+                    if (!want_set.empty() && !want_set.count(v)) continue;
+                    for (size_t wi = 0; wi < (want_set.empty() ? want.size() : 1); wi++) {
+                        const std::pair<std::string, uint64_t> w = want_set.empty() ? want[wi] : std::pair<std::string, uint64_t>{want_name[v], v};
                         if (v != w.second) continue;
                         const uint64_t obj = reinterpret_cast<uint64_t>(mbi.BaseAddress) + off + i;
                         const uint64_t xf = rd64(rd64(rd64(obj + 8) + 0x20) + 0x40);
                         float m[12];
-                        if (xf && rd(xf, &m) && std::isfinite(m[3]) && std::isfinite(m[7]) && std::isfinite(m[11]))
-                            std::fprintf(f, "%s %.2f %.2f %.2f 0x%llx\n", w.first.c_str(), m[3], m[7], m[11], static_cast<unsigned long long>(obj));
-                        else
+                        if (xf && rd(xf, &m) && std::isfinite(m[3]) && std::isfinite(m[7]) && std::isfinite(m[11])) {
+                            std::fprintf(f, "%s %.2f %.2f %.2f 0x%llx", w.first.c_str(), m[3], m[7], m[11], static_cast<unsigned long long>(obj));
+                            if (w.first == "dock" || w.first == "CScriptDockMP1") {       // S26: the connected area (obj + 980) and the dock plane (three points at obj + 1000)
+                                uint8_t gd[16]; float pl[9];
+                                if (rd(obj + 980, &gd) && rd(obj + 1000, &pl))
+                                    std::fprintf(f, " area=%s plane=%.2f,%.2f,%.2f;%.2f,%.2f,%.2f;%.2f,%.2f,%.2f", tt_guid_to_text(gd).c_str(), pl[0], pl[1], pl[2], pl[3], pl[4], pl[5], pl[6], pl[7], pl[8]);
+                            }
+                            std::fprintf(f, "\n");
+                        } else
                             std::fprintf(f, "%s - - - 0x%llx\n", w.first.c_str(), static_cast<unsigned long long>(obj));
                         hits++;
                     }

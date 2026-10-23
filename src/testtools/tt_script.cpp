@@ -504,6 +504,38 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    if (kw == "@probe") {
+        if (n != 3) return usage(msg, "@probe <in-file> <out-file>");
+        Step s = make(StepKind::Probe);
+        s.text = rest_after_first_word(body);
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@poke") {
+        if (n != 2) return usage(msg, "@poke <in-file>");
+        Step s = make(StepKind::Poke);
+        s.text = rest_after_first_word(body);
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@peek") {
+        if (n != 3) return usage(msg, "@peek <in-file> <out-file>");
+        Step s = make(StepKind::Peek);
+        s.text = rest_after_first_word(body);
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@rays") {
+        if (n != 3) return usage(msg, "@rays <in-file> <out-file>");
+        Step s = make(StepKind::Rays);
+        s.text = rest_after_first_word(body);
+        out.push_back(s);
+        return true;
+    }
+
     if (kw == "@watch") {
         if (n < 2 || n > 3) return usage(msg, "@watch on [vely|posy|both] | @watch off");
         Step s = make(StepKind::Watch);
