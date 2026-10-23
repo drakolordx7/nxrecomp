@@ -49,8 +49,14 @@ bool read_mem(uint64_t addr, void* out, size_t n) {
 }
 bool write_mem(uint64_t addr, const void* in, size_t n) {
     if (addr < 0x10000) return false;
-    SIZE_T got = 0;
-    return WriteProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(addr), in, n, &got) && got == n;
+    uint8_t probe[64];
+    if (n > sizeof probe || !read_mem(addr, probe, n)) return false;
+    __try {          // a direct store: WriteProcessMemory costs tens of milliseconds for an address in the guest heap (see play_aim.cpp)
+        std::memcpy(reinterpret_cast<void*>(addr), in, n);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 }  // namespace detail
 
@@ -124,7 +130,7 @@ bool read_state(GameState* out) {
         float hp;
         if (ps && rd(ps + 0xc, &hp)) { g.hp = hp; g.have_hp = true; }
         int32_t beam = -1, visor = -1, missiles = -1;
-        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x30 + 8 * 4, &missiles)) {
+        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x2c + 8 * 4, &missiles)) {
             g.beam = beam; g.visor = visor; g.missiles = missiles; g.have_ps = true;
         }
     }
@@ -203,7 +209,7 @@ bool give_item(int item, int amount) {
     const uint64_t ps = gs ? rd64(gs + 0x20) : 0;
     if (!ps) return false;
     const int32_t v[2] = {amount, amount};
-    return write_mem(ps + 0x30 + 8 * static_cast<uint64_t>(item), v, sizeof v);
+    return write_mem(ps + 0x2c + 8 * static_cast<uint64_t>(item), v, sizeof v);       // CPlayerStateMP1: {amount, capacity} per item from +0x2c (CPlayerStateMP1::SetPowerUp)
 }
 
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
@@ -239,7 +245,7 @@ bool grant(int64_t item, int32_t amount, int32_t capacity) {
     if (!ps) return false;
     auto put = [&](int64_t id, int32_t a, int32_t cap) {
         const int32_t v[2] = {a, cap};
-        return write_mem(ps + 0x44 + static_cast<uint64_t>(id) * 8, v, sizeof v);
+        return write_mem(ps + 0x2c + static_cast<uint64_t>(id) * 8, v, sizeof v);
     };
     if (item >= 0) return put(item, amount, capacity);
     bool ok = true;
