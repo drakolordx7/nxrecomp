@@ -275,6 +275,22 @@ static inline uint64_t f2u64(double v) { if (v != v || v <= 0) return 0; if (v >
 }
 #endif
 
+/* WFE (kind 1) and YIELD (kind 0): the hints a spin-wait loop gives. AArch64 hardware pauses the core; here the runtime may set
+ * nx_spin_hook to hand the host processor to another ready thread (the console runs a spinner and the lock holder on separate
+ * cores, a host with fewer processors does not). Without a hook the hint is an x86 PAUSE. The hook is a function pointer the
+ * compiler cannot see through, so a plain-load spin loop is not folded into an endless loop either. No guest state changes. */
+#ifdef __cplusplus
+inline void (*nx_spin_hook)(int kind) = nullptr;
+static inline void nx_spin_hint(int kind) {
+    if (void (*f)(int) = nx_spin_hook) f(kind);
+#if defined(__x86_64__) || defined(_M_X64)
+    else __builtin_ia32_pause();
+#endif
+}
+#else
+static inline void nx_spin_hint(int kind) { (void)kind; }
+#endif
+
 #include "fpexact.h"
 #include "neon.h"
 
