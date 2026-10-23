@@ -190,6 +190,7 @@ struct SamplerPool : Obj {
 // that live there as CPU-written (nvn_texture_registry.cpp).
 void texture_registry_add(Texture* t);
 void texture_registry_remove(Texture* t);
+void texture_registry_detach_gpu();   // sets Texture::gpu to null on every registered texture (the images are being freed: gpu::tex_shutdown)
 void textures_cpu_wrote(const void* lo, uint64_t size);      // marks every texture whose storage overlaps [lo, lo+size) cpu_dirty and tells the GPU layer
 size_t texture_registry_size();
 // Sparse textures: registered by the virtual pool they live in. A remap of tiles (nvnMemoryPoolMapVirtual) or a write to the physical
@@ -205,6 +206,7 @@ bool texture_gather_virtual(const Texture& t, std::vector<uint8_t>& out);
 Ref<Texture> texture_registry_find_alias(const Texture* t);
 // [nvn] trace_tex_events = 1: logs the life of block-compressed 128x128 cube textures (init, writes by the CPU, copies, uploads) as nvn.tev lines.
 void tev(const Texture* t, const char* what, uint64_t a = 0, uint64_t b = 0);
+void textures_mark_override_candidates_dirty();   // small BC7 sRGB textures: upload again (nxrt/tex_override.h)
 
 // NVNtextureHandle = (sampler id << 20) | texture id
 constexpr uint64_t make_texture_handle(uint32_t tex_id, uint32_t sampler_id) { return (static_cast<uint64_t>(sampler_id) << 20) | (tex_id & 0xfffffu); }

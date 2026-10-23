@@ -232,3 +232,36 @@ NXTEST(two_limiters_two_threads_independent) {
         return;
     }
 }
+
+namespace {
+int g_pre_frame_calls = 0;
+void count_pre_frame(void*) { ++g_pre_frame_calls; }
+}  // namespace
+
+NXTEST(pre_frame_hook_runs_only_in_begin_frame) {
+    FrameLimiter l;
+    l.set_target_fps(0);
+    g_pre_frame_calls = 0;
+    l.set_pre_frame_hook(count_pre_frame, nullptr);
+    for (int i = 0; i < 3; ++i) l.begin_frame();
+    CHECK_EQ(g_pre_frame_calls, 3);
+    for (int i = 0; i < 3; ++i) l.begin_frame_nohook();
+    CHECK_EQ(g_pre_frame_calls, 3);
+    l.run_pre_frame_hook();
+    l.run_pre_frame_hook();
+    CHECK_EQ(g_pre_frame_calls, 5);
+}
+
+NXTEST(nohook_still_paces_at_target_rate) {
+    ScopedBoost boost;
+    FrameLimiter l;
+    l.set_target_fps(100.0);
+    uint64_t first = 0, last = 0;
+    for (int i = 0; i < 6; ++i) {
+        last = l.begin_frame_nohook();
+        if (i == 0) first = last;
+    }
+    // 6 starts at 10 ms period span 5 intervals (50 ms); the bound is 4 periods minus 2 ms = 38 ms.
+    std::printf("    6 begin_frame_nohook calls at 100 fps: first to last start %.3f ms\n", ns_to_ms(static_cast<double>(last - first)));
+    CHECK_MSG(last - first >= 38000000ull, "begin_frame_nohook did not pace: 6 starts at 100 fps spanned less than 38 ms");
+}

@@ -12,12 +12,15 @@
 
 #include "nxrt/config.h"
 #include "nxrt/frame_limiter.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 
 namespace nxrt::extras {
 namespace {
 constexpr const char* kTag = "lowlat";
 std::atomic<LowLatency*> g_instance{nullptr};
+std::atomic<uint64_t (*)()> g_backlog_fn{nullptr};
+std::atomic<int> g_boundary_paced{0};
 
 uint64_t now_us() { return FrameLimiter::now_ns() / 1000ull; }
 double ms_since(uint64_t t_ns) { return static_cast<double>(FrameLimiter::now_ns() - t_ns) * 1e-6; }
@@ -40,7 +43,9 @@ struct LowLatency::Impl {
     // frame ids: sim_begin takes the next, sim_end queues it, present_begin pops the oldest
     std::atomic<uint64_t> sim_id{0};
     std::deque<uint64_t> pending;            // ids simulated and not yet presented (guarded by mu)
+    std::atomic<uint64_t> last_present_ns{0};  // when the last present started: the in-flight wait is skipped while nothing is being presented
     uint64_t present_id = 0;                  // id of the present in progress (render thread)
+    uint64_t present_sim = 0;                 // simulation id shown by the present in progress (0: none)
     uint64_t last_present_id = 0;
     bool submit_marked = false;               // RENDERSUBMIT_START was set for the frame in progress
 
@@ -73,6 +78,7 @@ struct LowLatency::Impl {
     uint64_t ab_next_ns = 0, ab_since_ns = 0;
     bool paced = false;                       // the mode is on: the frames_ahead wait runs (also on GPUs with neither extension)
     bool active = false;                      // markers and the host measurement run (enabled, or log_timings asks for the numbers)
+    bool running() const { return active || ft::on(); }     // the frame trace (S18 latency probe) also keeps the frame ids
 
     void marker(VkLatencyMarkerNV m, uint64_t id) {
         if (!reflex || !swapchain || !mode_set) return;
@@ -135,6 +141,20 @@ struct LowLatency::Impl {
     }
 };
 
+bool pace_in_main() {
+    static const bool v = config_get_str("latency", "pace", "main") != "present";
+    return v;
+}
+void pace_boundary_done() { g_boundary_paced.fetch_add(1); }
+bool pace_boundary_consume() {
+    int n = g_boundary_paced.load();
+    while (n > 0) {
+        if (g_boundary_paced.compare_exchange_weak(n, n - 1)) return true;
+    }
+    return false;
+}
+
+void lowlat_set_backlog_fn(uint64_t (*fn)()) { g_backlog_fn.store(fn); }
 LowLatency* lowlat() { return g_instance.load(std::memory_order_acquire); }
 void lowlat_set(LowLatency* l) { g_instance.store(l, std::memory_order_release); }
 
@@ -150,10 +170,11 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
     }
     // Boost is a Reflex setting; with Anti-Lag it behaves as On. Auto and On both use whichever backend exists.
     enabled_ = backend_ != Backend::None;
-    s.paced = s.cfg.mode != LatencyMode::Off;
+    s.paced = s.cfg.mode != LatencyMode::Off || pace_in_main();
     s.ab_period_s = config_get_double("latency", "ab_toggle_s", 0.0);     // test aid, not a user setting
     if (s.ab_period_s > 0) s.ab_next_ns = FrameLimiter::now_ns() + static_cast<uint64_t>(s.ab_period_s * 1e9);
     s.active = enabled_ || s.paced || s.cfg.log_timings;
+    NXLOG_I(kTag, "frame pacing: %s (frames_ahead %d)", pace_in_main() ? "limiter at the frame boundary" : "limiter in the present call", s.cfg.frames_ahead);
     if (enabled_) {
         s.sci.latencyModeEnable = s.reflex ? VK_TRUE : VK_FALSE;
         if (s.reflex) {
@@ -223,8 +244,22 @@ void LowLatency::set_cap_fps(double fps) {
     if (enabled_) s.set_mode_locked();
 }
 
+void LowLatency::wait_in_flight() {
+    if (!impl_->running()) return;
+    Impl& s = *impl_;
+    std::unique_lock<std::mutex> lk(s.mu);
+    if (s.paced && s.live_on && s.cfg.frames_ahead >= 0) {
+        const size_t limit = static_cast<size_t>(s.cfg.frames_ahead);
+        // Nothing presented for a while (loading screen, minimised window, movie): there is no queue to wait for, and the frames counted so far will
+        // never be popped. Forget them instead of waiting 100 ms per frame.
+        const uint64_t lp = s.last_present_ns.load(std::memory_order_relaxed);
+        if (!lp || FrameLimiter::now_ns() - lp > 250000000ull) { s.pending.clear(); return; }
+        if (!s.cv.wait_for(lk, std::chrono::milliseconds(100), [&] { return s.pending.size() <= limit; })) s.pending.clear();
+    }
+}
+
 void LowLatency::sim_begin() {
-    if (!impl_->active) return;
+    if (!impl_->running()) return;
     Impl& s = *impl_;
     const uint64_t id = s.sim_id.fetch_add(1) + 1;
     const uint64_t t0 = FrameLimiter::now_ns();
@@ -237,16 +272,11 @@ void LowLatency::sim_begin() {
         s.have_ema = s.have_gpu_ema = false;
         s.set_mode_locked();
     }
+    wait_in_flight();      // frames_ahead: the simulation of a frame starts only when at most that many earlier frames are still on their way to the screen
     VkSwapchainKHR sc;
     bool ready;
     {
         std::unique_lock<std::mutex> lk(s.mu);
-        // frames_ahead: the simulation of a frame starts only when at most that many earlier frames are still on their way to the screen. The game
-        // queues several frames between its main thread and the GPU; this is what keeps that queue short (and so the input sample close to the picture).
-        if (s.paced && s.live_on && s.cfg.frames_ahead >= 0) {
-            const size_t limit = static_cast<size_t>(s.cfg.frames_ahead);
-            s.cv.wait_for(lk, std::chrono::milliseconds(100), [&] { return s.pending.size() <= limit; });
-        }
         sc = s.swapchain;
         ready = s.mode_set;
     }
@@ -274,6 +304,11 @@ void LowLatency::sim_begin() {
     s.marker(VK_LATENCY_MARKER_SIMULATION_START_NV, id);
     {
         std::lock_guard<std::mutex> lk(s.mu);
+        if (ft::on()) {      // latency probe: frames simulated and not yet presented (this one excluded), GPU submissions not yet finished
+            ft::mark("lat.inflight", static_cast<uint32_t>(s.pending.size()));
+            if (auto fn = g_backlog_fn.load()) ft::mark("lat.gpuq", static_cast<uint32_t>(fn()));
+            ft::mark("lat.sim", static_cast<uint32_t>(id));
+        }
         s.pending.push_back(id);               // in flight until the present that shows it
         while (s.pending.size() > 16) s.pending.pop_front();
     }
@@ -282,10 +317,11 @@ void LowLatency::sim_begin() {
 }
 
 void LowLatency::input_sample() {
-    if (!impl_->active) return;
+    if (!impl_->running()) return;
     Impl& s = *impl_;
     const uint64_t id = s.sim_id.load();
     s.input_ns_for[id % 64].store(FrameLimiter::now_ns(), std::memory_order_relaxed);
+    ft::mark("lat.input", static_cast<uint32_t>(id));
     s.marker(VK_LATENCY_MARKER_INPUT_SAMPLE_NV, id);
 }
 
@@ -294,7 +330,7 @@ void LowLatency::sim_end() {
 }
 
 void LowLatency::submit_begin() {
-    if (!impl_->active) return;
+    if (!impl_->running()) return;
     Impl& s = *impl_;
     if (s.submit_marked) return;
     s.submit_marked = true;
@@ -308,22 +344,25 @@ void LowLatency::submit_begin() {
 }
 
 uint64_t LowLatency::present_begin() {
-    if (!impl_->active) return 0;
+    if (!impl_->running()) return 0;
     Impl& s = *impl_;
-    uint64_t id;
+    uint64_t sim = 0;                            // the simulation id this present shows; 0 = a present with no simulation behind it (menus, loading)
     {
         std::lock_guard<std::mutex> lk(s.mu);
         if (!s.pending.empty()) {
-            id = s.pending.front();
+            sim = s.pending.front();
             s.pending.pop_front();
-        } else {
-            id = s.last_present_id + 1;          // a frame with no simulation behind it (menus, loading): keep the ids increasing
         }
-        if (id <= s.last_present_id) id = s.last_present_id + 1;
     }
     s.cv.notify_all();
+    // The id for VkPresentIdKHR and the Reflex markers must increase; the probe marks use the simulation id (or 0), so a present without a
+    // simulation does not shift every later frame's id.
+    const uint64_t id = std::max(sim, s.last_present_id + 1);
     s.present_id = id;
+    s.present_sim = sim;
     s.last_present_id = id;
+    s.last_present_ns.store(FrameLimiter::now_ns(), std::memory_order_relaxed);
+    ft::mark("lat.present", static_cast<uint32_t>(sim));
     s.marker(VK_LATENCY_MARKER_RENDERSUBMIT_END_NV, id);
     s.marker(VK_LATENCY_MARKER_PRESENT_START_NV, id);
     if (s.antilag) s.antilag_update(VK_ANTI_LAG_STAGE_PRESENT_AMD, id);
@@ -331,11 +370,14 @@ uint64_t LowLatency::present_begin() {
     return id;
 }
 
+uint32_t LowLatency::present_sim_id() const { return static_cast<uint32_t>(impl_->present_sim); }
+
 void LowLatency::present_end() {
-    if (!impl_->active) return;
+    if (!impl_->running()) return;
     Impl& s = *impl_;
     const uint64_t id = s.present_id;
     s.marker(VK_LATENCY_MARKER_PRESENT_END_NV, id);
+    ft::mark("lat.present_end", static_cast<uint32_t>(s.present_sim));
     const uint64_t in_ns = s.input_ns_for[id % 64].load(std::memory_order_relaxed);
     if (in_ns) {
         const double d = ms_since(in_ns);
