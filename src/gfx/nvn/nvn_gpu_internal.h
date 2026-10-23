@@ -72,6 +72,8 @@ struct Frame {
     UploadAlloc upload(VkDeviceSize size, VkDeviceSize align);
     // A staging buffer for texture data (own buffer when large). Freed when the submission has completed.
     UploadAlloc staging(VkDeviceSize size);
+    // A staging buffer somebody else made and filled (background texture preparation): freed like the ones above when the submission has completed.
+    UploadAlloc adopt_staging(gfx::Buffer b);
     // Runs fn on the render thread after the submission has completed on the GPU (and, for objects the replay used, no
     // later submission can still be using them if they were last used in this one).
     void defer(std::function<void()> fn);

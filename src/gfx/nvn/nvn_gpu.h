@@ -41,6 +41,10 @@ void prefetch_pool(MemoryPool* p);
 void prewarm_program_shaders(const ShaderInfo* const stages[6]);
 // The CPU wrote texture memory (nvnMemoryPoolFlushMappedRange, nvnTextureWriteTexels ...): upload again before the next use.
 void mark_texture_cpu_dirty(Texture* t);
+// A texture is about to be sampled: it was put into a texture pool (nvnTexturePoolRegisterTexture / Image) or its handle was bound while a command
+// list was recorded (nvnCommandBufferBindTexture*). Its upload data is prepared in the background (nvn_texprep.h) if the CPU wrote it. Any thread.
+void texture_bound(Texture* t);
+void texture_registered(Texture* t);   // the registration half of the above: only big textures are acted on
 
 // The GPU image of a texture is copied back into the texture's storage in the game's memory in its block-linear layout (for
 // nvnTextureReadTexels / CopyTextureToBuffer users that read render targets on the CPU). Waits for the GPU. False when the

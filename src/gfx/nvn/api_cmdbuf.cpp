@@ -100,6 +100,7 @@ void nvnCommandBufferBeginRecording(NVNcommandBuffer* c) {
     std::lock_guard<std::mutex> lk(cb->lock);
     cb->rec = Ref<CmdList>(new CmdList());
     cb->recording = true;
+    cb->tpool = nullptr;
     cb->base_used = cb->command_used;
     cb->control_base = cb->control_used;
 }
@@ -113,6 +114,7 @@ NVNcommandHandle nvnCommandBufferEndRecording(NVNcommandBuffer* c) {
         if (!cb->recording || !cb->rec) return 0;
         list = std::move(cb->rec);
         cb->recording = false;
+        cb->tpool = nullptr;
         const uint64_t cmd_cap = cb->command_total > kReserve ? cb->command_total - kReserve : 0;
         const uint64_t ctl_cap = cb->control_total > kReserve ? cb->control_total - kReserve : 0;
         cb->command_used = std::min<uint64_t>(cb->base_used + list->record_count * kCmdBytesPerRecord, cmd_cap);

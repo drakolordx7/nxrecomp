@@ -49,6 +49,9 @@ public:
     void sim_begin();
     void input_sample();
     void sim_end();
+    // True while Reflex sets the frame pace itself (its sleep keeps the cap as the minimum interval between simulation starts): the frame limiter then does not
+    // wait at the frame boundary, because two pacers on one frame accumulate each other's sleeps (S21, [latency] reflex_limiter).
+    bool paces_frames() const;
     // Render thread.
     void submit_begin();
     uint64_t present_begin();     // the id for VkPresentIdKHR (0 when disabled)
@@ -81,6 +84,10 @@ private:
 bool pace_in_main();
 void pace_boundary_done();        // main thread: the boundary hook ran the limiter wait for the frame it starts
 bool pace_boundary_consume();     // presenting thread: true (and clears one) if a boundary wait covers this present, so it must not wait again
+
+// The frame cap (0 = none), from the settings. Remembered even before the renderer exists, so an instance created later starts with it (before this, a Reflex
+// sleep mode set at swapchain creation had a minimum interval of 0 until the next settings change); forwarded to the running instance.
+void lowlat_note_cap(double fps);
 
 // The instance of the running renderer (set by the renderer when it creates one; null otherwise). Hooks and the replay code go through it.
 LowLatency* lowlat();

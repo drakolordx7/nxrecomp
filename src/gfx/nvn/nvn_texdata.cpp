@@ -326,8 +326,10 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     // The source bytes: the texture's storage in the game's memory, or for a sparse texture the tiles mapped into its virtual pool.
     const uint8_t* src_mem = t.mem;
     std::vector<uint8_t> gathered;
+    Ref<MemoryPool> direct_keep;
     if (!src_mem && t.vpool) {
-        if (texture_gather_virtual(t, gathered)) src_mem = gathered.data();
+        if (const uint8_t* d = texture_virtual_direct(t, direct_keep)) src_mem = d;      // one piece of one pool: untile straight from it
+        else if (texture_gather_virtual(t, gathered)) src_mem = gathered.data();
     }
     if (!src_mem) return fail("no storage (mem is null)");
     const TexLayout L = compute_texture_layout(t.b);
@@ -447,6 +449,10 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
             return true;
         }
         if (mode == Mode::Bc5) return fail("the BC5 cache entry could not be read");
+    }
+    if (caps.cache_only && mode != Mode::Passthrough) {   // background job: a transcode is a long CPU job on data that may not be final; the render thread does it if it is needed
+        out.error = "no cache entry";
+        return false;
     }
     // only BC7 results are written to the cache, and never over a valid entry of another format (RGBA8 / BC5 entries come from the setup tool)
     if (!bc7 || (entry_format != VK_FORMAT_UNDEFINED && entry_format != out.format)) cache_file.clear();

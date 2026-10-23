@@ -247,6 +247,17 @@ UploadAlloc Frame::staging(VkDeviceSize size) {
     return a;
 }
 
+UploadAlloc Frame::adopt_staging(gfx::Buffer b) {
+    Slot& s = *static_cast<Slot*>(slot);
+    UploadAlloc a;
+    a.buffer = b.buffer;
+    a.offset = 0;
+    a.ptr = static_cast<uint8_t*>(b.mapped);
+    a.size = b.size;
+    s.extra.push_back(b);
+    return a;
+}
+
 void Frame::defer(std::function<void()> fn) { g->deferred.push_back({serial, std::move(fn)}); }
 
 VkDescriptorSet Frame::alloc_set(VkDescriptorSetLayout layout) {

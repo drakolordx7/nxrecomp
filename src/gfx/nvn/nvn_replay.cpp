@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 #include "nxrt/config.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_decoded.h"
 #include "nvn_enums.h"
@@ -562,7 +563,10 @@ void prepare_textures(const ProgLayout& pl) {
         if (!r.tex) continue;
         if (!tex_gpu(r.tex)) continue;
         if (shares_image(r.tex, S.depth_tex.get()) || is_color_feedback(r.tex)) continue;   // owned by the pass
-        if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != tex_sampled_layout(r.tex)) need.push_back(r.tex);
+        if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != tex_sampled_layout(r.tex)) {
+            need.push_back(r.tex);
+            if (r.tex->cpu_dirty.load() && ft::on()) ft::mark(b.nvn.source == NvnSource::SamplerBinding ? "tx.dirty_bind" : "tx.dirty_uniform", r.tex->id);
+        }
     }
     if (need.empty() && need_storage.empty()) return;
     end_pass();
