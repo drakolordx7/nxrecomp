@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <cstring>
 #include <filesystem>
 #include <cwchar>
@@ -33,6 +34,7 @@
 namespace mprs {
 namespace detail {
 const char* texcache_reject_reason(const TxtrInfo& info, size_t tiled_len, int quality);
+void texcache_set_rgba8_psnr(double db);
 }
 }  // namespace mprs
 
@@ -91,6 +93,12 @@ u32 clamp_levels(u32 mips, u32 maxdim) {
     return std::min(std::max<u32>(1, mips), top);
 }
 
+// The console's block height in GOBs for a number of block rows (test copy of console_block_height in the runtime's nvn_texture_layout.cpp).
+u32 console_block_height(u32 block_rows) {
+    const u32 hh = block_rows + block_rows / 2;
+    return hh >= 128 ? 16 : hh >= 64 ? 8 : hh >= 32 ? 4 : hh >= 16 ? 2 : 1;
+}
+
 // Layout the runtime builds for a block-linear ASTC texture (test copy of nvn_texture_layout.cpp's rules).
 tegra::TextureDesc test_desc(u32 w, u32 h, u32 depth, u32 levels, u32 layers, u32 bw, u32 bh, bool is3d) {
     tegra::TextureDesc d;
@@ -107,7 +115,7 @@ tegra::TextureDesc test_desc(u32 w, u32 h, u32 depth, u32 levels, u32 layers, u3
         d.gob_blocks_y = 1;
         d.gob_blocks_z = 16;
     } else {
-        d.gob_blocks_y = tegra::default_gob_blocks_y((h + bh - 1) / bh);
+        d.gob_blocks_y = console_block_height((h + bh - 1) / bh);
         d.gob_blocks_z = 1;
     }
     return d;
@@ -382,6 +390,247 @@ void test_synthetic() {
     check_synth("Astc8x5 sRGB 2D array 40x24, 3 layers, 2 mips", TxtrKind::D2Array, 72, 40, 24, 3, 2, 2, 3, 146, 13);
     check_synth("Astc8x8 sRGB 16x8, 9 mips requested (clamped to 5)", TxtrKind::D2, 74, 16, 8, 1, 9, 5, 1, 146, 14);
     check_synth("Astc4x4 3D 16x16x4, 1 mip", TxtrKind::D3, 53, 16, 16, 4, 1, 1, 1, 145, 15);
+}
+
+// ---- 3b. entry kinds: BC7, BC5 (two-channel data), RGBA8 (what BC7 cannot hold) ---------------------------------------------------
+using ColourFn = std::function<void(u8* colour16, Rng&)>;   // writes the four u16 (R, G, B, A) of a void-extent block
+
+// Like make_synth, but the colour of every constant block comes from `colour`.
+Synth make_synth_colour(TxtrKind kind, u32 fmt_id, u32 w, u32 h, u32 n, u32 mips, u64 seed, const ColourFn& colour) {
+    Synth s = make_synth(kind, fmt_id, w, h, n, mips, seed);
+    if (s.tiled.empty()) return s;
+    Rng rng{seed + 1000};
+    std::vector<u8> linear(static_cast<size_t>(s.layout.linear_size), 0);
+    for (const tegra::LevelLayout& lv : s.layout.levels)
+        for (u32 layer = 0; layer < s.desc.layers; ++layer)
+            for (u32 z = 0; z < lv.depth; ++z) {
+                const u64 slice = lv.linear_slice_size / lv.depth;
+                const u64 base = lv.linear_offset + layer * lv.linear_slice_size + z * slice;
+                for (u32 b = 0; b < lv.blocks_x * lv.blocks_y; ++b) {
+                    u8* p = &linear[base + u64(b) * 16];
+                    p[0] = 0xFC;
+                    p[1] = 0xFD;
+                    std::memset(p + 2, 0xFF, 6);
+                    colour(p + 8, rng);
+                }
+            }
+    std::fill(s.tiled.begin(), s.tiled.end(), 0);
+    CHECK(tegra::tile(s.desc, s.layout, linear.data(), s.tiled.data()));
+    return s;
+}
+
+void put16(u8* p, u32 v) {
+    p[0] = static_cast<u8>(v);
+    p[1] = static_cast<u8>(v >> 8);
+}
+
+// One BC4 block (8 bytes) to 16 values, the standard decode (independent of the encoder's library).
+void unpack_bc4(const u8* b, u8 out[16]) {
+    u32 v[8];
+    v[0] = b[0];
+    v[1] = b[1];
+    if (v[0] > v[1]) {
+        for (u32 i = 1; i < 7; ++i) v[1 + i] = ((7 - i) * v[0] + i * v[1] + 3) / 7;
+    } else {
+        for (u32 i = 1; i < 5; ++i) v[1 + i] = ((5 - i) * v[0] + i * v[1] + 2) / 5;
+        v[6] = 0;
+        v[7] = 255;
+    }
+    u64 bits = 0;
+    for (int i = 0; i < 6; ++i) bits |= u64(b[2 + i]) << (8 * i);
+    for (int i = 0; i < 16; ++i) out[i] = static_cast<u8>(v[(bits >> (3 * i)) & 7]);
+}
+
+// The ASTC decode of level `l`, layer `layer`, slice 0 of a synthetic texture (ground truth for the entry data).
+std::vector<u8> astc_truth(const Synth& s, u32 fmt_id, size_t l, u32 layer) {
+    const TxtrFormat& f = txtr_format(fmt_id);
+    const tegra::LevelLayout& lv = s.layout.levels[l];
+    std::vector<u8> astc(static_cast<size_t>(s.layout.linear_size));
+    CHECK(tegra::untile(s.desc, s.layout, s.tiled.data(), astc.data()));
+    a2b_input in{};
+    in.format = f.srgb ? A2B_ASTC_SRGB : A2B_ASTC_UNORM;
+    in.width = lv.width;
+    in.height = lv.height;
+    in.block_w = f.block_w;
+    in.block_h = f.block_h;
+    std::vector<u8> rgba(static_cast<size_t>(u64(lv.width) * lv.height * 4));
+    CHECK(a2b_decode_astc_rgba8(&in, astc.data() + lv.linear_offset + layer * lv.linear_slice_size,
+                                static_cast<size_t>(lv.linear_slice_size / lv.depth), 1, rgba.data(), nullptr) == A2B_OK);
+    return rgba;
+}
+
+struct Built {
+    TexCachePlan plan;
+    std::vector<u8> bytes;
+    TexCacheKind kind = TexCacheKind::Bc7;
+};
+
+Built build_synth(const Synth& s, int quality = 3) {
+    Built b;
+    b.plan = texcache_plan(s.info, s.tiled.data(), s.tiled.size(), quality);
+    CHECK(b.plan.ok);
+    if (b.plan.ok) b.bytes = texcache_build_file(s.info, b.plan, s.tiled.data(), s.tiled.size(), quality, &b.kind);
+    return b;
+}
+
+// Chooses the entry kind for textures made of constant blocks. A height of 40 texels is 10 block rows of 4: the console's block height
+// (1 GOB) differs from the smallest covering one (2 GOBs) there, so a wrong rule scrambles the blocks and changes the key.
+void test_entry_kinds() {
+    std::printf("entry kinds\n");
+    const ColourFn rg = [](u8* c, Rng& r) {   // two-channel data: random R and G, B 0, opaque
+        put16(c, r.byte() * 257u);
+        put16(c + 2, r.byte() * 257u);
+        put16(c + 4, 0);
+        put16(c + 6, 0xFFFF);
+    };
+    {   // BC5: linear, opaque, no blue
+        const Synth s = make_synth_colour(TxtrKind::D2, 53, 40, 40, 1, 3, 21, rg);
+        const Built b = build_synth(s);
+        CHECK(b.kind == TexCacheKind::Bc5);
+        CHECK_EQ(b.bytes.size(), b.plan.file_bytes);
+        CHECK_EQ(rd32(&b.bytes[16]), 141u);
+        CHECK(std::memcmp(b.bytes.data(), "NXB7", 4) == 0);
+        // the key is the one of a BC7 entry (the block height follows the console's rule, not the smallest covering one)
+        CHECK_EQ(b.plan.key, expected_key(s, static_cast<u32>(tex_nvn_astc_format(53)), 3, 1, 3));
+        {
+            const tegra::LevelLayout& l0 = s.layout.levels[0];
+            const u64 meta[10] = {1, u64(tex_nvn_astc_format(53)), l0.width, l0.height, l0.depth, 3, 1, tegra::default_gob_blocks_y(10), 0, 3};
+            const u64 mh = oracle::hash_seeded(reinterpret_cast<const u8*>(meta), sizeof meta, 0);
+            const u64 old_rule_key = oracle::hash_seeded(s.tiled.data(), static_cast<size_t>(s.layout.tiled_layer_stride * s.desc.layers), mh);
+            CHECK(b.plan.key != old_rule_key);
+        }
+        const std::string path = texcache_path((fs::temp_directory_path() / "mprs_test_texcache" / "kinds").string(), b.plan.key);
+        write_file(path, b.bytes);
+        TexCacheKind k = TexCacheKind::Bc7;
+        CHECK(texcache_file_valid(path, b.plan, &k));
+        CHECK(k == TexCacheKind::Bc5);
+        // every texel of every level: R and G as the ASTC decode has them (the blocks are constant and aligned, so BC5 is exact to 1)
+        for (size_t l = 0; l < b.plan.level.size(); ++l) {
+            const TexOutLevel& lv = b.plan.level[l];
+            const std::vector<u8> truth = astc_truth(s, 53, l, 0);
+            const u32 bx = (lv.width + 3) / 4;
+            u32 bad = 0;
+            for (u32 y = 0; y < lv.height; ++y)
+                for (u32 x = 0; x < lv.width; ++x) {
+                    u8 r[16], g[16];
+                    const u8* blk = &b.bytes[28 + 28 * b.plan.level.size() + lv.offset + (u64(y / 4) * bx + x / 4) * 16];
+                    unpack_bc4(blk, r);
+                    unpack_bc4(blk + 8, g);
+                    const u8* t = &truth[(u64(y) * lv.width + x) * 4];
+                    const int i = (y % 4) * 4 + x % 4;
+                    if (std::abs(int(r[i]) - int(t[0])) > 1 || std::abs(int(g[i]) - int(t[1])) > 1) ++bad;
+                }
+            CHECK_EQ(bad, 0u);
+        }
+    }
+    {   // not BC5: a blue channel above 2, alpha below 255, an sRGB texture
+        const ColourFn blue3 = [](u8* c, Rng& r) {
+            put16(c, r.byte() * 257u);
+            put16(c + 2, r.byte() * 257u);
+            put16(c + 4, 3 * 257u);
+            put16(c + 6, 0xFFFF);
+        };
+        const ColourFn alpha254 = [](u8* c, Rng& r) {
+            put16(c, r.byte() * 257u);
+            put16(c + 2, r.byte() * 257u);
+            put16(c + 4, 0);
+            put16(c + 6, 254 * 257u);
+        };
+        const ColourFn blue2 = [](u8* c, Rng& r) {   // at the limit: still BC5
+            put16(c, r.byte() * 257u);
+            put16(c + 2, r.byte() * 257u);
+            put16(c + 4, 2 * 257u);
+            put16(c + 6, 0xFFFF);
+        };
+        CHECK(build_synth(make_synth_colour(TxtrKind::D2, 53, 40, 28, 1, 2, 22, blue3)).kind == TexCacheKind::Bc7);
+        CHECK(build_synth(make_synth_colour(TxtrKind::D2, 53, 40, 28, 1, 2, 23, alpha254)).kind == TexCacheKind::Bc7);
+        CHECK(build_synth(make_synth_colour(TxtrKind::D2, 68, 40, 28, 1, 2, 24, rg)).kind == TexCacheKind::Bc7);   // Astc5x4 sRGB
+        CHECK(build_synth(make_synth_colour(TxtrKind::D2, 53, 40, 28, 1, 2, 25, blue2)).kind == TexCacheKind::Bc5);
+    }
+    {   // BC5 for a cube and an array: every layer and mip is there
+        const Synth s = make_synth_colour(TxtrKind::Cube, 53, 16, 16, 6, 3, 26, rg);
+        const Built b = build_synth(s);
+        CHECK(b.kind == TexCacheKind::Bc5);
+        CHECK_EQ(b.bytes.size(), b.plan.file_bytes);
+        CHECK_EQ(rd32(&b.bytes[24]), 6u);
+    }
+}
+
+// An RGBA8 entry, forced by moving the PSNR limit above anything a lossy format reaches: the data is the ASTC decode, exactly, level by
+// level and layer by layer, under the level table of texcache_rgba8_levels.
+struct PsnrLimit {
+    explicit PsnrLimit(double db) { detail::texcache_set_rgba8_psnr(db); }
+    ~PsnrLimit() { detail::texcache_set_rgba8_psnr(kRgba8PsnrDb); }
+};
+
+void check_rgba8(const char* name, TxtrKind kind, u32 fmt_id, u32 w, u32 h, u32 n, u32 mips, u32 want_vk, u64 seed) {
+    std::printf("rgba8 entry: %s\n", name);
+    const PsnrLimit force(1000.0);
+    const ColourFn any = [](u8* c, Rng& r) {
+        for (int i = 0; i < 4; ++i) put16(c + 2 * i, r.byte() * 257u);
+    };
+    const Synth s = make_synth_colour(kind, fmt_id, w, h, n, mips, seed, any);
+    const Built b = build_synth(s);
+    CHECK(b.kind == TexCacheKind::Rgba8);
+    u64 want_size = 0;
+    const std::vector<TexOutLevel> table = texcache_rgba8_levels(b.plan, &want_size);
+    CHECK_EQ(b.bytes.size(), want_size);
+    CHECK_EQ(rd32(&b.bytes[16]), want_vk);
+    CHECK_EQ(rd32(&b.bytes[20]), static_cast<u32>(table.size()));
+    CHECK_EQ(rd32(&b.bytes[24]), b.plan.layers);
+    if (b.bytes.size() != want_size) return;
+    const std::string path = texcache_path((fs::temp_directory_path() / "mprs_test_texcache" / "kinds").string(), b.plan.key);
+    write_file(path, b.bytes);
+    TexCacheKind k = TexCacheKind::Bc7;
+    CHECK(texcache_file_valid(path, b.plan, &k));
+    CHECK(k == TexCacheKind::Rgba8);
+    const size_t head = 28 + 28 * table.size();
+    for (size_t l = 0; l < table.size(); ++l) {
+        const u8* e = &b.bytes[28 + l * 28];
+        CHECK_EQ(rd64(e + 12), table[l].offset);
+        CHECK_EQ(rd64(e + 20), table[l].size);
+        for (u32 layer = 0; layer < b.plan.layers; ++layer) {
+            const std::vector<u8> truth = astc_truth(s, fmt_id, l, layer);
+            const u64 slice = u64(table[l].width) * table[l].height * 4;
+            CHECK(std::memcmp(&b.bytes[head + table[l].offset + layer * slice], truth.data(), static_cast<size_t>(slice)) == 0);
+        }
+    }
+    // a BC7-sized file under an RGBA8 header, and an RGBA8 header on a file of the BC7 size, are damaged files
+    {
+        std::vector<u8> bad(b.bytes.begin(), b.bytes.end() - 1);
+        write_file(path + ".cut", bad);
+        CHECK(!texcache_file_valid(path + ".cut", b.plan));
+    }
+    {
+        std::vector<u8> bad = b.bytes;
+        bad[16] = (want_vk == 43) ? 37 : 43;   // the other sRGB-ness
+        write_file(path + ".srgb", bad);
+        CHECK(!texcache_file_valid(path + ".srgb", b.plan));
+    }
+}
+
+void test_rgba8_entries() {
+    check_rgba8("Astc5x4 sRGB 40x28, 3 mips", TxtrKind::D2, 68, 40, 28, 1, 3, 43, 31);
+    check_rgba8("Astc4x4 cube 16x16, 2 mips, 6 layers", TxtrKind::Cube, 53, 16, 16, 6, 2, 37, 32);
+    check_rgba8("Astc4x4 3D 16x16x4, 1 mip", TxtrKind::D3, 53, 16, 16, 4, 1, 37, 33);
+}
+
+// The limit is a real decision: without forcing, constant-block textures stay BC7 whatever their colours.
+void test_bc7_default() {
+    std::printf("bc7 stays the default\n");
+    const ColourFn any = [](u8* c, Rng& r) {
+        for (int i = 0; i < 4; ++i) put16(c + 2 * i, r.byte() * 257u);
+    };
+    const Built b = build_synth(make_synth_colour(TxtrKind::D2, 68, 40, 28, 1, 3, 34, any));
+    CHECK(b.kind == TexCacheKind::Bc7);
+    CHECK_EQ(rd32(&b.bytes[16]), b.plan.vk_format);
+    CHECK_EQ(b.bytes.size(), b.plan.file_bytes);
+    // a BC5 header on an sRGB plan is not accepted (BC5 holds linear data only)
+    std::vector<u8> bad = b.bytes;
+    bad[16] = 141;
+    const std::string path = texcache_path((fs::temp_directory_path() / "mprs_test_texcache" / "kinds").string(), b.plan.key) + ".bc5srgb";
+    write_file(path, bad);
+    CHECK(!texcache_file_valid(path, b.plan));
 }
 
 // ---- real data helpers -------------------------------------------------------------------------------------------------------
@@ -748,6 +997,9 @@ int main(int argc, char** argv) {
         test_hash();
         test_nvn_table(nvn_h);
         test_synthetic();
+        test_entry_kinds();
+        test_rgba8_entries();
+        test_bc7_default();
         test_real_sample(romfs, scratch);
         test_thread_determinism(romfs);
     } catch (const std::exception& e) {
