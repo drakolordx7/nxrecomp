@@ -6,6 +6,8 @@
 // in the game's buffers. Expected pixels come from the CPU (texel positions, a reference sampler, a BC1/BC7/RGBA8 decoder, the
 // astc2bc7 ASTC decode and a PSNR bound for the compressed cases). Texture coordinates use the NVN convention: v = 0 is the first
 // texel row, and the top row of the frame (window row 0) shows the quad's top edge.
+#include <windows.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -13,7 +15,12 @@
 #include <fstream>
 #include <iterator>
 
+#include <nxrt/config.h>
+
 #include "astc2bc7.h"
+#ifdef NXRT_HAVE_BC7_REF
+#include "bc7decomp.h"
+#endif
 #include "tegra_tiling.h"
 #include "nvn_app.h"
 #include "nvn_texture_layout.h"
@@ -26,6 +33,27 @@ namespace {
 constexpr uint32_t kW = 64, kH = 48;
 const char* kRefDir = "D:/AI/Active/Metroid-Prime/work/nvn_refs";
 const char* kSamples = "D:/AI/Active/Metroid-Prime/work/survey/textures/samples/";
+
+// A new, empty BC7 cache folder for one test (the [nvn] bc7_cache environment variable points at it for the test's lifetime): the back end then
+// transcodes with this build's encoder instead of picking up an entry another encoder revision left in the working directory.
+struct FreshBc7Cache {
+    std::filesystem::path dir;
+    std::string old;
+    bool had_old = false;
+    FreshBc7Cache() {
+        static int n = 0;
+        dir = std::filesystem::temp_directory_path() /
+              ("nxrt_scene_tex_cache_" + std::to_string(::GetCurrentProcessId()) + "_" + std::to_string(++n));
+        std::filesystem::create_directories(dir);
+        if (const char* e = std::getenv("NXRT_NVN_BC7_CACHE")) { old = e; had_old = true; }
+        _putenv_s("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    }
+    ~FreshBc7Cache() {
+        _putenv_s("NXRT_NVN_BC7_CACHE", had_old ? old.c_str() : "");
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+};
 
 struct Rgb { int r, g, b; };
 struct Rgbf { double r, g, b; };
@@ -755,6 +783,7 @@ NXTEST(real_rgba8_texture_from_the_game) {
 // Scene 3c: a real ASTC 8x5 texture (sample s023, 64x64, 7 levels; 1005 distinct colours). The back end transcodes it (to BC7, or keeps it when the device
 // has ASTC); the frame must match the astc2bc7 decode of the same bytes with PSNR >= 30 dB.
 NXTEST(real_astc_8x5_texture_transcoded) {
+    FreshBc7Cache fresh_cache;
     const std::string dir = kSamples;
     const std::vector<uint8_t> tiled = read_file(dir + "s023.tiled"), lin_ref = read_file(dir + "s023.lin");
     if (tiled.empty() || lin_ref.empty()) { nxtest::skip("survey sample s023 not found"); return; }
@@ -824,7 +853,33 @@ NXTEST(real_astc_8x5_texture_transcoded) {
     std::printf("    PSNR vs astc2bc7 decode %.2f dB (bound 30), worst channel difference %d\n", psnr, worst);
     CHECK(psnr >= 30.0);
     check_clean(app);
-    if (psnr >= 30.0) reference_check("texture_astc_8x5_s023", px);
+#ifdef NXRT_HAVE_BC7_REF
+    // The expected picture is worked out here, with the encoder of this build: level 0 goes through the same a2b_transcode call and options the back end uses
+    // (quality from [nvn] bc7_quality, default 3), the BC7 blocks are decoded with the reference decoder, and the frame must equal that decode up to the
+    // rounding of the GPU's own BC7 decode. A stored image would go stale with every encoder revision.
+    {
+        a2b_options eo{};
+        eo.quality = static_cast<int>(nxrt::config_get_int("nvn", "bc7_quality", 3));
+        eo.threads = 0;
+        eo.perceptual = 0;
+        eo.allow_opaque_mode6 = 0;
+        a2b_format of;
+        std::vector<uint8_t> blocks(static_cast<size_t>(a2b_output_size(&in)));
+        const a2b_status ts = a2b_transcode(&in, untiled.data(), a2b_astc_size(64, 64, 8, 5), &eo, &of, blocks.data(), blocks.size(), nullptr);
+        CHECK_EQ(static_cast<int>(ts), static_cast<int>(A2B_OK));
+        if (ts == A2B_OK) {
+            const Cmp own = compare_rect(px, 0, 0, kW, kH, [&](uint32_t x, uint32_t y) {
+                bc7decomp::color_rgba blk[16];
+                const uint8_t* b = &blocks[(static_cast<size_t>(y / 4) * 16 + x / 4) * 16];
+                bc7decomp_ref::unpack_bc7(b, blk);
+                const bc7decomp::color_rgba& c = blk[(y % 4) * 4 + (x % 4)];
+                return Rgbf{static_cast<double>(c.r), static_cast<double>(c.g), static_cast<double>(c.b)};
+            }, 2);
+            report("frame vs the BC7 decode of this build's transcode (+-2)", own, 2);
+            CHECK_EQ(own.bad, 0);
+        }
+    }
+#endif
 }
 
 // Scene 3d: a real BC1 sRGB texture of the game (512x512, 10 levels, sample s037), sampled magnified-by-1/7.5 texels per pixel. The

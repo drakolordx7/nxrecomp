@@ -2,6 +2,11 @@
 # nxrt: game-independent runtime skeleton (OS/HLE layer) for the Metroid Prime Remastered static recompilation.
 # Build: scripts\build.ps1   (clang-cl + Ninja, Release)   Test: ctest --test-dir build\release
 cmake_minimum_required(VERSION 3.25)
+# Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
+# included, uses it; the libraries this one links must agree (a mismatch is a link error).
+if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 project(nxrt C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
