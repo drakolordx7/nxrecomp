@@ -31,4 +31,7 @@ bool sparse_tile_shape(int nvn_target, const FormatInfo* fmt, int out[3]);
 // The layout of the texture the builder describes. Never fails on a zero-filled builder: it returns valid = false.
 TexLayout compute_texture_layout(const TextureBuilderInfo& b);
 
+// Level-0 block height in GOBs of a block-linear 2D texture with that many block rows, when the game gives no packaged layout.
+uint32_t console_block_height(uint32_t block_rows);
+
 }  // namespace nxrt::nvn::be

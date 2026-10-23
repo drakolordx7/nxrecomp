@@ -970,6 +970,10 @@ void tex_shutdown() {
         std::lock_guard<std::mutex> lk(g_live_mu);
         left.assign(g_live_set.begin(), g_live_set.end());
     }
+    // Textures that are still alive (the game never finalized them, or a test left them behind) keep their place in the registry. They
+    // must not keep a pointer to the image object that is about to be freed: texture_registry_find_alias would hand it to the next texture
+    // made over the same memory, and that texture would use freed memory (a barrier on VK_NULL_HANDLE, or a crash).
+    texture_registry_detach_gpu();
     for (TexGpu* g : left) { g->refs = 1; tex_destroy(g); }
     for (auto& kv : g_sh.samplers)
         for (auto& e : kv.second) vkDestroySampler(vkdev(), e.second, nullptr);

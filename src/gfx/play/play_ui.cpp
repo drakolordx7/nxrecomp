@@ -42,6 +42,9 @@ constexpr const char* kAnisoNames[] = {"Game default", "2x", "4x", "8x", "16x"};
 constexpr int kAnisoValues[] = {0, 2, 4, 8, 16};
 constexpr int kAnisoCount = static_cast<int>(sizeof kAnisoValues / sizeof kAnisoValues[0]);
 constexpr Trig kTrigChoices[] = {Trig::Press, Trig::Tap, Trig::Hold, Trig::Toggle, Trig::DoubleTap};
+// The Button prompts combo on the Controller tab, in PromptStyle order.
+constexpr const char* kPromptLabels[kPromptStyleCount] = {"Switch (the game's own)", "Xbox", "PlayStation", "Keyboard and mouse",
+                                                          "Auto (follows the last used device)"};
 
 struct SwitchButton {
     const char* name;
@@ -238,6 +241,19 @@ void pad_tab(const LiveStatus& live, Page& p) {
         pad.label_abxy = false;
         mark(p);
     }
+    PromptSettings& prompts = p.edit.prompts;
+    const int prompt_sel = static_cast<int>(prompts.style);
+    if (ImGui::BeginCombo("Button prompts", kPromptLabels[prompt_sel])) {
+        for (int i = 0; i < kPromptStyleCount; ++i) {
+            if (ImGui::Selectable(kPromptLabels[i], i == prompt_sel) && i != prompt_sel) {
+                prompts.style = static_cast<PromptStyle>(i);
+                mark(p);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (prompts.style == PromptStyle::Auto) ImGui::TextDisabled("Showing now: %s", cstr(live.prompt_now));
+
     if (slider("Stick dead zone", &pad.stick_deadzone, 0.0, 0.5, "%.2f")) mark(p);
     if (slider("Trigger threshold", &pad.trigger_threshold, 0.05, 1.0, "%.2f")) mark(p);
     if (ImGui::Checkbox("Gyro (six-axis sensor)", &pad.gyro)) mark(p);
