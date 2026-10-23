@@ -79,11 +79,14 @@ struct WatchdogOptions {
 void watchdog_start(const WatchdogOptions& opt = {});
 void watchdog_stop();
 bool watchdog_running();
+void diag_progress();                  // a heartbeat that is not a frame: long work that is moving (texture transcodes on a cold cache) keeps the watchdog quiet
 void diag_frame_tick();                // call once per presented frame (or any heartbeat)
 void diag_frame_tick_nolisten();       // the same without calling the frame listener (the test tooling's own boundary)
 void diag_set_frame_listener(void (*fn)());   // called by diag_frame_tick after counting (test tooling's frame source "tick"); null removes it
 uint64_t diag_frame_count();
 uint32_t watchdog_fire_count();
+// Extra sections of the freeze dump: each function returns text (it must never block: the process may be frozen). Registered once at start-up.
+void diag_add_report(std::string (*fn)());
 std::string diag_thread_dump();        // the dump text the watchdog produces, on demand (also used by the SIGUSR-style "dump_threads" file)
 
 }  // namespace nxrt
