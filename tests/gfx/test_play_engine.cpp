@@ -63,10 +63,10 @@ play::InputId key_in(int scancode) {
     return id;
 }
 
-// Layers used by the context tests: Mouse1 is fire in gameplay and confirm in the menu (menu_touch off), W is in `all` only,
+// Layers used by the context tests: Mouse1 is fire in gameplay and confirm in the menu (menu_cursor off), W is in `all` only,
 // Left Ctrl is morph in `all` and switched off in the menu.
 const char* const kLayers =
-    "[mouse]\nmenu_touch = 0\n"
+    "[mouse]\nmenu_cursor = 0\n"
     "[bindings.all]\nMouse1 = fire\nW = move_forward\nLeft Ctrl = morph\n"
     "[bindings.menu]\nMouse1 = confirm\nLeft Ctrl = none\n";
 
@@ -306,8 +306,8 @@ NXTEST(context_switch_keeps_identical_binding) {
     e.key(SDL_SCANCODE_W, false, ms(1300));
 }
 
-NXTEST(menu_touch_owns_left_click) {
-    // Default menu_touch = 1: in the menu the left click is a touch, so a binding of Mouse1 gets nothing there.
+NXTEST(menu_cursor_owns_left_click) {
+    // Default menu_cursor = 1: in the menu the left click belongs to the pointer, so a binding of Mouse1 gets nothing there.
     Engine e(settings_from("[bindings.all]\nMouse1 = fire\n"));
     CHECK(e.context() == Ctx::Menu);               // engines start in the menu context
     e.mouse_button(1, true, ms(1000));
@@ -501,4 +501,43 @@ NXTEST(select_pulse_holds_for_frame_boundaries_once_they_are_counted) {
     CHECK(e.output(ms(1600)).buttons == want);          // one boundary after the first poll: still on
     e.frame_tick();
     CHECK(idle(e.output(ms(1700))));                    // two boundaries: retired (this poll shows nothing)
+}
+
+NXTEST(engine_pulse_confirm_presses_a_once) {
+    Engine e;
+    CHECK(e.output(ms(900)).buttons == 0);
+    e.pulse(Act::Confirm, ms(1000));                // [timing] pulse_ms (80 ms by default)
+    CHECK(has(e.output(ms(1010)), hid::kBtnA));     // first poll: the press is on
+    CHECK(idle(e.output(ms(1400))));                // seen, and past its end: gone
+    CHECK(idle(e.output(ms(1500))));
+}
+
+NXTEST(engine_pulse_uses_given_length) {
+    Engine e;
+    e.pulse(Act::BtnR, ms(2000), 300);              // 300 ms, not the 80 ms default
+    CHECK(has(e.output(ms(2010)), hid::kBtnR));
+    CHECK(has(e.output(ms(2250)), hid::kBtnR));     // still inside the 300 ms
+    CHECK(idle(e.output(ms(2500))));
+    CHECK(idle(e.output(ms(2600))));
+}
+
+NXTEST(engine_aux_sticks_add_and_clamp) {
+    Engine e(settings_from("[bindings.all]\nW = move_forward\n"));
+    to_gameplay(e);
+    e.set_aux_sticks(0.5f, 0, 0, 0);
+    CHECK(close_to(e.output(ms(1050)).lx, 0.5));
+    e.key(SDL_SCANCODE_W, true, ms(1100));          // ly = 1 from W, lx = 0.5 + 0 added: the pair is clamped to length 1
+    const EngineOut both = e.output(ms(1150));
+    CHECK(std::sqrt(both.lx * both.lx + both.ly * both.ly) <= 1.0001);
+    CHECK(close_to(both.lx, 1.0 / std::sqrt(5.0)));
+    CHECK(close_to(both.ly, 2.0 / std::sqrt(5.0)));
+    e.set_aux_sticks(0, 0, 0, 0);
+    CHECK(close_to(e.output(ms(1200)).lx, 0.0));
+    CHECK(close_to(e.output(ms(1200)).ly, 1.0));
+    e.set_aux_sticks(0, 0, -0.7f, 0.2f);
+    const EngineOut right = e.output(ms(1250));
+    CHECK(close_to(right.rx, -0.7));
+    CHECK(close_to(right.ry, 0.2));
+    e.key(SDL_SCANCODE_W, false, ms(1300));
+    e.set_aux_sticks(0, 0, 0, 0);
 }
