@@ -336,6 +336,6 @@ void prewarm_program_shaders(const ShaderInfo* const stages[6]) {
     gpl_program(stages, prewarm_program(stages) != 0);
 }
 
-void flush_caches() { pipeline_cache_save(); }
+void flush_caches() { pipeline_cache_flush(); }
 
 }  // namespace nxrt::nvn::be::gpu
