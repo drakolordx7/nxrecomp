@@ -267,3 +267,87 @@ NXTEST(same_picture_both_ways) {
     }
     CHECK(same);
 }
+
+namespace {
+
+// Sets [nvn] gpl_upgrade for one case; the default ("whole") comes back when the case ends.
+struct UpgradeConfig {
+    explicit UpgradeConfig(const char* value) { nxrt::config_set("nvn", "gpl_upgrade", value); }
+    ~UpgradeConfig() { nxrt::config_set("nvn", "gpl_upgrade", "whole"); }
+};
+
+// The triangle through the libraries, then again after the optimised replacement was built: the second draw finds it, uses it and draws the same picture.
+void upgrade_case(const char* mode) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    TempDir td;
+    const fs::path keys = td.path / "pipeline_keys.bin", cache = td.path / "pipeline_cache.bin";
+    PrewarmConfig cfg(keys, cache);
+    GplConfig gpl("1");
+    UpgradeConfig up(mode);
+    App::Opts o;
+    o.width = 64;
+    o.height = 48;
+
+    App app;
+    REQUIRE(app.init(o));
+    if (!gpu::gpl_active()) {
+        app.shutdown();
+        nxtest::skip("pipeline libraries not supported on this GPU");
+        return;
+    }
+    std::vector<uint8_t> px;
+    REQUIRE(draw_triangle(app, &px, 2));
+    check_triangle(px);
+    const auto t0 = std::chrono::steady_clock::now();
+    while (gpu::gpl_stats().upgrades_done + gpu::gpl_stats().upgrades_failed < 1 && std::chrono::steady_clock::now() - t0 < 20s) std::this_thread::sleep_for(10ms);
+    gpu::GplStats s = gpu::gpl_stats();
+    print_gpl("after the first draw", s);
+    CHECK(s.upgrades_queued >= 1);
+    CHECK(s.upgrades_done >= 1);
+    CHECK(s.upgrades_failed == 0);
+    std::vector<uint8_t> px2;
+    REQUIRE(draw_triangle(app, &px2, 0));
+    check_triangle(px2);
+    s = gpu::gpl_stats();
+    std::printf("    upgrades queued %llu, built %llu (%.1f ms), taken %llu\n", static_cast<unsigned long long>(s.upgrades_queued), static_cast<unsigned long long>(s.upgrades_done),
+                s.upgrade_ms, static_cast<unsigned long long>(s.upgrades_taken));
+    CHECK(s.upgrades_taken >= 1);
+    CHECK_EQ(app.validation().errors, 0ull);
+    CHECK(std::equal(px.begin(), px.end(), px2.begin()));
+    app.shutdown();
+}
+
+}  // namespace
+
+// gpl_upgrade = whole: a background thread builds the whole pipeline of a linked one and the next lookup takes it.
+NXTEST(linked_pipeline_is_replaced_by_whole) { upgrade_case("whole"); }
+
+// gpl_upgrade = lto: the same, with the parts linked again with link-time optimisation.
+NXTEST(linked_pipeline_is_replaced_by_lto_link) { upgrade_case("lto"); }
+
+// gpl_upgrade = off: the linked pipeline stays.
+NXTEST(no_upgrade_when_off) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    TempDir td;
+    const fs::path keys = td.path / "pipeline_keys.bin", cache = td.path / "pipeline_cache.bin";
+    PrewarmConfig cfg(keys, cache);
+    GplConfig gpl("1");
+    UpgradeConfig up("off");
+    App::Opts o;
+    o.width = 64;
+    o.height = 48;
+    App app;
+    REQUIRE(app.init(o));
+    if (!gpu::gpl_active()) {
+        app.shutdown();
+        nxtest::skip("pipeline libraries not supported on this GPU");
+        return;
+    }
+    std::vector<uint8_t> px;
+    REQUIRE(draw_triangle(app, &px, 2));
+    check_triangle(px);
+    const gpu::GplStats s = gpu::gpl_stats();
+    CHECK(s.linked >= 1);
+    CHECK_EQ(s.upgrades_queued, 0ull);
+    app.shutdown();
+}
