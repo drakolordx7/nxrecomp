@@ -178,7 +178,7 @@ public:
             [](const Settings& s) { return static_cast<int>(s.extras.latency.mode); },
             [](Settings& s, int i) { s.extras.latency.mode = static_cast<extras::LatencyMode>(std::clamp(i, 0, 3)); });
         f.heading(L"Frame rate counter");
-        f.hint(L"A small box in a corner of the game with the frame rate and the frame time. Off by default; it costs nothing while it is off.", 2, true);
+        f.hint(L"A small box in a corner of the game with the frame rate and frame time. F1 in the game opens the same options.", 1, true);
         f.checkbox(L"Show the counter when the game starts", [](const Settings& s) { return s.fps.show; }, [](Settings& s, bool v) { s.fps.show = v; });
         f.combo(
             L"Corner", {L"Top left", L"Top right", L"Bottom left", L"Bottom right"}, [](const Settings& s) { return static_cast<int>(s.fps.corner); },
@@ -188,7 +188,6 @@ public:
             [](const Settings& s) { return s.fps.detail; }, [](Settings& s, int i) { s.fps.detail = std::clamp(i, 0, 2); });
         key_text_ = f.text_row(L"Hotkey in the game", L"");
         key_button_ = f.button(L"Change...", 110);
-        f.hint(L"Press the hotkey in the game to show or hide the counter. F1 opens the full settings page, which has the same options.", 2);
         f.heading(L"Shaders");
         prep_hint_ = f.hint(L"Compiles the shaders now so the first hours of play do not stutter. Takes a few minutes.", 1, true);
         const RECT r = f.custom_row(nullptr, 26);

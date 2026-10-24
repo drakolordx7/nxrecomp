@@ -93,6 +93,7 @@ void note_pipeline_created(double ms, const char* what);   // counters and the d
 // Pipeline cache on disk ([nvn] pipeline_cache): written by a background thread while new pipelines appear and at shutdown.
 bool pipeline_cache_dirty();
 void pipeline_cache_save();
+void pipeline_cache_flush();
 
 // ---- prewarm (nvn_prewarm.cpp) ----------------------------------------------------------------------------------------------
 // Every pipeline that had to be created at a draw is recorded in a key file ([nvn] pipeline_keys). The next run compiles the recorded

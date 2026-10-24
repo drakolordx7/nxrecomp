@@ -80,6 +80,7 @@ std::condition_variable g_cv;
 bool g_inited = false, g_enabled = false, g_stop = false, g_lto = false;
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_discard{false};
+std::atomic<bool> g_prepare_cache{false};      // shader preparation keeps what it compiled in the pipeline cache file ([nvn] prepare_cache)
 std::atomic<uint64_t> g_prep_fast{0};          // shader preparation: parts that took under 2 ms (the driver found them in its cache)          // shader preparation: a part is thrown away as soon as it is made (the driver keeps what it compiled)
 std::unordered_map<std::string, Entry> g_libs;             // node based: a reference to an entry stays valid while others are added
 std::deque<Job> g_hot_q, g_cold_q;    // hot: programs a command buffer was recorded with (oldest first); cold: set but not yet bound (newest first)
@@ -167,7 +168,7 @@ VkPipeline create_part(VkGraphicsPipelineCreateInfo& gi, const char* what) {
     VkPipeline p = VK_NULL_HANDLE;
     const auto t0 = Clock::now();
     // shader preparation keeps nothing in the app cache file (it would grow to hundreds of MB); the driver's own cache holds the result
-    const VkResult r = vkCreateGraphicsPipelines(vkdev(), g_discard.load(std::memory_order_relaxed) ? VK_NULL_HANDLE : pipeline_cache_handle(), 1, &gi, nullptr, &p);
+    const VkResult r = vkCreateGraphicsPipelines(vkdev(), (g_discard.load(std::memory_order_relaxed) && !g_prepare_cache.load(std::memory_order_relaxed)) ? VK_NULL_HANDLE : pipeline_cache_handle(), 1, &gi, nullptr, &p);
     if (r != VK_SUCCESS) {
         NXLOG_E(kTag, "pipeline part (%s) failed (%d)", what, static_cast<int>(r));
         return VK_NULL_HANDLE;
@@ -726,6 +727,7 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
         g_stop = false;
     }
     g_prep_fast.store(0);
+    g_prepare_cache.store(config_get_bool("nvn", "prepare_cache", true));
     g_discard.store(true);
     const auto t0 = Clock::now();
     constexpr size_t kBatch = 192;                       // programs per batch; the shader modules and SPIR-V of a batch are released after it
@@ -799,6 +801,7 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
         for (const ShaderInfo* si : used) shader_cache().release_stub_spirv(si);
     }
     g_discard.store(false);
+    if (g_prepare_cache.load() && !cancel.load()) pipeline_cache_save();
     if (o.progress) o.progress(done.load(), r.programs);
     r.fast_parts = g_prep_fast.load();
     r.prepared = prepared.load(); r.missing_shaders = missing.load(); r.failed = failed.load(); r.parts = parts.load();

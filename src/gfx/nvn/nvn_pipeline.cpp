@@ -43,6 +43,8 @@ struct SharedLayout { VkDescriptorSetLayout sets[4] = {}; VkPipelineLayout layou
 std::map<std::string, SharedLayout> g_shared_layouts;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
 std::atomic<bool> g_cache_dirty{false};
+std::atomic<uint32_t> g_new_since_save{0};      // pipelines and parts created since the cache file was last written
+bool g_cache_big = false;                       // the file loaded at start was large (a shader preparation made it): rewritten rarely, see pipeline_cache_dirty
 // Producer modules with extra outputs (nvn_spirv_patch.h): (shader, slots as location * 4 + scalar type).
 std::map<std::pair<const ShaderInfo*, std::vector<uint32_t>>, VkShaderModule> g_variants;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;
@@ -79,9 +81,18 @@ void ensure_cache() {
     g_cache_path = config_get_str("nvn", "pipeline_cache", "pipeline_cache.bin");
     std::vector<char> data;
     if (!g_cache_path.empty()) {
-        std::ifstream f(g_cache_path, std::ios::binary);
-        if (f) data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        if (FILE* f = std::fopen(g_cache_path.c_str(), "rb")) {          // one read: the file can be hundreds of MB after a shader preparation
+            std::fseek(f, 0, SEEK_END);
+            const long len = std::ftell(f);
+            std::fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                data.resize(static_cast<size_t>(len));
+                if (std::fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
+            }
+            std::fclose(f);
+        }
     }
+    g_cache_big = data.size() >= (64u << 20);
     VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     ci.initialDataSize = data.size();
     ci.pInitialData = data.empty() ? nullptr : data.data();
@@ -99,6 +110,7 @@ void save_cache() {
     if (!g_cache || g_cache_path.empty()) return;
     NXFT("pipe.cache.save");
     g_cache_dirty.store(false);
+    g_new_since_save.store(0);
     size_t n = 0;
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, nullptr) != VK_SUCCESS || !n) return;
     std::vector<char> data(n);
@@ -121,8 +133,17 @@ void save_cache() {
 
 }  // namespace
 
-bool pipeline_cache_dirty() { return g_cache_dirty.load(std::memory_order_relaxed); }
+// A cache of hundreds of MB (the shader preparation's) is rewritten only after thousands of new pipelines: the new ones are few next to it and
+// the write takes seconds. The ordinary small cache is written whenever something new appeared, as before.
+bool pipeline_cache_dirty() {
+    if (!g_cache_dirty.load(std::memory_order_relaxed)) return false;
+    return !g_cache_big || g_new_since_save.load(std::memory_order_relaxed) >= 3000;
+}
 void pipeline_cache_save() { save_cache(); }
+// The write at the end of a session: skipped when the cache is the big one of a preparation and little was added.
+void pipeline_cache_flush() {
+    if (!g_cache_big || g_new_since_save.load(std::memory_order_relaxed) >= 300) save_cache();
+}
 
 bool GraphicsKey::operator==(const GraphicsKey& o) const { return std::memcmp(this, &o, sizeof *this) == 0; }
 uint64_t GraphicsKey::hash() const {
@@ -461,6 +482,7 @@ VkPipelineCache pipeline_cache_handle() {
 void note_pipeline_created(double ms, const char* what) {
     counters().pipelines_created.fetch_add(1);
     g_cache_dirty.store(true, std::memory_order_relaxed);
+    if (ms >= 2.0) g_new_since_save.fetch_add(1, std::memory_order_relaxed);      // a part the cache already had comes back in well under that
     NXLOG_D(kTag, "%s created in %.1f ms", what, ms);
 }
 
@@ -574,6 +596,7 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     } else {
         counters().pipelines_created.fetch_add(1);
         g_cache_dirty.store(true, std::memory_order_relaxed);
+    g_new_since_save.fetch_add(1, std::memory_order_relaxed);
         NXLOG_D(kTag, "graphics pipeline created in %.1f ms (vs %s fs %s)", ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
                 key.stage[1] ? key.stage[1]->hash.c_str() : "-");
     }
@@ -634,6 +657,7 @@ VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout) {
             counters().pipelines_created.fetch_add(1);
             ++g_pipeline_count;
             g_cache_dirty.store(true, std::memory_order_relaxed);
+    g_new_since_save.fetch_add(1, std::memory_order_relaxed);
         }
     }
     g_compute[k] = pipe;
@@ -692,7 +716,7 @@ void pipeline_shutdown() {
     VkDevice d = vkdev();
     prewarm_shutdown();
     gpl_stop();
-    save_cache();
+    if (!g_cache_big || g_new_since_save.load() >= 300) save_cache();
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket)
             if (e.second) vkDestroyPipeline(d, e.second, nullptr);
