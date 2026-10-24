@@ -13,6 +13,7 @@
 //   5. write the pitch into CPlayerMP1+0x5cc again, so the camera and the gun use the angle the mouse chose.
 // Sign conventions (the same as the GameCube port's): mouse right = yaw decreases (turn right), mouse up (dy < 0) = pitch increases (look up).
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <functional>
 
@@ -29,7 +30,10 @@ struct AimLayout {
     uint32_t player_goc = 0x08, goc_inner = 0x20, inner_xf = 0x40;   // player -> +8 -> +0x20 -> +0x40 = CTransform4f (3x4 floats, translation in column 3)
     uint32_t camera_state = 0x4d0;           // EPlayerCameraState, 0 = first person (SetCameraState 0xc6bd28)
     uint32_t morph_state = 0x4d4;            // 0 = unmorphed (GetMorphBallTransitionState 0xc686fc)
-    uint32_t orbit_state = 0x4e0;            // EPlayerOrbitState, 0 = none (SetOrbitState 0xc77e5c)
+    uint32_t orbit_state = 0x4e0;            // EPlayerOrbitState, 0 = none, 1 = orbit object (the normal lock-on), 2 point, 3 carcass, 4 forced, 5 grapple (SetOrbitState 0xc77e5c)
+    uint32_t orbit_reached = 0x550;          // byte: set by ValidateCurrentOrbitTargetId once the player has faced the target within 1 degree; from then on the lock breaks when the view
+                                             // turns away from the target by more than the tweak's angle. Also read by UpdateOrbitOrientation and by the aiming cursor, which only
+                                             // follows the locked target (and swings the arm cannon to it) while it is set. Free lock-on keeps it set and stops the break (play_lockcam.cpp).
     uint32_t free_look_pitch = 0x5cc;        // float radians, + = up
     uint32_t free_look_target = 0x5d0;       // float radians: the pitch CPlayerMP1::UpdateFreeLook (every Think) eases free_look_pitch toward; the input code sets it from the stick
     // CStateManager -> CStateManagerGameLogicMP1 -> CCameraManagerMP1
@@ -72,6 +76,15 @@ public:
     AimBlock gate(uint64_t player, uint64_t mgr) const;
     GameHints hints(uint64_t player) const;       // player may be 0: only the player-state fields are read then
 
+    // Free lock-on ([aim] lock_mode = free, S32): the lock stays, but the mouse keeps the view. Set from the settings at the frame boundary.
+    //   free_lock_active(): the setting is on and the game is in the ordinary lock-on (orbit state 1: an object, not a grapple, a forced orbit, a point
+    //   or a carcass) and the visor is not the scan visor (scanning keeps the classic lock, which centres the object). While it is active the
+    //   aim gate stays open, the hooks in play_lockcam.cpp stop the game from turning the body and the pitch to the target, and apply() keeps
+    //   the "reached" flag set (the arm cannon follows the target) while play_lockcam.cpp stops the view-angle break of the lock.
+    void set_free_lock(bool on) { free_lock_.store(on, std::memory_order_relaxed); }
+    bool free_lock_setting() const { return free_lock_.load(std::memory_order_relaxed); }
+    bool free_lock_active(uint64_t player) const;
+
     // One ProcessInput. original runs the game's own function (may be empty). Returns true when aim was applied (the gate was open).
     // dx, dy: raw mouse counts since the previous call (the caller takes them once per rendered frame).
     bool apply(uint64_t player, uint64_t mgr, double dx, double dy, const AimParams& p, const std::function<void()>& original);
@@ -95,6 +108,7 @@ private:
     bool pitch_valid_ = false;
     AimBlock block_ = AimBlock::None;
     uint64_t applied_ = 0;
+    std::atomic<bool> free_lock_{false};
 };
 
 // The transform maths (row-major 3x4: three rows of {r0, r1, r2, translation}); public for the tests.

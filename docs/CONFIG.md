@@ -240,6 +240,14 @@ To change a key, add a line `Key = action` to `[bindings.all]` (every context) o
 
 `[mouse] menu_cursor`, default `1`: in menus the mouse works like a pointer: a visible cursor, hovering highlights an item, left click activates, right click goes back, the wheel scrolls. While it is on, the left click drives no binding in the menu and map contexts. The old key `menu_touch` is ignored; a file that still has it loads without a warning and nothing changes.
 
+### Lock-on and camera feel (`controls.ini`, `[aim]` and `[camera]`)
+
+`[aim] lock_mode`, default `classic`. `classic` is the game's own lock-on: the view turns to face the target. `free` keeps the lock, the homing and the strafing but leaves the view under your control (mouse and right stick), so you can look away from the target and it stays locked. Scanning (the scan visor) always uses the classic lock. Details in `docs/S32.md`.
+
+`[aim] free_lock_margin`, default `0.15`, range `0` to `0.4`: with `free`, the part of the screen kept free along every edge; the locked target never leaves the middle of the screen inside that margin.
+
+`[camera] idle_sway`, default `1`. The game slowly wanders the first-person view while Samus stands still; `0` keeps the view steady. `[camera] walk_bob`, default `1`. The up-and-down sway of the view (and the arm cannon) while walking; `0` switches it off. Both change at once from the F1 page and the launcher, no restart needed.
+
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
 ## Window modes and the picture (`controls.ini`, `[display]`)

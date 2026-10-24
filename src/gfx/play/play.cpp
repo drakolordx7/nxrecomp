@@ -46,6 +46,7 @@
 #include "nxrt/runtime.h"
 #include "nxrt/tt.h"
 #include "play_aim.h"
+#include "play_lockcam.h"
 #include "menu_mouse.h"
 #include "play_engine.h"
 #include "play_selftest.h"
@@ -589,6 +590,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             extras::set_settings(s.extras);
             extras::hdr_refresh_levels();
             apply_fps_counter(s.fps);
+            lockcam_set(s);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -1131,6 +1133,8 @@ bool start(const StartOptions& opt) {
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
     st.hook_fpcam = hook_add_entry(st.base + kFnFpCamThink, &cam_think_hook, nullptr);
     st.hook_ballcam = hook_add_entry(st.base + kFnBallCamThink, &cam_think_hook, &st);
+    lockcam_install(st.base, st.aim.get());
+    lockcam_set(st.settings);
     mm::game_install(st.base);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
@@ -1142,6 +1146,7 @@ void stop() {
     G& st = g();
     if (!st.started) return;
     mm::game_remove();
+    lockcam_remove();
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     if (st.hook_fpcam) hook_remove(st.hook_fpcam);

@@ -146,7 +146,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Bindings };
+enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Bindings };
 
 // The factory-defaults revision this build writes ([meta] defaults_rev). Bump it together with a new entry in kDefaultAdditions.
 constexpr int kDefaultsRev = 2;
@@ -178,6 +178,8 @@ const char* sec_label(Sec s) {
         case Sec::Prompts: return "[prompts]";
         case Sec::Fps: return "[fps]";
         case Sec::Switch: return "[switch]";
+        case Sec::Aim: return "[aim]";
+        case Sec::Camera: return "[camera]";
         default: return "";
     }
 }
@@ -291,6 +293,22 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "menu_cursor") return set_bool(&s->mouse.menu_cursor);
             if (k == "menu_touch") return true;   // legacy key, dead since it never did anything: accepted and ignored
             if (k == "wheel_beams") return set_bool(&s->mouse.wheel_beams);
+            break;
+        case Sec::Aim:
+            if (k == "lock_mode") {
+                LockMode m = LockMode::Classic;
+                if (!parse_lock_mode(v, &m)) {
+                    *msg = "lock_mode must be classic or free, got '" + v + "'";
+                    return false;
+                }
+                s->aim.lock_mode = m;
+                return true;
+            }
+            if (k == "free_lock_margin") return set_real(0.0, 0.4, &s->aim.free_lock_margin);
+            break;
+        case Sec::Camera:
+            if (k == "idle_sway") return set_bool(&s->camera.idle_sway);
+            if (k == "walk_bob") return set_bool(&s->camera.walk_bob);
             break;
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
@@ -567,6 +585,8 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             else if (key == "latency") sec = Sec::Latency;
             else if (key == "prompts") sec = Sec::Prompts;
             else if (key == "fps") sec = Sec::Fps;
+            else if (key == "aim") sec = Sec::Aim;
+            else if (key == "camera") sec = Sec::Camera;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -655,6 +675,22 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
 
 }  // namespace
 
+// [aim] lock_mode names. Case-insensitive, no trimming (the file parser has already trimmed the value).
+const char* lock_mode_name(LockMode m) { return m == LockMode::Free ? "free" : "classic"; }
+
+bool parse_lock_mode(const std::string& s, LockMode* out) {
+    const std::string key = lower(s);
+    if (key == "classic") {
+        if (out) *out = LockMode::Classic;
+        return true;
+    }
+    if (key == "free") {
+        if (out) *out = LockMode::Free;
+        return true;
+    }
+    return false;
+}
+
 Settings default_settings() {
     Settings s;
     std::string err;
@@ -694,6 +730,13 @@ std::string format_settings(const Settings& s) {
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_cursor", flag(s.mouse.menu_cursor));
     kv("wheel_beams", flag(s.mouse.wheel_beams));
+
+    o += "\n[aim]\n";
+    kv("lock_mode", lock_mode_name(s.aim.lock_mode));
+    kv("free_lock_margin", num(s.aim.free_lock_margin));
+    o += "\n[camera]\n";
+    kv("idle_sway", flag(s.camera.idle_sway));
+    kv("walk_bob", flag(s.camera.walk_bob));
 
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));

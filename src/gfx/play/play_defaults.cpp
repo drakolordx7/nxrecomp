@@ -33,6 +33,19 @@ invert_x = 0
 menu_cursor = 1
 wheel_beams = 1
 
+[aim]
+# Lock-on (hold the lock button): classic is the game's own, the view turns to face the target. free keeps the lock, the homing shots and the strafing, but the view stays under your control (mouse and right stick). Scanning always uses classic.
+lock_mode = classic
+# With free, the view can move once the lock is established, but the locked target stays on screen. This is the part of the screen kept free along every edge, 0 to 0.4 (0.15 = the target stays in the middle 70 percent).
+free_lock_margin = 0.15
+
+[camera]
+# 1 is the game's own behaviour, 0 turns the effect off.
+# idle_sway: the slow drifting of the first-person view while Samus stands still.
+idle_sway = 1
+# walk_bob: the up-and-down sway of the view while walking.
+walk_bob = 1
+
 [pad]
 label_abxy = 1
 deadzone = 0.10

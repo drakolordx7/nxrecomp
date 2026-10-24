@@ -76,7 +76,7 @@ AimBlock AimDriver::gate(uint64_t player, uint64_t mgr) const {
     if (!rd(player + l_.camera_state, &cam) || !rd(player + l_.morph_state, &morph) || !rd(player + l_.orbit_state, &orbit)) return AimBlock::BadState;
     if (cam != 0) return AimBlock::NotFirstPerson;
     if (morph != 0) return AimBlock::Morphed;
-    if (orbit != 0) return AimBlock::LockedOn;
+    if (orbit != 0 && !free_lock_active(player)) return AimBlock::LockedOn;
     const uint64_t logic = rd64(mgr + l_.mgr_logic);
     const uint64_t cm = logic ? rd64(logic + l_.logic_camera_mgr) : 0;
     if (!cm) return AimBlock::BadState;
@@ -90,6 +90,13 @@ AimBlock AimDriver::gate(uint64_t player, uint64_t mgr) const {
     const GameHints h = hints(player);
     if (h.valid && !h.alive) return AimBlock::Dead;
     return AimBlock::None;
+}
+
+bool AimDriver::free_lock_active(uint64_t player) const {
+    if (!player || !free_lock_setting()) return false;
+    uint32_t orbit = 0;
+    if (!rd(player + l_.orbit_state, &orbit) || orbit != 1) return false;
+    return hints(0).visor != 2;      // the scan visor keeps the classic lock
 }
 
 GameHints AimDriver::hints(uint64_t player) const {
@@ -155,6 +162,10 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
         }
     }
     if (original) original();
+    if (free_lock_active(player)) {
+        const uint8_t reached = 1;    // the game's own "the view reached the target" state: the aiming cursor (and so the arm cannon) tracks the locked target from then on
+        guest_write(player + l_.orbit_reached, &reached, 1);      // (the lock itself does not break when the view turns away: play_lockcam.cpp)
+    }
     const float out = static_cast<float>(pitch_);
     guest_write(player + l_.free_look_pitch, &out, sizeof out);
     guest_write(player + l_.free_look_target, &out, sizeof out);      // else Think eases the view back toward the stick's (zero) target

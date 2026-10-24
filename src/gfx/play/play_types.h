@@ -186,8 +186,26 @@ struct FpsSettings {
     bool in_screenshots = false;                         // [fps] in_screenshots: the counter is drawn into screenshots too (test tooling asks for this)
 };
 
+// ---- lock-on and camera feel (S32) --------------------------------------------------------------------------------------------
+// [aim] lock_mode: classic is the game's own lock-on (the view turns to the target); free starts the same way (the game centres the target)
+// and then lets the mouse and the right stick move the view, as long as the target stays on the screen (free_lock_margin). [camera] idle_sway and walk_bob: 1 is the game's own behaviour.
+enum class LockMode : uint8_t { Classic = 0, Free };
+const char* lock_mode_name(LockMode m);                       // "classic" "free"
+bool parse_lock_mode(const std::string& s, LockMode* out);    // case-insensitive
+struct AimSettings {
+    LockMode lock_mode = LockMode::Classic;
+    double free_lock_margin = 0.15;   // [aim] free_lock_margin (0..0.4): with the free lock the view may move, but the locked target stays inside the screen with this
+                                      // fraction of the screen size kept free along every edge (0 = right at the edge, 0.15 = the middle 70 percent)
+};
+struct CameraSettings {
+    bool idle_sway = true;     // the slow wandering of the first-person view while standing still
+    bool walk_bob = true;      // the up-and-down sway of the view while walking
+};
+
 struct Settings {
     MouseSettings mouse;
+    AimSettings aim;
+    CameraSettings camera;
     PadSettings pad;
     TimingSettings timing;
     DisplaySettings display;
