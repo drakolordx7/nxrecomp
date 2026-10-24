@@ -53,3 +53,14 @@ entryhook 0x7100d72314   # CFirstPersonCameraMP1::Think(float, CStateManager&): 
 entryhook 0x7100cff7ec   # CBallCameraMP1::Think(float, CStateManager&): x0 = the camera
 #   CPlayerStuckTrackerMP1::AddState (S25): one sample per 1/60 s of game time, so the 20 sample window of the stuck test keeps its length at high frame rates
 entryhook 0x7100d801d8
+# S28 (mouse pointer in menus, branch mouse; runtime src/gfx/play/menu_mouse*.cpp, docs/S28.md): the front end's UI widgets take the pointer.
+#   CUIWidgetGOC::ProcessInput(CStateManager&, float): x0 = widget; the hook runs the game's own and, when the pad did nothing for this widget, looks at the pointer
+entryhook 0x710088cb74
+#   CFinalInput::GetTouchScreenPosition(CTransform4f const*): answers the pointer position (UI units) while the game's touch routine runs for a click
+entryhook 0x710035322c
+#   CUIMenuGOC::BeforeThink(CStateManager&, float): x0 = the menu; before it runs its widgets the pointer picks the one it means
+entryhook 0x7100888608
+#   CGuiFrame::ProcessControllerInput(NGuiUtils::SWidgetInput const&): the older GUI frames (pause screen, options, map, message boxes): the pointer selects table rows
+entryhook 0x7100bd45e0
+#   CPauseScreenManagerMP1::ProcessControllerInput: x0 = the manager, which holds the tab and button labels of the pause screen (clicked like the buttons they show)
+entryhook 0x7100e65bec
