@@ -141,6 +141,7 @@ struct GplStats {
     uint64_t upgrades_queued = 0, upgrades_done = 0, upgrades_failed = 0, upgrades_taken = 0;
     double upgrade_ms = 0;
     uint64_t linked = 0, link_failed = 0, parts_ahead = 0, parts_at_draw = 0, parts_waited = 0, parts_hit = 0, jobs = 0, jobs_skipped = 0;
+    uint64_t jobs_pending = 0;                       // shader-part jobs queued or running at this moment (0 once every job queued so far has finished)
     double link_ms = 0, draw_part_ms = 0, wait_ms = 0, worker_ms = 0;
 };
 GplStats gpl_stats();

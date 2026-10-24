@@ -106,6 +106,22 @@ NXTEST(menu_mouse_window_to_ui_forced_display_aspect) {
     CHECK(close_to(nx, 1));
 }
 
+NXTEST(menu_mouse_window_to_ui_narrower_than_16_9_keeps_the_full_width) {
+    // 1600x1000 (16:10): the UI camera keeps its 16 units across the whole width and shows 10 units of height, so the pointer's x spans -1..1
+    // across the window and its y spans -1.1111..1.1111 (16 / 14.4... = kUiAspect / aspect) across the height.
+    const mm::Geometry g = geom(1600, 1000, 1600, 1000);
+    float nx = 9, ny = 9;
+    bool inside = false;
+    mm::window_to_ui(g, 0, 500, &nx, &ny, &inside);
+    CHECK(close_to(nx, -1) && close_to(ny, 0) && inside);
+    mm::window_to_ui(g, 800, 0, &nx, &ny, &inside);
+    CHECK(close_to(nx, 0) && close_to(ny, 16.0 / 9.0 / 1.6) && !inside);   // above the 16:9 content: off the UI
+    mm::window_to_ui(g, 800, 45, &nx, &ny, &inside);                        // 4.5 % of the height down: y = 0.91 * 1.1111, still above the content
+    CHECK(close_to(ny, 0.91 * (16.0 / 9.0) / 1.6) && !inside);
+    mm::window_to_ui(g, 800, 70, &nx, &ny, &inside);                        // 7 % down: y = 0.86 * 1.1111, inside the +-1 range
+    CHECK(inside);
+}
+
 // ---- transform ------------------------------------------------------------------------------------------------------------------
 
 NXTEST(menu_mouse_transform_point) {

@@ -146,10 +146,27 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Bindings };
+enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Bindings };
+
+// The factory-defaults revision this build writes ([meta] defaults_rev). Bump it together with a new entry in kDefaultAdditions.
+constexpr int kDefaultsRev = 2;
+
+// Factory bindings that an older controls.ini does not have. A file that has [bindings.*] sections and a defaults_rev below `rev` gets
+// each entry with rev above its own (only where the input is still unbound in that context, so the user's own choice wins).
+// Append new factory bindings here with the next rev; bump kDefaultsRev.
+struct DefaultAddition {
+    int rev;
+    Ctx ctx;
+    const char* input;
+    Act act;
+};
+const DefaultAddition kDefaultAdditions[] = {
+    {2, Ctx::Map, "X", Act::BtnX},   // the map's Key / Legend button (its footer shows X)
+};
 
 const char* sec_label(Sec s) {
     switch (s) {
+        case Sec::Meta: return "[meta]";
         case Sec::Mouse: return "[mouse]";
         case Sec::Pad: return "[pad]";
         case Sec::PadMap: return "[padmap]";
@@ -255,6 +272,9 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
     };
 
     switch (sec) {
+        case Sec::Meta:
+            if (k == "defaults_rev") return set_int(0, 1000, &s->defaults_rev);
+            break;
         case Sec::Mouse:
             if (k == "yaw") return set_num(&s->mouse.yaw_rad);
             if (k == "pitch") return set_num(&s->mouse.pitch_rad);
@@ -451,6 +471,33 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
     return true;
 }
 
+// Adds the factory bindings newer than `file_rev` to a file that has bindings sections. A binding is added only when no binding of the
+// same context already uses that input. Sets *added to a description of what was added (for the log line).
+void apply_default_additions(Settings* s, int file_rev, std::string* added) {
+    for (const DefaultAddition& d : kDefaultAdditions) {
+        if (d.rev <= file_rev) continue;
+        InputId id;
+        if (!parse_input(d.input, &id)) continue;
+        bool taken = false;
+        for (const Binding& b : s->bindings) {
+            if (b.ctx == d.ctx && b.in == id) {
+                taken = true;
+                break;
+            }
+        }
+        if (taken) continue;
+        Binding b;
+        b.in = id;
+        b.ctx = d.ctx;
+        b.act = d.act;
+        b.trig = Trig::Press;
+        b.ms = 0;
+        s->bindings.push_back(b);
+        if (!added->empty()) *added += ", ";
+        *added += input_name(id) + " = " + act_info(d.act).name + " in [bindings." + ctx_name(d.ctx) + "]";
+    }
+}
+
 // The core reader. Applies `text` on top of `*s`. Only writes what it parsed into `*s`; the caller decides what to keep.
 // If the text has no [bindings.*] section and with_default_bindings is set, the factory bindings are loaded first.
 bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vector<std::string>* warnings, bool with_default_bindings) {
@@ -509,7 +556,8 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             }
             const std::string name = trim(line.substr(1, line.size() - 2));
             const std::string key = lower(name);
-            if (key == "mouse") sec = Sec::Mouse;
+            if (key == "meta") sec = Sec::Meta;
+            else if (key == "mouse") sec = Sec::Mouse;
             else if (key == "pad") sec = Sec::Pad;
             else if (key == "padmap") sec = Sec::PadMap;
             else if (key == "timing") sec = Sec::Timing;
@@ -588,6 +636,20 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
         }
         if (!known) warn(i, "unknown key '" + key + "' in " + sec_label(sec));
     }
+
+    if (has_bindings) {
+        // A file with bindings written by an older revision gets the newer factory bindings it lacks (see kDefaultAdditions).
+        const int file_rev = s->defaults_rev;   // 0 when the file has no [meta]
+        if (file_rev < kDefaultsRev) {
+            std::string added;
+            apply_default_additions(s, file_rev, &added);
+            s->defaults_rev = kDefaultsRev;
+            s->migrated = true;
+            s->migration_added = added;
+        }
+    } else if (with_default_bindings) {
+        s->defaults_rev = kDefaultsRev;   // the factory bindings were applied, so the result is at the current revision
+    }
     return true;
 }
 
@@ -597,7 +659,10 @@ Settings default_settings() {
     Settings s;
     std::string err;
     // The factory text has a [bindings.*] section, so parse_settings does not look at the factory bindings again.
-    if (!parse_settings(default_settings_text(), &s, &err)) return builtin_settings();
+    if (!parse_settings(default_settings_text(), &s, &err)) {
+        s = builtin_settings();
+        s.defaults_rev = kDefaultsRev;
+    }
     return s;
 }
 
@@ -618,6 +683,8 @@ std::string format_settings(const Settings& s) {
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
 
     o += "# Metroid Prime Remastered, play mode: controls and display.\n";
+    o += "\n[meta]\n";
+    kv("defaults_rev", std::to_string(s.defaults_rev));
     o += "\n[mouse]\n";
     kv("yaw", num(s.mouse.yaw_rad));
     kv("pitch", num(s.mouse.pitch_rad));

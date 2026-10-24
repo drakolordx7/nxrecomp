@@ -14,6 +14,11 @@ const char* default_settings_text() {
     return R"INI(# Metroid Prime Remastered, play mode: controls and display.
 # F1 in game opens the settings page, which writes this file.
 
+[meta]
+# The factory-defaults revision this file was written with. A file with bindings and an older revision gets the newer factory bindings
+# added where the key is still unbound (docs/CONFIG.md). Do not change it by hand.
+defaults_rev = 2
+
 [mouse]
 # Radians per mouse count (raw, unaccelerated). The settings page shows the same value on the Source engine scale
 # (yaw_source = 2.0 is 2.0 * 0.022 degrees per count).

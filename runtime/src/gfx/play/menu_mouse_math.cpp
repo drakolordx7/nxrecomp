@@ -42,11 +42,14 @@ void window_to_ui(const Geometry& g, float px, float py, float* nx, float* ny, b
     if (aspect < 0.1) aspect = kUiAspect;
     // The UI camera is authored for 16:9 and kept at that shape in the middle of a wider (or narrower) picture: its width is kUiAspect / aspect of the
     // picture's width.
-    const double x = (u - 0.5) * 2.0 * (aspect / kUiAspect);
-    const double y = (0.5 - v) * 2.0;
+    // Narrower than 16:9 the camera keeps its full width and shows more above and below (display options, hud_ortho), so the picture's
+    // width is the camera's 16 units and its height is 16 / aspect units.
+    const bool narrow = aspect < kUiAspect - 0.02;
+    const double x = narrow ? (u - 0.5) * 2.0 : (u - 0.5) * 2.0 * (aspect / kUiAspect);
+    const double y = narrow ? (0.5 - v) * 2.0 * (kUiAspect / aspect) : (0.5 - v) * 2.0;
     if (nx) *nx = static_cast<float>(x);
     if (ny) *ny = static_cast<float>(y);
-    if (inside) *inside = u >= 0 && u < 1 && v >= 0 && v < 1 && std::fabs(x) <= 1.0;
+    if (inside) *inside = u >= 0 && u < 1 && v >= 0 && v < 1 && std::fabs(x) <= 1.0 && std::fabs(y) <= 1.0;
 }
 
 void transform_point(const float m[12], float x, float y, float z, float out[3]) {

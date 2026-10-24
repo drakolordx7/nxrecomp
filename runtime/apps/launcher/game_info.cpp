@@ -317,6 +317,15 @@ bool start_game(const std::wstring& game_dir, std::wstring* err, const std::wstr
 bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* err, const std::wstring& extra_args) {
     std::wstring args = L"--out " + quote_arg(game_dir);
     if (!extra_args.empty()) args += L" " + extra_args;
+    // The shader pack sits next to the launcher in a release. Say so explicitly, so setup finds it even when it is started from a
+    // different working folder. Scripted runs that name their own shaders (or none) in --setup-args keep their choice.
+    const bool has_choice = extra_args.find(L"--shader-pack") != std::wstring::npos || extra_args.find(L"--shader-cache") != std::wstring::npos ||
+                            extra_args.find(L"--no-shaders") != std::wstring::npos;
+    if (!has_choice) {
+        std::error_code ec;
+        const fs::path pack = fs::path(launcher_exe_dir()) / L"shader_cache.mprshc";
+        if (fs::exists(pack, ec)) args += L" --shader-pack " + quote_arg(pack.wstring());
+    }
     return launch_in_exe_dir(L"mpr_setup.exe", args, process, err);
 }
 

@@ -42,6 +42,8 @@ const IconInfo kIcons[kIconCount] = {
     {Btn::Plus, true, "TXTR_ButtonPlusPressed", "c6e47769-3e3c-4d82-adb1-f1f384642301", kGui, "289fe674-12d9-4ae7-8d56-8fba49c5ff65"},
     {Btn::Minus, false, "TXTR_ButtonMinus", "dd9a75d4-db58-41f9-be73-b2934b696997", kGui, "7b9ad0b2-83c1-40fe-bfa7-23308c05f51e"},
     {Btn::DPad, false, "TXTR_DPadIdle", "d78d38fa-a230-4363-a12b-1dc6eea1ad3a", kFront, nullptr},
+    {Btn::None, false, "TXTR_LStickIdle", "f72e5e94-6afe-4860-82b0-756714ce3e0a", kGui, "0f32e3c3-1893-4d29-9c53-fe2163e434a5"},
+    {Btn::None, false, "TXTR_RStickIdle", "1dbb8f79-6e18-4d41-8586-65341d66fa2a", kGui, "875ca189-1d34-4d3c-970f-261eb0d13c21"},
 };
 
 std::string lower_ascii(std::string s) {
@@ -162,6 +164,11 @@ bool input_for_button(const Settings& s, Ctx ctx, Btn b, InputId* out) {
 }
 
 std::string resolve_icon(const ResolveIn& in, Icon icon) {
+    // The map's stick icons: the mouse buttons that drive the map (left drag rotates, middle drag moves). Only keyboard style on the map.
+    if (icon == Icon::LStick || icon == Icon::RStick) {
+        if (in.style != PromptStyle::Keyboard || in.ctx != Ctx::Map) return {};
+        return icon == Icon::LStick ? "kbm/mouse1" : "kbm/mouse2";
+    }
     const Btn b = icon_button(icon);
     const PadSettings no_pad{};
     const PadSettings& pad = in.settings ? in.settings->pad : no_pad;

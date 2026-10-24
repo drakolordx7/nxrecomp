@@ -796,7 +796,9 @@ void program_bound(const ShaderInfo* const stages[6]) { gpl_program_bound(stages
 
 GplStats gpl_stats() {
     std::lock_guard<std::mutex> lk(g_mu);
-    return g_stats;
+    GplStats s = g_stats;
+    s.jobs_pending = g_hot_q.size() + (g_cold ? g_cold_q.size() : 0) + static_cast<uint64_t>(g_running);
+    return s;
 }
 
 void gpl_stop() {

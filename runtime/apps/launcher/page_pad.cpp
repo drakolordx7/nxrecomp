@@ -122,8 +122,10 @@ public:
                 [i](const Settings& s) { return item_of_value(s.pad.remap[i]); },
                 [this, i](Settings& s, int item) { s.pad.remap[i] = item == kCustomItem ? custom_[i] : value_of_item(item); });
         }
-        f.columns(1);
+        f.columns(2);
         reset_id_ = f.button(L"Reset layout", 150, true);
+        find_id_ = f.button(L"Find a button...", 150, true);
+        f.columns(1);
     }
 
     void load(const Settings& s) override {
@@ -135,6 +137,15 @@ public:
     }
 
     bool command(int id, int code, HWND) override {
+        if (id == find_id_ && code == BN_CLICKED) {
+            // The player presses the button on the pad; that row's drop-down gets the focus and opens so it is clear which one it is.
+            int row = -1;
+            if (capture_pad_button(host()->window(), host()->env(), &row) && row >= 0 && row < kPadSrcCount) {
+                SetFocus(combos_[row]);
+                SendMessageW(combos_[row], CB_SHOWDROPDOWN, TRUE, 0);
+            }
+            return true;
+        }
         if (id != reset_id_ || code != BN_CLICKED) return false;
         for (HWND c : combos_) SendMessageW(c, CB_SETCURSEL, 0, 0);
         host()->changed();
@@ -148,6 +159,7 @@ private:
     uint64_t custom_[kPadSrcCount] = {};   // the value of each button when the page opened; written back while Custom is selected
     HWND combos_[kPadSrcCount] = {};
     int reset_id_ = 0;
+    int find_id_ = 0;
 };
 
 }  // namespace

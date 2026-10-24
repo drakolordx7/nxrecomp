@@ -150,6 +150,11 @@ bool xinput_pad_connected();
 // being bound ("Jump").
 bool capture_input(HWND owner, const Env& env, const std::wstring& what, nxrt::play::InputId* out);
 
+// A modal "press the controller button you want to change" window for the Controller tab. Polls the game controllers until one button
+// (or a trigger pulled past half) is pressed, then returns true with *out_source set to that row (pad_capture.h). Returns false when
+// the player cancelled (Escape or closed it). Without a controller it says so and keeps waiting for one.
+bool capture_pad_button(HWND owner, const Env& env, int* out_source);
+
 // Message-box helpers with the launcher's title.
 int message(HWND owner, const std::wstring& text, UINT type = MB_OK | MB_ICONINFORMATION);
 std::wstring input_label(const nxrt::play::InputId& id);   // the player-facing name of an input ("Left Ctrl", "Left mouse button", "Wheel up")

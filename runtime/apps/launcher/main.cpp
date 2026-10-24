@@ -39,6 +39,7 @@ constexpr int kLogicalW = 680;
 constexpr int kLogicalH = 650;
 constexpr UINT_PTR kTimerSetup = 1;
 constexpr UINT kMsgPrepareUpdate = WM_APP + 1;     // PrepareRun: the progress or the result changed (posted from its worker thread)
+constexpr UINT kMsgTestDpi = WM_APP + 40;            // test aid (launcher_e2e.py): wParam = a DPI; runs the WM_DPICHANGED path with a rectangle scaled to it
 constexpr UINT kMsgPrepareFinished = WM_APP + 2;   // PrepareRun: the child has exited and its output is read
 
 enum ControlId : int {
@@ -146,6 +147,7 @@ private:
     void build_pages();
     void destroy_pages();
     void layout();
+    void change_dpi(int dpi, const RECT& suggested);
     void show_page(int i);
 
     void load_game_dir(const std::wstring& dir);
@@ -294,6 +296,20 @@ void App::layout() {
     MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&tr), 2);
     for (auto& p : pages_)
         if (p->hwnd()) MoveWindow(p->hwnd(), tr.left, tr.top, tr.right - tr.left, tr.bottom - tr.top, TRUE);
+}
+
+void App::change_dpi(int dpi, const RECT& r) {
+    for (auto& p : pages_)
+        if (p->hwnd()) p->store(&cur_);
+    destroy_pages();
+    free_fonts();
+    env_.dpi = dpi;
+    make_fonts();
+    SetWindowPos(hwnd_, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    apply_fonts();
+    layout();
+    build_pages();
+    layout();
 }
 
 void App::build_pages() {
@@ -622,19 +638,17 @@ LRESULT App::on_message(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_CREATE: on_create(); return 0;
         case WM_SIZE: layout(); return 0;
-        case WM_DPICHANGED: {
-            for (auto& p : pages_)
-                if (p->hwnd()) p->store(&cur_);
-            destroy_pages();
-            free_fonts();
-            env_.dpi = HIWORD(wp);
-            make_fonts();
-            const RECT* r = reinterpret_cast<const RECT*>(lp);
-            SetWindowPos(hwnd_, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
-            apply_fonts();
-            layout();
-            build_pages();
-            layout();
+        case WM_DPICHANGED:
+            change_dpi(HIWORD(wp), *reinterpret_cast<const RECT*>(lp));
+            return 0;
+        case kMsgTestDpi: {
+            // Windows does not deliver a WM_DPICHANGED that another process sends, so the test drives the same code through this message.
+            RECT r{};
+            GetWindowRect(hwnd_, &r);
+            const int w = MulDiv(r.right - r.left, static_cast<int>(wp), env_.dpi), h = MulDiv(r.bottom - r.top, static_cast<int>(wp), env_.dpi);
+            r.right = r.left + w;
+            r.bottom = r.top + h;
+            change_dpi(static_cast<int>(wp), r);
             return 0;
         }
         case WM_COMMAND: on_command(LOWORD(wp), HIWORD(wp)); return 0;

@@ -18,7 +18,7 @@ using mprl::bind_slot;
 using mprl::clear_slot;
 using mprl::inputs_for;
 using mprl::key_rows;
-using mprl::reset_bindings;
+using mprl::reset_shown_bindings;
 using nxrt::play::Act;
 using nxrt::play::Binding;
 using nxrt::play::Ctx;
@@ -37,6 +37,35 @@ InputId key(const char* name) {
 InputId mouse(int code) { return InputId{InKind::Mouse, code}; }
 
 bool same_input(const InputId& a, const InputId& b) { return a == b; }
+
+bool same_binding(const Binding& a, const Binding& b) {
+    return same_input(a.in, b.in) && a.ctx == b.ctx && a.act == b.act && a.trig == b.trig && a.ms == b.ms;
+}
+
+// The bindings of the factory layer (all_layer true, Ctx::All) or of the other contexts (false), in file order.
+std::vector<Binding> layer(const Settings& s, bool all_layer) {
+    std::vector<Binding> out;
+    for (const Binding& b : s.bindings)
+        if ((b.ctx == Ctx::All) == all_layer) out.push_back(b);
+    return out;
+}
+
+bool same_list(const std::vector<Binding>& a, const std::vector<Binding>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!same_binding(a[i], b[i])) return false;
+    return true;
+}
+
+Binding binding(const char* key_name, Ctx ctx, Act act) {
+    Binding b;
+    b.in = key(key_name);
+    b.ctx = ctx;
+    b.act = act;
+    b.trig = Trig::Press;
+    b.ms = 0;
+    return b;
+}
 
 }  // namespace
 
@@ -137,19 +166,58 @@ NXTEST(reset_restores_factory_bindings) {
     Settings s = nxrt::play::default_settings();
     bind_slot(s, Act::Fire, 0, key("G"), nullptr);
     clear_slot(s, Act::Jump, 0);
-    reset_bindings(s);
+    reset_shown_bindings(s);
 
     const Settings factory = nxrt::play::default_settings();
     CHECK_EQ(s.bindings.size(), factory.bindings.size());
-    bool same = s.bindings.size() == factory.bindings.size();
-    for (std::size_t i = 0; same && i < s.bindings.size(); ++i) {
-        const Binding& a = s.bindings[i];
-        const Binding& b = factory.bindings[i];
-        same = same_input(a.in, b.in) && a.ctx == b.ctx && a.act == b.act && a.trig == b.trig && a.ms == b.ms;
-    }
-    CHECK(same);
+    CHECK(same_list(s.bindings, factory.bindings));
     const std::vector<InputId> in = inputs_for(s, Act::Fire);
     CHECK(in.size() == 1 && same_input(in[0], mouse(1)));
+}
+
+NXTEST(reset_shown_bindings_leaves_other_contexts_alone) {
+    // Edit the factory layer (the keys this tab shows) and every other context.
+    Settings s = nxrt::play::default_settings();
+    bind_slot(s, Act::Fire, 0, key("G"), nullptr);
+    clear_slot(s, Act::Jump, 0);
+    bind_slot(s, Act::Jump, 1, key("Z"), nullptr);
+    s.bindings.push_back(binding("H", Ctx::Menu, Act::Confirm));
+    s.bindings.push_back(binding("J", Ctx::Map, Act::Map));
+    s.bindings.push_back(binding("K", Ctx::Morph, Act::Jump));
+    s.bindings.push_back(binding("L", Ctx::Scan, Act::Visor2));
+    s.bindings.push_back(binding("M", Ctx::Gameplay, Act::Fire));
+    s.bindings.push_back(binding("N", Ctx::Gameplay, Act::Jump));
+    // Remove the first gameplay binding (M); N stays.
+    for (auto it = s.bindings.begin(); it != s.bindings.end(); ++it) {
+        if (it->ctx != Ctx::Gameplay) continue;
+        s.bindings.erase(it);
+        break;
+    }
+
+    const std::vector<Binding> others_before = layer(s, false);
+    reset_shown_bindings(s);
+
+    // The factory layer is back, and the other contexts are the same bindings in the same order.
+    const Settings factory = nxrt::play::default_settings();
+    CHECK(same_list(layer(s, true), layer(factory, true)));
+    CHECK(same_list(layer(s, false), others_before));
+    CHECK_EQ(s.bindings.size(), layer(factory, true).size() + others_before.size());
+    const std::vector<InputId> fire = inputs_for(s, Act::Fire);
+    CHECK(fire.size() == 1 && same_input(fire[0], mouse(1)));
+    const std::vector<InputId> jump = inputs_for(s, Act::Jump);
+    CHECK(jump.size() == 1 && same_input(jump[0], key("Space")));
+}
+
+NXTEST(reset_shown_bindings_fills_an_empty_factory_layer) {
+    // No All binding left at all: the reset adds the factory layer and keeps the other contexts.
+    Settings s = nxrt::play::default_settings();
+    const std::vector<Binding> others = layer(s, false);
+    s.bindings = others;
+    reset_shown_bindings(s);
+
+    const Settings factory = nxrt::play::default_settings();
+    CHECK(same_list(layer(s, true), layer(factory, true)));
+    CHECK(same_list(layer(s, false), others));
 }
 
 NXTEST(other_contexts_are_not_touched) {
