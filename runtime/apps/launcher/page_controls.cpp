@@ -14,6 +14,7 @@ namespace mprl {
 
 namespace {
 
+using nxrt::play::LockMode;
 using nxrt::play::PromptStyle;
 using nxrt::play::rad_per_count;
 using nxrt::play::source_sens;
@@ -39,6 +40,16 @@ std::wstring sens_text(int pos) {
 // The button icon drop-down, in the order it shows. The list index is what the page reads and writes; the enum value is what is saved.
 const PromptStyle kStyles[] = {PromptStyle::Auto, PromptStyle::Keyboard, PromptStyle::Xbox, PromptStyle::PlayStation, PromptStyle::Switch};
 constexpr int kStyleCount = static_cast<int>(sizeof kStyles / sizeof kStyles[0]);
+
+// The free-lock edge margin as a percent slider: 0.15 -> 15, 0..40 only.
+int margin_pos(double m) {
+    return static_cast<int>(std::clamp(std::lround(m * 100.0), 0L, 40L));
+}
+
+// Margin slider position as text: 15 -> "15 %".
+std::wstring margin_text(int pos) {
+    return std::to_wstring(pos) + L" %";
+}
 
 // The two sensitivities have the same rounded value, so the "same for both" box starts ticked.
 bool same_steps(const Settings& s) {
@@ -88,6 +99,23 @@ public:
             L"Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
             [](Settings& s, bool v) { s.mouse.menu_cursor = v; });
 
+        f.heading(L"Lock-on and camera");
+        f.combo(
+            L"Lock-on camera", {L"Classic (the view turns to the target)", L"Free (you keep control of the view)"},
+            [](const Settings& s) { return s.aim.lock_mode == LockMode::Free ? 1 : 0; },
+            [](Settings& s, int i) { s.aim.lock_mode = i == 1 ? LockMode::Free : LockMode::Classic; });
+        f.hint(L"Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.", 3);
+        f.slider(
+            L"Free lock edge margin", 0, 40, [](const Settings& s) { return margin_pos(s.aim.free_lock_margin); },
+            [this](Settings& s, int pct) {
+                if (pct == margin0_) return;   // only a value the player moved is written
+                s.aim.free_lock_margin = pct / 100.0;
+            },
+            margin_text);
+        f.checkbox(
+            L"Gun drives the view (the game's own)", [](const Settings& s) { return s.camera.gun_drives_view; },
+            [](Settings& s, bool v) { s.camera.gun_drives_view = v; });
+
         f.heading(L"Button prompts");
         f.combo(
             L"Button icons", {L"Automatic (follows what you use)", L"Keyboard and mouse", L"Xbox", L"PlayStation", L"Switch (the game's own)"},
@@ -105,6 +133,7 @@ public:
         yaw0_ = slider_pos(s.mouse.yaw_rad);
         pitch0_ = slider_pos(s.mouse.pitch_rad);
         morph0_ = slider_pos(s.mouse.morph_yaw_rad);
+        margin0_ = margin_pos(s.aim.free_lock_margin);
         linked_ = same_steps(s);
         Page::load(s);
     }
@@ -121,7 +150,7 @@ private:
     }
 
     HWND yaw_ = nullptr, pitch_ = nullptr;
-    int yaw0_ = 0, pitch0_ = 0, morph0_ = 0;   // slider positions as loaded
+    int yaw0_ = 0, pitch0_ = 0, morph0_ = 0, margin0_ = 0;   // slider positions as loaded
     bool linked_ = false;                      // the "same for both" box (not saved)
     bool syncing_ = false;
 };

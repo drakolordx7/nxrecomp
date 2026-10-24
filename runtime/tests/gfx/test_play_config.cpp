@@ -91,6 +91,8 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
           ma.menu_cursor == mb.menu_cursor && ma.wheel_beams == mb.wheel_beams))
         return false;
+    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.gun_drives_view != b.camera.gun_drives_view)
+        return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
           pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale))
@@ -490,6 +492,80 @@ NXTEST(menu_cursor_parses_and_round_trips) {
     REQUIRE_MSG(parse_settings(text, &r, &err), err);
     CHECK(!r.mouse.menu_cursor);
     CHECK(same_settings(s, r));
+}
+
+NXTEST(lockfree_parses_and_round_trips) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE(parse_settings("[aim]\nlock_mode = free\n", &s, &err, &w));
+    CHECK(w.empty());
+    CHECK(s.aim.lock_mode == LockMode::Free);
+    Settings u;
+    REQUIRE(parse_settings("[aim]\nlock_mode = FREE\n", &u, &err));
+    CHECK(u.aim.lock_mode == LockMode::Free);
+    Settings c;
+    REQUIRE(parse_settings("[aim]\nlock_mode = classic\n", &c, &err));
+    CHECK(c.aim.lock_mode == LockMode::Classic);
+    const std::string text = format_settings(s);
+    CHECK(text.find("lock_mode = free") != std::string::npos);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(r.aim.lock_mode == LockMode::Free);
+    CHECK(same_settings(s, r));
+}
+
+NXTEST(lockfree_rejects_unknown_value) {
+    Settings s;
+    std::string err;
+    CHECK(!parse_settings("[aim]\nlock_mode = sideways\n", &s, &err));
+    CHECK(err.find("lock_mode") != std::string::npos);
+}
+
+NXTEST(lockfree_margin_parses_and_round_trips) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE(parse_settings("[aim]\nfree_lock_margin = 0.3\n", &s, &err, &w));
+    CHECK(w.empty());
+    CHECK(s.aim.free_lock_margin == 0.3);
+    const std::string text = format_settings(s);
+    CHECK(text.find("free_lock_margin = 0.3") != std::string::npos);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(r.aim.free_lock_margin == 0.3);
+    CHECK(same_settings(s, r));
+}
+
+NXTEST(lockfree_margin_rejects_out_of_range) {
+    Settings s;
+    std::string err;
+    CHECK(!parse_settings("[aim]\nfree_lock_margin = 0.5\n", &s, &err));
+    CHECK(err.find("free_lock_margin") != std::string::npos);
+    CHECK(!parse_settings("[aim]\nfree_lock_margin = -0.1\n", &s, &err));
+    CHECK(err.find("free_lock_margin") != std::string::npos);
+}
+
+NXTEST(camera_gun_drives_view_parses_and_round_trips) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE(parse_settings("[camera]\ngun_drives_view = 0\n", &s, &err, &w));
+    CHECK(w.empty());
+    CHECK(!s.camera.gun_drives_view);
+    const std::string text = format_settings(s);
+    CHECK(text.find("gun_drives_view = 0") != std::string::npos);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(!r.camera.gun_drives_view);
+    CHECK(same_settings(s, r));
+}
+
+NXTEST(camera_and_aim_defaults_are_classic_and_on) {
+    const Settings d = default_settings();
+    CHECK(d.aim.lock_mode == LockMode::Classic);
+    CHECK(d.aim.free_lock_margin == 0.15);
+    CHECK(d.camera.gun_drives_view);
 }
 
 NXTEST(parse_errors_name_the_line) {
