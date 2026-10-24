@@ -2,8 +2,9 @@
 // Button prompts (S17): which icon of the prompt pack stands in for each of the game's own button icons. Pure functions, no
 // game memory and no graphics; prompts.cpp does the texture side.
 //
-// The game draws its prompts ("PRESS (A) TO START", the footer of the menus, tutorial texts) with 17 small BC7 textures,
-// TXTR_ButtonA, TXTR_ButtonB ... TXTR_DPadIdle, in GuiSysMP1.pak and PreloadFrontEndMPT.pak. Each of them is one Icon here.
+// The game draws its prompts ("PRESS (A) TO START", the footer of the menus, tutorial texts) with 19 small BC7 textures,
+// TXTR_ButtonA, TXTR_ButtonB ... TXTR_DPadIdle, and the two stick icons TXTR_LStickIdle and TXTR_RStickIdle, in GuiSysMP1.pak and
+// PreloadFrontEndMPT.pak. Each of them is one Icon here.
 #pragma once
 #include <string>
 
@@ -11,12 +12,12 @@
 
 namespace nxrt::play {
 
-// The physical button an icon shows.
-enum class Btn : uint8_t { A, B, X, Y, L, R, ZL, ZR, Plus, Minus, DPad, kCount };
+// The physical button an icon shows. None: the icon is not a button of the Switch pad (the stick icons).
+enum class Btn : uint8_t { A, B, X, Y, L, R, ZL, ZR, Plus, Minus, DPad, None, kCount };
 
 // The game's icon textures. The "Pressed" ones are the gold highlighted twins the game draws while the button is held.
 enum class Icon : uint8_t {
-    A, APressed, B, BPressed, X, Y, L, R, RPressed, ZL, ZLPressed, ZR, ZRPressed, Plus, PlusPressed, Minus, DPad,
+    A, APressed, B, BPressed, X, Y, L, R, RPressed, ZL, ZLPressed, ZR, ZRPressed, Plus, PlusPressed, Minus, DPad, LStick, RStick,
     kCount
 };
 constexpr int kIconCount = static_cast<int>(Icon::kCount);
@@ -39,6 +40,8 @@ struct ResolveIn {
 // pressed icon. Pad styles show the physical button that presses the Switch button, following settings->pad.remap. Empty: keep the
 // game's own icon (Switch style, a keyboard style button no input is bound to, or a pad style where nothing presses the button or the
 // pad source is a stick click or the d-pad).
+// The stick icons (LStick, RStick) are the map's controls: keyboard style on the map shows the mouse buttons that drive it (left button
+// rotates, middle button moves; kbm/mouse1 and kbm/mouse2). Every other style and context keeps the game's own stick icon.
 std::string resolve_icon(const ResolveIn& in, Icon icon);
 
 // Keyboard and mouse: the input that presses this Switch button in the given context, following the bindings of the settings.

@@ -196,6 +196,12 @@ struct Settings {
     FpsSettings fps;
     Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
+    // [meta] defaults_rev: the factory-defaults revision the file was written with (0 when the file has no [meta]). When a file with
+    // bindings sections is read at an older revision, the newer factory bindings are added to it (play_config.cpp, kDefaultsRev).
+    int defaults_rev = 0;
+    // Transient, never written to the file: set by load_settings when it upgraded an older file, so the caller can keep a .bak and save.
+    bool migrated = false;
+    std::string migration_added;   // transient: the bindings the upgrade added, for the log line
 };
 
 // The factory settings: the table above and the default bindings (default_settings_text() in play_defaults.cpp, which is the same text
@@ -205,6 +211,7 @@ const char* default_settings_text();
 
 // ---- the settings file ---------------------------------------------------------------------------------------------------------
 // Plain ini, '#' or ';' starts a comment. Sections and keys are case-insensitive, whitespace around names and values is ignored.
+//   [meta]     defaults_rev = <n>   (written by the game; the factory-defaults revision of the file, a file without it counts as 0)
 //   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_cursor = 1   wheel_beams = 1     (radians per count)
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
 //   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale

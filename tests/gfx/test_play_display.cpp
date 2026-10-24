@@ -155,6 +155,37 @@ NXTEST(hud_perspective_widens_only_the_16_9_camera) {
     CHECK(!play::hud_perspective(nullptr, 2.3889));
 }
 
+NXTEST(hud_perspective_narrow_display_grows_the_vertical_angle_once) {
+    // 16:10: the horizontal reach of the frame stays what it was drawn for, so the vertical angle grows: tan(v'/2) = tan(65/2) * (16/9) / 1.6
+    float aspect = 1.7778f, fov = 65.0f;
+    CHECK(play::hud_perspective(&aspect, 1.6, &fov));
+    CHECK(close_to(aspect, 1.6));
+    const double want = 2.0 * std::atan(std::tan(65.0 * 3.14159265358979 / 360.0) * (16.0 / 9.0) / 1.6) * 180.0 / 3.14159265358979;
+    CHECK(close_to(fov, want));
+    const float once = fov;
+    CHECK(play::hud_perspective(&aspect, 1.6, &fov));            // called again for the same camera (every frame): no change
+    CHECK(close_to(fov, once));
+    float wide_aspect = 1.7778f, wide_fov = 65.0f;                // a display wider than 16:9 never changes the angle
+    CHECK(play::hud_perspective(&wide_aspect, 2.3889, &wide_fov));
+    CHECK(close_to(wide_fov, 65.0));
+    float no_fov_aspect = 1.7778f;                                // without a fov pointer only the aspect changes (old behaviour)
+    CHECK(play::hud_perspective(&no_fov_aspect, 1.6));
+    CHECK(close_to(no_fov_aspect, 1.6));
+}
+
+NXTEST(hud_ortho_narrow_display_keeps_the_width_and_grows_the_height) {
+    float l = -8, r = 8, b = -4.5f, t = 4.5f;
+    CHECK(play::hud_ortho(&l, &r, &b, &t, 1.6));
+    CHECK(close_to(l, -8) && close_to(r, 8));
+    CHECK(close_to(t, 5.0) && close_to(b, -5.0));                // 16 / 1.6 = 10 units tall around the centre
+    CHECK(play::hud_ortho(&l, &r, &b, &t, 1.6));                  // again: the same
+    CHECK(close_to(t, 5.0) && close_to(b, -5.0));
+    float l2 = 8, r2 = -8, b2 = -4.5f, t2 = 4.5f;                 // the retail ball HUD (reversed left and right)
+    CHECK(play::hud_ortho(&l2, &r2, &b2, &t2, 4.0 / 3.0));
+    CHECK(close_to(l2, 8) && close_to(r2, -8));
+    CHECK(close_to(t2, 6.0) && close_to(b2, -6.0));
+}
+
 NXTEST(hud_ortho_widens_the_16_9_extents_around_the_centre) {
     float l = -8, r = 8, b = -4.5f, t = 4.5f;
     CHECK(play::hud_ortho(&l, &r, &b, &t, 32.0 / 9.0));

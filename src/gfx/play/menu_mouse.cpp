@@ -37,6 +37,11 @@ constexpr uint64_t kFnTextPaneBounds = 0x861b98;           // CTextPaneGOC::GetB
 constexpr uint64_t kFnRenderCastToPtr = 0x80a030;          // CRenderGOC::CastToPtr(CGameObjectComponent*)
 constexpr uint64_t kFnRenderTextureBounds = 0xa330f0;      // CRenderTexture::GetBounds(CAABox&)
 constexpr uint64_t kBtnPaneCount = 128, kBtnPanes = 136;   // CUIButtonGOC: the linked text panes / render components (ids)
+constexpr uint64_t kFnSliderCastToPtr = 0x889d64;          // CUISliderGOC::CastToPtr(CGameObjectComponent*)
+constexpr uint64_t kFnSliderSetTick = 0x88a8bc;            // CUISliderGOC::SetTickCount(CStateManager&, float tick, bool send_value): x0 slider, x1 state manager, s0 tick
+// A slider row of the front end's option pages (HUD Opacity, SFX, Music): the knob travels from kSliderX0 (0) to kSliderX1 (max) in UI units. The slider
+// widget has no button and so no box; its component is the one its "button" field names.
+constexpr float kSliderX0 = -3.02f, kSliderX1 = 1.28f, kSliderGrab = 0.35f;
 constexpr uint64_t kFnButtonCastToPtr = 0x883b64;          // CUIButtonGOC::CastToPtr(CGameObjectComponent*)
 constexpr uint64_t kWButton = 0x90;                        // id of the widget's CUIButtonGOC
 constexpr uint64_t kBtnBox = 176;                          // the button's CAABox2f: min x, min y, max x, max y
@@ -87,6 +92,10 @@ struct State {
     bool over_value = false;                  // the pointer is over a slider: the wheel steps its value
     uint64_t pause_mgr = 0;                   // the pause screen manager seen last (its label panes)
     Act pending_act = Act::None;              // a button the pointer pressed (a pause screen label)
+    uint64_t drag_goc = 0;                    // the front end's slider component the left button is dragging (0: none)
+    float drag_max = 0;                       // its tick count
+    uint32_t rehover = 0;                     // frames in which the pointer is treated as moving, after it switched lists
+    uint32_t focus_cooldown = 0;              // frames before the pointer may ask again to move between two lists (A / B)
     uint64_t chosen = 0;                      // the widget a click goes to
     uint64_t hover_w = 0;                     // the widget a hover selects (an arrow button's row label)
     bool over_value_goc = false;              // the pointer is over an option's arrow buttons: the wheel steps the value                      // the widget the pointer means this tick (set by the menu hook)
@@ -121,6 +130,17 @@ uint64_t call_guest(::Ctx* c, uint64_t fn, uint64_t a0, uint64_t a1 = 0, uint64_
 void ui_point(const Snapshot& snap, float out[2]) {
     out[0] = snap.nx * kUiHalfWidth;
     out[1] = snap.ny * kUiHalfHeight;
+}
+
+// CUISliderGOC::SetTickCount with a float argument: the same call the pad's left and right make through OnAction_NextTick / PrevTick.
+void slider_set_tick(::Ctx* c, uint64_t goc, uint64_t sm, float tick) {
+    ::Ctx saved = *c;
+    c->x[0] = goc;
+    c->x[1] = sm;
+    c->x[2] = 1;
+    c->v[0].f32[0] = tick;
+    dispatch_call(c, S().base + kFnSliderSetTick);
+    *c = saved;
 }
 
 // Debug (NXRT_MENUMOUSE_LOG=3): the pieces a button's box is made of, asked directly.
@@ -238,17 +258,31 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
     s.hover_now = s.snap.hover || (changed && s.snap.shown);
     if (changed) s.over_value_goc = false;
     s.last_menu = menu;
-    if (!(s.hover_now || s.snap.click)) return 0;
+    if (!s.snap.held) s.drag_goc = 0;
+    if (!(s.hover_now || s.snap.click || s.drag_goc)) return 0;
     if (s.log >= 2) NXLOG_I(kTag, "menu %llx focus=%u widgets=%d ids=%llx", static_cast<unsigned long long>(menu), focus, n, static_cast<unsigned long long>(ids));
     float pt[2];
     ui_point(s.snap, pt);
     struct Cand { uint64_t w; uint32_t mode, state; float box[4]; bool hit; float dist; uint64_t btn; };
     std::vector<Cand> cands;
+    struct Slider { uint64_t goc; float ticks; };
+    std::vector<Slider> sliders;                                   // in the order of the menu's widgets: top row first
     for (int32_t i = 0; i < n && i < 64; ++i) {
         uint32_t cid = 0;
         if (!play::guest_read(ids + 4ull * i, &cid, 4)) continue;
         const uint64_t comp = call_guest(c, kFnComponentById, sm + 0x30, cid);
         const uint64_t w = comp ? call_guest(c, kFnWidgetCastToPtr, comp) : 0;
+        if (s.log >= 4 && comp) {
+            const uint64_t sg = call_guest(c, kFnSliderCastToPtr, comp);
+            if (sg) {
+                float tk[3] = {0, 0, 0};
+                uint64_t pr = 0;
+                play::guest_read(sg + 0x38, &pr, 8);
+                if (pr) play::guest_read(pr + 0xc, &tk[0], 4);
+                play::guest_read(sg + 0x44, &tk[1], 4);
+                NXLOG_I(kTag, "  menu id %08x is a slider component %llx: max ticks %.1f, current %.1f", cid, static_cast<unsigned long long>(sg), tk[0], tk[1]);
+            }
+        }
         if (!w) continue;
         const WidgetInfo wi = widget_info(w);
         if (!wi.ok) continue;
@@ -257,6 +291,12 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
         {
             const uint64_t bc = wi.button ? call_guest(c, kFnComponentById, sm + 0x30, wi.button) : 0;
             btn = bc ? call_guest(c, kFnButtonCastToPtr, bc) : 0;
+            if (!btn && bc) {                                      // a slider's widget names its slider component where a button's names the button
+                const uint64_t sg = call_guest(c, kFnSliderCastToPtr, bc);
+                uint64_t pr = 0;
+                float ticks = 0;
+                if (sg && play::guest_read(sg + 0x38, &pr, 8) && pr && play::guest_read(pr + 0xc, &ticks, 4) && ticks >= 1.f) sliders.push_back({sg, ticks});
+            }
             if (btn) {
                 uint32_t shape = 0;
                 uint64_t bprops = 0;
@@ -266,6 +306,15 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
             }
         }
         if (s.log >= 3 && btn) log_button_parts(c, btn, sm);
+        if (s.log >= 4) {   // debug: which of the widget's fields name a slider component?
+            for (uint64_t off = 0; off < 0x200; off += 4) {
+                uint32_t v = 0;
+                if (!play::guest_read(w + off, &v, 4) || v < 0x10000 || v > 0x1ffff) continue;
+                const uint64_t cc = call_guest(c, kFnComponentById, sm + 0x30, v);
+                const uint64_t sg = cc ? call_guest(c, kFnSliderCastToPtr, cc) : 0;
+                if (sg) NXLOG_I(kTag, "    widget %08x: field +%llu = %08x is a slider component %llx", wi.id, static_cast<unsigned long long>(off), v, static_cast<unsigned long long>(sg));
+            }
+        }
         k.btn = btn;
         const bool valid = btn && k.box[2] > k.box[0] && k.box[3] > k.box[1];
         k.hit = valid && pt[0] >= k.box[0] && pt[0] <= k.box[2] && pt[1] >= k.box[1] && pt[1] <= k.box[3];
@@ -297,6 +346,44 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
     const Cand* best = nullptr;
     for (const Cand& k : cands)
         if (k.hit && (!best || k.dist < best->dist)) best = &k;
+    // Slider rows: the label rows that have no pair of arrow buttons beside them, top to bottom, are the rows of the sliders found above, in order.
+    // The track is a picture with no box: a pointer over the knob's travel on that row selects the row, a click or a drag sets the value.
+    if (!sliders.empty()) {
+        std::vector<const Cand*> rows;
+        for (const Cand& k : cands) {
+            if (k.mode != 1 && k.mode != 2) continue;
+            const float cy = 0.5f * (k.box[1] + k.box[3]);
+            bool arrows = false;
+            for (const Cand& a : cands)
+                if (a.mode == 0 && std::fabs(0.5f * (a.box[1] + a.box[3]) - cy) < 0.1f) arrows = true;
+            if (!arrows) rows.push_back(&k);
+        }
+        std::sort(rows.begin(), rows.end(), [](const Cand* a, const Cand* b) { return a->box[1] > b->box[1]; });
+        const Slider* dragging = nullptr;
+        for (const Slider& sl : sliders)
+            if (sl.goc == s.drag_goc) dragging = &sl;
+        for (size_t i = 0; i < rows.size() && i < sliders.size(); ++i) {
+            const Cand& row = *rows[i];
+            const Slider& sl = sliders[i];
+            const bool over = pt[0] >= kSliderX0 - kSliderGrab && pt[0] <= kSliderX1 + kSliderGrab && pt[1] >= row.box[1] && pt[1] <= row.box[3];
+            if (!over && dragging != &sl) continue;
+            uint8_t fl = 0;
+            if (!play::guest_read(sl.goc + 0x28, &fl, 1) || (~fl & 0x78) != 0) continue;     // the slider is not active
+            s.chosen = 0;
+            s.hover_w = row.w;
+            s.over_value_goc = true;
+            if (s.snap.click && over) { s.drag_goc = sl.goc; s.pointer.click_used(); s.clicks++; dragging = &sl; }
+            if (dragging == &sl && (s.snap.click || s.snap.held)) {
+                const float f = std::min(1.f, std::max(0.f, (pt[0] - kSliderX0) / (kSliderX1 - kSliderX0)));
+                const float tick = std::floor(f * sl.ticks + 0.5f);
+                float cur = -1;
+                play::guest_read(sl.goc + 0x44, &cur, 4);
+                if (tick != cur) slider_set_tick(c, sl.goc, sm, tick);
+                if (s.log) NXLOG_I(kTag, "slider row %llx: pointer %.3f -> tick %.0f of %.0f (was %.0f)", static_cast<unsigned long long>(row.w), pt[0], tick, sl.ticks, cur);
+            }
+            return 0;
+        }
+    }
     s.chosen = best ? best->w : 0;
     s.hover_w = 0;
     s.over_value_goc = false;
@@ -529,6 +616,23 @@ int table_row_at(::Ctx* c, uint64_t table, uint64_t cam, float gx, float gy, int
     return best;
 }
 
+// The horizontal middle of the rows of a table on the screen (ndc), or false when no row has a text pane to measure.
+bool table_center_x(::Ctx* c, uint64_t table, uint64_t cam, int32_t rows, float* out) {
+    float sum = 0;
+    int n = 0;
+    for (int32_t i = 0; i < rows; ++i) {
+        const uint64_t row = call_guest(c, kFnGuiWorker, table, static_cast<uint64_t>(i));
+        NdcRect q;
+        if (row) gui_pane_rect(c, row, cam, &q, 0);
+        if (!q.valid()) continue;
+        sum += 0.5f * (q.x0 + q.x1);
+        ++n;
+    }
+    if (!n) return false;
+    *out = sum / static_cast<float>(n);
+    return true;
+}
+
 thread_local bool t_in_frame = false;
 uint64_t g_dumped_frame = 0, g_last_gui_frame = 0;
 uint32_t g_dumped_count = 0;
@@ -546,18 +650,34 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
     if (!n || !list || !cam) return;
     const bool changed = frame != g_last_gui_frame;
     g_last_gui_frame = frame;
-    const bool hover = s.snap.hover || (changed && s.snap.shown);
+    bool hover = s.snap.hover || (changed && s.snap.shown);
+    if (s.rehover > 0) { --s.rehover; hover = true; }       // a list was just made active for the pointer: select the row under it once it has taken over
     if (!s.snap.in_picture) return;
+    // Two lists side by side (Inventory and Log Book: the categories on the left, the items or entries on the right) are tables of which only one
+    // is active; the pad moves between them with A (into the right list) and B (back). Tables that are visible and enabled but not active are kept
+    // here, so a pointer over one of them can ask for that move.
+    struct Idle { uint64_t w; int32_t rows; };
+    std::vector<Idle> idle;
+    float active_cx = 0;
+    bool have_active = false;
+    if (s.focus_cooldown > 0) --s.focus_cooldown;
     for (uint32_t i = 0; i < n && i < 400 && (hover || s.snap.click); ++i) {
         uint64_t w = 0, vp = 0;
         if (!play::guest_read(list + 8ull * i, &w, 8) || !w || !play::guest_read(w, &vp, 8)) continue;
         if (std::strcmp(gui_type(vp), "TableGroup") != 0) continue;
-        if (!(call_guest(c, kFnGuiIsActive, w) & 1) || !(call_guest(c, kFnGuiIsVisible, w) & 1) || !(call_guest(c, kFnGuiIsEnabled, w) & 1)) continue;
+        if (!(call_guest(c, kFnGuiIsVisible, w) & 1) || !(call_guest(c, kFnGuiIsEnabled, w) & 1)) continue;
+        if (!(call_guest(c, kFnGuiIsActive, w) & 1)) {
+            int32_t r2 = 0;
+            play::guest_read(w + kTableRows, &r2, 4);
+            if (r2 > 0 && r2 <= 32) idle.push_back({w, r2});
+            continue;
+        }
         int32_t rows = 0, cur = 0;
         play::guest_read(w + kTableRows, &rows, 4);
         play::guest_read(w + kTableCurrent, &cur, 4);
         if (rows <= 0 || rows > 32) continue;
         s.capable += static_cast<uint32_t>(rows);
+        if (!have_active) have_active = table_center_x(c, w, cam, rows, &active_cx);
         const int hit = table_row_at(c, w, cam, s.snap.gx, s.snap.gy, rows);
         if (s.log) NXLOG_I(kTag, "gui table %llx rows=%d current=%d pointer=(%.3f, %.3f) -> row %d", static_cast<unsigned long long>(w), rows, cur, s.snap.gx, s.snap.gy, hit);
         if (hit < 0) continue;
@@ -567,6 +687,21 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
             s.pending_act = Act::Confirm;
             s.pointer.click_used();
             s.clicks++;
+            return;
+        }
+    }
+    // the pointer is over a row of the other list: ask the pad's way across (A into the list on the right, B back to the one on the left). The list
+    // becomes active in the game's own way, and its row under the pointer is selected on the next frames like any other.
+    if (have_active && !idle.empty() && s.focus_cooldown == 0) {
+        for (const Idle& t : idle) {
+            const int hit = table_row_at(c, t.w, cam, s.snap.gx, s.snap.gy, t.rows);
+            float cx = 0;
+            if (hit < 0 || !table_center_x(c, t.w, cam, t.rows, &cx) || std::fabs(cx - active_cx) < 0.1f) continue;
+            s.pending_act = cx > active_cx ? Act::Confirm : Act::Back;
+            s.focus_cooldown = 20;
+            s.rehover = 25;
+            if (s.snap.click) { s.pointer.click_used(); s.clicks++; } else { s.hovers++; }
+            if (s.log) NXLOG_I(kTag, "gui table %llx (row %d) is not active: %s", static_cast<unsigned long long>(t.w), hit, cx > active_cx ? "A (into the right list)" : "B (back to the left list)");
             return;
         }
     }

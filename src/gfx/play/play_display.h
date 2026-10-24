@@ -41,7 +41,7 @@ void internal_size(const DisplaySettings& d, int window_w, int window_h, int* ou
 double display_aspect(const DisplaySettings& d, int w, int h);
 
 // A GUI perspective camera's aspect: returns true and sets *aspect when it was the authored 16:9 (or already the display aspect).
-bool hud_perspective(float* aspect, double display_aspect);
+bool hud_perspective(float* aspect, double display_aspect, float* fov_degrees = nullptr);
 // A GUI orthographic camera's extents (left, right, bottom, top as the game stores them: either order of each pair; the retail ball HUD has
 // left 8, right -8): widens the width around its centre so |width| / |height| = display aspect, keeping the order. Only cameras whose own
 // ratio is 16:9 (or already the display aspect) are touched.

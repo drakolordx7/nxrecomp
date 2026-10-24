@@ -186,6 +186,28 @@ NXTEST(a_switch_button_nothing_presses_has_no_pad_icon) {
     CHECK_EQ(name_of(t, PromptStyle::Xbox, Ctx::Menu, Icon::Y), std::string("xbox/y"));
 }
 
+NXTEST(map_sticks_show_the_mouse_buttons_that_drive_the_map) {
+    const Settings s = default_settings();
+    // the map: left drag rotates it (button 1), middle drag moves it (button 2)
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Map, Icon::LStick), std::string("kbm/mouse1"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Map, Icon::RStick), std::string("kbm/mouse2"));
+    // no settings at all: the stick icons do not need the bindings
+    ResolveIn r;
+    r.style = PromptStyle::Keyboard;
+    r.ctx = Ctx::Map;
+    CHECK_EQ(resolve_icon(r, Icon::LStick), std::string("kbm/mouse1"));
+}
+
+NXTEST(stick_icons_keep_the_games_icon_outside_the_keyboard_map) {
+    const Settings s = default_settings();
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::LStick), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::RStick), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Map, Icon::LStick), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::PlayStation, Ctx::Map, Icon::RStick), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Switch, Ctx::Map, Icon::RStick), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Menu, Icon::RStick), std::string());
+}
+
 NXTEST(auto_follows_the_last_used_device) {
     CHECK(auto_style(LastDevice::KeyboardMouse, 1, 1) == PromptStyle::Keyboard);
     CHECK(auto_style(LastDevice::Pad, 2, -1) == PromptStyle::PlayStation);
@@ -204,14 +226,22 @@ NXTEST(every_icon_has_an_id_and_a_pak) {
         CHECK(uuids.insert(icon_asset_uuid(ic)).second);
         CHECK(std::strstr(icon_asset_name(ic), "TXTR_") == icon_asset_name(ic));
         CHECK(std::strstr(icon_pak_file(ic), ".pak") != nullptr);
+        CHECK(std::strlen(icon_pak_file(ic)) > 0);
+        const auto canonical = [](const char* id) {   // lower-case hex and dashes, the canonical text of the pak ids
+            for (const char* c = id; *c; ++c)
+                if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '-')) return false;
+            return true;
+        };
+        CHECK(canonical(icon_asset_uuid(ic)));
         if (const char* front = icon_front_uuid(ic)) {   // the front end's own copy (title screen, menus)
             CHECK_EQ(std::strlen(front), size_t(36));
+            CHECK(canonical(front));
             CHECK(uuids.insert(front).second);
         }
     }
     int with_front = 0;
     for (int i = 0; i < kIconCount; ++i) with_front += icon_front_uuid(static_cast<Icon>(i)) != nullptr;
-    CHECK_EQ(with_front, 16);   // every icon but the d-pad (whose id is the same in both interfaces)
+    CHECK_EQ(with_front, 18);   // every icon but the d-pad (whose id is the same in both interfaces), the two sticks included
 }
 
 // ---- the pack ------------------------------------------------------------------------------------------------------------------------
@@ -244,8 +274,13 @@ NXTEST(the_shipped_pack_has_every_icon_every_style_can_ask_for) {
     for (PromptStyle st : {PromptStyle::Xbox, PromptStyle::PlayStation})
         for (bool label : {true, false})
             for (int i = 0; i < kIconCount; ++i) {
+                const Icon ic = static_cast<Icon>(i);
                 const Settings s = default_settings();
-                const std::string n = name_of(s, st, Ctx::Menu, static_cast<Icon>(i), label);
+                const std::string n = name_of(s, st, Ctx::Menu, ic, label);
+                if (icon_button(ic) == Btn::None) {   // the stick icons: a pad shows the game's own
+                    CHECK(n.empty());
+                    continue;
+                }
                 CHECK_MSG(!n.empty() && p.find(n) != nullptr, n);
             }
     // keyboard: the key of every name SDL has for a scancode (a key the player can bind) has an entry, and its pressed twin

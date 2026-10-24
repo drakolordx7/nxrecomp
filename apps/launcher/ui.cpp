@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "keymap_win.h"
+#include "pad_capture.h"
 
 namespace mprl {
 
@@ -467,6 +468,122 @@ bool capture_input(HWND owner, const Env& env, const std::wstring& what, nxrt::p
     SetForegroundWindow(owner);
     if (st.got && out) *out = st.id;
     return st.got;
+}
+
+// ---- Find a button (Controller tab) -----------------------------------------------------------------------------------------
+
+namespace {
+
+constexpr wchar_t kPadCaptureClass[] = L"MprLauncherPadCapture";
+constexpr UINT_PTR kPadPollTimer = 1;
+constexpr UINT kPadPollMs = 30;
+constexpr wchar_t kPadPressText[] = L"Press the controller button you want to change. Escape cancels.";
+constexpr wchar_t kPadNoPadText[] = L"No controller found. Connect one and press a button, or press Escape.";
+
+struct PadCaptureState {
+    PadCapture* pad = nullptr;
+    HWND text = nullptr;
+    bool shown_no_pad = false;   // which of the two texts the window shows
+    bool done = false;
+    int source = -1;             // the row pressed, or -1 when cancelled
+};
+
+LRESULT CALLBACK pad_capture_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    PadCaptureState* st = reinterpret_cast<PadCaptureState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!st) return DefWindowProcW(hwnd, msg, wp, lp);
+    switch (msg) {
+        case WM_TIMER: {
+            if (wp != kPadPollTimer) break;
+            const int row = st->pad->poll();
+            if (row >= 0) {
+                st->source = row;
+                st->done = true;
+                return 0;
+            }
+            const bool none = !st->pad->has_pad();
+            if (none != st->shown_no_pad) {
+                st->shown_no_pad = none;
+                SetWindowTextW(st->text, none ? kPadNoPadText : kPadPressText);
+            }
+            return 0;
+        }
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
+            if (wp == VK_ESCAPE) st->done = true;
+            return 0;
+        case WM_KEYUP:
+        case WM_SYSKEYUP:
+        case WM_CHAR:
+        case WM_SYSCHAR:
+            return 0;
+        case WM_SYSCOMMAND:
+            if ((wp & 0xFFF0) == SC_KEYMENU) return 0;   // Alt or F10 must not open the system menu
+            break;
+        case WM_CLOSE:
+            st->done = true;
+            return 0;
+        case WM_CTLCOLORSTATIC: {
+            HDC dc = reinterpret_cast<HDC>(wp);
+            SetBkMode(dc, TRANSPARENT);
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+}  // namespace
+
+bool capture_pad_button(HWND owner, const Env& env, int* out_source) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof wc;
+        wc.lpfnWndProc = &pad_capture_proc;
+        wc.hInstance = env.inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(static_cast<INT_PTR>(COLOR_WINDOW + 1));
+        wc.lpszClassName = kPadCaptureClass;
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    PadCapture pad;
+    pad.open();   // if this fails the window just reports no controller; Escape still cancels
+    PadCaptureState st;
+    st.pad = &pad;
+    st.shown_no_pad = !pad.has_pad();
+    const int w = env.S(400), h = env.S(150);
+    RECT orc{};
+    GetWindowRect(owner, &orc);
+    const int x = orc.left + ((orc.right - orc.left) - w) / 2;
+    const int y = orc.top + ((orc.bottom - orc.top) - h) / 2;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, kPadCaptureClass, L"Find a button", WS_POPUP | WS_CAPTION | WS_SYSMENU, x, y, w, h,
+                               owner, nullptr, env.inst, nullptr);
+    if (!dlg) return false;
+    SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
+    // The client area is a little smaller than the window; the text fills it.
+    RECT crc{};
+    GetClientRect(dlg, &crc);
+    st.text = CreateWindowExW(0, L"STATIC", st.shown_no_pad ? kPadNoPadText : kPadPressText, WS_CHILD | WS_VISIBLE | SS_CENTER | SS_NOPREFIX, env.S(12),
+                              env.S(10), crc.right - env.S(24), crc.bottom - env.S(20), dlg, nullptr, env.inst, nullptr);
+    SendMessageW(st.text, WM_SETFONT, reinterpret_cast<WPARAM>(env.font), TRUE);
+    EnableWindow(owner, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetForegroundWindow(dlg);
+    SetFocus(dlg);
+    SetTimer(dlg, kPadPollTimer, kPadPollMs, nullptr);
+    MSG m;
+    while (!st.done && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    KillTimer(dlg, kPadPollTimer);
+    EnableWindow(owner, TRUE);
+    DestroyWindow(dlg);
+    SetForegroundWindow(owner);
+    pad.close();
+    if (st.source < 0) return false;
+    if (out_source) *out_source = st.source;
+    return true;
 }
 
 }  // namespace mprl

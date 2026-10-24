@@ -62,11 +62,11 @@ public:
     bool command(int id, int code, HWND) override {
         if (code != BN_CLICKED) return false;
         if (id == reset_id_) {
-            if (message(host()->window(), L"Reset every key binding to the factory settings? This also resets the keys of the menus, map, "
-                                          L"gameplay and morph ball.",
+            if (message(host()->window(), L"Reset the keys on this tab to the factory settings? Only the keys shown here are reset. "
+                                          L"The menu, map, gameplay, morph ball and scan keys are not touched.",
                         MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
                 return true;
-            reset_bindings(edit_);
+            reset_shown_bindings(edit_);
             refresh();
             host()->changed();
             return true;

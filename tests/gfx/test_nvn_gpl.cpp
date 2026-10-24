@@ -85,14 +85,17 @@ void check_triangle(const std::vector<uint8_t>& px) {
     CHECK(magenta > 360 && magenta < 410);
 }
 
-// Waits (up to 6 s) until the workers have built `want` shader parts ahead of the draw, so the draw links the finished parts instead of
-// racing the workers for them. The checks after the draw say what happened.
-void wait_for_parts(uint64_t want) {
+// Waits until the workers have finished every shader-part job queued so far, so the draw links finished parts instead of racing the workers
+// for them. Counting finished parts is not enough: the program has one fragment part and one pre-rasterisation part for each raster variant
+// (jobs 5 here), and the first two to finish may not be the two the draw needs. The queue and the running count are read together under the
+// lock, so no job can be in between. 60 s is a safety stop for a stuck worker; the checks after the draw report it.
+void wait_for_parts(uint64_t /*unused: kept so the call sites read the same*/) {
     const auto t0 = std::chrono::steady_clock::now();
     for (;;) {
-        if (gpu::gpl_stats().parts_ahead >= want) return;
-        if (std::chrono::steady_clock::now() - t0 > 6s) return;
-        std::this_thread::sleep_for(10ms);
+        const gpu::GplStats s = gpu::gpl_stats();
+        if (s.jobs > 0 && s.jobs_pending == 0) return;
+        if (std::chrono::steady_clock::now() - t0 > 60s) return;
+        std::this_thread::sleep_for(5ms);
     }
 }
 
@@ -213,7 +216,11 @@ NXTEST(triangle_through_libraries) {
     CHECK(s.linked >= 1);
     CHECK(s.link_failed == 0);
     CHECK(s.parts_ahead >= 2);
-    CHECK(s.parts_at_draw <= 2);     // only the vertex input and fragment output parts are made at the draw
+    // The draw makes the vertex input and fragment output parts itself. It may also make the pre-rasterisation part of its raster flags:
+    // the workers only know the default flags, the draw teaches them its own (learn_raster) and queues that part for the workers, so
+    // the draw and a worker race for it (the draw waits for the worker, or makes it first). Never more than those three.
+    CHECK(s.parts_at_draw <= 3);
+    CHECK(s.parts_at_draw >= 2);
     app.shutdown();
 }
 
