@@ -17,6 +17,7 @@
 #include <shobjidl.h>
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -34,6 +35,9 @@ using nxrt::play::load_settings;
 using nxrt::play::save_settings;
 
 constexpr wchar_t kClassName[] = L"MprLauncherWindow";
+#ifndef MPR_VERSION
+#define MPR_VERSION "dev"
+#endif
 constexpr wchar_t kTitle[] = L"Metroid Prime Remastered PC";
 constexpr int kLogicalW = 680;
 constexpr int kLogicalH = 650;
@@ -44,8 +48,15 @@ constexpr UINT kMsgPrepareFinished = WM_APP + 2;   // PrepareRun: the child has 
 
 enum ControlId : int {
     IDC_TITLE = 2000, IDC_STATUS, IDC_FOLDER_LABEL, IDC_FOLDER, IDC_CHANGE, IDC_SETUP, IDC_TABS, IDC_RESET, IDC_NOTE, IDC_SAVE, IDC_PLAY,
-    IDC_PREP_TEXT, IDC_PREP_BAR, IDC_PREP_CANCEL,
+    IDC_PREP_TEXT, IDC_PREP_BAR, IDC_PREP_CANCEL, IDC_VERSION,
 };
+
+// "v0.1.0" for a release build, "dev build" for a local one.
+std::wstring version_text() {
+    const char* v = MPR_VERSION;
+    std::wstring w(v, v + std::strlen(v));
+    return (v[0] >= '0' && v[0] <= '9') ? L"v" + w : L"dev build";
+}
 
 std::string narrow(const std::wstring& w) {
     if (w.empty()) return {};
@@ -168,7 +179,7 @@ private:
     CmdLine cmd_;
     Env env_;
     HWND hwnd_ = nullptr;
-    HWND title_ = nullptr, status_ = nullptr, folder_label_ = nullptr, folder_ = nullptr, change_ = nullptr, setup_btn_ = nullptr;
+    HWND version_ = nullptr, title_ = nullptr, status_ = nullptr, folder_label_ = nullptr, folder_ = nullptr, change_ = nullptr, setup_btn_ = nullptr;
     HWND tabs_ = nullptr, reset_ = nullptr, note_ = nullptr, save_ = nullptr, play_ = nullptr;
     HWND prep_text_ = nullptr, prep_bar_ = nullptr, prep_cancel_ = nullptr;   // shader preparation row, shown while it runs
     HFONT title_font_ = nullptr;
@@ -213,7 +224,7 @@ void App::free_fonts() {
 }
 
 void App::apply_fonts() {
-    for (HWND h : {folder_label_, folder_, change_, setup_btn_, tabs_, reset_, note_, save_, status_, prep_text_, prep_cancel_})
+    for (HWND h : {version_, folder_label_, folder_, change_, setup_btn_, tabs_, reset_, note_, save_, status_, prep_text_, prep_cancel_})
         if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(env_.font), TRUE);
     SendMessageW(title_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font_), TRUE);
     SendMessageW(play_, WM_SETFONT, reinterpret_cast<WPARAM>(env_.bold), TRUE);
@@ -226,6 +237,7 @@ void App::on_create() {
         return CreateWindowExW(ex, cls, text, style | WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), env_.inst, nullptr);
     };
     title_ = mk(L"STATIC", kTitle, SS_LEFT | SS_NOPREFIX, IDC_TITLE);
+    version_ = mk(L"STATIC", version_text().c_str(), SS_RIGHT | SS_NOPREFIX, IDC_VERSION);
     status_ = mk(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, IDC_STATUS);
     folder_label_ = mk(L"STATIC", L"Game folder", SS_LEFT | SS_NOPREFIX, IDC_FOLDER_LABEL);
     folder_ = mk(L"EDIT", L"", ES_READONLY | ES_AUTOHSCROLL | WS_TABSTOP, IDC_FOLDER, WS_EX_CLIENTEDGE);
@@ -262,7 +274,9 @@ void App::layout() {
     const int S_16 = env_.S(16);
     const int w = rc.right - rc.left;
     auto put = [](HWND h, int x, int y, int cx, int cy) { MoveWindow(h, x, y, cx, cy, TRUE); };
-    put(title_, S_16, env_.S(10), w - 2 * S_16, env_.S(30));
+    const int vw = env_.S(150);
+    put(title_, S_16, env_.S(10), w - 2 * S_16 - vw, env_.S(30));
+    put(version_, w - S_16 - vw, env_.S(18), vw, env_.S(20));
     put(status_, S_16, env_.S(44), w - 2 * S_16, env_.S(20));
     const int row = env_.S(72);
     put(folder_label_, S_16, row + env_.S(4), env_.S(84), env_.S(20));
@@ -665,7 +679,7 @@ LRESULT App::on_message(UINT msg, WPARAM wp, LPARAM lp) {
             HWND c = reinterpret_cast<HWND>(lp);
             COLORREF col = GetSysColor(COLOR_WINDOWTEXT);
             if (c == status_) col = status_color_;
-            else if (c == note_) col = kGray;
+            else if (c == note_ || c == version_) col = kGray;
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, col);
             return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
@@ -730,7 +744,8 @@ int App::run() {
     if (!RegisterClassExW(&wc)) return 1;
 
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    CreateWindowExW(0, kClassName, kTitle, style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, env_.inst, this);
+    const std::wstring caption = std::wstring(kTitle) + L"  " + version_text();
+    CreateWindowExW(0, kClassName, caption.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, env_.inst, this);
     if (!hwnd_) return 1;
     // The DPI at WM_CREATE can still be the placeholder; it settles once the window is placed. Rebuild the fonts if it differs.
     const int dpi_now = static_cast<int>(GetDpiForWindow(hwnd_));
