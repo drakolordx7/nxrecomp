@@ -64,3 +64,22 @@ entryhook 0x7100888608
 entryhook 0x7100bd45e0
 #   CPauseScreenManagerMP1::ProcessControllerInput: x0 = the manager, which holds the tab and button labels of the pause screen (clicked like the buttons they show)
 entryhook 0x7100e65bec
+# S32 (freelock; runtime src/gfx/play/play_lockcam.cpp, docs/S32.md): free lock-on and the decoupled gun.
+#   CPlayerMP1::UpdateOrbitOrientation(float, CStateManager&): x0 = the player; turns the body to face the lock-on target (skipped by free lock-on)
+entryhook 0x7100c77854
+#   CPlayerMP1::ComputeFreeLook(CFinalInput const&, CStateManager const&): x0 = the player; with a lock the pitch target is the direction to the target
+entryhook 0x7100c71638
+#   CPlayerMP1::TurnInput(CStateManager const&, CFinalInput const&) const: x0 = the player; returns the turn input in s0 (zero while locked on)
+entryhook 0x7100cefa54
+#   CFirstPersonCameraMP1::UpdateTransform(CStateManager&, float): x0 = the camera; while locked on it eases its own view toward the target (run as unlocked by free lock-on)
+entryhook 0x7100d710ac
+#   CPlayerMP1::ValidateCurrentOrbitTargetId(CStateManager&): x0 = the player; returns why the lock breaks (5 = the view turned away); free lock-on turns that into "still locked"
+entryhook 0x7100c765d0
+#   CPlayerGunMP1::Update(IMP1EntityBaseGOC&, float, float, float, CStateManager&): x0 = the gun; the decoupled gun moves its transform (+484) by the camera bob that the view no longer shows
+entryhook 0x7100c93950
+#   CPlayerMP1::UpdateAimTarget(CStateManager&): x0 = the player; free lock-on makes the locked target the aim target too, so the aiming cursor and the gun stay on it
+entryhook 0x7100c7ad8c
+#   CAimingCursorMP1::Update(CFinalInput const&, float, CStateManager&): x0 = the cursor; free lock-on follows what the cursor does while locked on
+entryhook 0x7100cb6250
+#   CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: free lock-on tells the aiming cursor that the aim-follow command is held while the lock is on
+entryhook 0x71004d7540
