@@ -11,6 +11,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "nxrt/config.h"
@@ -36,8 +37,14 @@ struct LayoutKey {
 std::mutex g_layout_mu;
 std::recursive_mutex g_module_mu;   // every module cache below; the variant makers call shader_module
 std::map<LayoutKey, ProgLayout> g_layouts;
+// Descriptor set layouts and the pipeline layout built from them, shared by every program whose descriptors are the same (S24): two programs with
+// the same signature get the same VkPipelineLayout handle, so the shader parts compiled for one are found again for the other.
+struct SharedLayout { VkDescriptorSetLayout sets[4] = {}; VkPipelineLayout layout = VK_NULL_HANDLE; };
+std::map<std::string, SharedLayout> g_shared_layouts;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
 std::atomic<bool> g_cache_dirty{false};
+std::atomic<uint32_t> g_new_since_save{0};      // pipelines and parts created since the cache file was last written
+bool g_cache_big = false;                       // the file loaded at start was large (a shader preparation made it): rewritten rarely, see pipeline_cache_dirty
 // Producer modules with extra outputs (nvn_spirv_patch.h): (shader, slots as location * 4 + scalar type).
 std::map<std::pair<const ShaderInfo*, std::vector<uint32_t>>, VkShaderModule> g_variants;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;
@@ -74,9 +81,18 @@ void ensure_cache() {
     g_cache_path = config_get_str("nvn", "pipeline_cache", "pipeline_cache.bin");
     std::vector<char> data;
     if (!g_cache_path.empty()) {
-        std::ifstream f(g_cache_path, std::ios::binary);
-        if (f) data.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        if (FILE* f = std::fopen(g_cache_path.c_str(), "rb")) {          // one read: the file can be hundreds of MB after a shader preparation
+            std::fseek(f, 0, SEEK_END);
+            const long len = std::ftell(f);
+            std::fseek(f, 0, SEEK_SET);
+            if (len > 0) {
+                data.resize(static_cast<size_t>(len));
+                if (std::fread(data.data(), 1, data.size(), f) != data.size()) data.clear();
+            }
+            std::fclose(f);
+        }
     }
+    g_cache_big = data.size() >= (64u << 20);
     VkPipelineCacheCreateInfo ci = {VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
     ci.initialDataSize = data.size();
     ci.pInitialData = data.empty() ? nullptr : data.data();
@@ -92,7 +108,9 @@ void ensure_cache() {
 
 void save_cache() {
     if (!g_cache || g_cache_path.empty()) return;
+    NXFT("pipe.cache.save");
     g_cache_dirty.store(false);
+    g_new_since_save.store(0);
     size_t n = 0;
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, nullptr) != VK_SUCCESS || !n) return;
     std::vector<char> data(n);
@@ -115,8 +133,17 @@ void save_cache() {
 
 }  // namespace
 
-bool pipeline_cache_dirty() { return g_cache_dirty.load(std::memory_order_relaxed); }
+// A cache of hundreds of MB (the shader preparation's) is rewritten only after thousands of new pipelines: the new ones are few next to it and
+// the write takes seconds. The ordinary small cache is written whenever something new appeared, as before.
+bool pipeline_cache_dirty() {
+    if (!g_cache_dirty.load(std::memory_order_relaxed)) return false;
+    return !g_cache_big || g_new_since_save.load(std::memory_order_relaxed) >= 3000;
+}
 void pipeline_cache_save() { save_cache(); }
+// The write at the end of a session: skipped when the cache is the big one of a preparation and little was added.
+void pipeline_cache_flush() {
+    if (!g_cache_big || g_new_since_save.load(std::memory_order_relaxed) >= 300) save_cache();
+}
 
 bool GraphicsKey::operator==(const GraphicsKey& o) const { return std::memcmp(this, &o, sizeof *this) == 0; }
 uint64_t GraphicsKey::hash() const {
@@ -147,6 +174,25 @@ static VkShaderModule create_module(const std::vector<uint32_t>& words, const ch
             fixed.erase(fixed.begin() + static_cast<std::ptrdiff_t>(cap_at), fixed.begin() + static_cast<std::ptrdiff_t>(cap_at) + 2);
             code = &fixed;
         }
+    }
+    // [nvn] spirv_salt (measurement only): an OpSourceExtension with the salt in every module gives the driver a new shader hash, so a run
+    // compiles every shader from scratch without touching the driver's own cache on disk.
+    static const std::string salt = config_get_str("nvn", "spirv_salt", "");
+    std::vector<uint32_t> salted;
+    if (!salt.empty() && code->size() > 5) {
+        salted = *code;
+        size_t at = 5;
+        while (at < salted.size()) {
+            const uint32_t op = salted[at] & 0xffff, len = salted[at] >> 16;
+            if (len == 0) break;
+            if (op != 17 && op != 10 && op != 11 && op != 14 && op != 15 && op != 16 && op != 331) break;   // capability .. execution mode
+            at += len;
+        }
+        std::vector<uint32_t> ins((salt.size() + 1 + 3) / 4 + 1, 0);
+        ins[0] = (static_cast<uint32_t>(ins.size()) << 16) | 4u;                 // OpSourceExtension
+        std::memcpy(&ins[1], salt.c_str(), salt.size());
+        salted.insert(salted.begin() + static_cast<std::ptrdiff_t>(at), ins.begin(), ins.end());
+        code = &salted;
     }
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     ci.codeSize = code->size() * 4;
@@ -326,8 +372,9 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
             }
         }
     }
+    std::vector<VkDescriptorSetLayoutBinding> lbs[4];
+    std::string sig;                                   // the descriptors of the program, as bytes: the key of the shared layout
     for (int set = 0; set < 4; ++set) {
-        std::vector<VkDescriptorSetLayoutBinding> lb;
         for (const BindingDesc& d : pl.bindings) {
             if (d.set != static_cast<uint32_t>(set)) continue;
             VkDescriptorSetLayoutBinding b = {};
@@ -335,36 +382,40 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
             b.descriptorType = d.type;
             b.descriptorCount = std::max<uint32_t>(1, d.shader->refl.bindings[d.index].count);
             b.stageFlags = d.stages;
-            lb.push_back(b);
+            lbs[set].push_back(b);
             pl.has_set[set] = true;
+            const uint32_t w[4] = {b.binding, static_cast<uint32_t>(b.descriptorType), b.descriptorCount, b.stageFlags};
+            sig.append(reinterpret_cast<const char*>(w), sizeof w);
         }
-        VkDescriptorSetLayoutCreateInfo ci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        ci.bindingCount = static_cast<uint32_t>(lb.size());
-        ci.pBindings = lb.data();
-        if (vkCreateDescriptorSetLayout(vkdev(), &ci, nullptr, &pl.sets[set]) != VK_SUCCESS) {
-            NXLOG_E(kTag, "descriptor set layout %d failed", set);
+        sig.append("|", 1);
+    }
+    auto sh = g_shared_layouts.find(sig);
+    if (sh == g_shared_layouts.end()) {
+        SharedLayout nl;
+        for (int set = 0; set < 4; ++set) {
+            VkDescriptorSetLayoutCreateInfo ci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            ci.bindingCount = static_cast<uint32_t>(lbs[set].size());
+            ci.pBindings = lbs[set].data();
+            if (vkCreateDescriptorSetLayout(vkdev(), &ci, nullptr, &nl.sets[set]) != VK_SUCCESS) {
+                NXLOG_E(kTag, "descriptor set layout %d failed", set);
+                return nullptr;
+            }
+        }
+        VkPipelineLayoutCreateInfo pci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pci.setLayoutCount = 4;
+        pci.pSetLayouts = nl.sets;
+        if (vkCreatePipelineLayout(vkdev(), &pci, nullptr, &nl.layout) != VK_SUCCESS) {
+            NXLOG_E(kTag, "pipeline layout failed");
             return nullptr;
         }
+        sh = g_shared_layouts.emplace(sig, nl).first;
     }
-    VkPipelineLayoutCreateInfo pci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pci.setLayoutCount = 4;
-    pci.pSetLayouts = pl.sets;
-    if (vkCreatePipelineLayout(vkdev(), &pci, nullptr, &pl.layout) != VK_SUCCESS) {
-        NXLOG_E(kTag, "pipeline layout failed");
-        return nullptr;
-    }
+    for (int set = 0; set < 4; ++set) pl.sets[set] = sh->second.sets[set];
+    pl.layout = sh->second.layout;
     return &g_layouts.emplace(key, std::move(pl)).first->second;
 }
 
-VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
-    ensure_cache();
-    const auto t0 = std::chrono::steady_clock::now();
-
-    VkPipelineShaderStageCreateInfo stages[3] = {};
-    uint32_t ns = 0;
-    const VkShaderStageFlagBits bits[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
-    // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
-    const int feeder = key.stage[2] ? 2 : 0;
+std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key) {
     // vertex inputs the shader declares as floats but the game feeds with integer attributes (key formats UINT / SINT)
     std::vector<SpvIntSlot> int_slots;
     if (key.stage[0] && !key.xfb)
@@ -380,17 +431,21 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
                     break;
                 }
         }
+    return int_slots;
+}
+
+bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
+    *out = StageModules{};
+    // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
+    const int feeder = key.stage[2] ? 2 : 0;
+    const std::vector<SpvIntSlot> int_slots = key_int_slots(key);
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
         if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
         if (key.xfb) {
             VkShaderModule m = xfb_variant(key.stage[0]).first;
-            if (!m) return VK_NULL_HANDLE;
-            stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-            stages[ns].stage = bits[0];
-            stages[ns].module = m;
-            stages[ns].pName = "main";
-            ++ns;
+            if (!m) return false;
+            out->m[0] = m;
             continue;
         }
         VkShaderModule m = (i == feeder && key.stage[1]) ? producer_module(key.stage[i], key.stage[1], i == 0 ? int_slots : std::vector<SpvIntSlot>())
@@ -399,10 +454,52 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
                            : (i == 1 && key.dual_src)    ? dual_source_module(key.stage[i])
                            : (i == 1)                    ? hdr_fragment_module(key.stage[i])
                                                          : shader_module(key.stage[i]);
-        if (!m) return VK_NULL_HANDLE;
+        if (!m) return false;
+        out->m[i] = m;
+    }
+    return true;
+}
+
+const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state() {
+    static const VkDynamicState dyn[] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
+        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
+        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
+        VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
+    static const VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
+                                                        sizeof(dyn) / sizeof(dyn[0]), dyn};
+    return &dy;
+}
+
+VkPipelineCache pipeline_cache_handle() {
+    ensure_cache();
+    return g_cache;
+}
+
+void note_pipeline_created(double ms, const char* what) {
+    counters().pipelines_created.fetch_add(1);
+    g_cache_dirty.store(true, std::memory_order_relaxed);
+    if (ms >= 2.0) g_new_since_save.fetch_add(1, std::memory_order_relaxed);      // a part the cache already had comes back in well under that
+    NXLOG_D(kTag, "%s created in %.1f ms", what, ms);
+}
+
+VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
+    ensure_cache();
+    const auto t0 = std::chrono::steady_clock::now();
+
+    VkPipelineShaderStageCreateInfo stages[3] = {};
+    uint32_t ns = 0;
+    const VkShaderStageFlagBits bits[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
+    StageModules sm;
+    if (!resolve_stage_modules(key, &sm)) return VK_NULL_HANDLE;
+    for (int i = 0; i < 3; ++i) {
+        if (!sm.m[i]) continue;
         stages[ns] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
         stages[ns].stage = bits[i];
-        stages[ns].module = m;
+        stages[ns].module = sm.m[i];
         stages[ns].pName = "main";
         ++ns;
     }
@@ -468,18 +565,6 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     cb.attachmentCount = key.color_count;
     cb.pAttachments = cba;
 
-    static const VkDynamicState dyn[] = {
-        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
-        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
-        VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
-        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
-        VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
-        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
-    VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-    dy.dynamicStateCount = sizeof(dyn) / sizeof(dyn[0]);
-    dy.pDynamicStates = dyn;
-
     VkFormat cf[8];
     for (uint32_t i = 0; i < key.color_count && i < 8; ++i) cf[i] = static_cast<VkFormat>(key.color_format[i]);
     VkPipelineRenderingCreateInfo ri = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
@@ -499,7 +584,7 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     gi.pMultisampleState = &ms;
     gi.pDepthStencilState = &ds;
     gi.pColorBlendState = &cb;
-    gi.pDynamicState = &dy;
+    gi.pDynamicState = pipeline_dynamic_state();
     gi.layout = layout.layout;
     VkPipeline pipe = VK_NULL_HANDLE;
     const VkResult r = vkCreateGraphicsPipelines(vkdev(), g_cache, 1, &gi, nullptr, &pipe);
@@ -511,6 +596,7 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
     } else {
         counters().pipelines_created.fetch_add(1);
         g_cache_dirty.store(true, std::memory_order_relaxed);
+    g_new_since_save.fetch_add(1, std::memory_order_relaxed);
         NXLOG_D(kTag, "graphics pipeline created in %.1f ms (vs %s fs %s)", ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
                 key.stage[1] ? key.stage[1]->hash.c_str() : "-");
     }
@@ -530,6 +616,13 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     VkPipeline pipe = VK_NULL_HANDLE;
     if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
         ++g_pipeline_count;
+        bucket.emplace_back(key, pipe);
+        return pipe;
+    }
+    pipe = gpl_link(key, layout);                // linked from shader parts compiled ahead (null: not eligible or a part failed)
+    if (pipe) {
+        ++g_pipeline_count;
+        prewarm_record(key);                     // the next run builds the whole pipeline ahead of the draw
         bucket.emplace_back(key, pipe);
         return pipe;
     }
@@ -564,6 +657,7 @@ VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout) {
             counters().pipelines_created.fetch_add(1);
             ++g_pipeline_count;
             g_cache_dirty.store(true, std::memory_order_relaxed);
+    g_new_since_save.fetch_add(1, std::memory_order_relaxed);
         }
     }
     g_compute[k] = pipe;
@@ -603,23 +697,41 @@ VkBuffer driver_constants_buffer(VkDeviceSize* range) {
 
 size_t pipeline_count() { return g_pipeline_count; }
 
+void module_cache_clear() {
+    VkDevice d = vkdev();
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    for (auto& [k, m] : g_modules) if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_modules.clear();
+    for (auto& [k, m] : g_variants) if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_variants.clear();
+    for (auto& [k, m] : g_dual_src) if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_dual_src.clear();
+    for (auto& [k, e] : g_no_out) if (e.first && e.second) vkDestroyShaderModule(d, e.first, nullptr);
+    g_no_out.clear();
+    for (auto& [k, v] : g_xfb_mod) if (v.first) vkDestroyShaderModule(d, v.first, nullptr);
+    g_xfb_mod.clear();
+}
+
 void pipeline_shutdown() {
     VkDevice d = vkdev();
     prewarm_shutdown();
-    save_cache();
+    gpl_stop();
+    if (!g_cache_big || g_new_since_save.load() >= 300) save_cache();
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket)
             if (e.second) vkDestroyPipeline(d, e.second, nullptr);
     g_gfx.clear();
+    gpl_shutdown();                              // the parts the pipelines were linked from
     for (auto& [k, p] : g_compute)
         if (p) vkDestroyPipeline(d, p, nullptr);
     g_compute.clear();
-    for (auto& [k, l] : g_layouts) {
+    g_layouts.clear();
+    for (auto& [k, l] : g_shared_layouts) {          // the handles in g_layouts were copies of these
         if (l.layout) vkDestroyPipelineLayout(d, l.layout, nullptr);
         for (VkDescriptorSetLayout s : l.sets)
             if (s) vkDestroyDescriptorSetLayout(d, s, nullptr);
     }
-    g_layouts.clear();
+    g_shared_layouts.clear();
     for (auto& [k, m] : g_modules)
         if (m) vkDestroyShaderModule(d, m, nullptr);
     g_modules.clear();

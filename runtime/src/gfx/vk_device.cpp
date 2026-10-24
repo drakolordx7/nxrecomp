@@ -400,6 +400,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT aeds3 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT avids = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT};
     VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT adrua = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT};
+    VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT agpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
     VkPhysicalDeviceTransformFeedbackFeaturesEXT atfb = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT};
     VkPhysicalDevicePresentIdFeaturesKHR apid = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
     VkPhysicalDeviceAntiLagFeaturesAMD aal = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD};
@@ -422,6 +423,10 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     const bool x_vids = add_ext(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, &avids);
     const bool x_drua = add_ext(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, &adrua);
     const bool x_tfb = add_ext(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, &atfb);
+    // pipelines linked from separately compiled shader parts (nvn_gpl.cpp): needs VK_KHR_pipeline_library next to the extension itself
+    const bool x_gpl = has_dext(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) && has_dext(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME) &&
+                       add_ext(VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME, &agpl);
+    if (x_gpl) dev_exts.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
     // display extras: HDR metadata and the latency extensions (low_latency2 needs present_id; neither is used unless the settings ask)
     const bool x_hdrmd = !headless && has_dext(VK_EXT_HDR_METADATA_EXTENSION_NAME);
     if (x_hdrmd) dev_exts.push_back(VK_EXT_HDR_METADATA_EXTENSION_NAME);
@@ -483,6 +488,15 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.vertex_input_dynamic_state = x_vids && avids.vertexInputDynamicState;
     features_.dynamic_rendering_unused_attachments = x_drua && adrua.dynamicRenderingUnusedAttachments;
     features_.transform_feedback = x_tfb && atfb.transformFeedback;
+    features_.graphics_pipeline_library = x_gpl && agpl.graphicsPipelineLibrary;
+    if (features_.graphics_pipeline_library) {
+        // the libraries are compiled apart from each other, so the vertex shader's outputs and the fragment shader's inputs must not need matching interpolation decorations
+        VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT gp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 gpp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &gp};
+        vkGetPhysicalDeviceProperties2(physical_, &gpp);
+        features_.graphics_pipeline_library = gp.graphicsPipelineLibraryIndependentInterpolationDecoration == VK_TRUE;
+        NXLOG_I(kTag, "pipeline libraries: fast linking %d, independent interpolation decoration %d", gp.graphicsPipelineLibraryFastLinking, gp.graphicsPipelineLibraryIndependentInterpolationDecoration);
+    }
     features_.hdr_metadata = x_hdrmd;
     features_.present_id = x_pid && apid.presentId;
     features_.low_latency2 = x_ll2 && features_.present_id;

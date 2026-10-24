@@ -19,6 +19,7 @@
 #include <cstring>
 
 #include "nvn_cmd.h"
+#include "nvn_gpu.h"
 #include "nvn_impl.h"
 
 namespace nxrt::nvn {
@@ -122,6 +123,10 @@ void nvnCommandBufferBindVertexStreamState(NVNcommandBuffer* c, int count, const
 
 void nvnCommandBufferBindProgram(NVNcommandBuffer* c, const NVNprogram* program, int stages) {
     Program* prog = host_of<Program>(program);
+    if (prog && prog->linked && !prog->gpl_bound.load(std::memory_order_relaxed)) {
+        prog->gpl_bound.store(1, std::memory_order_relaxed);
+        be::gpu::program_bound(prog->stage);
+    }
     const P_BindProgram p{prog, static_cast<uint32_t>(stages), 0};
     with_rec(c, [&](CmdList& l) { l.hold(prog); l.emit(Op::BindProgram, p); });
 }

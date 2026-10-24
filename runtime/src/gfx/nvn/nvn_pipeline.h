@@ -6,12 +6,17 @@
 // and masks, blend constants, line width, vertex strides); everything else is part of the key.
 #pragma once
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <vector>
 
 #include <volk.h>
 
+#include "nxrt/nvn_backend.h"
+
 #include "nvn_core.h"
 #include "nvn_shaders.h"
+#include "nvn_spirv_patch.h"
 
 namespace nxrt::nvn::be::gpu {
 
@@ -74,16 +79,28 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout);
 // The creation itself: no lookup, no bookkeeping; safe to call from any thread (the prewarm workers). Null on failure.
 VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout);
 
+// The shader module each stage of a key runs (the translated one or a patched variant: varyings the next stage reads, integer attributes,
+// stream-out, dual-source, private outputs, HDR tone map), by stage slot as in GraphicsKey::stage; null = no such stage. False on a Vulkan error.
+struct StageModules { VkShaderModule m[3] = {}; };
+bool resolve_stage_modules(const GraphicsKey& key, StageModules* out);
+// The vertex inputs the vertex shader declares as floats that this key feeds with integer attributes (the shader module is then a patched variant).
+std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key);
+// The dynamic state list every graphics pipeline and pipeline library uses.
+const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state();
+VkPipelineCache pipeline_cache_handle();
+void note_pipeline_created(double ms, const char* what);   // counters and the dirty flag of the cache file
+
 // Pipeline cache on disk ([nvn] pipeline_cache): written by a background thread while new pipelines appear and at shutdown.
 bool pipeline_cache_dirty();
 void pipeline_cache_save();
+void pipeline_cache_flush();
 
 // ---- prewarm (nvn_prewarm.cpp) ----------------------------------------------------------------------------------------------
 // Every pipeline that had to be created at a draw is recorded in a key file ([nvn] pipeline_keys). The next run compiles the recorded
 // pipelines of a program on worker threads as soon as the game sets the program's shaders, long before its first draw.
 void prewarm_init();                                                      // loads the key file, starts the cache saver (idempotent)
 void prewarm_record(const GraphicsKey& key);                              // a pipeline was created for this key at draw time
-void prewarm_program(const ShaderInfo* const stages[6]);                  // a program got its shaders: queue its recorded pipelines
+size_t prewarm_program(const ShaderInfo* const stages[6]);                // a program got its shaders: queue its recorded pipelines (how many)
 bool prewarm_take(const GraphicsKey& key, VkPipeline* out);               // true when a prewarm job owns the key; waits for a running one
 void prewarm_shutdown();                                                  // stops the workers (before the device is torn down)
 struct PrewarmStats { uint64_t recorded = 0, loaded = 0, queued = 0, built = 0, taken = 0, waited = 0, claimed = 0; double wait_ms = 0; };
@@ -96,6 +113,33 @@ uint32_t xfb_stride(const ShaderInfo* vs);
 // Persistent buffers every draw may bind: the driver constants (c[0]) image and a shader's constant data (c[1]).
 VkBuffer constant_data_buffer(const ShaderInfo* s, VkDeviceSize* range);
 VkBuffer driver_constants_buffer(VkDeviceSize* range);
+
+// ---- pipeline libraries (nvn_gpl.cpp, VK_EXT_graphics_pipeline_library) ------------------------------------------------------
+// A pipeline is linked from four parts: vertex input, pre-rasterisation shaders (vertex/geometry code + raster state), fragment shader
+// (fragment code), fragment output (blend and attachment formats). The two shader parts hold all the compile time and depend on very little
+// state (the shaders of a program and three raster flags), so they are compiled by background threads when the game sets a program's
+// shaders, long before the draw whose blend state and formats are only known then. The draw links the parts.
+bool gpl_active();                                                   // enabled and supported (first call reads the settings)
+VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout);   // null: not possible for this key, build it whole
+void gpl_program(const ShaderInfo* const stages[6], bool covered);   // a program got its shaders: queue its shader parts (covered: the key file has pipelines for it, skip)
+void gpl_program_bound(const ShaderInfo* const stages[6]);           // a command buffer was recorded with the program bound: its parts go first
+void gpl_progress_log();                                             // one log line when something changed since the last call
+void gpl_stop();                                                     // stops the workers (before modules and layouts go)
+void gpl_shutdown();                                                 // destroys the parts (after the pipelines)
+struct GplStats {
+    uint64_t linked = 0, link_failed = 0, parts_ahead = 0, parts_at_draw = 0, parts_waited = 0, parts_hit = 0, jobs = 0, jobs_skipped = 0;
+    double link_ms = 0, draw_part_ms = 0, wait_ms = 0, worker_ms = 0;
+};
+GplStats gpl_stats();
+void set_compile_thread_priority(bool background = true);                                  // [nvn] compile_priority for the threads that build pipelines in the background
+
+// ---- shader preparation (nvn_gpl.cpp, S24) ---------------------------------------------------------------------------------
+// Compiles the shader parts of every program in a list (setup writes it from the player's own game files: <shader cache>/../programs.bin)
+// before the game runs, so the driver has them in its cache and the game's own requests are fast. The parts are thrown away as soon as they exist.
+using PrepareOptions = nxrt::nvn::ShaderPrepareOptions;
+using PrepareResult = nxrt::nvn::ShaderPrepareResult;
+bool gpl_prepare(const PrepareOptions& o, PrepareResult* r);       // false: nothing could be done (see r->error)
+void module_cache_clear();                                          // destroys every cached shader module and variant (nothing may be creating pipelines)
 
 void pipeline_shutdown();
 size_t pipeline_count();

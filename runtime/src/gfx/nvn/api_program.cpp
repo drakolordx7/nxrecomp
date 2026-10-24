@@ -106,6 +106,7 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     }
     ++p->serial;
     p->linked = false;
+    p->gpl_bound.store(0, std::memory_order_relaxed);
     if (count > 0 && !shaders) return 0;
 
     bool all_found = true;
