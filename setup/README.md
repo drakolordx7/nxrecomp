@@ -39,6 +39,7 @@ Exit codes: 0 done, 1 error, 2 the dump cannot be used, 3 keys problem, 4 disk p
   romfs\            the game's data files
   bc7_cache\        the game's textures converted to a format PC graphics cards read directly (about 4.4 GB)
   shader_cache\     translated shaders (only when this build comes with them)
+                    programs.bin lists the shader programs of your own game files; the game compiles them ahead from it (see "Prepare shaders" in the launcher)
   mpr.ini           settings the game reads from this folder
   setup.log         what happened, every run
   setup_state.tsv   what is finished, so a second run only checks sizes

@@ -35,6 +35,7 @@ When it finishes, the install folder holds these, next to mpr.exe:
 - romfs\          the game's data files
 - bc7_cache\      the textures, converted for PC graphics cards (about 4.4 GB)
 - shader_cache\   translated shaders
+                  (setup also writes programs.bin here, a list made from your own game files; the launcher's "Prepare shaders" step uses it)
 - mpr.ini         settings the game reads from this folder
 - setup.log       what happened, every run
 - setup_state.tsv what is finished, so a repeat run only checks sizes
