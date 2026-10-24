@@ -252,13 +252,13 @@ Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_cany
 
 ### Controller sticks (`controls.ini`, `[pad]`)
 
-`[pad] deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the left stick (movement). It was the only stick dead zone before the right stick got its own key.
+`[pad] deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the left stick (movement). Before the right stick got its own key, this was the only stick dead zone.
 
-`[pad] right_deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the right stick (looking). A file that has `deadzone` but no `right_deadzone` gives the right stick the value of `deadzone` when it is read; the next save writes both keys.
+`[pad] right_deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the right stick (looking). A file with `deadzone` but no `right_deadzone` gives the right stick the value of `deadzone` when read. The next save writes both keys.
 
-`[pad] invert_y`, default `0`: flips the right stick's vertical axis in play, so pushing up looks down. Menus and the map keep the stick as it is. It stacks with the game's own invert option in the game's controls menu, so with both on the look is back to normal.
+`[pad] invert_y`, default `0`: flips the right stick's vertical axis in play, so pushing up looks down. Menus and the map keep the stick as it is. It adds to the game's own invert option in its controls menu, so with both on, looking is back to normal.
 
-`[pad] look_sens`, default `1`, range `0.25` to `3`: multiplies the right stick's deflection in play. Below 1 the turn speed tops out lower, above 1 it tops out sooner. Like `invert_y`, it applies in play only.
+`[pad] look_sens`, default `1`, range `0.25` to `3`: multiplies the right stick's deflection in play. Below 1, the top turn speed is lower. Above 1, it is reached sooner. Like `invert_y`, it applies in play only.
 
 ## Window modes and the picture (`controls.ini`, `[display]`)
 
