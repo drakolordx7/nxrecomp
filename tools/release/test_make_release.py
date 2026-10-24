@@ -16,7 +16,7 @@ ROOT = 'mpr-test-windows-x64'
 MANIFEST = mr.MANIFEST
 EXPECTED = sorted([
     'mpr.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll',
-    'mpr_setup.exe', 'mpr_setup_cli.exe', 'mpr_launcher.exe', 'shader_cache.mprshc', 'README.txt', 'controls.ini',
+    'mpr_setup.exe', 'mpr_setup_cli.exe', 'mpr_launcher.exe', 'shader_cache.mprshc', 'README.txt', 'HELP.txt', 'controls.ini',
     'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
@@ -47,6 +47,7 @@ def make_fake_repo(root):
     w('tools/setup/build/release/bin/astc2bc7.exe', b'MZ tool that must not ship')
     w('work/setup_test/shader_cache.mprshc', mr.PACK_MAGIC + b'\x00' * 1024)
     w('tools/release/templates/README.txt', b'readme\n')
+    w('tools/release/templates/HELP.txt', b'help\n')
     w('tools/release/templates/THIRD_PARTY_NOTICES.txt', b'notices\n')
     w('tools/release/templates/controls.ini', b'[controls]\n')
     w('tools/release/licenses/LICENSE.astc-encoder.Apache-2.0', b'Apache licence text\n')
@@ -152,6 +153,8 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(any(n.endswith(('.pdb', '.map')) for n in names))
         self.assertFalse(any('astc2bc7' in n for n in names))
         self.assertTrue(os.path.isfile(os.path.join(self.out, ROOT + '.manifest.txt')))
+        with open(os.path.join(self.out, ROOT + '.zip.sha256'), encoding='utf-8') as f:
+            self.assertEqual(f.read(), '%s  %s\n' % (sha(os.path.join(self.out, ROOT + '.zip')), ROOT + '.zip'))
 
     def test_zip_is_deterministic(self):
         out2 = os.path.join(self.tmp, 'out2')

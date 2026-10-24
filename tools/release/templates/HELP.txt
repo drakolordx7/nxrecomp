@@ -1,0 +1,167 @@
+Metroid Prime Remastered for Windows: controls, settings and help
+=================================================================
+
+This file goes with README.txt. It lists every default key, the settings you can change and the fixes for
+common problems.
+
+
+Controls
+--------
+
+Keyboard and mouse (the launcher's Keyboard tab and the F1 page change any of these):
+
+  Move                  W A S D
+  Look and aim          Mouse (first-person view only; not while locked on)
+  Fire (hold to charge) Left button
+  Lock on               Right button or Q
+  Missile               Middle button or F
+  Jump                  Space
+  Morph ball            Left Ctrl or C (the mouse turns the camera in the ball)
+  Free look             Left Alt
+  Map                   Tab or M
+  Pause                 Escape
+  Beams 1 to 4          Keys 1 to 4 (the mouse wheel cycles through the beams)
+  Visors 1 to 4         Keys 5 to 8
+  D-pad                 Arrow keys
+  Menus: confirm        Return, Keypad Enter, Space or left button
+  Menus: back           Escape, Backspace or right button
+  Menus: tabs left and right   Q and E, or Page Up and Page Down
+  Map: zoom             Mouse wheel (drag with the left button to rotate, the middle button to move)
+
+Always available:
+
+  F1                    Settings page (the same settings as the launcher)
+  F2                    Frame rate counter on or off
+  Alt+Enter             Borderless fullscreen on or off (exclusive fullscreen if you chose it)
+
+Controllers: Xbox, PlayStation and Switch controllers work through SDL, together with the keyboard. By
+default the button names follow the printed label (the Xbox A button is the Switch A button). The launcher
+(Controller tab) can switch to button position and make any controller button press any Switch button.
+Defaults on an Xbox layout: left stick moves, right stick looks, RT fires, LT locks on, RB fires missiles, B
+jumps, Y is the morph ball, a right stick click is free look, Start (menu) opens the map, Back (view)
+pauses, the d-pad picks visors, and X plus the d-pad picks beams. Rumble and gyro are on.
+
+Button icons in the game follow what you use: keyboard and mouse icons (showing your own keys) until you touch
+a controller, then that controller's icons. The launcher's Controls tab can fix the icon style.
+
+
+The launcher
+------------
+
+mpr_launcher.exe needs no installer. It reads and writes controls.ini in the game folder, the same file the
+game's F1 page edits. Tabs:
+
+- Display: window mode and size, frame rate limit, VSync, field of view.
+- Extras: HDR, low latency (NVIDIA Reflex or AMD Anti-Lag 2), the frame rate counter (corner, detail, key),
+  and "Prepare shaders".
+- Controls: mouse sensitivity, inverting, the morph ball camera, button icon style.
+- Keyboard: every action with up to two keys or mouse buttons. Double-click a key, then press the new key.
+  Delete clears it.
+- Controller: dead zone, trigger point, rumble, gyro, and what each controller button presses.
+
+"Game folder" at the top shows where the game files are. "Change..." points the launcher at another folder
+(remembered in mpr_launcher.ini). "Run setup again..." starts the setup tool. Save keeps your changes, Play saves
+and starts the game, and Reset to defaults restores the factory value of every setting (nothing is written
+until you press Save or Play). The version is in the top right corner.
+
+Shader preparation: the game's shaders are turned into GPU pipelines for your graphics card and driver. The
+launcher does this once after setup and again after a driver update (a few minutes, shown as a progress bar).
+Without it the game still runs, but stutters more while it builds them on the fly. It writes
+shader_cache\prepare.state and pipeline_cache.bin (about 700 MB) in the game folder.
+
+
+Game folder
+-----------
+
+After setup the folder holds, next to mpr.exe:
+
+  exefs\             the game program, copied from the dump unchanged
+  romfs\             the game's data files
+  bc7_cache\         the textures, converted for PC graphics cards (about 4.4 GB)
+  shader_cache\      translated shaders and the list of the game's shader programs
+  shader_cache.mprshc  the shader pack that came in the zip (about 250 MB). Setup unpacks it into shader_cache, so you
+                     can delete it afterwards. Keep it if you might run setup again after deleting shader_cache.
+  mpr.ini            settings the game reads from this folder (setup writes it)
+  controls.ini       your controls and display settings
+  setup.log          what happened, every run
+  mpr.log            the last game run (mpr.log.prev is the one before)
+
+Leave "bc7_quality" in mpr.ini alone: the game has to use the value setup wrote.
+
+You can also run setup from a command line: mpr_setup_cli --input dump.nsp --out D:\MPR (add --keys
+prod.keys if it cannot find your keys). Exit codes: 0 done, 1 error, 2 the dump cannot be used, 3 keys problem,
+4 disk problem, 5 stopped (run it again).
+
+
+Settings you can change in the files
+------------------------------------
+
+Each line is optional; a missing key keeps its default.
+
+- controls.ini [display] window_mode: windowed (default), borderless or exclusive. vsync: 0 or 1. fps_cap: frame
+  limit, 60 by default, 0 for none. The launcher's Display tab sets these.
+- mpr.ini [gfx] gpu: discrete or integrated, or part of a GPU's name, if the wrong card is chosen.
+- mpr.ini [am] operation_mode: docked (default) or handheld.
+- mpr.ini [audio] volume: 0.0 to 1.0. device: default, or part of an output device's name.
+- mpr.ini [fs] save_dir: the folder for save data. Default: %APPDATA%\MPRRecomp\save.
+
+mpr.ini is a plain text file. Add a section name in square brackets and key = value lines under it. Setup
+rewrites mpr.ini each time it runs while the first line (a comment that starts with "; Written by mpr_setup")
+is there, so delete that line once you have edits you want to keep.
+
+Saves are in %APPDATA%\MPRRecomp\save. Back that folder up if you care about your progress. Uninstalling is
+deleting the game folder and, if you want your saves gone too, that folder.
+
+
+Updating
+--------
+
+Unzip the new release over the old game folder. The zip holds no game files, no controls.ini and no mpr.ini,
+so yours stay. Run setup again only if the release notes say so.
+
+
+Troubleshooting
+---------------
+
+- The launcher says "No game files in this folder yet" but you ran setup into another folder: press "Change..."
+  and pick that folder.
+- Setup: "No Switch keys file was found": press Browse next to "Your Switch keys" and pick prod.keys.
+- Setup: "The keys cannot open this dump": your keys are older than the game. Dump the keys again from a console
+  on recent firmware.
+- Setup: "This is an update" or "different game": use the original version 1.0.0 base game dump.
+- Setup: "The dump is damaged": copy the file again or dump the game again. Setup checks the dump's own hashes
+  before it writes anything.
+- Setup: "Not enough free space": free some space or pick another drive. Running setup again is safe.
+- Setup stopped halfway (power cut, crash, Stop button): run it again. Finished files are kept.
+- Setup: "Shader pack not found": mpr_setup.exe wants shader_cache.mprshc in its own folder. Unzip the whole
+  release, not single files.
+- A message about Vulkan, "cannot create the game window", or a black window: the game needs a Vulkan 1.3
+  driver. "Vulkan 1.3 is required", "no usable Vulkan 1.3 GPU" and "no Vulkan loader found (vulkan-1.dll)" mean
+  the driver is missing or too old. Update the graphics driver. On a laptop, make sure the game uses the
+  discrete GPU.
+- A missing DLL message: the three astcdec-*-shared.dll files must stay in the same folder as mpr.exe and
+  mpr_setup.exe. Unzip the whole release.
+- The game starts and stutters for the first minutes: shaders were not prepared for this driver. Open the
+  launcher, Extras tab, "Prepare shaders".
+- The launcher says "controls.ini could not be read": the file has a typo or a bad value. The launcher shows the
+  defaults, and when you save it keeps the old file as controls.ini.bak.
+- No sound: the game plays through your default output device. Set [audio] device in mpr.ini to part of the
+  name of the device you use. The list of devices is in mpr.log.
+- Very long folder paths can fail, because Windows limits a file's full path to 260 characters. Keep the game
+  folder path under about 180 characters, for example D:\Games\MPR.
+- The game does not start at all: look for mpr_fatal.txt, mpr_crash.txt and mpr_freeze.txt next to mpr.exe.
+
+
+Reporting a bug
+---------------
+
+Open an issue at https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/issues and attach:
+
+- mpr.log from the run where it happened (and setup.log for a setup problem), plus mpr_crash.txt, mpr_fatal.txt
+  or mpr_freeze.txt if one exists
+- your GPU, driver version and Windows version, and the version number (top right of the launcher, the "mpr 0.1.0" line
+  near the top of mpr.log)
+- a screenshot for a visual bug
+
+setup.log contains no key data. Never post prod.keys, title.keys or your dump, and never attach files taken from
+the game.

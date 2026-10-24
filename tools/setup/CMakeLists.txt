@@ -10,6 +10,9 @@ project(mpr_setup C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+# The release version the setup log and window show ("dev" for local builds; scripts/build.ps1 -Version sets it).
+set(MPRS_VERSION "dev" CACHE STRING "release version shown by mpr_setup")
+add_compile_definitions(MPR_VERSION="${MPRS_VERSION}")
 enable_testing()
 
 # Libraries from the S4 tools (built in-tree, not installed): ASTC->BC7 transcoder and Tegra tiling.
