@@ -474,13 +474,25 @@ void learn_raster(const RasterKey& r) {
 
 }  // namespace
 
-void set_compile_thread_priority() {
+void set_compile_thread_priority(bool background) {
 #if defined(_WIN32)
     static const std::string mode = config_get_str("nvn", "compile_priority", "below");
     int p = THREAD_PRIORITY_BELOW_NORMAL;
     if (mode == "normal") p = THREAD_PRIORITY_NORMAL;
     else if (mode == "idle") p = THREAD_PRIORITY_IDLE;
     SetThreadPriority(GetCurrentThread(), p);
+    // Efficiency mode (EcoQoS): Windows runs the thread on the efficiency cores of a hybrid CPU and at a lower clock elsewhere, so a burst of
+    // shader compiles does not take the fast cores from the game's own threads. Not for the shader preparation, which wants all the speed.
+    static const bool eco = config_get_bool("nvn", "compile_eco", true);
+    if (background && eco) {
+        THREAD_POWER_THROTTLING_STATE st = {};
+        st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+        st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        st.StateMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+        SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &st, sizeof st);
+    }
+#else
+    (void)background;
 #endif
 }
 
@@ -746,7 +758,7 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
         std::vector<const ShaderInfo*> used;
         std::mutex used_mu;
         auto work = [&] {
-            set_compile_thread_priority();
+            set_compile_thread_priority(false);
             std::vector<const ShaderInfo*> mine;
             for (;;) {
                 if (cancel.load()) break;
