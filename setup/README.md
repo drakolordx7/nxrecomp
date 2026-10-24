@@ -11,9 +11,8 @@ You run it once. It needs about 13 GB of free disk space and takes about 5 minut
   copies or uploads it. If you use an emulator (yuzu, Eden, Ryujinx and similar), the tool finds its keys by itself.
   If your eShop dump was bought on another console, put that console's title key in a `title.keys` file next to `prod.keys`.
 - 13 GB of free space on the drive you install to.
-- The shader pack `shader_cache.mprshc`, in the same folder as `mpr_setup.exe` (the release zip contains it). The game cannot
-  draw anything without it, so setup stops with a message if it cannot find the pack. Use `--shader-pack` to name another file
-  or folder.
+- The shader pack `shader_cache.mprshc`, in the same folder as `mpr_setup.exe` (the release zip includes it). Setup stops with a
+  message if it cannot find the pack, because the game draws nothing without it. Use `--shader-pack` to point at another file or folder.
 
 ## Run it
 
@@ -87,9 +86,9 @@ the noise texture) and the mean from 48.4 to 50.0 dB; textures under 33 dB went 
 - **"This is an update"** or **"different game"**: use the original v1.0.0 base game dump.
 - **"The dump is damaged"**: the file was not copied completely or is corrupt. Copy it again, or dump the game again. The tool
   checks the dump's own hashes before it writes anything.
-- **"Shader pack not found"**: put `shader_cache.mprshc` in the same folder as `mpr_setup.exe`, or start setup with
-  `--shader-pack` pointing at it. Without the shaders the game draws nothing. If the install folder already has shaders from an
-  earlier complete run, setup keeps them and does not need the pack.
+- "Shader pack not found": put `shader_cache.mprshc` in the same folder as `mpr_setup.exe`, or start setup with
+  `--shader-pack` pointing at the file. Without the shaders, the game draws nothing. If the install folder already has shaders
+  from an earlier complete run, setup keeps them and does not need the pack.
 - **"Not enough free space"**: free some space or pick another drive. Repeating setup is safe.
 - **It stopped halfway** (power cut, crash): run it again. Finished files are kept.
 - When you ask for help, send `setup.log` from the install folder. It contains no key data.
