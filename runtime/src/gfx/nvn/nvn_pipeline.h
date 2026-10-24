@@ -5,8 +5,10 @@
 // offers (viewports, scissors, cull mode, front face, topology, depth/stencil tests and ops, depth bias, stencil references
 // and masks, blend constants, line width, vertex strides); everything else is part of the key.
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -120,13 +122,24 @@ VkBuffer driver_constants_buffer(VkDeviceSize* range);
 // state (the shaders of a program and three raster flags), so they are compiled by background threads when the game sets a program's
 // shaders, long before the draw whose blend state and formats are only known then. The draw links the parts.
 bool gpl_active();                                                   // enabled and supported (first call reads the settings)
-VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout);   // null: not possible for this key, build it whole
+// The optimised pipeline that replaces a linked one: made by a background thread, taken by the draw side on a later lookup (state 1 = ready;
+// pipe may be null when the build failed). The linked pipeline stays in use until then.
+struct PipeUpgrade {
+    std::atomic<int> state{0};
+    VkPipeline pipe = VK_NULL_HANDLE;
+};
+// null: not possible for this key, build it whole. *up (when given) gets the upgrade the linked pipeline will be replaced by (null: none queued).
+VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout, std::shared_ptr<PipeUpgrade>* up = nullptr);
+bool gpl_ab_whole();                                                 // measurement only ([nvn] gpl_ab): true in the windows that run the optimised pipelines
+void gpl_take_upgrade(VkPipeline& current, VkPipeline& alt, std::shared_ptr<PipeUpgrade>& up);   // render thread: swaps in the finished optimised pipeline (the old one is destroyed once the GPU is done with it)
 void gpl_program(const ShaderInfo* const stages[6], bool covered);   // a program got its shaders: queue its shader parts (covered: the key file has pipelines for it, skip)
 void gpl_program_bound(const ShaderInfo* const stages[6]);           // a command buffer was recorded with the program bound: its parts go first
 void gpl_progress_log();                                             // one log line when something changed since the last call
 void gpl_stop();                                                     // stops the workers (before modules and layouts go)
 void gpl_shutdown();                                                 // destroys the parts (after the pipelines)
 struct GplStats {
+    uint64_t upgrades_queued = 0, upgrades_done = 0, upgrades_failed = 0, upgrades_taken = 0;
+    double upgrade_ms = 0;
     uint64_t linked = 0, link_failed = 0, parts_ahead = 0, parts_at_draw = 0, parts_waited = 0, parts_hit = 0, jobs = 0, jobs_skipped = 0;
     double link_ms = 0, draw_part_ms = 0, wait_ms = 0, worker_ms = 0;
 };

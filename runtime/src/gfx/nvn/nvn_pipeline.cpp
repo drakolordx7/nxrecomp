@@ -50,7 +50,14 @@ std::map<std::pair<const ShaderInfo*, std::vector<uint32_t>>, VkShaderModule> g_
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_dual_src;
 std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, bool>> g_no_out;   // (module, owned by this map)      // fragment shaders with private outputs (passes without colour attachments)
 std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, uint32_t>> g_xfb_mod;   // vertex shaders with the captured outputs, their stride       // fragment shaders with the second blend source at Location 0, Index 1
-std::unordered_map<uint64_t, std::vector<std::pair<GraphicsKey, VkPipeline>>> g_gfx;
+// One pipeline per key. `up`: a linked pipeline (nvn_gpl.cpp) that a background thread is replacing with an optimised one; the lookup swaps it in.
+struct GfxEntry {
+    GraphicsKey first;
+    VkPipeline second = VK_NULL_HANDLE;
+    VkPipeline alt = VK_NULL_HANDLE;                 // measurement only ([nvn] gpl_ab): the optimised pipeline, kept next to the linked one
+    std::shared_ptr<PipeUpgrade> up;
+};
+std::unordered_map<uint64_t, std::vector<GfxEntry>> g_gfx;
 std::map<std::pair<const ShaderInfo*, VkPipelineLayout>, VkPipeline> g_compute;
 VkPipelineCache g_cache = VK_NULL_HANDLE;
 bool g_cache_tried = false;
@@ -610,20 +617,23 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     for (auto& e : bucket)
         if (e.first == key) {
             counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
+            if (e.up && e.up->state.load(std::memory_order_acquire) != 0) gpl_take_upgrade(e.second, e.alt, e.up);
+            if (e.alt && gpl_ab_whole()) return e.alt;
             return e.second;
         }
     prewarm_init();
     VkPipeline pipe = VK_NULL_HANDLE;
     if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
         ++g_pipeline_count;
-        bucket.emplace_back(key, pipe);
+        bucket.push_back({key, pipe, VK_NULL_HANDLE, nullptr});
         return pipe;
     }
-    pipe = gpl_link(key, layout);                // linked from shader parts compiled ahead (null: not eligible or a part failed)
+    std::shared_ptr<PipeUpgrade> up;
+    pipe = gpl_link(key, layout, &up);           // linked from shader parts compiled ahead (null: not eligible or a part failed)
     if (pipe) {
         ++g_pipeline_count;
         prewarm_record(key);                     // the next run builds the whole pipeline ahead of the draw
-        bucket.emplace_back(key, pipe);
+        bucket.push_back({key, pipe, VK_NULL_HANDLE, up});
         return pipe;
     }
     NXFT("pipe.create");
@@ -632,7 +642,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
         ++g_pipeline_count;
         prewarm_record(key);
     }
-    bucket.emplace_back(key, pipe);
+    bucket.push_back({key, pipe, VK_NULL_HANDLE, nullptr});
     return pipe;
 }
 
@@ -718,8 +728,11 @@ void pipeline_shutdown() {
     gpl_stop();
     if (!g_cache_big || g_new_since_save.load() >= 300) save_cache();
     for (auto& [h, bucket] : g_gfx)
-        for (auto& e : bucket)
+        for (auto& e : bucket) {
             if (e.second) vkDestroyPipeline(d, e.second, nullptr);
+            if (e.alt) vkDestroyPipeline(d, e.alt, nullptr);
+            if (e.up && e.up->state.load() == 1 && e.up->pipe) vkDestroyPipeline(d, e.up->pipe, nullptr);     // built and never taken
+        }
     g_gfx.clear();
     gpl_shutdown();                              // the parts the pipelines were linked from
     for (auto& [k, p] : g_compute)
