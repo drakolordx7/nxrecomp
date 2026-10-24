@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "hid_shm.h"
+#include "nxrt/gauge.h"
 #include "nxrt/input_source.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
@@ -421,11 +422,15 @@ void zero_handle_cmd(ipc::Service& svc, uint32_t id, const char* name) {
     });
 }
 
+// Gauge (include/nxrt/gauge.h): IAppletResource objects alive (the sampler runs while any is).
+GaugeCounter g_hid_resources("hid.applet_resources");
+
 // IAppletResource (nn::hid::IAppletResource): one per CreateAppletResource. While one is alive the sampler runs.
 class AppletResource : public ipc::Service {
 public:
     AppletResource() : ipc::Service("nn::hid::IAppletResource") {
         st().resources++;
+        g_hid_resources.add(1);
         add_cmd(0, "GetSharedMemoryHandle", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
             HidState& s = st();
             std::lock_guard<std::mutex> lk(s.mu);
@@ -436,7 +441,10 @@ public:
             return 0;
         });
     }
-    ~AppletResource() override { st().resources--; }
+    ~AppletResource() override {
+        st().resources--;
+        g_hid_resources.sub(1);
+    }
 };
 
 std::shared_ptr<ipc::Service> make_vibration_list() {

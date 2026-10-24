@@ -10,12 +10,30 @@
 // compare mode NONE with compare func LESS, max anisotropy 1, reduction AVERAGE, border 0 0 0 0, lod snap 0. The device pointer
 // is not a sampler parameter, so SetDefaults leaves it alone.
 // smo-recomp runtime/gfx/nvn_gl.c (GPL-3.0), layout/defaults checked, no code copied
+#include <cstdint>
 #include <cstring>
+#include <mutex>
+#include <unordered_set>
 
 #include "nvn_impl.h"
+#include "nxrt/gauge.h"
 
 namespace nxrt::nvn {
 namespace {
+
+// Live samplers (nxrt/gauge.h). A sampler has no host object, so the count is the set of guest addresses initialised and not yet finalized.
+std::mutex g_live_mu;
+std::unordered_set<uintptr_t> g_live;
+struct SamplerGauge {
+    SamplerGauge() {
+        nxrt::gauge_register("nvn.samplers", [] {
+            std::lock_guard<std::mutex> lk(g_live_mu);
+            return static_cast<int64_t>(g_live.size());
+        });
+    }
+    ~SamplerGauge() { nxrt::gauge_unregister("nvn.samplers"); }
+};
+SamplerGauge g_sampler_gauge;
 
 // The parameter block: byte for byte the smo SamplerParams layout (48 bytes). Enum fields hold the NVN values (all below 256).
 struct SamplerData {
@@ -230,9 +248,14 @@ float nvnSamplerBuilderGetLodSnap(const NVNsamplerBuilder* b) { return get_lodsn
 NVNboolean nvnSamplerInitialize(NVNsampler* s, const NVNsamplerBuilder* b) {
     if (!s || !b) return 0;
     write_params(s, read_params(b));
+    std::lock_guard<std::mutex> lk(g_live_mu);
+    g_live.insert(reinterpret_cast<uintptr_t>(s));
     return 1;
 }
-void nvnSamplerFinalize(NVNsampler* s) {}                              // nothing host-side to release
+void nvnSamplerFinalize(NVNsampler* s) {                               // nothing host-side to release; the live count drops
+    std::lock_guard<std::mutex> lk(g_live_mu);
+    g_live.erase(reinterpret_cast<uintptr_t>(s));
+}
 void nvnSamplerSetDebugLabel(NVNsampler* s, const char* label) {}      // labels are not kept
 
 void nvnSamplerGetMinMagFilter(const NVNsampler* s, NVNminFilter* mn, NVNmagFilter* mg) { get_minmag(s, mn, mg); }

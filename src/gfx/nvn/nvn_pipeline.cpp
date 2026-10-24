@@ -16,6 +16,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_spirv_patch.h"
@@ -62,10 +63,16 @@ std::map<std::pair<const ShaderInfo*, VkPipelineLayout>, VkPipeline> g_compute;
 VkPipelineCache g_cache = VK_NULL_HANDLE;
 bool g_cache_tried = false;
 std::string g_cache_path;
-size_t g_pipeline_count = 0;
+nxrt::GaugeCounter g_pipeline_count{"nvn.pipelines"};   // live VkPipelines (graphics and compute, linked ones included); render thread
 std::unordered_map<const ShaderInfo*, std::pair<gfx::Buffer, VkDeviceSize>> g_const_bufs;
 gfx::Buffer g_driver_const;
 bool g_driver_const_made = false;
+// Counters mirrored at the sites that change the maps above (they are render thread only, so the gauge reads these instead).
+nxrt::GaugeCounter g_pipes_created{"nvn.pipelines_created"};     // ever; same events as counters().pipelines_created (shader parts included)
+nxrt::GaugeCounter g_gfx_keys{"nvn.pipeline_keys"};              // entries in g_gfx: one per graphics key tried (a failed build keeps its entry)
+nxrt::GaugeCounter g_compute_keys{"nvn.compute_pipeline_keys"};  // entries in g_compute
+nxrt::GaugeCounter g_const_n{"nvn.const_buffers"};               // entries in g_const_bufs
+nxrt::GaugeCounter g_const_bytes{"nvn.const_buffers.bytes"};     // bytes of the constant buffers in g_const_bufs
 
 VkShaderStageFlagBits stage_bit(ShaderStage s) {
     switch (s) {
@@ -488,6 +495,7 @@ VkPipelineCache pipeline_cache_handle() {
 
 void note_pipeline_created(double ms, const char* what) {
     counters().pipelines_created.fetch_add(1);
+    g_pipes_created.add(1);
     g_cache_dirty.store(true, std::memory_order_relaxed);
     if (ms >= 2.0) g_new_since_save.fetch_add(1, std::memory_order_relaxed);      // a part the cache already had comes back in well under that
     NXLOG_D(kTag, "%s created in %.1f ms", what, ms);
@@ -604,6 +612,7 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
         counters().pipelines_created.fetch_add(1);
         g_cache_dirty.store(true, std::memory_order_relaxed);
     g_new_since_save.fetch_add(1, std::memory_order_relaxed);
+        g_pipes_created.add(1);
         NXLOG_D(kTag, "graphics pipeline created in %.1f ms (vs %s fs %s)", ms_taken, key.stage[0] ? key.stage[0]->hash.c_str() : "-",
                 key.stage[1] ? key.stage[1]->hash.c_str() : "-");
     }
@@ -621,6 +630,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
             if (e.alt && gpl_ab_whole()) return e.alt;
             return e.second;
         }
+    g_gfx_keys.add(1);                           // every path below adds one entry to the bucket
     prewarm_init();
     VkPipeline pipe = VK_NULL_HANDLE;
     if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
@@ -666,11 +676,13 @@ VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout) {
         } else {
             counters().pipelines_created.fetch_add(1);
             ++g_pipeline_count;
+            g_pipes_created.add(1);
             g_cache_dirty.store(true, std::memory_order_relaxed);
     g_new_since_save.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    g_compute[k] = pipe;
+    g_compute[k] = pipe;                         // new key: the lookup above missed
+    g_compute_keys.add(1);
     return pipe;
 }
 
@@ -686,6 +698,8 @@ VkBuffer constant_data_buffer(const ShaderInfo* s, VkDeviceSize* range) {
         std::memset(b.mapped, 0, size);
         if (!s->constants.empty()) std::memcpy(b.mapped, s->constants.data(), s->constants.size());
         it = g_const_bufs.emplace(s, std::make_pair(b, size)).first;
+        g_const_n.add(1);
+        g_const_bytes.add(static_cast<int64_t>(size));
     }
     *range = it->second.second;
     return it->second.first.buffer;
@@ -705,7 +719,7 @@ VkBuffer driver_constants_buffer(VkDeviceSize* range) {
     return g_driver_const.buffer;
 }
 
-size_t pipeline_count() { return g_pipeline_count; }
+size_t pipeline_count() { return static_cast<size_t>(g_pipeline_count.get()); }
 
 void module_cache_clear() {
     VkDevice d = vkdev();
@@ -734,10 +748,12 @@ void pipeline_shutdown() {
             if (e.up && e.up->state.load() == 1 && e.up->pipe) vkDestroyPipeline(d, e.up->pipe, nullptr);     // built and never taken
         }
     g_gfx.clear();
+    g_gfx_keys.sub(g_gfx_keys.get());
     gpl_shutdown();                              // the parts the pipelines were linked from
     for (auto& [k, p] : g_compute)
         if (p) vkDestroyPipeline(d, p, nullptr);
     g_compute.clear();
+    g_compute_keys.sub(g_compute_keys.get());
     g_layouts.clear();
     for (auto& [k, l] : g_shared_layouts) {          // the handles in g_layouts were copies of these
         if (l.layout) vkDestroyPipelineLayout(d, l.layout, nullptr);
@@ -762,6 +778,8 @@ void pipeline_shutdown() {
     g_xfb_mod.clear();
     for (auto& [k, b] : g_const_bufs) device().destroy_buffer(b.first);
     g_const_bufs.clear();
+    g_const_n.sub(g_const_n.get());
+    g_const_bytes.sub(g_const_bytes.get());
     if (g_driver_const_made) device().destroy_buffer(g_driver_const);
     g_driver_const_made = false;
     if (g_cache) vkDestroyPipelineCache(d, g_cache, nullptr);
@@ -769,7 +787,50 @@ void pipeline_shutdown() {
     g_cache_tried = false;
     g_cache_ready.store(false);
     g_cache_dirty.store(false);
-    g_pipeline_count = 0;
+    g_pipeline_count.sub(g_pipeline_count.get());
 }
+
+// Gauges (nxrt/gauge.h). The callbacks read the layout and module maps under the locks that guard them; they are removed before those maps
+// are destroyed.
+namespace {
+struct PipelineGauges {
+    PipelineGauges() {
+        nxrt::gauge_register("nvn.pipeline_layouts", [] {
+            std::lock_guard<std::mutex> lk(g_layout_mu);
+            return static_cast<int64_t>(g_layouts.size());
+        });
+        nxrt::gauge_register("nvn.shared_layouts", [] {
+            std::lock_guard<std::mutex> lk(g_layout_mu);
+            return static_cast<int64_t>(g_shared_layouts.size());
+        });
+        nxrt::gauge_register("nvn.shader_modules", [] {
+            std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+            return static_cast<int64_t>(g_modules.size());
+        });
+        nxrt::gauge_register("nvn.shader_modules.variants", [] {
+            std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+            return static_cast<int64_t>(g_variants.size());
+        });
+        nxrt::gauge_register("nvn.shader_modules.dual_src", [] {
+            std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+            return static_cast<int64_t>(g_dual_src.size());
+        });
+        nxrt::gauge_register("nvn.shader_modules.no_out", [] {
+            std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+            return static_cast<int64_t>(g_no_out.size());
+        });
+        nxrt::gauge_register("nvn.shader_modules.xfb", [] {
+            std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+            return static_cast<int64_t>(g_xfb_mod.size());
+        });
+    }
+    ~PipelineGauges() {
+        for (const char* n : {"nvn.pipeline_layouts", "nvn.shared_layouts", "nvn.shader_modules", "nvn.shader_modules.variants",
+                              "nvn.shader_modules.dual_src", "nvn.shader_modules.no_out", "nvn.shader_modules.xfb"})
+            nxrt::gauge_unregister(n);
+    }
+};
+PipelineGauges g_pipeline_gauges;
+}  // namespace
 
 }  // namespace nxrt::nvn::be::gpu

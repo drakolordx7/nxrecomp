@@ -19,11 +19,15 @@
 #include "nvn_impl.h"
 #include "nvn_shaders.h"
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 
 namespace nxrt::nvn {
 using namespace be;
 namespace {
+
+// Live programs (nxrt/gauge.h): from Initialize to Finalize, or to an Initialize over the program.
+nxrt::GaugeCounter g_programs("nvn.programs");
 
 static_assert(sizeof(GuestHeader) <= sizeof(NVNprogram), "program header fits the NVN object");
 
@@ -84,12 +88,15 @@ void report_missing(const uint8_t* code, const uint8_t* control) {
 NVNboolean nvnProgramInitialize(NVNprogram* program, NVNdevice* device) {
     (void)device;   // the program needs no device state of its own
     if (!program) return 0;
+    const bool was_live = host_of<Program>(program) != nullptr;   // initialised over a live program: replaced, not added
     bind_guest(program, new Program());
+    if (!was_live) g_programs.add(1);
     return 1;
 }
 
 void nvnProgramFinalize(NVNprogram* program) {
     if (!host_of<Program>(program)) return;
+    g_programs.sub(1);
     unbind_guest(program);
 }
 

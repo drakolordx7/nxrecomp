@@ -4,12 +4,14 @@
 
 #include <atomic>
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <mutex>
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
@@ -33,6 +35,23 @@ std::mutex g_unk_lock;
 std::map<uint32_t, SvcUnknownRecord> g_unknown;
 std::atomic<uint64_t> g_unknown_total{0};
 std::atomic<int64_t> g_log_limit{-1};
+
+// ---- gauges (include/nxrt/gauge.h) ----
+// Removes its gauge when the file's statics are torn down (declared after the tables above, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { gauge_register(n, std::move(f)); }
+    ~GaugeHook() { gauge_unregister(name); }
+};
+GaugeHook gauge_svc_calls("kernel.svc_calls", [] {   // SVCs answered since start (all numbers)
+    uint64_t n = 0;
+    for (auto& c : g_calls) n += c.load(std::memory_order_relaxed);
+    return static_cast<int64_t>(n);
+});
+GaugeHook gauge_svc_unknown_kinds("kernel.svc_unknown_kinds", [] {   // distinct unknown SVC numbers seen (the map only grows)
+    std::lock_guard<std::mutex> lk(g_unk_lock);
+    return static_cast<int64_t>(g_unknown.size());
+});
 
 }  // namespace
 

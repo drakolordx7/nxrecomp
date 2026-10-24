@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,6 +25,7 @@
 #include <vector>
 
 #include "nxrt/audio_sink.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 
@@ -125,6 +127,11 @@ void play_host(uint32_t rate, uint32_t channels, const int16_t* pcm, uint32_t fr
     host().sink->write(pcm, frames);
 }
 
+// Gauges (include/nxrt/gauge.h), summed over every open stream: buffers appended and not yet played, and played buffers whose tag the
+// guest has not taken back yet. Each stream changes them where it moves a buffer between the two lists, and gives its share back when destroyed.
+GaugeCounter g_buffers_queued("audout.buffers_queued");
+GaugeCounter g_buffers_released("audout.buffers_released");
+
 // ---- streams --------------------------------------------------------------------------------------------------------------
 enum class Dir { Out, In };
 
@@ -144,7 +151,11 @@ struct Entry {
 class Stream {
 public:
     Stream(Dir dir, uint32_t rate, uint32_t channels) : dir_(dir), rate_(rate), channels_(channels) {}
-    ~Stream() { shutdown(); }
+    ~Stream() {
+        shutdown();
+        g_buffers_queued.sub(static_cast<int64_t>(queue_.size()));
+        g_buffers_released.sub(static_cast<int64_t>(released_.size()));
+    }
     Stream(const Stream&) = delete;
     Stream& operator=(const Stream&) = delete;
 
@@ -274,6 +285,7 @@ uint32_t Stream::append(uint64_t tag, const Desc& d) {
     std::lock_guard<std::mutex> lk(mu_);
     if (queue_.size() + released_.size() >= kMaxBuffers) return kResBufferCountFull;
     queue_.push_back(e);
+    g_buffers_queued.add(1);
     cv_.notify_all();
     return 0;
 }
@@ -284,6 +296,7 @@ uint32_t Stream::take_released(uint64_t* out, uint32_t max) {
     while (n < max && !released_.empty()) {
         out[n++] = released_.front();
         released_.pop_front();
+        g_buffers_released.sub(1);
     }
     sync_event_locked();
     return n;
@@ -325,6 +338,8 @@ void Stream::set_volume(float v) {
 
 void Stream::release_all_locked() {
     for (const Entry& e : queue_) released_.push_back(e.tag);
+    g_buffers_queued.sub(static_cast<int64_t>(queue_.size()));
+    g_buffers_released.add(static_cast<int64_t>(queue_.size()));
     queue_.clear();
     ++epoch_;
     cv_.notify_all();
@@ -377,6 +392,8 @@ void Stream::pace() {
         played_ += head.frames;
         released_.push_back(head.tag);
         queue_.pop_front();
+        g_buffers_queued.sub(1);
+        g_buffers_released.add(1);
         sync_event_locked();
     }
 }

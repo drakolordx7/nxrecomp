@@ -19,6 +19,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
+#include "nxrt/gauge.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
@@ -378,6 +379,7 @@ void diag_progress() { g_progress.fetch_add(1, std::memory_order_relaxed); }
 void diag_frame_tick_nolisten() { g_frames.fetch_add(1, std::memory_order_relaxed); }
 void diag_frame_tick() {
     g_frames.fetch_add(1, std::memory_order_relaxed);
+    soak_note_frame();
     if (auto fn = g_frame_listener.load(std::memory_order_acquire)) fn();
 }
 

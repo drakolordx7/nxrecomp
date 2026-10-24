@@ -10,11 +10,13 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 
 #include "nxrt/dispatch.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/module.h"
 
@@ -39,6 +41,20 @@ std::atomic<Entry*> g_by_index[kMaxModules];
 std::atomic<uint64_t> g_import_calls{0};
 std::mutex g_type_lock;                               // resolved imported typeinfo slots (ABI 3 NxEh.type_syms), keyed by slot address
 std::unordered_map<const uint64_t*, uint64_t> g_type_cache;
+
+// ---- gauges (include/nxrt/gauge.h) ----
+// Removes its gauge when this file's statics are torn down (declared after them, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_nx_modules("core.nx_modules", [] { return static_cast<int64_t>(g_count.load(std::memory_order_acquire)); });
+GaugeHook gauge_import_calls("core.import_calls", [] { return static_cast<int64_t>(g_import_calls.load(std::memory_order_relaxed)); });
+GaugeHook gauge_type_cache("core.type_cache", [] {   // resolved typeinfo slots (only grows)
+    std::lock_guard<std::mutex> lk(g_type_lock);
+    return static_cast<int64_t>(g_type_cache.size());
+});
 
 Entry* by_index(uint32_t index) { return index < kMaxModules ? g_by_index[index].load(std::memory_order_acquire) : nullptr; }
 

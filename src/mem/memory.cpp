@@ -7,12 +7,14 @@
 #include "nxrt/memory.h"
 
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 
 #include <windows.h>
 
 #include <algorithm>
 #include <atomic>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -83,6 +85,38 @@ struct Alias {
 std::map<uint64_t, Alias> g_aliases;      // view address -> record
 // Alias region in use: start -> size for every live view and for every candidate address the kernel refused.
 std::map<uint64_t, uint64_t> g_alias_used;
+
+// ---- gauges (include/nxrt/gauge.h); each callback takes the lock of the state it reads ----
+// Removes its gauge when this file's statics are torn down (declared after them, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_heap_reserved("mem.heap_reserved", [] { return static_cast<int64_t>(heap_reserved()); });   // section size
+GaugeHook gauge_heap_committed("mem.heap_committed", [] { return static_cast<int64_t>(heap_committed()); });   // committed through heap_commit
+GaugeHook gauge_aliases("mem.aliases", [] {   // heap alias views live (g_heap_mu)
+    std::lock_guard<std::mutex> lk(g_heap_mu);
+    return static_cast<int64_t>(g_aliases.size());
+});
+GaugeHook gauge_alias_used("mem.alias_used", [] {   // alias-region ranges in use, plus addresses the kernel refused (never freed: only grows)
+    std::lock_guard<std::mutex> lk(g_heap_mu);
+    return static_cast<int64_t>(g_alias_used.size());
+});
+GaugeHook gauge_fixed("mem.fixed_regions", [] {   // fixed reservations of this module (images, stacks, kernel region)
+    std::lock_guard<std::mutex> lk(g_fixed_mu);
+    return static_cast<int64_t>(g_fixed.size());
+});
+GaugeHook gauge_fixed_bytes("mem.fixed_bytes", [] {
+    std::lock_guard<std::mutex> lk(g_fixed_mu);
+    uint64_t n = 0;
+    for (const auto& kv : g_fixed) n += kv.second.size;
+    return static_cast<int64_t>(n);
+});
+GaugeHook gauge_vm_blocks("mem.vm_blocks", [] {   // blocks of the Horizon-style vm map kept for QueryMemory
+    std::lock_guard<std::mutex> lk(g_vm_mu);
+    return static_cast<int64_t>(g_vm.size());
+});
 
 // [memory] fast_query = false: ask the host (VirtualQuery) instead of the page table above; for before/after measurements.
 bool fast_query() {

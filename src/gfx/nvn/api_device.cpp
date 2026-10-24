@@ -27,12 +27,23 @@
 #include "nvn_cmd.h"
 #include "nvn_gpu.h"
 #include "nvn_impl.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 
 namespace nxrt::nvn {
 namespace {
 
 constexpr const char* kTag = "nvn";
+
+// Live counts (nxrt/gauge.h): an object counts from its Initialize to its Finalize (or to an Initialize over it). A window also holds up to 4
+// swapchain textures, counted in window_textures.
+nxrt::GaugeCounter g_syncs("nvn.syncs");
+nxrt::GaugeCounter g_windows("nvn.windows");
+nxrt::GaugeCounter g_window_textures("nvn.window_textures");
+void window_gone(const be::Window* w) {
+    g_windows.sub(1);
+    g_window_textures.sub(static_cast<int64_t>(w->textures.size()));
+}
 
 // Unknown command handles seen by nvnQueueSubmitCommands; a warning is logged for the first and then every 100th.
 std::atomic<uint64_t> g_unknown_handles{0};
@@ -284,12 +295,15 @@ NVNboolean nvnQueueWaitSync(NVNqueue* queue, const NVNsync* sync) {
 // ---- sync ---------------------------------------------------------------------------------------------------------------
 NVNboolean nvnSyncInitialize(NVNsync* sync, NVNdevice*) {
     if (!sync) return 0;
+    const bool was_live = be::host_of<be::Sync>(sync) != nullptr;   // initialised over a live sync: replaced, not added
     be::bind_guest(sync, new be::Sync());
+    if (!was_live) g_syncs.add(1);
     return 1;
 }
 
 void nvnSyncFinalize(NVNsync* sync) {
     if (!be::host_of<be::Sync>(sync)) return;
+    g_syncs.sub(1);
     be::unbind_guest(sync);
 }
 
@@ -350,6 +364,7 @@ ptrdiff_t nvnEventGetMemoryOffset(const NVNevent* event) {
 NVNboolean nvnWindowInitialize(NVNwindow* window, const NVNwindowBuilder* builder) {
     if (!window) return 0;
     const WindowBuilderInfo info = builder ? decode(builder) : WindowBuilderInfo{};
+    if (be::Window* old = be::host_of<be::Window>(window)) window_gone(old);   // initialised over a live window: the old one is replaced
     auto* w = new be::Window();
     for (int i = 0; i < info.texture_count && i < 4; ++i) {
         if (!info.textures[i]) continue;
@@ -359,11 +374,15 @@ NVNboolean nvnWindowInitialize(NVNwindow* window, const NVNwindowBuilder* builde
     w->present_interval = info.present_interval;
     w->native_window = info.native_window;
     be::bind_guest(window, w);
+    g_windows.add(1);
+    g_window_textures.add(static_cast<int64_t>(w->textures.size()));
     return 1;
 }
 
 void nvnWindowFinalize(NVNwindow* window) {
-    if (!be::host_of<be::Window>(window)) return;
+    const be::Window* w = be::host_of<be::Window>(window);
+    if (!w) return;
+    window_gone(w);
     be::unbind_guest(window);
 }
 

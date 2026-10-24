@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "nxrt/log.h"
+#include "vk_gauges.h"
 
 namespace nxrt::extras {
 namespace {
@@ -25,7 +26,9 @@ VkShaderModule make_module(VkDevice d, const uint32_t* code, size_t bytes) {
     mi.codeSize = bytes;
     mi.pCode = code;
     VkShaderModule m = VK_NULL_HANDLE;
-    return vkCreateShaderModule(d, &mi, nullptr, &m) == VK_SUCCESS ? m : VK_NULL_HANDLE;
+    if (vkCreateShaderModule(d, &mi, nullptr, &m) != VK_SUCCESS) return VK_NULL_HANDLE;
+    vk_gauge_shader_modules().add(1);
+    return m;
 }
 
 }  // namespace
@@ -46,15 +49,19 @@ bool OutputPass::init(gfx::Device& dev) {
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = 0.0f;
     if (vkCreateSampler(d, &sci, nullptr, &linear_) != VK_SUCCESS) return fail("linear sampler");
+    vk_gauge_samplers().add(1);
     sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
     if (vkCreateSampler(d, &sci, nullptr, &nearest_) != VK_SUCCESS) return fail("nearest sampler");
+    vk_gauge_samplers().add(1);
 
     auto set_layout = [&](std::initializer_list<VkDescriptorSetLayoutBinding> b, VkDescriptorSetLayout* out) {
         std::vector<VkDescriptorSetLayoutBinding> v(b);
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.bindingCount = static_cast<uint32_t>(v.size());
         li.pBindings = v.data();
-        return vkCreateDescriptorSetLayout(d, &li, nullptr, out) == VK_SUCCESS;
+        const bool ok = vkCreateDescriptorSetLayout(d, &li, nullptr, out) == VK_SUCCESS;
+        if (ok) vk_gauge_descriptor_set_layouts().add(1);
+        return ok;
     };
     auto pipe_layout = [&](VkDescriptorSetLayout sl, VkShaderStageFlags stages, uint32_t push, VkPipelineLayout* out) {
         VkPushConstantRange pcr = {stages, 0, push};
@@ -63,7 +70,9 @@ bool OutputPass::init(gfx::Device& dev) {
         li.pSetLayouts = &sl;
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges = &pcr;
-        return vkCreatePipelineLayout(d, &li, nullptr, out) == VK_SUCCESS;
+        const bool ok = vkCreatePipelineLayout(d, &li, nullptr, out) == VK_SUCCESS;
+        if (ok) vk_gauge_pipeline_layouts().add(1);
+        return ok;
     };
     if (!set_layout({{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}, &enc_set_layout_)) return fail("encode set layout");
     if (!pipe_layout(enc_set_layout_, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(EncodePush), &enc_layout_)) return fail("encode pipeline layout");
@@ -74,6 +83,7 @@ bool OutputPass::init(gfx::Device& dev) {
     dpi.poolSizeCount = 1;
     dpi.pPoolSizes = &ps;
     if (vkCreateDescriptorPool(d, &dpi, nullptr, &pool_) != VK_SUCCESS) return fail("descriptor pool");
+    vk_gauge_descriptor_pools().add(1);
     {
         VkDescriptorSetLayout ls[kSetRing];
         for (auto& x : ls) x = enc_set_layout_;
@@ -82,6 +92,7 @@ bool OutputPass::init(gfx::Device& dev) {
         ai.descriptorSetCount = kSetRing;
         ai.pSetLayouts = ls;
         if (vkAllocateDescriptorSets(d, &ai, enc_sets_) != VK_SUCCESS) return fail("descriptor sets");
+        vk_gauge_descriptor_sets().add(kSetRing);   // shutdown subtracts them only while enc_sets_[0] is set
     }
 
     vs_ = make_module(d, kOutVert, sizeof kOutVert);
@@ -97,15 +108,17 @@ void OutputPass::shutdown() {
     VkDevice d = dev_->device();
     dev_->wait_idle();
     fsr_.shutdown();
-    for (auto& [f, p] : enc_pipes_) vkDestroyPipeline(d, p, nullptr);
+    for (auto& [f, p] : enc_pipes_)
+        if (p) { vkDestroyPipeline(d, p, nullptr); vk_gauge_pipelines().sub(1); }
     enc_pipes_.clear();
-    if (enc_layout_) vkDestroyPipelineLayout(d, enc_layout_, nullptr);
-    if (pool_) vkDestroyDescriptorPool(d, pool_, nullptr);
-    if (enc_set_layout_) vkDestroyDescriptorSetLayout(d, enc_set_layout_, nullptr);
-    if (vs_) vkDestroyShaderModule(d, vs_, nullptr);
-    if (fs_) vkDestroyShaderModule(d, fs_, nullptr);
-    if (linear_) vkDestroySampler(d, linear_, nullptr);
-    if (nearest_) vkDestroySampler(d, nearest_, nullptr);
+    if (enc_layout_) { vkDestroyPipelineLayout(d, enc_layout_, nullptr); vk_gauge_pipeline_layouts().sub(1); }
+    if (pool_) { vkDestroyDescriptorPool(d, pool_, nullptr); vk_gauge_descriptor_pools().sub(1); }
+    if (enc_sets_[0]) vk_gauge_descriptor_sets().sub(kSetRing);
+    if (enc_set_layout_) { vkDestroyDescriptorSetLayout(d, enc_set_layout_, nullptr); vk_gauge_descriptor_set_layouts().sub(1); }
+    if (vs_) { vkDestroyShaderModule(d, vs_, nullptr); vk_gauge_shader_modules().sub(1); }
+    if (fs_) { vkDestroyShaderModule(d, fs_, nullptr); vk_gauge_shader_modules().sub(1); }
+    if (linear_) { vkDestroySampler(d, linear_, nullptr); vk_gauge_samplers().sub(1); }
+    if (nearest_) { vkDestroySampler(d, nearest_, nullptr); vk_gauge_samplers().sub(1); }
     enc_layout_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
     enc_set_layout_ = VK_NULL_HANDLE;
@@ -166,6 +179,7 @@ VkPipeline OutputPass::encode_pipeline(VkFormat fmt) {
         NXLOG_E(kTag, "encode pipeline for format %d failed", static_cast<int>(fmt));
         p = VK_NULL_HANDLE;
     }
+    if (p) vk_gauge_pipelines().add(1);
     enc_pipes_[fmt] = p;
     return p;
 }

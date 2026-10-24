@@ -388,6 +388,11 @@ inline void AudioRenderSystem::DisposeImpl() {
     // C# _workBufferMemoryPin.Dispose() and MemoryManager release: the work buffer vector is freed with the renderer.
 }
 
-inline AudioRenderSystem::~AudioRenderSystem() { Dispose(); }
+inline AudioRenderSystem::~AudioRenderSystem() {
+    Dispose();
+    g_gauge_voices_in_use.fetch_sub(_gaugeVoices, std::memory_order_relaxed);
+    g_gauge_wavebuffers_queued.fetch_sub(_gaugeWaves, std::memory_order_relaxed);
+    g_gauge_memory_pools.fetch_sub(_gaugePools, std::memory_order_relaxed);
+}
 
 }  // namespace nxrt::audren

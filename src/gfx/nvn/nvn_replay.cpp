@@ -15,6 +15,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nvn_decoded.h"
 #include "nvn_enums.h"
@@ -556,9 +557,11 @@ bool is_color_feedback(Texture* t) {
 std::unordered_map<Texture*, Ref<Texture>> g_fb_clone;     // attachment -> its copy (same shape, no storage in game memory)
 std::unordered_map<Texture*, Texture*> g_fb_use;           // attachment -> the copy the current draw samples
 bool g_fb_seen = false;                                    // the last check found a feedback binding: check every draw until it goes away
+std::atomic<int64_t> g_fb_clone_n{0};                      // g_fb_clone's size, mirrored for the gauge (the map itself is render thread only)
 
 Texture* feedback_clone(Texture* t) {
     Ref<Texture>& c = g_fb_clone[t];
+    g_fb_clone_n.store(static_cast<int64_t>(g_fb_clone.size()), std::memory_order_relaxed);
     if (c && (c->b.width != t->b.width || c->b.height != t->b.height || c->b.depth != t->b.depth || c->fmt != t->fmt || c->levels != t->levels || c->layers != t->layers))
         c = Ref<Texture>();                                 // the game made another texture at this address
     if (!c) {
@@ -2124,6 +2127,18 @@ void replay_shutdown() {
     g_set_cache.clear();
     g_fb_use.clear();
     g_fb_clone.clear();
+    g_fb_clone_n.store(0, std::memory_order_relaxed);
 }
+
+// Gauge (nxrt/gauge.h): reads the atomic mirror above, never the map. Removed before the globals are destroyed.
+namespace {
+struct ReplayGauges {
+    ReplayGauges() {
+        nxrt::gauge_register("nvn.replay.fb_clones", [] { return g_fb_clone_n.load(std::memory_order_relaxed); });
+    }
+    ~ReplayGauges() { nxrt::gauge_unregister("nvn.replay.fb_clones"); }
+};
+ReplayGauges g_replay_gauges;
+}  // namespace
 
 }  // namespace nxrt::nvn::be::gpu

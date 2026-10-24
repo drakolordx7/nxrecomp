@@ -18,8 +18,10 @@
 #include "nxrt/diag.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/lowlat.h"
+#include "vk_gauges.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
 #include "nvn_pipeline.h"
@@ -33,6 +35,10 @@ constexpr const char* kTag = "nvn.gpu";
 constexpr uint32_t kSlots = 4;
 constexpr VkDeviceSize kUploadBytes = 32ull << 20;
 
+// Live-count gauges of this file (leak monitor, nxrt/gauge.h).
+nxrt::GaugeCounter g_gauge_deferred("nvn.deferred_destroy");     // closures waiting for their submission to finish (defer_destroy, Frame::defer)
+nxrt::GaugeCounter g_gauge_render_queue("nvn.render_queue");     // jobs queued for the render thread
+
 struct Slot {
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer cb = VK_NULL_HANDLE;
@@ -44,6 +50,7 @@ struct Slot {
     uint64_t serial = 0;                  // last submission that used the slot
     bool timed = false;                   // frame trace: the submission wrote GPU timestamps (query pair index = slot index * 2)
     uint64_t cpu_t0 = 0;
+    uint64_t sets_live = 0;               // descriptor sets allocated from this slot's pools since the last reset (vk.descriptor_sets)
 };
 
 struct Deferred {
@@ -114,6 +121,7 @@ void retire() {
     while (!g->deferred.empty() && g->deferred.front().serial <= done) {
         auto fn = std::move(g->deferred.front().fn);
         g->deferred.pop_front();
+        g_gauge_deferred.sub(1);
         fn();
     }
 }
@@ -130,6 +138,7 @@ void render_loop() {
             if (g->queue.empty()) return;   // stop requested and drained
             job = std::move(g->queue.front());
             g->queue.pop_front();
+            g_gauge_render_queue.sub(1);
         }
         try {
             job();
@@ -145,11 +154,13 @@ bool create_slot(Slot& s) {
     ci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     ci.queueFamilyIndex = d.queue_family();
     if (vkCreateCommandPool(d.device(), &ci, nullptr, &s.pool) != VK_SUCCESS) return false;
+    vk_gauge_command_pools().add(1);
     VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     ai.commandPool = s.pool;
     ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     if (vkAllocateCommandBuffers(d.device(), &ai, &s.cb) != VK_SUCCESS) return false;
+    vk_gauge_command_buffers().add(1);
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     if (d.create_buffer(kUploadBytes, usage, gfx::MemoryUse::Upload, &s.upload, "nvn upload") != VK_SUCCESS) return false;
@@ -171,6 +182,7 @@ VkDescriptorPool new_dpool() {
     ci.pPoolSizes = sizes;
     VkDescriptorPool p = VK_NULL_HANDLE;
     if (vkCreateDescriptorPool(g->dev->device(), &ci, nullptr, &p) != VK_SUCCESS) return VK_NULL_HANDLE;
+    vk_gauge_descriptor_pools().add(1);
     return p;
 }
 
@@ -204,6 +216,8 @@ Slot& acquire_slot() {
     retire();
     vkResetCommandPool(g->dev->device(), s.pool, 0);
     for (VkDescriptorPool p : s.dpools) vkResetDescriptorPool(g->dev->device(), p, 0);
+    vk_gauge_descriptor_sets().sub(static_cast<int64_t>(s.sets_live));   // the reset freed them
+    s.sets_live = 0;
     s.dpool_cur = 0;
     s.upload_off = 0;
     for (auto& b : s.extra) g->dev->destroy_buffer(b);
@@ -259,7 +273,10 @@ UploadAlloc Frame::adopt_staging(gfx::Buffer b) {
     return a;
 }
 
-void Frame::defer(std::function<void()> fn) { g->deferred.push_back({serial, std::move(fn)}); }
+void Frame::defer(std::function<void()> fn) {
+    g->deferred.push_back({serial, std::move(fn)});
+    g_gauge_deferred.add(1);
+}
 
 VkDescriptorSet Frame::alloc_set(VkDescriptorSetLayout layout) {
     Slot& s = *static_cast<Slot*>(slot);
@@ -277,6 +294,8 @@ VkDescriptorSet Frame::alloc_set(VkDescriptorSetLayout layout) {
         const VkResult r = vkAllocateDescriptorSets(g->dev->device(), &ai, &set);
         if (r == VK_SUCCESS) {
             g->ctr.descriptor_sets.fetch_add(1, std::memory_order_relaxed);
+            s.sets_live++;
+            vk_gauge_descriptor_sets().add(1);
             return set;
         }
         ++s.dpool_cur;   // exhausted or fragmented: move on to the next pool (created on demand)
@@ -308,6 +327,7 @@ void defer_destroy(std::function<void()> fn) {
     }
     std::lock_guard<std::mutex> lk(g->dmu);
     g->pending_destroy.push_back(std::move(fn));
+    g_gauge_deferred.add(1);
 }
 
 void run_on_render_thread(const std::function<void()>& fn) {
@@ -327,6 +347,7 @@ void run_on_render_thread(const std::function<void()>& fn) {
             done = true;
             cv.notify_all();
         });
+        g_gauge_render_queue.add(1);
     }
     g->qcv.notify_one();
     std::unique_lock<std::mutex> lk(m);
@@ -581,6 +602,7 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
         delete gp;
         return false;
     }
+    vk_gauge_semaphores().add(1);
     for (Slot& s : gp->slots)
         if (!create_slot(s)) {
             NXLOG_E(kTag, "creating a submission slot failed");
@@ -593,6 +615,7 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = kSlots * 2;
         if (vkCreateQueryPool(dev.device(), &qi, nullptr, &gp->qpool) != VK_SUCCESS) gp->qpool = VK_NULL_HANDLE;
+        else vk_gauge_query_pools().add(1);
     }
     if (ft::on()) extras::lowlat_set_backlog_fn([]() -> uint64_t {      // latency probe: submissions the GPU has not finished
         if (!g || !g->timeline) return 0;
@@ -630,10 +653,11 @@ void tear_down() {
         while (!gp->deferred.empty()) {
             auto fn = std::move(gp->deferred.front().fn);
             gp->deferred.pop_front();
+            g_gauge_deferred.sub(1);
             fn();
         }
         drain_pending_destroy();
-        for (auto& d : gp->deferred) d.fn();
+        for (auto& d : gp->deferred) { d.fn(); g_gauge_deferred.sub(1); }
         gp->deferred.clear();
         gp->present.shutdown();
         gp->output.shutdown();
@@ -648,12 +672,21 @@ void tear_down() {
     vkDeviceWaitIdle(d.device());
     for (Slot& s : gp->slots) {
         for (auto& b : s.extra) d.destroy_buffer(b);
-        for (VkDescriptorPool p : s.dpools) vkDestroyDescriptorPool(d.device(), p, nullptr);
+        vk_gauge_descriptor_sets().sub(static_cast<int64_t>(s.sets_live));
+        s.sets_live = 0;
+        for (VkDescriptorPool p : s.dpools) {
+            vkDestroyDescriptorPool(d.device(), p, nullptr);
+            vk_gauge_descriptor_pools().sub(1);
+        }
         d.destroy_buffer(s.upload);
-        if (s.pool) vkDestroyCommandPool(d.device(), s.pool, nullptr);
+        if (s.pool) {
+            vkDestroyCommandPool(d.device(), s.pool, nullptr);
+            vk_gauge_command_pools().sub(1);
+            if (s.cb) vk_gauge_command_buffers().sub(1);
+        }
     }
-    if (gp->qpool) vkDestroyQueryPool(d.device(), gp->qpool, nullptr);
-    if (gp->timeline) vkDestroySemaphore(d.device(), gp->timeline, nullptr);
+    if (gp->qpool) { vkDestroyQueryPool(d.device(), gp->qpool, nullptr); vk_gauge_query_pools().sub(1); }
+    if (gp->timeline) { vkDestroySemaphore(d.device(), gp->timeline, nullptr); vk_gauge_semaphores().sub(1); }
     g = nullptr;
     delete gp;
 }

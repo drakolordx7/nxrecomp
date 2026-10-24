@@ -15,8 +15,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <limits>
 
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 
 namespace nxrt::sync {
@@ -113,6 +115,17 @@ Bucket g_buckets[kBuckets];
 SRWLOCK g_grave_lock;
 Object* g_grave = nullptr;
 std::atomic<size_t> g_live{0};
+std::atomic<size_t> g_grave_n{0};   // objects on the graveyard list (park adds, reset_all clears)
+
+// ---- gauges (include/nxrt/gauge.h) ----
+// Removes its gauge when this file's statics are torn down (declared after the counters above, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_sync_objects("os.sync_objects", [] { return static_cast<int64_t>(g_live.load(std::memory_order_relaxed)); });
+GaugeHook gauge_sync_graveyard("os.sync_graveyard", [] { return static_cast<int64_t>(g_grave_n.load(std::memory_order_relaxed)); });
 
 size_t bucket_index(uint64_t addr) {
     return static_cast<size_t>((addr * 0x9E3779B97F4A7C15ull) >> 52);
@@ -128,6 +141,7 @@ void park(Object* o) {
     AcquireSRWLockExclusive(&g_grave_lock);
     o->gnext = g_grave;
     g_grave = o;
+    g_grave_n.fetch_add(1, std::memory_order_relaxed);
     ReleaseSRWLockExclusive(&g_grave_lock);
 }
 
@@ -568,6 +582,7 @@ void reset_all() {
     AcquireSRWLockExclusive(&g_grave_lock);
     Object* g = g_grave;
     g_grave = nullptr;
+    g_grave_n.store(0, std::memory_order_relaxed);
     ReleaseSRWLockExclusive(&g_grave_lock);
     while (g) {
         Object* n = g->gnext;

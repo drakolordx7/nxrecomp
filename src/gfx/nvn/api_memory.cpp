@@ -19,6 +19,7 @@
 #include "nvn_core.h"
 #include "nvn_gpu.h"
 #include "nvn_impl.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 
 namespace nxrt::nvn {
@@ -35,6 +36,15 @@ constexpr uint64_t kMaxPoolSize = 1ull << 40;           // sanity bound (keeps t
 static_assert(sizeof(GuestHeader) + sizeof(uint64_t) <= sizeof(NVNtexturePool), "texture pool guest slot fits");
 static_assert(sizeof(GuestHeader) + sizeof(uint64_t) <= sizeof(NVNsamplerPool), "sampler pool guest slot fits");
 static_assert(sizeof(BufferData) <= sizeof(NVNbuffer), "buffer layout fits NVNbuffer");
+
+// Live object counts (nxrt/gauge.h). An object counts from its Initialize until its Finalize, or until an Initialize over it replaces it.
+nxrt::GaugeCounter g_memory_pools("nvn.memory_pools");
+nxrt::GaugeCounter g_memory_pool_bytes("nvn.memory_pools.bytes");   // size of the live pools (a virtual pool counts its reserved range, not committed memory)
+nxrt::GaugeCounter g_buffers("nvn.buffers");
+nxrt::GaugeCounter g_texture_pools("nvn.texture_pools");
+nxrt::GaugeCounter g_sampler_pools("nvn.sampler_pools");
+nxrt::GaugeCounter g_texture_handles("nvn.texture_handles");   // texture ids registered in live texture pools
+nxrt::GaugeCounter g_sampler_handles("nvn.sampler_handles");   // sampler ids registered in live sampler pools
 
 // Logs a message the first time this call site hits it.
 #define NVN_WARN_ONCE(...)                                                  \
@@ -62,6 +72,8 @@ uint64_t alloc_virtual_range(uint64_t size) {
 
 // Takes a pool out of the registry and marks it dead (Finalize, and re-initialisation over a live pool).
 void retire_pool(MemoryPool* p) {
+    g_memory_pools.sub(1);
+    g_memory_pool_bytes.sub(static_cast<int64_t>(p->size));
     handles_release_pool(p);
     pool_unregister(p);
     p->dead.store(true);
@@ -84,6 +96,20 @@ void drop_pool_ref(P* p) {
         p->mem->unref();
         p->mem = nullptr;
     }
+}
+
+// A texture or sampler pool leaves the live set (Finalize, or Initialize over it): the handles it registered leave with it.
+void texture_pool_gone(const TexturePool* tp) {
+    int64_t used = 0;
+    for (const TexturePool::Entry& e : tp->entries) used += e.used ? 1 : 0;
+    g_texture_handles.sub(used);
+    g_texture_pools.sub(1);
+}
+void sampler_pool_gone(const SamplerPool* sp) {
+    int64_t used = 0;
+    for (uint8_t u : sp->used) used += u ? 1 : 0;
+    g_sampler_handles.sub(used);
+    g_sampler_pools.sub(1);
 }
 
 // The memory pool behind a guest NVNmemoryPool (null when the object is not a live pool of ours).
@@ -141,6 +167,8 @@ NVNboolean nvnMemoryPoolInitialize(NVNmemoryPool* pool, const NVNmemoryPoolBuild
     }
     pool_register(p);
     bind_guest(pool, p);
+    g_memory_pools.add(1);
+    g_memory_pool_bytes.add(static_cast<int64_t>(p->size));
     return 1;
 }
 
@@ -248,12 +276,15 @@ NVNboolean nvnBufferInitialize(NVNbuffer* buffer, const NVNbufferBuilder* builde
                 static_cast<unsigned long long>(pool->size));
         return 0;
     }
+    BufferData prev{};
+    const bool was_live = buffer_load(buffer, prev);     // initialised over a live buffer: replaced, not added
     BufferData d{};
     d.address = pool->gpu_base + off;
     d.size = info.size;
     d.pool = reinterpret_cast<uint64_t>(info.pool);
     d.magic = kBufferMagic;
     buffer_store(buffer, d);
+    if (!was_live) g_buffers.add(1);
     if (gpu::active()) gpu::prefetch_pool(pool);   // a pool that backs a buffer is going to be read by the GPU: import it in the background
     return 1;
 }
@@ -263,6 +294,7 @@ void nvnBufferSetDebugLabel(NVNbuffer*, const char*) {}
 void nvnBufferFinalize(NVNbuffer* buffer) {
     BufferData d{};
     if (!buffer_load(buffer, d)) return;
+    g_buffers.sub(1);
     std::memset(buffer, 0, sizeof(NVNbuffer));
 }
 
@@ -320,7 +352,10 @@ NVNboolean nvnTexturePoolInitialize(NVNtexturePool* pool, const NVNmemoryPool* m
         NVN_WARN_ONCE("nvnTexturePoolInitialize: the memory pool is not a live pool or the count is negative; pool not created");
         return 0;
     }
-    if (TexturePool* old = host_of<TexturePool>(pool)) drop_pool_ref(old);
+    if (TexturePool* old = host_of<TexturePool>(pool)) {
+        texture_pool_gone(old);
+        drop_pool_ref(old);
+    }
     auto* tp = new TexturePool();
     tp->mem = mem;
     mem->ref();                                 // released by Finalize (or re-initialisation)
@@ -329,6 +364,7 @@ NVNboolean nvnTexturePoolInitialize(NVNtexturePool* pool, const NVNmemoryPool* m
     tp->entries.resize(static_cast<size_t>(count));
     owner_slot_set(pool, reinterpret_cast<uint64_t>(memory));
     bind_guest(pool, tp);
+    g_texture_pools.add(1);
     return 1;
 }
 
@@ -337,6 +373,7 @@ void nvnTexturePoolSetDebugLabel(NVNtexturePool*, const char*) {}
 void nvnTexturePoolFinalize(NVNtexturePool* pool) {
     TexturePool* tp = host_of<TexturePool>(pool);
     if (!tp) return;
+    texture_pool_gone(tp);
     drop_pool_ref(tp);
     unbind_guest(pool);
 }
@@ -356,6 +393,7 @@ void texture_pool_register(const NVNtexturePool* pool, int id, const NVNtexture*
     e.tex = Ref<Texture>::share(t);
     e.view = info;
     e.has_view = view != nullptr;
+    if (!e.used) g_texture_handles.add(1);
     e.used = true;
     be::tx_mark("tx.reg", t);
     be::g_tex_scan_epoch.fetch_add(1, std::memory_order_relaxed);   // a new texture sits behind this id now
@@ -393,7 +431,10 @@ NVNboolean nvnSamplerPoolInitialize(NVNsamplerPool* pool, const NVNmemoryPool* m
         NVN_WARN_ONCE("nvnSamplerPoolInitialize: the memory pool is not a live pool or the count is negative; pool not created");
         return 0;
     }
-    if (SamplerPool* old = host_of<SamplerPool>(pool)) drop_pool_ref(old);
+    if (SamplerPool* old = host_of<SamplerPool>(pool)) {
+        sampler_pool_gone(old);
+        drop_pool_ref(old);
+    }
     auto* sp = new SamplerPool();
     sp->mem = mem;
     mem->ref();                                 // released by Finalize (or re-initialisation)
@@ -403,6 +444,7 @@ NVNboolean nvnSamplerPoolInitialize(NVNsamplerPool* pool, const NVNmemoryPool* m
     sp->used.resize(static_cast<size_t>(count), 0);
     owner_slot_set(pool, reinterpret_cast<uint64_t>(memory));
     bind_guest(pool, sp);
+    g_sampler_pools.add(1);
     return 1;
 }
 
@@ -411,6 +453,7 @@ void nvnSamplerPoolSetDebugLabel(NVNsamplerPool*, const char*) {}
 void nvnSamplerPoolFinalize(NVNsamplerPool* pool) {
     SamplerPool* sp = host_of<SamplerPool>(pool);
     if (!sp) return;
+    sampler_pool_gone(sp);
     drop_pool_ref(sp);
     unbind_guest(pool);
 }
@@ -425,6 +468,7 @@ void sampler_pool_store(const NVNsamplerPool* pool, int id, const SamplerInfo& i
     }
     std::unique_lock<std::shared_mutex> lk(sp->lock);
     sp->entries[static_cast<size_t>(id)] = info;
+    if (!sp->used[static_cast<size_t>(id)]) g_sampler_handles.add(1);
     sp->used[static_cast<size_t>(id)] = 1;
 }
 

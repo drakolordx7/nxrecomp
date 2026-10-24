@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "nxrt/log.h"
+#include "vk_gauges.h"
 
 namespace nxrt::nvn::be {
 namespace {
@@ -36,7 +37,9 @@ bool MaskClear::init(gfx::Device& dev) {
         VkShaderModuleCreateInfo mi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         mi.codeSize = blob.bytes;
         mi.pCode = blob.words;
-        return vkCreateShaderModule(d, &mi, nullptr, out) == VK_SUCCESS;
+        const bool ok = vkCreateShaderModule(d, &mi, nullptr, out) == VK_SUCCESS;
+        if (ok) vk_gauge_shader_modules().add(1);
+        return ok;
     };
     if (!make_module(kMaskClearVertBlob, &vert_)) return fail("vertex shader module");
     for (uint32_t k = 0; k < 3; ++k)
@@ -48,6 +51,7 @@ bool MaskClear::init(gfx::Device& dev) {
     pli.pushConstantRangeCount = 1;
     pli.pPushConstantRanges = &pcr;
     if (vkCreatePipelineLayout(d, &pli, nullptr, &layout_) != VK_SUCCESS) return fail("pipeline layout");
+    vk_gauge_pipeline_layouts().add(1);
     return true;
 }
 
@@ -56,16 +60,16 @@ void MaskClear::shutdown() {
     VkDevice d = dev_->device();
     dev_->wait_idle();
     for (auto& kv : pipelines_)
-        if (kv.second) vkDestroyPipeline(d, kv.second, nullptr);
+        if (kv.second) { vkDestroyPipeline(d, kv.second, nullptr); vk_gauge_pipelines().sub(1); }
     pipelines_.clear();
     for (auto& kv : ds_pipelines_)
-        if (kv.second) vkDestroyPipeline(d, kv.second, nullptr);
+        if (kv.second) { vkDestroyPipeline(d, kv.second, nullptr); vk_gauge_pipelines().sub(1); }
     ds_pipelines_.clear();
-    if (layout_) vkDestroyPipelineLayout(d, layout_, nullptr);
+    if (layout_) { vkDestroyPipelineLayout(d, layout_, nullptr); vk_gauge_pipeline_layouts().sub(1); }
     for (auto& row : frag_)
         for (auto& m : row)
-            if (m) vkDestroyShaderModule(d, m, nullptr);
-    if (vert_) vkDestroyShaderModule(d, vert_, nullptr);
+            if (m) { vkDestroyShaderModule(d, m, nullptr); vk_gauge_shader_modules().sub(1); }
+    if (vert_) { vkDestroyShaderModule(d, vert_, nullptr); vk_gauge_shader_modules().sub(1); }
     layout_ = VK_NULL_HANDLE;
     vert_ = VK_NULL_HANDLE;
     for (auto& row : frag_)
@@ -140,6 +144,7 @@ VkPipeline MaskClear::pipeline_for(const Key& key) {
                 mask, kind);
         return VK_NULL_HANDLE;
     }
+    vk_gauge_pipelines().add(1);
     pipelines_.emplace(key, pipe);
     return pipe;
 }
@@ -214,6 +219,7 @@ VkPipeline MaskClear::ds_pipeline_for(const VkFormat* color_formats, uint32_t co
                 has_stencil ? 1 : 0, color_count);
         return VK_NULL_HANDLE;
     }
+    vk_gauge_pipelines().add(1);
     ds_pipelines_.emplace(key, pipe);
     return pipe;
 }

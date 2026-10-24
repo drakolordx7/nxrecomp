@@ -24,6 +24,7 @@
 
 #include <nxrt/ftrace.h>
 #include <nxrt/config.h>
+#include <nxrt/gauge.h>
 #include <nxrt/log.h>
 
 namespace nxrt::nvn::be {
@@ -983,8 +984,23 @@ static std::string exe_folder() {
     return std::filesystem::path(buf).parent_path().string();
 }
 
+namespace {
+// Gauges (nxrt/gauge.h) for the process cache. Declared after the cache in shader_cache(), so it is destroyed before the cache.
+struct ShaderCacheGauges {
+    explicit ShaderCacheGauges(const ShaderCache& c) {
+        nxrt::gauge_register("nvn.shaders.loaded", [&c] { return static_cast<int64_t>(c.loaded()); });
+        nxrt::gauge_register("nvn.shaders.missing", [&c] { return static_cast<int64_t>(c.missing()); });
+    }
+    ~ShaderCacheGauges() {
+        nxrt::gauge_unregister("nvn.shaders.loaded");
+        nxrt::gauge_unregister("nvn.shaders.missing");
+    }
+};
+}  // namespace
+
 ShaderCache& shader_cache() {
     static ShaderCache cache;
+    static ShaderCacheGauges gauges(cache);
     static std::once_flag once;
     std::call_once(once, [] {
         std::string configured = nxrt::config_get_str("nvn", "shader_cache", "");

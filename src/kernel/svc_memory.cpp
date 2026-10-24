@@ -6,12 +6,14 @@
 
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <vector>
 
 #include "nxrt/ftrace.h"
 #include "nxrt/abi.h"
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
@@ -70,6 +72,42 @@ bool in_map_region(uint64_t addr, uint64_t size) {
 }
 
 std::map<uint64_t, uint64_t> g_reserve_base;   // window address -> base of its host reservation (differs when addr is not 64 KiB aligned)
+
+// ---- gauges (include/nxrt/gauge.h): every callback takes g_mu, the lock of the state it reads ----
+// Removes its gauge when the file's statics are torn down (declared after the containers above, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { gauge_register(n, std::move(f)); }
+    ~GaugeHook() { gauge_unregister(name); }
+};
+GaugeHook gauge_heap_bytes("mem.heap_bytes", [] {   // SetHeapSize value (guest heap in use)
+    std::lock_guard lk(g_mu);
+    return static_cast<int64_t>(heap_now());
+});
+GaugeHook gauge_maps("mem.maps", [] {   // MapMemory mappings still live (the list only shrinks on UnmapMemory)
+    std::lock_guard lk(g_mu);
+    return static_cast<int64_t>(g_maps.size());
+});
+GaugeHook gauge_map_bytes("mem.map_bytes", [] {
+    std::lock_guard lk(g_mu);
+    uint64_t n = 0;
+    for (const MapRec& r : g_maps) n += r.size;
+    return static_cast<int64_t>(n);
+});
+GaugeHook gauge_windows("mem.windows", [] {   // MapSharedMemory / MapTransferMemory / MapPhysicalMemory views live in the alias region
+    std::lock_guard lk(g_mu);
+    return static_cast<int64_t>(g_windows.size());
+});
+GaugeHook gauge_window_bytes("mem.window_bytes", [] {
+    std::lock_guard lk(g_mu);
+    uint64_t n = 0;
+    for (const auto& kv : g_windows) n += kv.second.size;
+    return static_cast<int64_t>(n);
+});
+GaugeHook gauge_alias_reservations("mem.alias_reservations", [] {   // host reservations behind those windows
+    std::lock_guard lk(g_mu);
+    return static_cast<int64_t>(g_reserve_base.size());
+});
 
 // Reserves and commits [addr, addr+size) at exactly addr. A host reservation starts on a 64 KiB boundary, so a page-aligned address is
 // served by reserving the enclosing 64 KiB range and committing the pages. False when any of it is taken by something else.

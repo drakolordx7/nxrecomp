@@ -47,6 +47,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/overlay.h"
 #include "nvn_gpu_internal.h"
@@ -1027,5 +1028,59 @@ void gpl_shutdown() {
                 static_cast<unsigned long long>(s.upgrades_queued), static_cast<unsigned long long>(s.upgrades_done), s.upgrade_ms, static_cast<unsigned long long>(s.upgrades_taken),
                 static_cast<unsigned long long>(s.upgrades_failed), n_programs_seen, n_rasters);
 }
+
+// Gauges (nxrt/gauge.h). Each callback takes the lock that guards what it counts; the callbacks are removed before those containers are destroyed.
+namespace {
+struct GplGauges {
+    GplGauges() {
+        nxrt::gauge_register("nvn.gpl.parts", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_libs.size());
+        });
+        nxrt::gauge_register("nvn.gpl.hot_queue", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_hot_q.size());
+        });
+        nxrt::gauge_register("nvn.gpl.cold_queue", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_cold_q.size());
+        });
+        nxrt::gauge_register("nvn.gpl.upgrade_queue", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_up_q.size());
+        });
+        nxrt::gauge_register("nvn.gpl.programs_seen", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_seen.size());
+        });
+        nxrt::gauge_register("nvn.gpl.hot_programs", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_hot.size());
+        });
+        nxrt::gauge_register("nvn.gpl.covered_programs", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_covered.size());
+        });
+        nxrt::gauge_register("nvn.gpl.recent_programs", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_programs.size());
+        });
+        nxrt::gauge_register("nvn.gpl.rasters", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_rasters.size());
+        });
+        nxrt::gauge_register("nvn.gpl.pred_cache", [] {
+            std::lock_guard<std::mutex> lk(g_pred_mu);
+            return static_cast<int64_t>(g_pred_cache.size());
+        });
+    }
+    ~GplGauges() {
+        for (const char* n : {"nvn.gpl.parts", "nvn.gpl.hot_queue", "nvn.gpl.cold_queue", "nvn.gpl.upgrade_queue", "nvn.gpl.programs_seen",
+                              "nvn.gpl.hot_programs", "nvn.gpl.covered_programs", "nvn.gpl.recent_programs", "nvn.gpl.rasters", "nvn.gpl.pred_cache"})
+            nxrt::gauge_unregister(n);
+    }
+};
+GplGauges g_gpl_gauges;
+}  // namespace
 
 }  // namespace nxrt::nvn::be::gpu

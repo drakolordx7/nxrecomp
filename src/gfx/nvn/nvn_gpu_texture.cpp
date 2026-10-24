@@ -24,7 +24,9 @@
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gfx_tuning.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "vk_gauges.h"
 #include "nvn_enums.h"
 #include "nvn_format.h"
 #include "nvn_gpu_internal.h"
@@ -72,6 +74,8 @@ namespace {
 
 constexpr const char* kTag = "nvn.tex";
 std::atomic<uint64_t> g_live_images{0};
+nxrt::GaugeCounter g_gauge_textures_live("nvn.textures_live");               // TexGpu objects alive (g_live_set)
+nxrt::GaugeCounter g_gauge_texture_snapshots("nvn.texture_snapshots");       // debug snapshots kept (g_snaps; the list never shrinks)
 
 // Logs a message only the first time its key is seen (render thread only).
 bool first_time(const std::string& key) {
@@ -257,6 +261,7 @@ VkImageCreateFlags base_flags(const Shape& s, VkFormat fmt) {
 TexGpu* create_texture_gpu(Texture* t) {
     auto* g = new TexGpu();
     { std::lock_guard<std::mutex> lk(g_live_mu); g_live_set.insert(g); }
+    g_gauge_textures_live.add(1);
     t->gpu = g;
     const Shape s = shape_of(*t);
     g->fmt = t->fmt;
@@ -452,6 +457,7 @@ VkImageView view_for(TexGpu& g, VkImageViewType type, uint32_t base_level, uint3
         return VK_NULL_HANDLE;
     }
     g.views.emplace(key, view);
+    vk_gauge_image_views().add(1);
     return view;
 }
 
@@ -540,6 +546,7 @@ bool make_dummy(Dummy& d, VkImageViewType type, bool depth) {
         device().destroy_image(d.img);
         return false;
     }
+    vk_gauge_image_views().add(1);
     return true;
 }
 
@@ -656,6 +663,7 @@ VkSampler create_sampler(const SamplerInfo& s) {
         NXLOG_W(kTag, "vkCreateSampler failed: the dummy sampler is used");
         return VK_NULL_HANDLE;
     }
+    vk_gauge_samplers().add(1);
     return out;
 }
 
@@ -926,6 +934,8 @@ VkImageView dummy_storage_view(VkImageViewType type, VkFormat format) {
     if (vkCreateImageView(vkdev(), &vi, nullptr, &d.view) != VK_SUCCESS) {
         d.view = VK_NULL_HANDLE;
         device().destroy_image(d.img);
+    } else {
+        vk_gauge_image_views().add(1);
     }
     return d.view;
 }
@@ -939,6 +949,7 @@ VkSampler dummy_sampler() {
         ci.addressModeU = ci.addressModeV = ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         ci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
         if (vkCreateSampler(vkdev(), &ci, nullptr, &g_sh.dummy_sampler) != VK_SUCCESS) g_sh.dummy_sampler = VK_NULL_HANDLE;
+        else vk_gauge_samplers().add(1);
     }
     return g_sh.dummy_sampler;
 }
@@ -975,7 +986,8 @@ void tex_destroy(TexGpu* g) {
         std::lock_guard<std::mutex> lk(g_live_mu);
         if (!g_live_set.erase(g)) return;   // already destroyed by tex_shutdown
     }
-    for (auto& kv : g->views) vkDestroyImageView(vkdev(), kv.second, nullptr);
+    g_gauge_textures_live.sub(1);
+    for (auto& kv : g->views) { vkDestroyImageView(vkdev(), kv.second, nullptr); vk_gauge_image_views().sub(1); }
     g->views.clear();
     if (g->img) g_live_images.fetch_sub(1);
     device().destroy_image(g->img);
@@ -1007,16 +1019,16 @@ void tex_shutdown() {
     texture_registry_detach_gpu();
     for (TexGpu* g : left) { g->refs = 1; tex_destroy(g); }
     for (auto& kv : g_sh.samplers)
-        for (auto& e : kv.second) vkDestroySampler(vkdev(), e.second, nullptr);
+        for (auto& e : kv.second) { vkDestroySampler(vkdev(), e.second, nullptr); vk_gauge_samplers().sub(1); }
     g_sh.samplers.clear();
-    if (g_sh.dummy_sampler != VK_NULL_HANDLE) vkDestroySampler(vkdev(), g_sh.dummy_sampler, nullptr);
+    if (g_sh.dummy_sampler != VK_NULL_HANDLE) { vkDestroySampler(vkdev(), g_sh.dummy_sampler, nullptr); vk_gauge_samplers().sub(1); }
     for (auto& kv : g_sh.storage) {
-        if (kv.second.view != VK_NULL_HANDLE) vkDestroyImageView(vkdev(), kv.second.view, nullptr);
+        if (kv.second.view != VK_NULL_HANDLE) { vkDestroyImageView(vkdev(), kv.second.view, nullptr); vk_gauge_image_views().sub(1); }
         device().destroy_image(kv.second.img);
     }
     for (Dummy* set : {g_sh.color, g_sh.depth}) {
         for (int i = 0; i < 6; ++i) {
-            if (set[i].view != VK_NULL_HANDLE) vkDestroyImageView(vkdev(), set[i].view, nullptr);
+            if (set[i].view != VK_NULL_HANDLE) { vkDestroyImageView(vkdev(), set[i].view, nullptr); vk_gauge_image_views().sub(1); }
             device().destroy_image(set[i].img);
         }
     }
@@ -1150,6 +1162,7 @@ int snapshot_record(Texture* t, Frame& fr) {
     vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, 1, &r);
     move_layout(fr, *g, prev);
     g_snaps.push_back(std::move(s));
+    g_gauge_texture_snapshots.add(1);
     return static_cast<int>(g_snaps.size()) - 1;
 }
 
@@ -1183,6 +1196,7 @@ int snapshot_record_raw(Texture* t, Frame& fr) {
     vkCmdCopyImageToBuffer(fr.cb, g->img.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, s.buf.buffer, static_cast<uint32_t>(regions.size()), regions.data());
     move_layout(fr, *g, prev);
     g_snaps.push_back(std::move(s));
+    g_gauge_texture_snapshots.add(1);
     return static_cast<int>(g_snaps.size()) - 1;
 }
 
