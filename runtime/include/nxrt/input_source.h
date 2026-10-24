@@ -38,6 +38,8 @@ struct StickValue { int32_t x = 0, y = 0; };            // -32767..32767
 struct SixAxisSample {
     float accel[3] = {0, 0, -1.0f};                     // in G (the console reports 1.0 downwards at rest)
     float gyro[3] = {0, 0, 0};                          // revolutions per second
+    float angle[3] = {0, 0, 0};                         // the pad's turn since it was reset, per axis, in revolutions (what the console's own sensor fusion reports)
+    float direction[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};   // the pad's x, y and z axes in the world frame, three floats each (identity: lying still, face up)
     bool at_rest = true;
 };
 

@@ -95,7 +95,8 @@ bool same_settings(const Settings& a, const Settings& b) {
         return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
-          pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale))
+          pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale &&
+          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens))
         return false;
     const TimingSettings &ta = a.timing, &tb = b.timing;
     if (!(ta.tap_ms == tb.tap_ms && ta.hold_ms == tb.hold_ms && ta.double_ms == tb.double_ms && ta.pulse_ms == tb.pulse_ms)) return false;
@@ -1469,4 +1470,117 @@ NXTEST(file_without_bindings_gets_factory_bindings_at_current_revision) {
     CHECK(!s.migrated);
     CHECK_EQ(s.defaults_rev, 2);
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
+}
+
+// ---- controller sticks: right_deadzone, invert_y, look_sens ([pad]) ----------------------------------------------------------------
+
+NXTEST(pad_stick_keys_defaults) {
+    const PadSettings d = default_settings().pad;
+    CHECK(near(d.stick_deadzone, 0.10));
+    CHECK(near(d.right_deadzone, 0.10));
+    CHECK(!d.invert_y);
+    CHECK(d.look_sens == 1.0);
+}
+
+NXTEST(pad_stick_keys_round_trip) {
+    Settings s = default_settings();
+    s.pad.stick_deadzone = 0.2;
+    s.pad.right_deadzone = 0.25;
+    s.pad.invert_y = true;
+    s.pad.look_sens = 1.5;
+    const std::string text = format_settings(s);
+    CHECK(text.find("\ndeadzone = 0.2\nright_deadzone = 0.25\ninvert_y = 1\nlook_sens = 1.5\ntrigger_threshold = ") != std::string::npos);
+    Settings r;
+    std::string err;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(near(r.pad.stick_deadzone, 0.2));
+    CHECK(near(r.pad.right_deadzone, 0.25));
+    CHECK(r.pad.invert_y);
+    CHECK(r.pad.look_sens == 1.5);
+    CHECK(same_settings(s, r));
+    CHECK_EQ(format_settings(r), text);
+}
+
+NXTEST(pad_stick_keys_written_in_order) {
+    const std::string text = format_settings(default_settings());
+    const size_t pad_at = text.find("\n[pad]\n");
+    REQUIRE_MSG(pad_at != std::string::npos, "[pad] section");
+    const char* order[] = {"\ndeadzone = ", "\nright_deadzone = ", "\ninvert_y = ", "\nlook_sens = ", "\ntrigger_threshold = "};
+    size_t at = pad_at;
+    for (const char* k : order) {
+        const size_t p = text.find(k, at);
+        CHECK_MSG(p != std::string::npos, k);
+        if (p == std::string::npos) return;
+        at = p;
+    }
+}
+
+NXTEST(pad_stick_keys_range_errors) {
+    const struct {
+        const char* text;
+        const char* expect;
+    } cases[] = {
+        {"[pad]\nright_deadzone = 0.6\n", "line 2: right_deadzone must be 0..0.5, got 0.6"},
+        {"[pad]\nright_deadzone = -0.1\n", "line 2: right_deadzone must be 0..0.5, got -0.1"},
+        {"[pad]\nright_deadzone = abc\n", "line 2: right_deadzone must be a number"},
+        {"[pad]\nlook_sens = 0.2\n", "line 2: look_sens must be 0.25..3, got 0.2"},
+        {"[pad]\nlook_sens = 3.5\n", "line 2: look_sens must be 0.25..3, got 3.5"},
+        {"[pad]\nlook_sens = fast\n", "line 2: look_sens must be a number"},
+        {"[pad]\ninvert_y = maybe\n", "line 2: invert_y must be 1/0"},
+    };
+    for (const auto& c : cases) {
+        Settings s;
+        std::string err;
+        CHECK(!parse_settings(c.text, &s, &err));
+        CHECK_MSG(starts_with(err, c.expect), err);
+    }
+}
+
+NXTEST(pad_stick_keys_boundaries_accepted) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[pad]\nright_deadzone = 0\nlook_sens = 0.25\ninvert_y = yes\n", &s, &err), err);
+    CHECK(s.pad.right_deadzone == 0.0);
+    CHECK(s.pad.look_sens == 0.25);
+    CHECK(s.pad.invert_y);
+    REQUIRE_MSG(parse_settings("[pad]\nright_deadzone = 0.5\nlook_sens = 3\ninvert_y = 0\n", &s, &err), err);
+    CHECK(s.pad.right_deadzone == 0.5);
+    CHECK(s.pad.look_sens == 3.0);
+    CHECK(!s.pad.invert_y);
+}
+
+NXTEST(pad_right_deadzone_follows_old_deadzone) {
+    // A file with deadzone but no right_deadzone was written before the right stick had its own dead zone: the right stick takes deadzone's value.
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[pad]\ndeadzone = 0.3\n", &s, &err, &w), err);
+    CHECK(w.empty());
+    CHECK(near(s.pad.stick_deadzone, 0.3));
+    CHECK(near(s.pad.right_deadzone, 0.3));
+
+    // A zero deadzone is copied as well, and the next save writes both keys.
+    REQUIRE_MSG(parse_settings("[pad]\ndeadzone = 0\n", &s, &err), err);
+    CHECK(s.pad.right_deadzone == 0.0);
+    CHECK(format_settings(s).find("\ndeadzone = 0\nright_deadzone = 0\n") != std::string::npos);
+}
+
+NXTEST(pad_right_deadzone_explicit_wins_over_deadzone) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[pad]\ndeadzone = 0.3\nright_deadzone = 0.05\n", &s, &err), err);
+    CHECK(near(s.pad.stick_deadzone, 0.3));
+    CHECK(near(s.pad.right_deadzone, 0.05));
+    // The order of the two lines does not matter.
+    REQUIRE_MSG(parse_settings("[pad]\nright_deadzone = 0.05\ndeadzone = 0.3\n", &s, &err), err);
+    CHECK(near(s.pad.stick_deadzone, 0.3));
+    CHECK(near(s.pad.right_deadzone, 0.05));
+}
+
+NXTEST(pad_right_deadzone_default_kept_without_pad_deadzone) {
+    // No deadzone in [pad]: the right dead zone keeps its default.
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
+    CHECK(near(s.pad.right_deadzone, 0.10));
 }

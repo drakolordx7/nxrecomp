@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Controller tab: stick dead zone, trigger point, rumble, motion controls, the face button labels, and the button layout (what each
+// Controller tab: stick dead zones, look inversion and sensitivity, trigger point, rumble, motion controls, the face button labels, and the button layout (what each
 // controller button presses on the Switch pad).
 #include <algorithm>
 #include <cmath>
@@ -88,15 +88,30 @@ public:
         f.heading(L"Controller");
         f.columns(2);
         f.slider(
-            L"Stick dead zone", 0, 50, [](const Settings& s) { return position_of(s.pad.stick_deadzone, 0, 50); },
+            L"Left dead zone", 0, 50, [](const Settings& s) { return position_of(s.pad.stick_deadzone, 0, 50); },
             [this](Settings& s, int v) {
                 if (v != deadzone_pos_) s.pad.stick_deadzone = v / 100.0;   // the slider does not show every digit: keep the file's value
+            },
+            [](int v) { return std::to_wstring(v) + L"%"; });
+        f.slider(
+            L"Right dead zone", 0, 50, [](const Settings& s) { return position_of(s.pad.right_deadzone, 0, 50); },
+            [this](Settings& s, int v) {
+                if (v != right_deadzone_pos_) s.pad.right_deadzone = v / 100.0;
             },
             [](int v) { return std::to_wstring(v) + L"%"; });
         f.slider(
             L"Trigger point", 5, 100, [](const Settings& s) { return position_of(s.pad.trigger_threshold, 5, 100); },
             [this](Settings& s, int v) {
                 if (v != trigger_pos_) s.pad.trigger_threshold = v / 100.0;
+            },
+            [](int v) { return std::to_wstring(v) + L"%"; });
+        f.checkbox(
+            L"Invert look (right stick up looks down)", [](const Settings& s) { return s.pad.invert_y; },
+            [](Settings& s, bool v) { s.pad.invert_y = v; });
+        f.slider(
+            L"Look sensitivity", 25, 300, [](const Settings& s) { return position_of(s.pad.look_sens, 25, 300); },
+            [this](Settings& s, int v) {
+                if (v != look_pos_) s.pad.look_sens = v / 100.0;
             },
             [](int v) { return std::to_wstring(v) + L"%"; });
         f.checkbox(L"Rumble", [](const Settings& s) { return s.pad.rumble; }, [](Settings& s, bool v) { s.pad.rumble = v; });
@@ -130,7 +145,9 @@ public:
 
     void load(const Settings& s) override {
         deadzone_pos_ = position_of(s.pad.stick_deadzone, 0, 50);
+        right_deadzone_pos_ = position_of(s.pad.right_deadzone, 0, 50);
         trigger_pos_ = position_of(s.pad.trigger_threshold, 5, 100);
+        look_pos_ = position_of(s.pad.look_sens, 25, 300);
         rumble_pos_ = position_of(s.pad.rumble_scale, 0, 200);
         for (int i = 0; i < kPadSrcCount; ++i) custom_[i] = s.pad.remap[i];
         Page::load(s);
@@ -154,7 +171,9 @@ public:
 
 private:
     int deadzone_pos_ = 10;       // slider positions the values read in load()
+    int right_deadzone_pos_ = 10;
     int trigger_pos_ = 35;
+    int look_pos_ = 100;
     int rumble_pos_ = 100;
     uint64_t custom_[kPadSrcCount] = {};   // the value of each button when the page opened; written back while Custom is selected
     HWND combos_[kPadSrcCount] = {};

@@ -22,6 +22,7 @@
 #pragma once
 #include <cstdint>
 
+#include "nxrt/abi.h"
 #include "play_aim.h"
 #include "play_types.h"
 
@@ -32,6 +33,11 @@ void lockcam_remove();
 void lockcam_set(const Settings& s);        // any thread; takes effect at the next call of the hooked functions
 void lockcam_frame();                       // once per frame boundary: hands the live picture aspect and field of view offset to the lock-on view limit
 
+// The game's pitch scheme for the stick (play.cpp scales the right stick's vertical axis by the frame time while it is on). lockcam_prime (main thread, inside a hook: it calls into the game) learns the game's
+// command value once; lockcam_pitch_accumulates() is what the game answered the last time it asked whether command 73 is held.
+void lockcam_prime(::Ctx* c);
+bool lockcam_pitch_accumulates();      // command 73 held: the dual stick scheme, the stick adds to the pitch target every call
+
 // The camera bob decoupling (play.cpp's camera Think hook calls these). gun_drives_view = 0 makes lockcam_gun_decoupled() true.
 bool lockcam_gun_decoupled();
 // vanilla: the camera transform the game made (with the bob); steady: the same without the bob (3x4 floats, row major). Keeps steady^-1 * vanilla for the gun.
@@ -41,6 +47,12 @@ void lockcam_clear_gun_delta();
 // The transform maths behind it, public for the tests: out = a * b for 3x4 affine transforms (row major, translation in column 3), and out = a * inverse(b).
 void xf_mul(const float a[12], const float b[12], float out[12]);
 void xf_rel(const float a[12], const float b[12], float out[12]);      // a * b^-1 (b a rigid transform)
+
+// The right stick's turn in the free lock-on. The game turns Samus by pushing her angular velocity toward (stick * full turn speed) with a torque, so a turn
+// ramps up when the stick goes over and coasts down when it is let go; the lock-on code of the game (which would do it through the physics) is skipped, so this
+// does the same on a plain number. omega is the turn speed (radians per second, + = turn left like the yaw), target the speed the stick asks for.
+// Speeding up (the target is further out than omega, same direction) approaches with time constant tau_up seconds, slowing down or reversing with tau_down.
+double turn_ramp_step(double* omega, double target, double dt, double tau_up, double tau_down);
 
 struct LockCamStats {
     uint64_t orientation_skipped = 0, freelook_calls = 0, turn_calls = 0, cursor_calls = 0, view_clamped = 0, gun_moved = 0;

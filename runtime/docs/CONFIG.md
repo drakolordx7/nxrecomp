@@ -250,6 +250,16 @@ To change a key, add a line `Key = action` to `[bindings.all]` (every context) o
 
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
+### Controller sticks (`controls.ini`, `[pad]`)
+
+`[pad] deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the left stick (movement). Before the right stick got its own key, this was the only stick dead zone.
+
+`[pad] right_deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the right stick (looking). A file with `deadzone` but no `right_deadzone` gives the right stick the value of `deadzone` when read. The next save writes both keys.
+
+`[pad] invert_y`, default `0`: flips the right stick's vertical axis in play, so pushing up looks down. Menus and the map keep the stick as it is. It adds to the game's own invert option in its controls menu, so with both on, looking is back to normal.
+
+`[pad] look_sens`, default `1`, range `0.25` to `3`: multiplies the right stick's deflection in play. Below 1, the top turn speed is lower. Above 1, it is reached sooner. Like `invert_y`, it applies in play only.
+
 ## Window modes and the picture (`controls.ini`, `[display]`)
 
 `window_mode` is `windowed`, `borderless` or `exclusive`. Borderless covers the display at its desktop mode. Exclusive asks Windows for the desktop mode. If the display refuses (a remote or locked session, some drivers), the game logs "window mode 'exclusive' was refused" and uses borderless instead. The setting in the file stays as it was. Alt+Enter and the F1 page switch modes while playing.

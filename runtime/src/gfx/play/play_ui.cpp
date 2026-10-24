@@ -384,7 +384,12 @@ void pad_tab(const LiveStatus& live, Page& p) {
     }
     if (prompts.style == PromptStyle::Auto) ImGui::TextDisabled("Showing now: %s", cstr(live.prompt_now));
 
-    if (slider("Stick dead zone", &pad.stick_deadzone, 0.0, 0.5, "%.2f")) mark(p);
+    if (slider("Left stick dead zone", &pad.stick_deadzone, 0.0, 0.5, "%.2f")) mark(p);
+    if (slider("Right stick dead zone", &pad.right_deadzone, 0.0, 0.5, "%.2f")) mark(p);
+    if (ImGui::Checkbox("Invert look (right stick up looks down)", &pad.invert_y)) mark(p);
+    if (ImGui::IsItemHovered()) ImGui::SetItemTooltip("%s", "Applies in play only; adds to the game's own invert option.");
+    if (slider("Look sensitivity", &pad.look_sens, 0.25, 3.0, "%.2f", ImGuiSliderFlags_Logarithmic)) mark(p);
+    if (ImGui::IsItemHovered()) ImGui::SetItemTooltip("%s", "Multiplies the right stick while playing. Below 1 the top turning speed is lower; above 1 you reach it with less stick.");
     if (slider("Trigger threshold", &pad.trigger_threshold, 0.05, 1.0, "%.2f")) mark(p);
     if (ImGui::Checkbox("Gyro (six-axis sensor)", &pad.gyro)) mark(p);
     if (slider("Gyro scale", &pad.gyro_scale, 0.1, 4.0, "%.2f", ImGuiSliderFlags_Logarithmic)) mark(p);
