@@ -4,7 +4,7 @@
     python tools/release/make_release.py [--out DIR] [--version V] [--no-shader-pack] [--strict-paths]
                                          [--deny-hash-dir DIR ...] [--repo DIR] [--exe F] [--setup-bin DIR]
                                          [--shader-pack F] [--templates DIR] [--controls F] [--license F] [--notices F]
-                                         [--prompts-dir DIR]
+                                         [--prompts-dir DIR] [--launcher F]
 
 Output, in --out (default <repo>/work/release_out):
     mpr-<version>-windows-x64/              the release folder
@@ -13,6 +13,8 @@ Output, in --out (default <repo>/work/release_out):
 Without the shader pack the folder and the zip get the suffix -noshaders.
 The prompt icon pack prompts/prompt_icons.pak and its licence prompts/LICENSE-Kenney-InputPrompts.txt are required,
 read from --prompts-dir (default <repo>/runtime/assets/prompts).
+The launcher mpr_launcher.exe is read from --launcher (default: next to --exe) and ships in the release root beside
+mpr.exe and the setup tools (mpr_setup.exe, mpr_setup_cli.exe).
 
 Exit codes: 0 built and audited; 1 an I/O error; 2 a missing input or a bad option; 3 refused by the audit.
 A refused or failed build leaves none of its output behind. The .pdb and .map beside mpr.exe are never copied.
@@ -39,6 +41,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 EXE_NAME = 'mpr.exe'
 SETUP_EXES = ('mpr_setup.exe', 'mpr_setup_cli.exe')
+LAUNCHER_NAME = 'mpr_launcher.exe'              # starts the game; sits beside mpr.exe, built with the runtime
 DLL_GLOB = 'astcdec-*-shared.dll'
 DLL_COUNT = 3
 PACK_NAME = 'shader_cache.mprshc'
@@ -63,7 +66,7 @@ FONT_FILES = [
 
 # Size sanity, bytes (min, max or None). Tests replace these with tiny values.
 SIZE_RULES = {'exe': (10 * MIB, 400 * MIB), 'setup': (100 * KIB, None), 'pack': (100 * MIB, 1 * GIB),
-              'prompt': (KIB, 4 * MIB - 1)}
+              'prompt': (KIB, 4 * MIB - 1), 'launcher': (100 * KIB, 40 * MIB)}
 
 DENY_EXT = ('.nsp', '.xci', '.nsz', '.xcz', '.nca', '.nso', '.nro', '.npdm', '.pak', '.bntx', '.keys', '.tik',
             '.cnmt', '.romfs', '.pdb', '.map', '.obj', '.lib', '.ilk', '.exp')
@@ -87,7 +90,7 @@ KEY_TEXT = [
     (rb'(?i)master_key_00', 'master_key_00'),
     (rb'-----BEGIN', '-----BEGIN'),
 ]
-LEAK_FILES = (EXE_NAME,) + SETUP_EXES
+LEAK_FILES = (EXE_NAME, LAUNCHER_NAME) + SETUP_EXES
 LEAK_PATTERNS = [b'D:/AI', b'D:\\AI', b'drakolord']   # matched case-insensitively, as ASCII and as UTF-16LE
 
 
@@ -140,6 +143,7 @@ def parse_args(argv):
     ap.add_argument('--out', help='output folder (default <repo>/work/release_out)')
     ap.add_argument('--version', help='version in the names (default: today plus git describe --always --dirty)')
     ap.add_argument('--exe', help='mpr.exe (default <repo>/game-build/build/release/mpr.exe); the astcdec DLLs come from its folder')
+    ap.add_argument('--launcher', help='mpr_launcher.exe (default: mpr_launcher.exe in the folder of --exe)')
     ap.add_argument('--setup-bin', help='folder with mpr_setup.exe and mpr_setup_cli.exe (default <repo>/tools/setup/build/release/bin)')
     ap.add_argument('--shader-pack', help='translated shader pack, copied as shader_cache.mprshc '
                                           '(default <repo>/work/setup_test/shader_cache.mprshc)')
@@ -166,6 +170,7 @@ def resolve(o):
     if o.no_shader_pack and o.shader_pack:
         raise UsageError('--no-shader-pack and --shader-pack cannot be given together')
     o.exe = os.path.abspath(o.exe or under_repo('game-build', 'build', 'release', EXE_NAME))
+    o.launcher = os.path.abspath(o.launcher or os.path.join(os.path.dirname(o.exe), LAUNCHER_NAME))
     o.setup_bin = os.path.abspath(o.setup_bin or under_repo('tools', 'setup', 'build', 'release', 'bin'))
     if o.no_shader_pack:
         o.shader_pack = None
@@ -198,6 +203,7 @@ def plan_items(o):
     items += [(os.path.basename(d), d) for d in dlls]
     for name in SETUP_EXES:
         items.append((name, need(os.path.join(o.setup_bin, name), name)))
+    items.append((LAUNCHER_NAME, need(o.launcher, LAUNCHER_NAME)))
     if o.shader_pack:
         items.append((PACK_NAME, need(o.shader_pack, 'shader pack')))
     items.append(('README.txt', need(os.path.join(o.templates, 'README.txt'), 'README.txt template')))
@@ -354,7 +360,8 @@ def magic_problems(rel, head):
         out += ['%s starts with %s' % (rel, label) for magic, label in MAGIC_DENY if head.startswith(magic)]
         return out
     root = '/' not in rel
-    exempt = root and (rel == EXE_NAME or rel.lower().endswith('.dll') or fnmatch.fnmatch(rel.lower(), 'mpr_setup*.exe'))
+    exempt = root and (rel in (EXE_NAME, LAUNCHER_NAME) or rel.lower().endswith('.dll')
+                       or fnmatch.fnmatch(rel.lower(), 'mpr_setup*.exe'))
     if exempt:
         return []
     out = []
@@ -467,6 +474,8 @@ def size_problem(rel, size):
         key = 'exe'
     elif '/' not in rel and fnmatch.fnmatch(rel.lower(), 'mpr_setup*.exe'):
         key = 'setup'
+    elif rel == LAUNCHER_NAME:
+        key = 'launcher'
     elif rel == PACK_NAME:
         key = 'pack'
     elif rel == PROMPT_PACK:
