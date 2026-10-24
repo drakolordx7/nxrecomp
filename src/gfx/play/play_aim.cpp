@@ -238,6 +238,7 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
     block_ = gate(player, mgr);
     if (block_ != AimBlock::None) {
         pitch_valid_ = false;     // the game owns the view now; adopt its pitch when aim comes back
+        pad_look_prev_ = false;
         if (original) original();
         return false;
     }
@@ -246,7 +247,10 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
     if (!pitch_valid_ || !std::isfinite(pitch_)) {
         pitch_ = std::isfinite(cur_pitch) ? cur_pitch : 0.0;
         pitch_valid_ = true;
+    } else if ((p.pad_look || pad_look_prev_) && std::isfinite(cur_pitch)) {
+        pitch_ = cur_pitch;       // the pad moved the view since the last call (and the game's code eased it there): carry on from it
     }
+    pad_look_prev_ = p.pad_look;
     limit_ = pitch_limit(p);
     double dyaw = dx * p.yaw_rad * (p.invert_x ? 1.0 : -1.0);
     pitch_ = std::max(-limit_, std::min(limit_, pitch_ + dy * p.pitch_rad * (p.invert_y ? 1.0 : -1.0)));
@@ -266,10 +270,15 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
         if (set_xf_) set_xf_(set_xf_user_, player, nx);
         else guest_write(xfp, nx, sizeof nx);
     }
+    const float pre = static_cast<float>(pitch_);
+    guest_write(player + l_.free_look_pitch, &pre, sizeof pre);       // what the mouse made of it, before the game reads the stick
+    guest_write(player + l_.free_look_target, &pre, sizeof pre);
     if (original) original();
-    const float out = static_cast<float>(pitch_);
-    guest_write(player + l_.free_look_pitch, &out, sizeof out);
-    guest_write(player + l_.free_look_target, &out, sizeof out);      // else Think eases the view back toward the stick's (zero) target
+    if (!p.pad_look) {
+        const float out = static_cast<float>(pitch_);
+        guest_write(player + l_.free_look_pitch, &out, sizeof out);
+        guest_write(player + l_.free_look_target, &out, sizeof out);  // else Think eases the view back toward the stick's (zero) target
+    }
     ++applied_;
     return true;
 }

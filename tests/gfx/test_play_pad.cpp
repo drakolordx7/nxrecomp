@@ -395,3 +395,84 @@ NXTEST(pad_default_buttons_label_and_position) {
     CHECK_EQ(face(kSouth, kXboxLabels, false), play::pad_default_buttons(S::South, false));
     CHECK_EQ(face(kNorth, kXboxLabels, true), play::pad_default_buttons(S::North, true));
 }
+
+NXTEST(left_and_right_dead_zones_differ) {
+    // 0.2 of full deflection (6554 of 32768) on both sticks: inside the right dead zone (0.3), outside the left one (0.1).
+    platform::GamepadRaw raw;
+    raw.axes[0] = 6554;   // left stick X
+    raw.axes[2] = 6554;   // right stick X
+    play::PadSettings cfg;
+    cfg.stick_deadzone = 0.1;
+    cfg.right_deadzone = 0.3;
+    const hid::NpadInput out = run(raw, cfg);
+    CHECK(out.left.x > 0);
+    CHECK_EQ(out.right.x, 0);
+
+    // swapped: the left stick now sits inside its dead zone, the right one outside
+    cfg.stick_deadzone = 0.3;
+    cfg.right_deadzone = 0.1;
+    const hid::NpadInput sw = run(raw, cfg);
+    CHECK_EQ(sw.left.x, 0);
+    CHECK(sw.right.x > 0);
+}
+
+NXTEST(look_stick_identity_at_defaults) {
+    const hid::StickValue out = play::adjust_look_stick(hid::StickValue{12000, -8000}, play::PadSettings{});
+    CHECK_EQ(out.x, 12000);
+    CHECK_EQ(out.y, -8000);
+}
+
+NXTEST(look_stick_invert_flips_only_y) {
+    play::PadSettings cfg;
+    cfg.invert_y = true;
+    const hid::StickValue out = play::adjust_look_stick(hid::StickValue{12000, -8000}, cfg);
+    CHECK_EQ(out.x, 12000);
+    CHECK_EQ(out.y, 8000);
+}
+
+NXTEST(look_stick_sens_half_halves) {
+    play::PadSettings cfg;
+    cfg.look_sens = 0.5;
+    const hid::StickValue out = play::adjust_look_stick(hid::StickValue{12000, -8000}, cfg);
+    CHECK_EQ(out.x, 6000);
+    CHECK_EQ(out.y, -4000);
+}
+
+NXTEST(look_stick_sens_two_clamps_to_unit_circle) {
+    // (20000, 20000) times 2 is far outside the circle: it is pulled back onto it, keeping the 45 degree direction.
+    // Each axis is rounded after the pull-back, so the length can be about 0.3 counts over 32767 (here 23170 on both axes).
+    play::PadSettings cfg;
+    cfg.look_sens = 2.0;
+    const hid::StickValue out = play::adjust_look_stick(hid::StickValue{20000, 20000}, cfg);
+    const double len = std::sqrt(static_cast<double>(out.x) * out.x + static_cast<double>(out.y) * out.y);
+    CHECK_MSG(len <= 32767 * 1.0001, "clamped length " + std::to_string(len));
+    CHECK_MSG(len >= 32767 * 0.999, "clamped length " + std::to_string(len));
+    CHECK(out.x > 0 && out.y > 0);
+    CHECK_MSG(out.x - out.y <= 1 && out.y - out.x <= 1, "direction " + std::to_string(out.x) + " " + std::to_string(out.y));
+}
+
+NXTEST(look_stick_sens_clamped_to_range) {
+    // below 0.25 behaves as 0.25: (12000, -8000) * 0.25 = (3000, -2000)
+    play::PadSettings low;
+    low.look_sens = 0.1;
+    play::PadSettings quarter;
+    quarter.look_sens = 0.25;
+    const hid::StickValue a = play::adjust_look_stick(hid::StickValue{12000, -8000}, low);
+    const hid::StickValue b = play::adjust_look_stick(hid::StickValue{12000, -8000}, quarter);
+    CHECK_EQ(a.x, b.x);
+    CHECK_EQ(a.y, b.y);
+    CHECK_EQ(b.x, 3000);
+    CHECK_EQ(b.y, -2000);
+
+    // above 3 behaves as 3: (1000, -1000) * 3 = (3000, -3000)
+    play::PadSettings high;
+    high.look_sens = 10.0;
+    play::PadSettings three;
+    three.look_sens = 3.0;
+    const hid::StickValue c = play::adjust_look_stick(hid::StickValue{1000, -1000}, high);
+    const hid::StickValue d = play::adjust_look_stick(hid::StickValue{1000, -1000}, three);
+    CHECK_EQ(c.x, d.x);
+    CHECK_EQ(c.y, d.y);
+    CHECK_EQ(d.x, 3000);
+    CHECK_EQ(d.y, -3000);
+}

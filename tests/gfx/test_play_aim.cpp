@@ -540,3 +540,123 @@ NXTEST(guest_write_fails_on_reserved_page) {
     CHECK(!play::guest_write(A(page), src, sizeof src));
     CHECK(VirtualFree(page, 0, MEM_RELEASE));
 }
+
+NXTEST(mouse_only_overwrites_game_pitch) {
+    // pad_look false: the game's change to the pitch fields is written over by the tracked pitch after the original runs.
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    auto game_up = [&] {
+        put<float>(w.pl() + w.layout.free_look_pitch, get<float>(w.pl() + w.layout.free_look_pitch) + 0.1f);
+        put<float>(w.pl() + w.layout.free_look_target, get<float>(w.pl() + w.layout.free_look_target) + 0.1f);
+    };
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, game_up));
+    CHECK_NEAR(d.pitch(), 0.2, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.2, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_target), 0.2, 1e-5);
+
+    // mouse up still raises the tracked pitch; the game's change is again overwritten
+    CHECK(d.apply(w.pl(), w.mgr(), 0, -100, p, game_up));
+    CHECK_NEAR(d.pitch(), 0.2 + 100 * kYawRad, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.2 + 100 * kYawRad, 1e-5);
+}
+
+NXTEST(pad_look_keeps_game_pitch_and_adopts_next_call) {
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    // the game's stick code adds 0.1 to both pitch fields
+    auto game_up = [&] {
+        put<float>(w.pl() + w.layout.free_look_pitch, get<float>(w.pl() + w.layout.free_look_pitch) + 0.1f);
+        put<float>(w.pl() + w.layout.free_look_target, get<float>(w.pl() + w.layout.free_look_target) + 0.1f);
+    };
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, game_up));
+    // nothing is written after the original: the game's value stays in memory
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.3, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_target), 0.3, 1e-5);
+    // the driver's own value is still the one it started from
+    CHECK_NEAR(d.pitch(), 0.2, 1e-5);
+
+    // next call, zero mouse: the driver starts from the game's value
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, {}));
+    CHECK_NEAR(d.pitch(), 0.3, 1e-5);
+}
+
+NXTEST(pad_look_mouse_delta_adds_to_game_pitch) {
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    auto game_up = [&] {
+        put<float>(w.pl() + w.layout.free_look_pitch, get<float>(w.pl() + w.layout.free_look_pitch) + 0.1f);
+        put<float>(w.pl() + w.layout.free_look_target, get<float>(w.pl() + w.layout.free_look_target) + 0.1f);
+    };
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, game_up));   // game's pitch is now 0.3
+    // mouse up with the pad looking: the mouse delta is added on top of the game's 0.3
+    CHECK(d.apply(w.pl(), w.mgr(), 0, -100, p, game_up));
+    CHECK_NEAR(d.pitch(), 0.3 + 100 * kYawRad, 1e-5);
+    // the game's own +0.1 is still in memory after the call
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), d.pitch() + 0.1, 1e-5);
+}
+
+NXTEST(pad_look_released_adopts_once_then_overwrites) {
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    auto game_up = [&] {
+        put<float>(w.pl() + w.layout.free_look_pitch, get<float>(w.pl() + w.layout.free_look_pitch) + 0.1f);
+        put<float>(w.pl() + w.layout.free_look_target, get<float>(w.pl() + w.layout.free_look_target) + 0.1f);
+    };
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, game_up));   // game's pitch 0.3, tracked 0.2
+
+    // pad let go: the call adopts the game's 0.3 once; the original's 0.7 is then overwritten with the tracked value
+    p.pad_look = false;
+    auto game_set_07 = [&] {
+        put<float>(w.pl() + w.layout.free_look_pitch, 0.7f);
+        put<float>(w.pl() + w.layout.free_look_target, 0.7f);
+    };
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, game_set_07));
+    CHECK_NEAR(d.pitch(), 0.3, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.3, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_target), 0.3, 1e-5);
+
+    // a later call does not adopt again: the game's 0.9 is ignored and the tracked 0.3 stays
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.9f);
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, game_set_07));
+    CHECK_NEAR(d.pitch(), 0.3, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.3, 1e-5);
+}
+
+NXTEST(pad_look_adopted_pitch_is_clamped) {
+    // tweak is 50 degrees (World::init), so the limit is 50 degrees in radians
+    const double lim = 50.0 * kPi / 180.0;
+    AimParams p;
+    p.pad_look = true;
+
+    World up;
+    up.init();
+    put<float>(up.pl() + up.layout.free_look_pitch, 5.0f);   // the game's pitch, far past the limit
+    AimDriver du(0, up.layout);
+    CHECK(du.apply(up.pl(), up.mgr(), 0, 0, p, {}));
+    CHECK_NEAR(du.last_pitch_limit(), lim, 1e-4);
+    CHECK_NEAR(du.pitch(), lim, 1e-5);
+    CHECK_NEAR(get<float>(up.pl() + up.layout.free_look_pitch), lim, 1e-5);
+
+    World dn;
+    dn.init();
+    put<float>(dn.pl() + dn.layout.free_look_pitch, -5.0f);
+    AimDriver dd(0, dn.layout);
+    CHECK(dd.apply(dn.pl(), dn.mgr(), 0, 0, p, {}));
+    CHECK_NEAR(dd.pitch(), -lim, 1e-5);
+    CHECK_NEAR(get<float>(dn.pl() + dn.layout.free_look_pitch), -lim, 1e-5);
+}

@@ -51,9 +51,11 @@
 #include "play_engine.h"
 #include "play_selftest.h"
 #include "play_types.h"
+#include "play_vpad.h"
 #include "play_ui.h"
 #include "prompts.h"
 #include "pad_map.h"
+#include "pad_orient.h"
 
 namespace nxrt::play {
 
@@ -100,6 +102,17 @@ public:
         n.left = combine(pf.left, kb.lx, kb.ly);
         n.right = combine(pf.right, kb.rx, kb.ry);
         n.six_axis = pf.six;
+        {   // the pad's orientation (the game's pointer scheme reads it): integrated from the gyro, held level by the accelerometer
+            const uint64_t t = FrameLimiter::now_ns();
+            const double dt = last_orient_ns_ ? static_cast<double>(t - last_orient_ns_) / 1e9 : 0.0;
+            last_orient_ns_ = t;
+            orient_.step(pf.six.gyro, pf.six.accel, dt);
+            std::memcpy(n.six_axis.direction, orient_.direction, sizeof orient_.direction);
+            std::memcpy(n.six_axis.angle, orient_.angle, sizeof orient_.angle);
+        }
+        right_y_.store(n.right.y, std::memory_order_relaxed);
+        n.right.y = static_cast<int32_t>(std::lround(static_cast<double>(n.right.y) * look_scale_.load(std::memory_order_relaxed)));
+        gyro_pitch_.store(std::fabs(pf.six.gyro[0]), std::memory_order_relaxed);
         out.touch.count = 0;
         if (t.down) {
             out.touch.count = 1;
@@ -114,6 +127,12 @@ public:
         std::lock_guard<std::mutex> lk(mu_);
         pad_ = p;
     }
+    // Is a pad looking up or down right now (the right stick's vertical axis off centre, or the gyro turning about the pad's pitch axis)? Read by the aim
+    // on the main thread; the values are the ones the game gets.
+    bool pad_look(bool gyro_enabled) const {
+        return std::abs(right_y_.load(std::memory_order_relaxed)) > 650 || (gyro_enabled && gyro_pitch_.load(std::memory_order_relaxed) > 0.02f);
+    }
+    void set_look_scale(float k) { look_scale_.store(k, std::memory_order_relaxed); }      // the right stick's vertical axis times k, for the game's per-call pitch
     void set_touch(const Touch& t) {
         std::lock_guard<std::mutex> lk(mu_);
         touch_ = t;
@@ -130,6 +149,11 @@ private:
         return r;
     }
     Engine* engine_;
+    PadOrient orient_;
+    uint64_t last_orient_ns_ = 0;
+    std::atomic<int32_t> right_y_{0};
+    std::atomic<float> look_scale_{1.f};
+    std::atomic<float> gyro_pitch_{0.f};
     std::mutex mu_;
     PadFrame pad_;
     Touch touch_;
@@ -272,6 +296,8 @@ bool key_sink(const char* name, bool down) {
         input::queue_push(m);
         return true;
     }
+    // Scripted virtual gamepad (S35 tests): `keydown vpad attach xbox`, `keydown vpad axis ry 0.8`, `keydown vpad button south 1`, `keydown vpad gyro 0 1 0` ...
+    if (name && std::strncmp(name, "vpad ", 5) == 0) return !down || vpad_command(name + 5);
     if (!name || !parse_input(name, &id)) return false;
     input::Event e;
     e.timestamp_ns = 0;
@@ -487,6 +513,8 @@ void handle_event(const input::Event& e, uint64_t now) {
             break;
         case EventType::GamepadAdded:
             NXLOG_I(kTag, "controller %u connected", static_cast<unsigned>(e.u.gamepad.id));
+            // a pad that replaces the one in use: the prompts follow its kind at once (without it they change at the first press)
+            if (st.last_dev == LastDevice::Pad) st.last_pad_kind = static_cast<int>(input::gamepad_kind_of(e.u.gamepad.id));
             break;
         case EventType::GamepadRemoved:
             NXLOG_I(kTag, "controller %u disconnected", static_cast<unsigned>(e.u.gamepad.id));
@@ -507,6 +535,8 @@ void poll_pads(uint64_t now) {
         const float l = std::max(st.vib[0][0].load(), st.vib[1][0].load()), h = std::max(st.vib[0][1].load(), st.vib[1][1].load());
         map_rumble(l, h, st.settings.pad, &lo, &hi);
     }
+    const Ctx cx = st.engine ? st.engine->context() : Ctx::Menu;
+    const bool look_ctx = cx == Ctx::Gameplay || cx == Ctx::Morph || cx == Ctx::Scan;      // the right stick is a look only in play
     const bool rumble_changed = lo != st.rumble_lo || hi != st.rumble_hi;
     const bool rumble_refresh = (lo || hi) && now - st.last_rumble_ns > 100 * kMs;
     for (size_t i = 0; i < n; ++i) {
@@ -522,6 +552,7 @@ void poll_pads(uint64_t now) {
                 mm::pointer().on_other_input();
             }
         }
+        if (look_ctx) tmp.right = adjust_look_stick(tmp.right, st.settings.pad);
         pf.buttons |= tmp.buttons;
         auto big = [](hid::StickValue a, hid::StickValue b) {
             return static_cast<int64_t>(a.x) * a.x + static_cast<int64_t>(a.y) * a.y >= static_cast<int64_t>(b.x) * b.x + static_cast<int64_t>(b.y) * b.y ? a : b;
@@ -533,6 +564,12 @@ void poll_pads(uint64_t now) {
             if (platform::gamepad_sensors(infos[i].id, a, gy)) {
                 map_sensors(a, gy, st.settings.pad, &pf.six);
                 have_six = true;
+                static bool gyro_logged = false;
+                if (!gyro_logged && !pf.six.at_rest) {
+                    gyro_logged = true;
+                    NXLOG_I(kTag, "pad gyro is moving (first time): %.3f %.3f %.3f rev/s, accel %.2f %.2f %.2f G", pf.six.gyro[0], pf.six.gyro[1], pf.six.gyro[2],
+                            pf.six.accel[0], pf.six.accel[1], pf.six.accel[2]);
+                }
             }
         }
         if (rumble_changed || rumble_refresh) platform::gamepad_rumble(infos[i].id, lo, hi, 250);
@@ -618,6 +655,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
     // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
     // can take 100 ms or more per frame under load) must not read as a menu.
     const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
+    if (!in_game && st.source_owner) st.source_owner->set_look_scale(1.f);      // menus and the map get the stick as it is
     st.hints = st.aim->hints(st.player.load());
     if (st.hints.valid) {
         static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma
@@ -793,6 +831,16 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         p.invert_x = m.invert_x;
         p.invert_y = m.invert_y;
         p.pitch_limit_rad = st.pitch_limit_deg * kPi / 180.0;
+        p.pad_look = st.source_owner && st.source_owner->pad_look(st.settings.pad.gyro);
+        // The game adds the stick's pitch to its target once per ProcessInput call (dual stick scheme), with no time step: at 120 steps per second the view would pitch twice as
+        // fast as at 60. What it adds goes up with the stick's deflection to the power of about 2.2 (measured at 60 steps per second: 20, 50 and 90 percent of a deflection give
+        // 0.5, 20 and 80 percent of the full step), so the right stick's vertical axis is scaled by (step * 60) ^ (1 / 2.2) while that scheme is on: the view pitches at the
+        // console's speed at any frame rate above 60. Below 60 the stick is already at its full range, so it cannot be scaled up.
+        float dt = 0;
+        double scale = 1.0;
+        if (guest_read(c->x[1], &dt, sizeof dt) && dt > 1e-4f && dt < 0.5f && lockcam_pitch_accumulates())
+            scale = std::pow(std::max(0.05, std::min(1.0, static_cast<double>(dt) * 60.0)), 1.0 / 2.2);
+        if (st.source_owner) st.source_owner->set_look_scale(static_cast<float>(scale));
     }
     XfCall xc{c};
     st.aim->set_transform_fn(&guest_set_transform, &xc);

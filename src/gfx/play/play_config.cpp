@@ -312,6 +312,9 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
             if (k == "deadzone") return set_real(0.0, 0.5, &s->pad.stick_deadzone);
+            if (k == "right_deadzone") return set_real(0.0, 0.5, &s->pad.right_deadzone);
+            if (k == "invert_y") return set_bool(&s->pad.invert_y);
+            if (k == "look_sens") return set_real(0.25, 3.0, &s->pad.look_sens);
             if (k == "trigger_threshold") return set_real(0.05, 1.0, &s->pad.trigger_threshold);
             if (k == "gyro") return set_bool(&s->pad.gyro);
             if (k == "gyro_scale") return set_num(&s->pad.gyro_scale);
@@ -548,6 +551,8 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
 
     Sec sec = Sec::None;
     Ctx ctx = Ctx::All;
+    // Which of the two dead-zone keys the [pad] section has, for the rule after the loop (right_deadzone takes deadzone's value when only deadzone is there).
+    bool pad_has_deadzone = false, pad_has_right_deadzone = false;
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string line = trim(lines[i]);
         if (line.empty()) continue;
@@ -654,7 +659,14 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             return false;
         }
         if (!known) warn(i, "unknown key '" + key + "' in " + sec_label(sec));
+        if (sec == Sec::Pad) {
+            if (lower(key) == "deadzone") pad_has_deadzone = true;
+            if (lower(key) == "right_deadzone") pad_has_right_deadzone = true;
+        }
     }
+
+    // A file written before right_deadzone existed has one dead zone (deadzone), so the right stick takes its value.
+    if (pad_has_deadzone && !pad_has_right_deadzone) s->pad.right_deadzone = s->pad.stick_deadzone;
 
     if (has_bindings) {
         // A file with bindings written by an older revision gets the newer factory bindings it lacks (see kDefaultAdditions).
@@ -739,6 +751,9 @@ std::string format_settings(const Settings& s) {
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));
     kv("deadzone", num(s.pad.stick_deadzone));
+    kv("right_deadzone", num(s.pad.right_deadzone));
+    kv("invert_y", flag(s.pad.invert_y));
+    kv("look_sens", num(s.pad.look_sens));
     kv("trigger_threshold", num(s.pad.trigger_threshold));
     kv("gyro", flag(s.pad.gyro));
     kv("gyro_scale", num(s.pad.gyro_scale));
