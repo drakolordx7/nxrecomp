@@ -131,7 +131,7 @@ struct GplStats {
     double link_ms = 0, draw_part_ms = 0, wait_ms = 0, worker_ms = 0;
 };
 GplStats gpl_stats();
-void set_compile_thread_priority();                                  // [nvn] compile_priority for the threads that build pipelines in the background
+void set_compile_thread_priority(bool background = true);                                  // [nvn] compile_priority for the threads that build pipelines in the background
 
 // ---- shader preparation (nvn_gpl.cpp, S24) ---------------------------------------------------------------------------------
 // Compiles the shader parts of every program in a list (setup writes it from the player's own game files: <shader cache>/../programs.bin)

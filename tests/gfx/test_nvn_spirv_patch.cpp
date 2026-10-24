@@ -511,3 +511,31 @@ NXTEST(int_attributes_reach_an_indexed_attribute_array) {
     CHECK(!gpu::spirv_int_attributes(in, {{40, false}}, out2));
     CHECK(out2 == keep);
 }
+
+// The integer inputs of a vertex shader can be told from its code: an input read only through bitcasts to integers. These are shaders of the
+// Frigate route; the slots are the ones the game's draws fed with integer formats (S24), and a shader with no such input gives none.
+NXTEST(predict_int_inputs_from_the_code) {
+    if (const char* why = absent_input()) {
+        nxtest::skip(why);
+        return;
+    }
+    struct Case { const char* hash; std::vector<uint32_t> locations; };
+    const Case cases[] = {{"edfebf23808d2d31", {1}}, {"703a0d4c57b5b6cd", {3}}, {"c439de15f8c11afe", {2}}};
+    for (const Case& c : cases) {
+        std::vector<uint32_t> in;
+        if (!load_hash(c.hash, in)) { nxtest::skip("a vertex shader of the route is not in the shader cache"); return; }
+        const std::vector<gpu::SpvIntSlot> got = gpu::spirv_predict_int_inputs(in);
+        std::vector<uint32_t> locs;
+        for (const gpu::SpvIntSlot& g : got) {
+            locs.push_back(g.location);
+            CHECK(!g.is_signed);
+        }
+        std::printf("    %s: predicted %zu slot(s)\n", c.hash, locs.size());
+        CHECK_MSG(locs == c.locations, std::string("predicted slots differ for ") + c.hash);
+    }
+    std::vector<uint32_t> plain;
+    REQUIRE(load_hash(kVertexHash, plain));
+    CHECK(gpu::spirv_predict_int_inputs(plain).empty());
+    CHECK(gpu::spirv_predict_int_inputs(std::vector<uint32_t>{1u, 2u}).empty());
+}
+

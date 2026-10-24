@@ -66,6 +66,7 @@ struct PrepareConfig {
         nxrt::config_set("nvn", "pipeline_cache", c.c_str());
         nxrt::config_set("nvn", "prewarm", "0");
         nxrt::config_set("nvn", "gpl", "1");
+        nxrt::config_set("nvn", "prepare_cache", "1");
     }
     ~PrepareConfig() {
         nxrt::config_set("nvn", "pipeline_keys", keys.c_str());
@@ -242,6 +243,7 @@ NXTEST(prepare_six_programs) {
         nxtest::skip("pipeline libraries not supported on this GPU");
         return;
     }
+    nxrt::config_set("nvn", "prepare_cache", "0");           // keeps nothing in the pipeline cache file
     nxrt::nvn::ShaderPrepareOptions o;
     o.programs_file = file.string();
     o.threads = 2;
@@ -269,6 +271,36 @@ NXTEST(prepare_six_programs) {
     const std::string state = read_text(td.path / "prepare.state");
     CHECK(state.find("complete: 1") != std::string::npos);
     CHECK(!fs::exists(td.path / "pipeline_cache.bin"));
+}
+
+// With prepare_cache on (the default) the result is kept in the pipeline cache file.
+NXTEST(keeps_cache_file_when_asked) {
+    if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
+    std::vector<Prog> progs;
+    REQUIRE(real_programs(&progs));
+    TempDir td;
+    PrepareConfig cfg(td.path);
+    const fs::path file = td.path / "programs.bin";
+    REQUIRE(write_programs(file, progs));
+    App app;
+    REQUIRE(start(app));
+    if (!gpu::gpl_active()) {
+        app.shutdown();
+        nxtest::skip("pipeline libraries not supported on this GPU");
+        return;
+    }
+    nxrt::config_set("nvn", "prepare_cache", "1");
+    nxrt::nvn::ShaderPrepareOptions o;
+    o.programs_file = file.string();
+    o.threads = 2;
+    nxrt::nvn::ShaderPrepareResult r;
+    CHECK(nxrt::nvn::prepare_shaders(o, &r));
+    CHECK(r.prepared >= 1);
+    app.shutdown();
+    std::error_code ec;
+    const auto size = fs::exists(td.path / "pipeline_cache.bin") ? fs::file_size(td.path / "pipeline_cache.bin", ec) : 0;
+    std::printf("    pipeline cache file: %llu bytes\n", static_cast<unsigned long long>(size));
+    CHECK(size > 1000);
 }
 
 // After a finished run, a second call with only_if_needed does nothing (already_ready, no parts); with force it runs again.
