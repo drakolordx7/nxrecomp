@@ -135,9 +135,10 @@ Troubleshooting
 - Setup stopped halfway (power cut, crash, Stop button): run it again. Finished files are kept.
 - Setup: "Shader pack not found": mpr_setup.exe wants shader_cache.mprshc in its own folder. Unzip the whole
   release, not single files.
-- A message about Vulkan, or a black window: the game needs a Vulkan 1.3 driver. "Vulkan 1.3 is required",
-  "no usable Vulkan 1.3 GPU" and "no Vulkan loader found (vulkan-1.dll)" mean the driver is missing or too old.
-  Update the graphics driver. On a laptop, make sure the game uses the discrete GPU.
+- A message about Vulkan, "cannot create the game window", or a black window: the game needs a Vulkan 1.3
+  driver. "Vulkan 1.3 is required", "no usable Vulkan 1.3 GPU" and "no Vulkan loader found (vulkan-1.dll)" mean
+  the driver is missing or too old. Update the graphics driver. On a laptop, make sure the game uses the
+  discrete GPU.
 - A missing DLL message: the three astcdec-*-shared.dll files must stay in the same folder as mpr.exe and
   mpr_setup.exe. Unzip the whole release.
 - The game starts and stutters for the first minutes: shaders were not prepared for this driver. Open the
