@@ -46,6 +46,7 @@
 #include "nxrt/runtime.h"
 #include "nxrt/tt.h"
 #include "play_aim.h"
+#include "menu_mouse.h"
 #include "play_engine.h"
 #include "play_selftest.h"
 #include "play_types.h"
@@ -159,6 +160,7 @@ struct G {
     uint32_t hook_update = 0, hook_input = 0, hook_fpcam = 0, hook_ballcam = 0;
     LookOffsets free_look, ball_look;     // free look (first person, Alt held) and the morph ball camera orbit; main thread only
     bool capture_mouse = true, quit_on_close = true, log_status = false;
+    bool pointer_draw = false;         // [play] pointer_draw: the menu pointer is also drawn into the frame (screenshots show it); a test aid
     bool late_sample = true;           // pump the window's events again right before the mouse counts are taken (S11: the counts are as new as ProcessInput)
     double pitch_limit_deg = 0;
 
@@ -257,6 +259,18 @@ void pre_frame(void*) {
 
 bool key_sink(const char* name, bool down) {
     InputId id;
+    // Scripted pointer: `keydown mpos <x> <y>` puts the pointer at window pixel (x, y) the way a real motion event does (S28 tests).
+    if (name && std::strncmp(name, "mpos ", 5) == 0) {
+        if (!down) return true;
+        float px = 0, py = 0;
+        if (std::sscanf(name + 5, "%f %f", &px, &py) != 2) return false;
+        input::Event m;
+        m.type = input::EventType::MouseMotion;
+        m.u.motion.x = px;
+        m.u.motion.y = py;
+        input::queue_push(m);
+        return true;
+    }
     if (!name || !parse_input(name, &id)) return false;
     input::Event e;
     e.timestamp_ns = 0;
@@ -351,29 +365,6 @@ void toggle_fullscreen() {
     st.dirty = true;
 }
 
-// Window pixels to the 1280 x 720 touch screen, honouring the letterbox the present pass draws.
-bool touch_point(float px, float py, Touch* t) {
-    G& st = g();
-    int pw = 0, ph = 0;
-    platform::pixel_size(&pw, &ph);
-    if (pw <= 0 || ph <= 0) return false;
-    double x = px, y = py, w = pw, h = ph, ox = 0, oy = 0;
-    if (st.settings.display.keep_aspect) {
-        const double s = std::min(w / 1280.0, h / 720.0);
-        ox = (w - 1280.0 * s) / 2.0;
-        oy = (h - 720.0 * s) / 2.0;
-        x = (x - ox) / s;
-        y = (y - oy) / s;
-    } else {
-        x = x / w * 1280.0;
-        y = y / h * 720.0;
-    }
-    if (x < 0 || y < 0 || x >= 1280 || y >= 720) return false;
-    t->x = static_cast<uint32_t>(x);
-    t->y = static_cast<uint32_t>(y);
-    return true;
-}
-
 void toggle_fps_counter();       // defined after the settings page host
 
 // Tells the overlay how the frame rate counter should look (the overlay draws it; nothing happens while it is off).
@@ -433,6 +424,7 @@ void handle_event(const input::Event& e, uint64_t now) {
                 if (!(e.flags & input::kFlagRepeat)) toggle_fullscreen();
                 return;
             }
+            if (!(e.flags & input::kFlagRepeat)) mm::pointer().on_other_input();
             if (!(e.flags & input::kFlagRepeat) && !menu_blocked) st.engine->key(e.u.key.scancode, true, now);
             break;
         case EventType::KeyUp:
@@ -440,25 +432,44 @@ void handle_event(const input::Event& e, uint64_t now) {
             break;
         case EventType::MouseButtonDown:
             if (e.u.button.button == 1) st.mouse1 = true;
+            if (!menu_blocked) mm::pointer().on_button(e.u.button.button, true);
             if (!menu_blocked) st.engine->mouse_button(e.u.button.button, true, now);
             break;
         case EventType::MouseButtonUp:
             if (e.u.button.button == 1) st.mouse1 = false;
+            mm::pointer().on_button(e.u.button.button, false);
             st.engine->mouse_button(e.u.button.button, false, now);
             break;
         case EventType::MouseWheel: {
             if (menu_blocked) break;
             const float dy = e.u.wheel.dy;
+            // the map: the wheel zooms (the L and R buttons), a longer pulse than a button tap so one notch is a visible step
+            if (dy != 0 && st.settings.mouse.menu_cursor && st.engine->context() == Ctx::Map && !(st.overlay && st.overlay->visible())) {
+                st.engine->pulse(dy > 0 ? Act::BtnR : Act::BtnL, now, 160);
+                break;
+            }
+            // over a slider's track in a menu the wheel steps the value (right is more) instead of moving the selection
+            if (dy != 0 && st.settings.mouse.menu_cursor && mm::pointer().enabled() && mm::game_snapshot().active && mm::game_over_value()) {
+                st.engine->pulse(dy > 0 ? Act::DpadRight : Act::DpadLeft, now);
+                break;
+            }
             const int n = std::max(1, static_cast<int>(std::lround(std::fabs(dy))));
             if (dy != 0) for (int i = 0; i < n; ++i) st.engine->wheel(dy > 0 ? 1 : -1, now);
             break;
         }
         case EventType::MouseMotion:
-            if (!(e.flags & input::kFlagRelative)) { st.mouse_x = e.u.motion.x; st.mouse_y = e.u.motion.y; }
+            if (!(e.flags & input::kFlagRelative)) {
+                st.mouse_x = e.u.motion.x;
+                st.mouse_y = e.u.motion.y;
+                if (!menu_blocked) mm::pointer().on_motion(e.u.motion.x, e.u.motion.y);
+                // moving the pointer over a menu counts as using the mouse (the prompts switch to keyboard icons); the raw motion of the aim in play does not
+                if (!menu_blocked && st.settings.mouse.menu_cursor && mm::pointer().has_moved()) st.last_dev = LastDevice::KeyboardMouse;
+            }
             break;
         case EventType::WindowFocusLost:
             st.engine->release_all(now);
             st.mouse1 = false;
+            mm::pointer().on_focus_lost();
             break;
         case EventType::WindowFocusGained:
         case EventType::WindowRestored:
@@ -499,6 +510,7 @@ void poll_pads(uint64_t now) {
             if (tmp.buttons != 0 || off_centre(tmp.left) || off_centre(tmp.right)) {
                 st.last_dev = LastDevice::Pad;
                 st.last_pad_kind = static_cast<int>(infos[i].kind);
+                mm::pointer().on_other_input();
             }
         }
         pf.buttons |= tmp.buttons;
@@ -639,21 +651,56 @@ int update_hook(::Ctx*, uint64_t, void*) {
             platform::set_relative_mouse(want);
             if (want) input::mouse_delta_take();      // nothing that piled up before the capture
         }
-        // menus: the left click as a touch
-        Touch t;
-        if (!want && !overlay_visible && st.settings.mouse.menu_touch && (ctx == Ctx::Menu || ctx == Ctx::Map) && st.mouse1) {
-            t.down = touch_point(st.mouse_x, st.mouse_y, &t);
+    }
+    {   // the map: dragging with the left button rotates it (the left stick), with the middle button moves it (the right stick); the speed is the pointer's speed
+        static float px = 0, py = 0;
+        static uint64_t last_ns = 0;
+        static bool have = false;
+        float lx = 0, ly = 0, rx = 0, ry = 0;
+        mm::Pointer& pp = mm::pointer();
+        const bool on_map = st.window && ctx == Ctx::Map && st.settings.mouse.menu_cursor && pp.enabled() && (platform::focused() || tt::enabled()) && !overlay_visible;
+        if (on_map && have && (pp.held() || pp.mid_held())) {
+            int ww = 1, wh = 1;
+            platform::pixel_size(&ww, &wh);
+            // the stick follows the pointer's speed: a full stick is a drag of 0.8 window heights per second, whatever the frame rate
+            const float dt = std::max(1e-3f, static_cast<float>(now - last_ns) / 1e9f);
+            const float k = 1.f / (0.8f * static_cast<float>(std::max(1, wh)) * dt);
+            const float dx = std::max(-1.f, std::min(1.f, (pp.x() - px) * k)), dy = std::max(-1.f, std::min(1.f, (pp.y() - py) * k));
+            if (pp.held()) { lx = dx; ly = -dy; }
+            else { rx = dx; ry = -dy; }
         }
-        st.source_owner->set_touch(t);
+        px = pp.x();
+        py = pp.y();
+        last_ns = now;
+        have = true;
+        st.engine->set_aux_sticks(lx, ly, rx, ry);
+    }
+    {   // the mouse as a pointer in the menus (stream S28): the cursor, and the snapshot the widget hooks read this frame
+        mm::Pointer& ptr = mm::pointer();
+        ptr.set_enabled(st.settings.mouse.menu_cursor);
+        // (a scripted run has no focus: the test tooling drives the pointer with synthetic events)
+        const bool menu_up = st.window && !in_game && ctx == Ctx::Menu && (platform::focused() || tt::enabled()) && !platform::minimized() && !overlay_visible;
+        mm::Geometry geo;
+        platform::pixel_size(&geo.win_w, &geo.win_h);
+        const DisplayLive dl = display_live();
+        geo.render_w = dl.render_w;
+        geo.render_h = dl.render_h;
+        geo.display_aspect = dl.aspect > 0 ? dl.aspect : 0;
+        geo.keep_aspect = st.settings.display.keep_aspect;
+        if (const Act a = mm::game_frame(menu_up, geo); a != Act::None) st.engine->pulse(a, now);
+        if (st.overlay && st.pointer_draw) st.overlay->set_pointer(menu_up && ptr.enabled() && ptr.cursor_visible(menu_up), ptr.x(), ptr.y(), true);
+        if (st.window && !platform::relative_mouse()) platform::set_cursor_visible(overlay_visible || !(ptr.enabled() && menu_up) || ptr.cursor_visible(menu_up));
     }
     if (!in_game) input::mouse_delta_take();         // aim only counts what arrives while the game is playing
 
     if (st.log_status && now - st.last_status_ns > 1000 * kMs) {
         st.last_status_ns = now;
-        NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d display_hook_calls=%u", ctx_name(ctx),
+        NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d display_hook_calls=%u menumouse(active=%d hovers=%llu clicks=%llu widget_calls=%llu hook_calls=%llu)", ctx_name(ctx),
                 in_game ? 1 : 0, aim_block_name(st.aim->last_block()), static_cast<unsigned long long>(st.frames.load()),
                 static_cast<unsigned long long>(st.pi_calls.load()), static_cast<unsigned long long>(st.aim_frames.load()),
-                static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0, display_hook_calls());
+                static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0, display_hook_calls(),
+                mm::game_snapshot().active ? 1 : 0, static_cast<unsigned long long>(mm::game_stats().hovers), static_cast<unsigned long long>(mm::game_stats().clicks),
+                static_cast<unsigned long long>(mm::game_stats().widget_calls), static_cast<unsigned long long>(mm::game_hook_calls()));
     }
     if (st.selftest.active()) st.selftest.tick(st.renderer, &st.limiter, selftest_host());
     return 0;
@@ -970,6 +1017,7 @@ bool load() {
     st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);
     st.log_status = config_get_bool("play", "log_status", false);
+    st.pointer_draw = config_get_bool("play", "pointer_draw", false);
     st.pitch_limit_deg = config_get_double("play", "pitch_limit_deg", 0.0);
     st.base = static_cast<uint64_t>(config_get_int("play", "game_base", 0x7100000000ll));
     apply_frame_cap(st.settings);
@@ -1063,6 +1111,7 @@ bool start(const StartOptions& opt) {
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
     st.hook_fpcam = hook_add_entry(st.base + kFnFpCamThink, &cam_think_hook, nullptr);
     st.hook_ballcam = hook_add_entry(st.base + kFnBallCamThink, &cam_think_hook, &st);
+    mm::game_install(st.base);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
             static_cast<unsigned long long>(st.base), st.hook_update, st.hook_input);
@@ -1072,6 +1121,7 @@ bool start(const StartOptions& opt) {
 void stop() {
     G& st = g();
     if (!st.started) return;
+    mm::game_remove();
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     if (st.hook_fpcam) hook_remove(st.hook_fpcam);

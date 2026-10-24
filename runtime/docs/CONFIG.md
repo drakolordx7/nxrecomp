@@ -15,6 +15,8 @@ Rules:
 |---|---|---|---|---|---|
 | `log` | `path` | `nxrt.log` | `NXRT_LOG_PATH` | `src/diag/log.cpp` | Log file. An empty value writes no file. |
 | `log` | `level` | `info` | `NXRT_LOG_LEVEL` | `src/diag/log.cpp` | Lowest level written: `error`, `warn`, `info`, `debug`, `trace`, or `0` to `4`. An unrecognised value keeps the level set in code. |
+| `NXRT_MENUMOUSE_LOG` | `src/gfx/play/menu_mouse.cpp` | Menu pointer debugging: `1` logs what the pointer hits and does, `2` also every widget it looks at, `3` also the parts of each button's box. |
+| `NXRT_MENUMOUSE_DUMP` | `src/gfx/play/menu_mouse.cpp` | Logs every widget of each older GUI frame (pause screen, options, map) once: type, name, position, size and where the frame's camera puts it. |
 | `memory` | `heap_gb` | `6` | `NXRT_MEMORY_HEAP_GB` | `src/mem/memory.cpp` | Heap section reserve in GiB, from 1 to 1024. Out of range: a warning is logged and 6 is used. Read only when `mem::Config.heap_reserve` is 0. |
 | `memory` | `app_memory_mb` | `0` (= 3285, 0xCD500000 bytes) | `NXRT_MEMORY_APP_MEMORY_MB` | `src/kernel/svc_info.cpp`, `svc_memory.cpp` | Physical memory the process is told it has: GetInfo TotalMemorySize, and the ceiling of SetHeapSize together with the module images and 64 MiB. |
 | `memory` | `limit_gb` | `8` | `NXRT_MEMORY_LIMIT_GB` | `src/diag/memguard.cpp` | Private commit limit in GB. Zero, negative or non-numeric: 8. |
@@ -140,6 +142,7 @@ Rules:
 | `play` | `quit_on_close` | `true` | `NXRT_PLAY_QUIT_ON_CLOSE` | `src/gfx/play/play.cpp` | Closing the window ends the process. |
 | `play` | `game_base` | `0x7100000000` | `NXRT_PLAY_GAME_BASE` | `src/gfx/play/play.cpp` | Base of the game's main module (hook addresses). |
 | `play` | `log_status` | `false` | `NXRT_PLAY_LOG_STATUS` | `src/gfx/play/play.cpp` | One status line per second in the log. |
+| `play` | `pointer_draw` | `false` | `NXRT_PLAY_POINTER_DRAW` | `src/gfx/play/play.cpp` | Test aid: draws an arrow at the menu pointer into the game's own frame, so a game screenshot shows where the pointer is (the OS cursor is not part of the frame). |
 | `play` | `selftest` | empty | `NXRT_PLAY_SELFTEST` | `src/gfx/play/play_selftest.h` | Window self-test script for the oracles (steps are listed in that header). |
 | `play` | `late_sample` | `true` | `NXRT_PLAY_LATE_SAMPLE` | `src/gfx/play/play.cpp` | Pump the window's events again right before the first `ProcessInput` of a frame takes the mouse counts, so the aim includes what the mouse did since the frame boundary. |
 | `prompts` | `style` | `auto` | none (controls.ini only) | `src/gfx/play/play_config.cpp` (read from `controls.ini`) | Button icons the game's prompts show. `auto` (the default) shows keyboard and mouse icons until a controller is used, then that controller's icons, and goes back to the keyboard when a key or mouse button is pressed. The other values are `switch` (the game's own icons), `xbox`, `playstation` and `keyboard` (keyboard and mouse). Also accepts `ps`, `ps4`, `ps5`, `dualsense`, `kbm`, `mouse` and `keyboard_mouse`. Stored in `controls.ini` under `[prompts]`, not in `nxrt.ini`. Set it in the launcher (Controls tab) or on the F1 page (Controller tab, Button prompts). Changes apply on the next frame, with no restart. Keyboard icons show the keys the action is bound to: a rebound jump key shows the new key, and a key with no icon of its own gets a plain key icon. Xbox and PlayStation icons follow `[padmap]`. |
@@ -227,6 +230,8 @@ These live in the play-mode file `controls.ini` (key `[play] controls`), not in 
 How it works: the game only knows the Switch pad, so an action is turned into pad buttons by the `[switch]` table. By default `beam_1` to `beam_4` hold X and press the d-pad (up, right, down, left), and `visor_1` to `visor_4` press the d-pad alone (up, right, down, left). The wheel skips beams the player does not have yet. In the menu and map contexts they are switched off (`1` to `8 = none` in `[bindings.menu]` and `[bindings.map]`) and the wheel moves the cursor or the map instead.
 
 To change a key, add a line `Key = action` to `[bindings.all]` (every context) or to one context (`[bindings.gameplay]`, `[bindings.morph]`, `[bindings.scan]`, `[bindings.menu]`, `[bindings.map]`). `Key = none` switches an input off in that context. Key names are SDL scancode names (`Left Ctrl`, `Page Up`, `Mouse1`, `WheelUp`).
+
+`[mouse] menu_cursor`, default `1`: in menus the mouse works like a pointer: a visible cursor, hovering highlights an item, left click activates, right click goes back, the wheel scrolls. While it is on, the left click drives no binding in the menu and map contexts. The old key `menu_touch` is ignored; a file that still has it loads without a warning and nothing changes.
 
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 

@@ -116,8 +116,9 @@ NXTEST(keyboard_style_follows_the_bindings_of_the_context) {
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::R), std::string("kbm/e"));
     // A is only bound in menus and the map: in gameplay the prompt still shows the menu key
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::A), std::string("kbm/return"));
-    // X presses no action alone in the default layout: nothing is bound, the game's icon stays
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::X), std::string());
+    // X is bound only in the map (its Key / Legend button): the map shows it, and the other contexts find it there
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Map, Icon::X), std::string("kbm/x"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::X), std::string("kbm/x"));
 }
 
 NXTEST(keyboard_style_follows_a_rebind) {

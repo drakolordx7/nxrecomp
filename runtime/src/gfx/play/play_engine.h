@@ -47,6 +47,8 @@ public:
     void mouse_button(int button, bool down, uint64_t now_ns);    // 1 left .. 5, the numbering of input.h
     void wheel(int dir, uint64_t now_ns);                          // +1 up, -1 down: one notch
     void release_all(uint64_t now_ns);                             // focus lost: everything is released (no taps fire)
+    void pulse(Act a, uint64_t now_ns, int ms = 0);                // ms 0 = [timing] pulse_ms
+    void set_aux_sticks(float lx, float ly, float rx, float ry);   // added to the sticks (the menu pointer dragging the map); 0 = none                            // one press of the action's Switch output for [timing] pulse_ms (the menu pointer's click on a plain screen)
     // One call per game frame (the frame-boundary hook). Once it has been called, a select pulse also stays on for at least `kPulseFrames` frame
     // boundaries after the first poll that reported it: the game samples its input once per tick and other readers poll the pad in between, so
     // a pulse that is only a few milliseconds of one frame can be eaten before the tick sees it.
@@ -104,6 +106,7 @@ private:
     bool frames_used_ = false;
     static constexpr uint64_t kPulseFrames = 2;
     unsigned beam_mask_ = 0x0f;
+    float aux_[4] = {};
 };
 
 }  // namespace nxrt::play

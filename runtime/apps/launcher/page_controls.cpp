@@ -84,6 +84,9 @@ public:
         f.checkbox(
             L"Mouse wheel changes the beam", [](const Settings& s) { return s.mouse.wheel_beams; },
             [](Settings& s, bool v) { s.mouse.wheel_beams = v; });
+        f.checkbox(
+            L"Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
+            [](Settings& s, bool v) { s.mouse.menu_cursor = v; });
 
         f.heading(L"Button prompts");
         f.combo(
