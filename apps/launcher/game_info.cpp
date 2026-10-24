@@ -320,4 +320,250 @@ bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* er
     return launch_in_exe_dir(L"mpr_setup.exe", args, process, err);
 }
 
+// ---- Shader preparation ----------------------------------------------------------------------------------------------
+
+namespace {
+
+// A plain decimal count: digits only, at most 18 of them.
+bool parse_count(const std::string& s, unsigned long long* out) {
+    if (s.empty() || s.size() > 18) return false;
+    unsigned long long v = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+        v = v * 10 + static_cast<unsigned long long>(c - '0');
+    }
+    *out = v;
+    return true;
+}
+
+}  // namespace
+
+PrepareLine parse_prepare_line(const std::string& raw) {
+    PrepareLine out;
+    const std::string line = trim(raw);
+    static const std::string kPrefix = "prepare:";
+    if (line.compare(0, kPrefix.size(), kPrefix) != 0) {
+        out.text = line;
+        return out;
+    }
+    const std::string rest = trim(line.substr(kPrefix.size()));
+    std::vector<std::string> words;
+    {
+        std::string cur;
+        for (char c : rest) {
+            if (c == ' ' || c == '\t') {
+                if (!cur.empty()) words.push_back(cur);
+                cur.clear();
+            } else {
+                cur.push_back(c);
+            }
+        }
+        if (!cur.empty()) words.push_back(cur);
+    }
+    if (words.empty()) {
+        out.text = line;
+        return out;
+    }
+    const std::string& w0 = words[0];
+    if (w0 == "ready") {
+        out.kind = PrepareKind::ready;
+        out.text = rest;
+        return out;
+    }
+    if (w0 == "error") {
+        out.kind = PrepareKind::error;
+        out.text = trim(rest.substr(w0.size()));
+        return out;
+    }
+    if (w0 == "done") {
+        out.kind = PrepareKind::done;
+        out.text = rest;
+        for (size_t i = 1; i < words.size(); ++i) {
+            const std::string& w = words[i];
+            if (w.compare(0, 7, "failed=") == 0) {
+                unsigned long long n = 0;
+                if (parse_count(w.substr(7), &n)) out.failed = static_cast<long long>(n);
+            } else if (w == "cancelled") {
+                out.cancelled = true;
+            }
+        }
+        return out;
+    }
+    if (words.size() == 2) {
+        unsigned long long d = 0, t = 0;
+        if (parse_count(words[0], &d) && parse_count(words[1], &t)) {
+            out.kind = PrepareKind::progress;
+            out.done = d;
+            out.total = t;
+            out.text = rest;
+            return out;
+        }
+    }
+    out.text = line;
+    return out;
+}
+
+bool shader_prepare_available(const std::wstring& game_dir) {
+    if (game_dir.empty()) return false;
+    return path_exists(fs::path(game_dir) / L"shader_cache" / L"programs.bin");
+}
+
+bool shader_prepare_done(const std::wstring& game_dir) {
+    if (game_dir.empty()) return false;
+    std::ifstream f(fs::path(game_dir) / L"shader_cache" / L"prepare.state", std::ios::binary);
+    if (!f) return false;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (trim(line) == "complete: 1") return true;
+    }
+    return false;
+}
+
+PrepareRun::~PrepareRun() {
+    if (active_) {
+        cancel();
+        finish();
+    }
+}
+
+bool PrepareRun::start(const std::wstring& game_dir, bool if_needed, HWND notify, UINT msg_update, UINT msg_finished, std::wstring* err) {
+    if (active_) {
+        set_err(err, L"Shader preparation is already running.");
+        return false;
+    }
+    const std::wstring dir = launcher_exe_dir();
+    const std::wstring exe = (fs::path(dir) / L"mpr.exe").wstring();
+    std::error_code ec;
+    if (game_dir.empty()) {
+        set_err(err, L"No game folder is set.");
+        return false;
+    }
+    if (!fs::exists(exe, ec)) {
+        set_err(err, L"mpr.exe was not found next to the launcher.");
+        return false;
+    }
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof sa;
+    sa.bInheritHandle = TRUE;
+    HANDLE rd = nullptr, wr = nullptr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) {
+        const DWORD code = GetLastError();
+        set_err(err, L"Could not start shader preparation (Windows error " + std::to_wstring(code) + L").");
+        return false;
+    }
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);   // only the child gets the write end
+    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
+    if (nul == INVALID_HANDLE_VALUE) nul = nullptr;
+
+    std::wstring cmd = quote_arg(exe) + L" --prepare-shaders";
+    if (if_needed) cmd += L" --if-needed";
+    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
+    buf.push_back(L'\0');
+
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdInput = nul;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(exe.c_str(), buf.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, game_dir.c_str(), &si, &pi);
+    const DWORD code = ok ? 0 : GetLastError();
+    CloseHandle(wr);
+    if (nul) CloseHandle(nul);
+    if (!ok) {
+        CloseHandle(rd);
+        set_err(err, L"Could not start shader preparation (Windows error " + std::to_wstring(code) + L").");
+        return false;
+    }
+    CloseHandle(pi.hThread);
+
+    proc_ = pi.hProcess;
+    pipe_ = rd;
+    notify_ = notify;
+    msg_update_ = msg_update;
+    msg_finished_ = msg_finished;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        progress_ = PrepareLine{};
+        result_ = PrepareLine{};
+    }
+    update_pending_ = false;
+    cancel_requested_ = false;
+    exit_code_ = 0xFFFFFFFFu;
+    active_ = true;
+    thread_ = std::thread(&PrepareRun::worker, this);
+    return true;
+}
+
+void PrepareRun::cancel() {
+    if (!active_ || !proc_) return;
+    cancel_requested_ = true;
+    TerminateProcess(proc_, 3);   // only this run's child; the next run starts from zero
+}
+
+void PrepareRun::ack_update() { update_pending_ = false; }
+
+PrepareLine PrepareRun::progress() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return progress_;
+}
+
+PrepareLine PrepareRun::result() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return result_;
+}
+
+DWORD PrepareRun::finish() {
+    if (thread_.joinable()) thread_.join();
+    if (pipe_) {
+        CloseHandle(pipe_);
+        pipe_ = nullptr;
+    }
+    if (proc_) {
+        CloseHandle(proc_);
+        proc_ = nullptr;
+    }
+    active_ = false;
+    return exit_code_;
+}
+
+void PrepareRun::handle_line(const std::string& line) {
+    const PrepareLine pl = parse_prepare_line(line);
+    if (pl.kind == PrepareKind::other) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (pl.kind == PrepareKind::progress) {
+            progress_ = pl;
+        } else {
+            result_ = pl;
+        }
+    }
+    // Coalesced: one message is in the queue until the UI thread acknowledges it. ack_update() clears the flag before the
+    // UI reads, so a change made after that read posts again.
+    if (notify_ && !update_pending_.exchange(true)) PostMessageW(notify_, msg_update_, 0, 0);
+}
+
+void PrepareRun::worker() {
+    std::string acc;
+    char buf[4096];
+    for (;;) {
+        DWORD n = 0;
+        if (!ReadFile(pipe_, buf, static_cast<DWORD>(sizeof buf), &n, nullptr) || n == 0) break;   // the child closed its output
+        acc.append(buf, n);
+        size_t p;
+        while ((p = acc.find('\n')) != std::string::npos) {
+            handle_line(acc.substr(0, p));
+            acc.erase(0, p + 1);
+        }
+    }
+    if (!acc.empty()) handle_line(acc);
+    WaitForSingleObject(proc_, INFINITE);
+    DWORD code = 0xFFFFFFFFu;
+    if (!GetExitCodeProcess(proc_, &code)) code = 0xFFFFFFFFu;
+    exit_code_ = code;
+    if (notify_) PostMessageW(notify_, msg_finished_, 0, 0);
+}
+
 }  // namespace mprl

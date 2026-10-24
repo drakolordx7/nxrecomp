@@ -11,6 +11,7 @@
 // bc7_quality, log_unimplemented; see docs/CONFIG.md.
 #pragma once
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "nxrt/gfx.h"
@@ -37,6 +38,30 @@ void backend_flush_caches();
 
 // Traces the next whole presented frame like [nvn] trace_frame (the scripted `@shot nvntrace_<name>` calls this).
 void backend_trace_next_frame();
+
+// Shader preparation (S24): compiles the shader parts of every program in a list before the game runs, so the driver already has them when the
+// game asks. The list is written by the setup tool from the player's own game files (<shader cache folder>/../programs.bin, "MPRPRG01").
+// Needs the back end installed (any mode; `register_entry_points = false` is enough) and an open shader cache.
+struct ShaderPrepareOptions {
+    std::string programs_file;                                    // empty: programs.bin next to the shader cache folder
+    bool only_if_needed = false;                                  // do nothing when the state file says this GPU and driver were prepared already
+    bool force = false;                                           // ignore the state file
+    int threads = 0;                                              // 0: all hardware threads but two
+    std::function<bool(uint64_t done, uint64_t total)> progress;  // called often; returning false cancels
+};
+struct ShaderPrepareResult {
+    uint64_t programs = 0;          // in the list
+    uint64_t prepared = 0;          // programs whose parts were all made
+    uint64_t missing_shaders = 0;   // skipped: a stage has no translated shader in the cache
+    uint64_t failed = 0;            // a part could not be made
+    uint64_t parts = 0;
+    uint64_t fast_parts = 0;        // parts made in under 2 ms: the driver already had them
+    double seconds = 0;
+    bool cancelled = false;
+    bool already_ready = false;     // only_if_needed and nothing to do
+    std::string error;              // why nothing could be done
+};
+bool prepare_shaders(const ShaderPrepareOptions& o, ShaderPrepareResult* r);
 
 struct BackendStats {
     uint64_t submits = 0, lists_replayed = 0, draws = 0, draws_skipped = 0, dispatches = 0, clears = 0, copies = 0, presents = 0;
