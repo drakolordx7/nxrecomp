@@ -6,12 +6,17 @@
 // and masks, blend constants, line width, vertex strides); everything else is part of the key.
 #pragma once
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <vector>
 
 #include <volk.h>
 
+#include "nxrt/nvn_backend.h"
+
 #include "nvn_core.h"
 #include "nvn_shaders.h"
+#include "nvn_spirv_patch.h"
 
 namespace nxrt::nvn::be::gpu {
 
@@ -78,6 +83,8 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
 // stream-out, dual-source, private outputs, HDR tone map), by stage slot as in GraphicsKey::stage; null = no such stage. False on a Vulkan error.
 struct StageModules { VkShaderModule m[3] = {}; };
 bool resolve_stage_modules(const GraphicsKey& key, StageModules* out);
+// The vertex inputs the vertex shader declares as floats that this key feeds with integer attributes (the shader module is then a patched variant).
+std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key);
 // The dynamic state list every graphics pipeline and pipeline library uses.
 const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state();
 VkPipelineCache pipeline_cache_handle();
@@ -124,6 +131,14 @@ struct GplStats {
 };
 GplStats gpl_stats();
 void set_compile_thread_priority();                                  // [nvn] compile_priority for the threads that build pipelines in the background
+
+// ---- shader preparation (nvn_gpl.cpp, S24) ---------------------------------------------------------------------------------
+// Compiles the shader parts of every program in a list (setup writes it from the player's own game files: <shader cache>/../programs.bin)
+// before the game runs, so the driver has them in its cache and the game's own requests are fast. The parts are thrown away as soon as they exist.
+using PrepareOptions = nxrt::nvn::ShaderPrepareOptions;
+using PrepareResult = nxrt::nvn::ShaderPrepareResult;
+bool gpl_prepare(const PrepareOptions& o, PrepareResult* r);       // false: nothing could be done (see r->error)
+void module_cache_clear();                                          // destroys every cached shader module and variant (nothing may be creating pipelines)
 
 void pipeline_shutdown();
 size_t pipeline_count();

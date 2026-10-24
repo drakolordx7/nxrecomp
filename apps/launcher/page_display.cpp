@@ -189,6 +189,11 @@ public:
         key_text_ = f.text_row(L"Hotkey in the game", L"");
         key_button_ = f.button(L"Change...", 110);
         f.hint(L"Press the hotkey in the game to show or hide the counter. F1 opens the full settings page, which has the same options.", 2);
+        f.heading(L"Shaders");
+        prep_hint_ = f.hint(L"Compiles the shaders now so the first hours of play do not stutter. Takes a few minutes.", 1, true);
+        const RECT r = f.custom_row(nullptr, 26);
+        prep_button_ = f.create(L"BUTTON", L"Prepare shaders", BS_PUSHBUTTON | WS_TABSTOP, r.left, r.top, host()->env().S(150),
+                                host()->env().S(26), &prep_id_);
     }
 
     void load(const Settings& s) override {
@@ -197,12 +202,24 @@ public:
         SetWindowTextW(key_text_, input_label(fps_key_).c_str());
     }
 
+    void state_changed() override {
+        if (!prep_button_) return;
+        const bool offered = host()->shader_prepare_offered();
+        ShowWindow(prep_hint_, offered ? SW_SHOW : SW_HIDE);
+        ShowWindow(prep_button_, offered ? SW_SHOW : SW_HIDE);
+        EnableWindow(prep_button_, !host()->shader_prepare_busy());
+    }
+
     void store(Settings* s) override {
         Page::store(s);
         s->fps.key = fps_key_;
     }
 
     bool command(int id, int code, HWND) override {
+        if (id == prep_id_ && code == BN_CLICKED) {
+            host()->prepare_shaders_now();
+            return true;
+        }
         if (id != key_button_ || code != BN_CLICKED) return false;
         InputId in;
         if (!capture_input(host()->window(), host()->env(), L"the frame rate counter", &in)) return true;
@@ -220,6 +237,9 @@ private:
     HWND key_text_ = nullptr;
     int key_button_ = -1;
     InputId fps_key_;
+    HWND prep_hint_ = nullptr;
+    HWND prep_button_ = nullptr;
+    int prep_id_ = -1;
 };
 
 }  // namespace

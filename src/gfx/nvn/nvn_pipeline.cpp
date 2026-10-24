@@ -11,6 +11,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "nxrt/config.h"
@@ -36,6 +37,10 @@ struct LayoutKey {
 std::mutex g_layout_mu;
 std::recursive_mutex g_module_mu;   // every module cache below; the variant makers call shader_module
 std::map<LayoutKey, ProgLayout> g_layouts;
+// Descriptor set layouts and the pipeline layout built from them, shared by every program whose descriptors are the same (S24): two programs with
+// the same signature get the same VkPipelineLayout handle, so the shader parts compiled for one are found again for the other.
+struct SharedLayout { VkDescriptorSetLayout sets[4] = {}; VkPipelineLayout layout = VK_NULL_HANDLE; };
+std::map<std::string, SharedLayout> g_shared_layouts;
 std::unordered_map<const ShaderInfo*, VkShaderModule> g_modules;
 std::atomic<bool> g_cache_dirty{false};
 // Producer modules with extra outputs (nvn_spirv_patch.h): (shader, slots as location * 4 + scalar type).
@@ -346,8 +351,9 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
             }
         }
     }
+    std::vector<VkDescriptorSetLayoutBinding> lbs[4];
+    std::string sig;                                   // the descriptors of the program, as bytes: the key of the shared layout
     for (int set = 0; set < 4; ++set) {
-        std::vector<VkDescriptorSetLayoutBinding> lb;
         for (const BindingDesc& d : pl.bindings) {
             if (d.set != static_cast<uint32_t>(set)) continue;
             VkDescriptorSetLayoutBinding b = {};
@@ -355,31 +361,40 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
             b.descriptorType = d.type;
             b.descriptorCount = std::max<uint32_t>(1, d.shader->refl.bindings[d.index].count);
             b.stageFlags = d.stages;
-            lb.push_back(b);
+            lbs[set].push_back(b);
             pl.has_set[set] = true;
+            const uint32_t w[4] = {b.binding, static_cast<uint32_t>(b.descriptorType), b.descriptorCount, b.stageFlags};
+            sig.append(reinterpret_cast<const char*>(w), sizeof w);
         }
-        VkDescriptorSetLayoutCreateInfo ci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        ci.bindingCount = static_cast<uint32_t>(lb.size());
-        ci.pBindings = lb.data();
-        if (vkCreateDescriptorSetLayout(vkdev(), &ci, nullptr, &pl.sets[set]) != VK_SUCCESS) {
-            NXLOG_E(kTag, "descriptor set layout %d failed", set);
+        sig.append("|", 1);
+    }
+    auto sh = g_shared_layouts.find(sig);
+    if (sh == g_shared_layouts.end()) {
+        SharedLayout nl;
+        for (int set = 0; set < 4; ++set) {
+            VkDescriptorSetLayoutCreateInfo ci = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            ci.bindingCount = static_cast<uint32_t>(lbs[set].size());
+            ci.pBindings = lbs[set].data();
+            if (vkCreateDescriptorSetLayout(vkdev(), &ci, nullptr, &nl.sets[set]) != VK_SUCCESS) {
+                NXLOG_E(kTag, "descriptor set layout %d failed", set);
+                return nullptr;
+            }
+        }
+        VkPipelineLayoutCreateInfo pci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        pci.setLayoutCount = 4;
+        pci.pSetLayouts = nl.sets;
+        if (vkCreatePipelineLayout(vkdev(), &pci, nullptr, &nl.layout) != VK_SUCCESS) {
+            NXLOG_E(kTag, "pipeline layout failed");
             return nullptr;
         }
+        sh = g_shared_layouts.emplace(sig, nl).first;
     }
-    VkPipelineLayoutCreateInfo pci = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    pci.setLayoutCount = 4;
-    pci.pSetLayouts = pl.sets;
-    if (vkCreatePipelineLayout(vkdev(), &pci, nullptr, &pl.layout) != VK_SUCCESS) {
-        NXLOG_E(kTag, "pipeline layout failed");
-        return nullptr;
-    }
+    for (int set = 0; set < 4; ++set) pl.sets[set] = sh->second.sets[set];
+    pl.layout = sh->second.layout;
     return &g_layouts.emplace(key, std::move(pl)).first->second;
 }
 
-bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
-    *out = StageModules{};
-    // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
-    const int feeder = key.stage[2] ? 2 : 0;
+std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key) {
     // vertex inputs the shader declares as floats but the game feeds with integer attributes (key formats UINT / SINT)
     std::vector<SpvIntSlot> int_slots;
     if (key.stage[0] && !key.xfb)
@@ -395,6 +410,14 @@ bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
                     break;
                 }
         }
+    return int_slots;
+}
+
+bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
+    *out = StageModules{};
+    // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
+    const int feeder = key.stage[2] ? 2 : 0;
+    const std::vector<SpvIntSlot> int_slots = key_int_slots(key);
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
         if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
@@ -650,6 +673,21 @@ VkBuffer driver_constants_buffer(VkDeviceSize* range) {
 
 size_t pipeline_count() { return g_pipeline_count; }
 
+void module_cache_clear() {
+    VkDevice d = vkdev();
+    std::lock_guard<std::recursive_mutex> lk(g_module_mu);
+    for (auto& [k, m] : g_modules) if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_modules.clear();
+    for (auto& [k, m] : g_variants) if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_variants.clear();
+    for (auto& [k, m] : g_dual_src) if (m) vkDestroyShaderModule(d, m, nullptr);
+    g_dual_src.clear();
+    for (auto& [k, e] : g_no_out) if (e.first && e.second) vkDestroyShaderModule(d, e.first, nullptr);
+    g_no_out.clear();
+    for (auto& [k, v] : g_xfb_mod) if (v.first) vkDestroyShaderModule(d, v.first, nullptr);
+    g_xfb_mod.clear();
+}
+
 void pipeline_shutdown() {
     VkDevice d = vkdev();
     prewarm_shutdown();
@@ -663,12 +701,13 @@ void pipeline_shutdown() {
     for (auto& [k, p] : g_compute)
         if (p) vkDestroyPipeline(d, p, nullptr);
     g_compute.clear();
-    for (auto& [k, l] : g_layouts) {
+    g_layouts.clear();
+    for (auto& [k, l] : g_shared_layouts) {          // the handles in g_layouts were copies of these
         if (l.layout) vkDestroyPipelineLayout(d, l.layout, nullptr);
         for (VkDescriptorSetLayout s : l.sets)
             if (s) vkDestroyDescriptorSetLayout(d, s, nullptr);
     }
-    g_layouts.clear();
+    g_shared_layouts.clear();
     for (auto& [k, m] : g_modules)
         if (m) vkDestroyShaderModule(d, m, nullptr);
     g_modules.clear();

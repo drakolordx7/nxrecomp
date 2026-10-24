@@ -22,6 +22,7 @@
 #include "nxrt/lowlat.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
+#include "nvn_pipeline.h"
 #include "nvn_present_pass.h"
 #include "extras/output_pass.h"
 
@@ -678,6 +679,13 @@ bool install_backend(const BackendDesc& desc) {
 }
 
 void shutdown_backend() { be::gpu::tear_down(); }
+
+bool prepare_shaders(const ShaderPrepareOptions& o, ShaderPrepareResult* r) {
+    ShaderPrepareResult local;
+    ShaderPrepareResult& out = r ? *r : local;
+    if (!be::gpu::active()) { out = ShaderPrepareResult{}; out.error = "the graphics back end is not running"; return false; }
+    return be::gpu::gpl_prepare(o, &out);
+}
 bool backend_installed() { return be::gpu::active(); }
 void backend_flush_caches() {
     if (be::gpu::active()) be::gpu::flush_caches();

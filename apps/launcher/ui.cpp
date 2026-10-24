@@ -206,7 +206,7 @@ void Form::heading(const wchar_t* text) {
     y_ += env_.S(26);
 }
 
-void Form::hint(const wchar_t* text, int lines, bool full_width) {
+HWND Form::hint(const wchar_t* text, int lines, bool full_width) {
     columns(1);
     const int h = env_.S(16) * lines;
     const int x = full_width ? env_.S(kMargin) : control_x();
@@ -214,6 +214,7 @@ void Form::hint(const wchar_t* text, int lines, bool full_width) {
     HWND w = make(L"STATIC", text, SS_LEFT | SS_NOPREFIX, x, y_ - env_.S(2), w_, h, nullptr);
     if (w) page_.hints_.push_back(w);
     y_ += h + env_.S(4);
+    return w;
 }
 
 void Form::checkbox(const wchar_t* text, GetBool get, SetBool set, After after) {
