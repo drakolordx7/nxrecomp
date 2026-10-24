@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -66,13 +67,16 @@ constexpr UINT_PTR kTimerTick = 2;
 constexpr int kMaxLogLines = 2000;
 constexpr int kLogTrimLines = 500;
 constexpr int kLogicalW = 644;  // client area in logical px (96 DPI)
-constexpr int kLogicalH = 576;
+constexpr int kLogicalH = 580;
 
 constexpr COLORREF kGreen = RGB(0x0F, 0x6B, 0x2F);
 constexpr COLORREF kRed = RGB(0xB3, 0x1B, 0x1B);
 constexpr COLORREF kGray = RGB(0x5F, 0x5F, 0x5F);
 
 constexpr wchar_t kClassName[] = L"MprSetupWindow";
+#ifndef MPR_VERSION
+#define MPR_VERSION "dev"
+#endif
 constexpr wchar_t kWindowTitle[] = L"Metroid Prime Remastered PC - Setup";
 constexpr wchar_t kDumpHint[] = L"Pick your own game dump (.nsp, .xci, .nsz or .xcz), or drag it onto this window.";
 constexpr wchar_t kKeysHint[] =
@@ -497,7 +501,8 @@ int App::run() {
 
     // Created at a placeholder size; WM_CREATE reads the window's own DPI, then the real size is set from that DPI.
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    CreateWindowExW(0, kClassName, kWindowTitle, style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, hinst_, this);
+    const std::wstring title = std::wstring(kWindowTitle) + L"  " + (std::isdigit(static_cast<unsigned char>(MPR_VERSION[0])) ? L"v" : L"") + widen(MPR_VERSION);
+    CreateWindowExW(0, kClassName, title.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, hinst_, this);
     if (!hwnd_) return static_cast<int>(Fail::Generic);
     // The DPI at WM_CREATE can still be the placeholder; the window's DPI is only settled once it is placed.
     dpi_ = GetDpiForWindow(hwnd_);
@@ -704,16 +709,16 @@ void App::layout() {
     put(dump_edit_, x0, y, ew, S(26));
     put(dump_browse_, xb, y, bw, S(26));
     y += S(32);
-    put(dump_status_, x0, y, w, S(30));
-    y += S(34);
+    put(dump_status_, x0, y, w, S(34));      // two lines of the status text (the keys message wraps)
+    y += S(36);
 
     put(keys_label_, x0, y, w, S(18));
     y += S(22);
     put(keys_edit_, x0, y, ew, S(26));
     put(keys_browse_, xb, y, bw, S(26));
     y += S(32);
-    put(keys_hint_, x0, y, w, S(30));
-    y += S(34);
+    put(keys_hint_, x0, y, w, S(34));
+    y += S(36);
 
     put(out_label_, x0, y, w, S(18));
     y += S(22);

@@ -17,6 +17,10 @@
 #endif
 #include <windows.h>
 
+#ifndef MPR_VERSION
+#define MPR_VERSION "dev"
+#endif
+
 using namespace mprs;
 
 namespace {
@@ -149,6 +153,7 @@ int wmain(int argc, wchar_t** wargv) {
         else if (a == "--find-keys") find_keys = true;
         else if (a == "--title-id") o.expected_title_id = val();
         else if (a == "--build-id") o.expected_build_id = val();
+        else if (a == "--version") { std::printf("mpr_setup %s\n", MPR_VERSION); return 0; }
         else if (a == "--help" || a == "-h" || a == "/?") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n\n", a.c_str()); usage(); return 1; }
     }

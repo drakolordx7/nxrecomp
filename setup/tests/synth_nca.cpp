@@ -591,7 +591,8 @@ std::vector<uint8_t> synth_xci(const SynthFiles& secure_entries, bool include_se
     const std::vector<uint8_t> rootimg = synth_hfs0(root);
     std::vector<uint8_t> out(0x200, 0);
     std::memcpy(out.data() + 0x100, "HEAD", 4);
-    put64(out.data() + 0x138, 0x200);
+    put64(out.data() + 0x130, 0x200);                      // PartitionFsHeaderAddress
+    put64(out.data() + 0x138, 0x200 + rootimg.size() / 2);   // PartitionFsHeaderSize (a different number, so a swapped read is caught)
     out.insert(out.end(), rootimg.begin(), rootimg.end());
     return out;
 }
