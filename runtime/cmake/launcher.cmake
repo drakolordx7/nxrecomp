@@ -16,6 +16,11 @@ add_executable(mpr_launcher WIN32
     "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
     "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/launcher.rc")
 target_link_libraries(mpr_launcher PRIVATE mpr_launcher_core comctl32 uxtheme dwmapi shlwapi ole32 shell32)
+# The release version the launcher shows (set by the game build: game-build/CMakeLists.txt, -DMPR_VERSION=0.1.0).
+if(NOT DEFINED MPR_VERSION)
+    set(MPR_VERSION "dev")
+endif()
+set_source_files_properties("${NXRT_LAUNCHER_DIR}/main.cpp" PROPERTIES COMPILE_DEFINITIONS "MPR_VERSION=\"${MPR_VERSION}\"")
 target_link_options(mpr_launcher PRIVATE /MANIFEST:NO)   # launcher.rc carries the manifest
 set_target_properties(mpr_launcher PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")   # next to mpr.exe in the game build
 
