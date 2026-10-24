@@ -20,11 +20,14 @@ What you need
 
 First run
 
-1. Start mpr_setup.exe from the game folder. Its install folder defaults to the folder it is in.
-2. Pick your dump file, or drag it into the window. Check the green line under it.
-3. Pick the keys file if setup did not find it, and check the install folder.
-4. Press Start setup. On a 16-core PC it takes about 5 minutes; fewer cores take longer.
-5. Press Stop at any time. Run setup again later and it carries on where it stopped.
+1. Start mpr_launcher.exe from the game folder. In a new folder, it says there are no game files yet.
+2. Press "Set up game files...". The setup tool opens with the game folder already filled in. You can
+   also start mpr_setup.exe yourself. Its install folder defaults to the folder it is in.
+3. Pick your dump file, or drag it into the window. Check the green line under it.
+4. Pick the keys file if setup did not find it, and check the install folder.
+5. Press Start setup. On a 16-core PC it takes about 5 minutes; fewer cores take longer.
+6. Press Stop at any time. Run setup again later and it carries on where it stopped.
+7. When the setup window closes, the launcher says "Ready to play." and the Play button works.
 
 When it finishes, the install folder holds these, next to mpr.exe:
 
@@ -43,15 +46,40 @@ Command line users can run mpr_setup_cli --input dump.nsp --out D:\MPR. Exit cod
 1 error, 2 the dump cannot be used, 3 keys problem, 4 disk problem, 5 stopped (run it again).
 
 
+The launcher
+
+mpr_launcher.exe is a small settings window that opens before the game. It needs no installer. It
+reads and writes controls.ini in the game folder, the same file the game's F1 page edits, so the two
+always match. The tabs are:
+
+- Display: window mode and size, frame rate limit, VSync, field of view.
+- Extras: HDR, low latency (NVIDIA Reflex or AMD Anti-Lag 2), and the frame rate counter (on or off,
+  corner, how much it shows, and its hotkey).
+- Controls: mouse sensitivity, inverting, the morph ball camera, and which button icons the game shows.
+- Keyboard: every action with up to two keys or mouse buttons. Double-click a key to change it, then
+  press the new key or mouse button. Delete clears the selected key.
+- Controller: dead zone, trigger point, rumble, gyro, and what each controller button presses.
+
+"Game folder" at the top shows where the game files are. "Change..." points the launcher at another
+folder, and it remembers the choice in mpr_launcher.ini next to the launcher. "Run setup again..."
+starts the setup tool. Save keeps your changes. Play saves them and starts the game. Reset to
+defaults restores the factory value of every setting, but nothing is written until you press Save or
+Play.
+
+
 Playing
 
-Start the game by double-clicking mpr.exe in the game folder. It finds exefs, romfs, bc7_cache,
-shader_cache and mpr.ini next to itself, so a shortcut to mpr.exe works too. If setup has not been
-run yet, a message box tells you so.
+Press Play in the launcher, or double-click mpr.exe in the game folder. mpr.exe finds exefs, romfs,
+bc7_cache, shader_cache and mpr.ini next to itself, so a shortcut to mpr.exe works too, and it
+uses the settings the launcher saved. If setup has not been run yet, a message box tells you so.
 
 The game opens in a resizable window. Alt+Enter switches borderless fullscreen on and off. F1 in
 the game opens the settings page, which edits controls.ini. controls.ini is written with the
-factory settings the first time you start the game.
+factory settings the first time you start the game (or the launcher saves it).
+
+F2 shows and hides the frame rate counter, a small box in one corner that shows the frame rate and
+the frame time. It is off by default. You can change the corner, the detail level and the key in the
+launcher (Extras tab), on the F1 page (Display tab), or in controls.ini ([fps]).
 
 Keyboard and mouse, by default:
 
@@ -64,15 +92,23 @@ Keyboard and mouse, by default:
   go back.
 
 Controllers: Xbox, PlayStation and Switch pads work through SDL, and can be used with the keyboard
-at the same time. Button names follow the printed label by default (Xbox A is Switch A). The
-settings page can switch to button position instead. The mouse aim, the Switch button layout and
-the beam and visor combinations have not been played through yet, so expect rough edges there and
-use the F1 settings page to change what feels wrong. The game shows Xbox, PlayStation, keyboard or Switch button icons, chosen with [prompts] style in controls.ini (switch, xbox, playstation, keyboard or auto) or on the F1 settings page, Controller tab.
+at the same time. By default, button names follow the printed label (Xbox A is Switch A). The
+launcher or the settings page can switch to button position instead. You can also make any controller
+button press any Switch button ([padmap] in controls.ini). The mouse aim, the Switch button layout and
+the beam and visor combinations have not been played through yet, so expect rough edges. Use the F1
+settings page to change anything that feels wrong.
+
+The game shows Xbox, PlayStation, keyboard or Switch button icons. Choose them in the launcher
+(Controls tab), with [prompts] style in controls.ini (auto, keyboard, xbox, playstation or switch), or
+on the F1 settings page (Controller tab). The default, auto, shows keyboard and mouse icons until you
+use a controller, then shows that controller's icons. Keyboard icons show the keys you bound, so a
+rebound jump key shows the new key.
 
 Settings you can change. Each line is optional; a missing key keeps its default.
 
-- controls.ini, [display] window_mode: windowed (default) or borderless.
+- controls.ini, [display] window_mode: windowed (default), borderless or exclusive.
 - controls.ini, [display] vsync: 0 (default) or 1. fps_cap: frame limit, 60 by default, 0 for none.
+  The launcher's Display tab sets these.
 - mpr.ini, [gfx] gpu: discrete or integrated, or part of a GPU name, if the wrong card is chosen.
 - mpr.ini, [am] operation_mode: docked (default) or handheld.
 - mpr.ini, [audio] volume: 0.0 to 1.0. device: default, or part of an output device's name.
@@ -106,6 +142,10 @@ Troubleshooting
   If the window stays black without a message, send mpr.log (see below).
 - Missing DLL: the three astcdec-*-shared.dll files must stay in the same folder as mpr.exe and
   mpr_setup.exe. Extract the whole zip, not single files.
+- The launcher says "controls.ini could not be read": the file has a typo or a bad value. The launcher
+  shows the defaults. When you save, it keeps your old file as controls.ini.bak and writes a new one.
+- The launcher says the game files are missing, but you ran setup into another folder. Press
+  "Change..." and pick that folder.
 - The game does not start: look for mpr_fatal.txt next to mpr.exe, which is written after a fatal
   error, and for mpr.log.
 - Log files: the game writes mpr.log in the game folder (the previous run is kept as mpr.log.prev).
