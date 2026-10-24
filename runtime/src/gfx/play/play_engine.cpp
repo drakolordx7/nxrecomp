@@ -35,9 +35,9 @@ bool Engine::is_select(Act a) {
 }
 
 // The bindings that apply to one input in context c: the context's own, else those of the `all` layer. In the menu contexts the left
-// click is a touch (when menu_touch is on) and therefore drives no binding.
+// click is the menu pointer's click (when menu_cursor is on) and therefore drives no binding.
 std::vector<int> Engine::effective(Ctx c, const InputId& id) const {
-    if (st_.mouse.menu_touch && (c == Ctx::Menu || c == Ctx::Map) && id.kind == InKind::Mouse && id.code == 1) return {};
+    if (st_.mouse.menu_cursor &&(c == Ctx::Menu || c == Ctx::Map) && id.kind == InKind::Mouse && id.code == 1) return {};
     std::vector<int> own, all;
     for (size_t i = 0; i < st_.bindings.size(); ++i) {
         const Binding& b = st_.bindings[i];
@@ -232,6 +232,20 @@ bool Engine::binding_active(int b, uint64_t now) const {
     return false;
 }
 
+void Engine::set_aux_sticks(float lx, float ly, float rx, float ry) {
+    std::lock_guard<std::mutex> lk(mu_);
+    aux_[0] = lx; aux_[1] = ly; aux_[2] = rx; aux_[3] = ry;
+}
+
+void Engine::pulse(Act a, uint64_t now, int ms) {
+    std::lock_guard<std::mutex> lk(mu_);
+    const uint64_t p = static_cast<uint64_t>(ms > 0 ? ms : st_.timing.pulse_ms) * kMs;
+    uint64_t start = now;
+    for (const Sel& s : sels_) start = std::max(start, s.end + p);
+    sels_.push_back({a, start, start + p});
+    last_select_ns_ = start + p;
+}
+
 void Engine::select(Act a, uint64_t now) {
     if (a == Act::BeamNext || a == Act::BeamPrev) {
         const int dir = a == Act::BeamNext ? 1 : 3;
@@ -292,6 +306,7 @@ EngineOut Engine::output(uint64_t now) {
         if (!sels_.front().seen) sels_.front().seen_frame = frame_;
         sels_.front().seen = true;
     }
+    lx += aux_[0]; ly += aux_[1]; rx += aux_[2]; ry += aux_[3];
     clamp_stick(lx, ly);
     clamp_stick(rx, ry);
     o.lx = lx; o.ly = ly; o.rx = rx; o.ry = ry;

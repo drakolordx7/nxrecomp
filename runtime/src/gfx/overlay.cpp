@@ -97,6 +97,8 @@ struct Overlay::Impl {
     extras::OverlayComposite composite;
 
     // Corner frame-rate counter. set_counter() stores the settings from any thread; the rest is used by the presenting thread only.
+    std::atomic<bool> ptr_show{false}, ptr_in_shots{true};
+    std::atomic<float> ptr_x{0}, ptr_y{0};
     std::atomic<bool> counter_show{false};
     std::atomic<int> counter_corner{0};
     std::atomic<int> counter_detail{1};
@@ -311,6 +313,14 @@ int Overlay::toggle_scancode() const { return impl_->toggle_sc; }
 void Overlay::set_toggle_scancode(int sc) { impl_->toggle_sc = sc; }
 uint64_t Overlay::frames_drawn() const { return impl_->drawn; }
 
+void Overlay::set_pointer(bool show, float x, float y, bool in_screenshots) {
+    Impl& s = *impl_;
+    s.ptr_x.store(x, std::memory_order_relaxed);
+    s.ptr_y.store(y, std::memory_order_relaxed);
+    s.ptr_in_shots.store(in_screenshots, std::memory_order_relaxed);
+    s.ptr_show.store(show, std::memory_order_relaxed);
+}
+
 void Overlay::set_counter(const CounterConfig& c) {
     Impl& s = *impl_;
     s.counter_corner.store(std::clamp(c.corner, 0, 3), std::memory_order_relaxed);
@@ -509,7 +519,8 @@ void Overlay::draw(const FrameInfo& f) {
     const auto now = std::chrono::steady_clock::now();
     const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
     const bool note_on = s.note_visible(now_s) && (s.counter_in_shots.load(std::memory_order_relaxed) || !s.ctx.renderer->capture_pending());
-    if (!s.visible && !counter_on && !note_on) {
+    const bool ptr_on = s.ptr_show.load(std::memory_order_relaxed) && (s.ptr_in_shots.load(std::memory_order_relaxed) || !s.ctx.renderer->capture_pending());
+    if (!s.visible && !counter_on && !note_on && !ptr_on) {
         s.last_frame = now;
         s.counter_was_on = false;
         return;
@@ -532,7 +543,7 @@ void Overlay::draw(const FrameInfo& f) {
     }
     // a screenshot leaves the counter out unless asked for; with the menu hidden there is then nothing to draw
     const bool show_counter = counter_on && (s.counter_in_shots.load(std::memory_order_relaxed) || !s.ctx.renderer->capture_pending());
-    if (!s.visible && !show_counter && !note_on) {
+    if (!s.visible && !show_counter && !note_on && !ptr_on) {
         s.last_frame = now;
         return;
     }
@@ -552,6 +563,16 @@ void Overlay::draw(const FrameInfo& f) {
     if (s.visible) s.build_ui();
     if (show_counter) s.draw_counter(f, now_s);
     if (note_on) s.draw_note(f);
+    if (ptr_on) {   // a plain arrow, white with a dark outline, sized with the frame height
+        const float k = std::max(1.f, static_cast<float>(f.extent.height) / 720.f);
+        const float x = s.ptr_x.load(std::memory_order_relaxed), y = s.ptr_y.load(std::memory_order_relaxed);
+        const ImVec2 pts[7] = {{0, 0}, {0, 16 * k}, {4 * k, 12.5f * k}, {7.5f * k, 19 * k}, {10 * k, 18 * k}, {6.5f * k, 11.5f * k}, {12 * k, 11.5f * k}};
+        ImVec2 poly[7];
+        for (int i = 0; i < 7; ++i) poly[i] = ImVec2(x + pts[i].x, y + pts[i].y);
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        dl->AddConvexPolyFilled(poly, 7, IM_COL32(255, 255, 255, 255));
+        dl->AddPolyline(poly, 7, IM_COL32(0, 0, 0, 255), ImDrawFlags_Closed, 1.5f * k);
+    }
     ImGui::Render();
 
     // one dynamic-rendering pass that draws the ImGui draw data into view

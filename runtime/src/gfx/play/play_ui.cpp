@@ -244,7 +244,7 @@ void mouse_tab(Page& p) {
     if (ImGui::Checkbox("Invert vertical", &m.invert_y)) mark(p);
     if (ImGui::Checkbox("Invert horizontal", &m.invert_x)) mark(p);
     if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_beams)) mark(p);
-    if (ImGui::Checkbox("Left click is a touch in menus and the map", &m.menu_touch)) mark(p);
+    if (ImGui::Checkbox("Mouse pointer in menus (cursor, hover, click)", &m.menu_cursor)) mark(p);
 
     ImGui::Spacing();
     ImGui::TextWrapped("Raw mouse input, no acceleration. Aim only applies in the first-person view when not locked on, not in the morph ball and not in a cutscene. Holding the free look key (Alt) turns the view without turning Samus.");

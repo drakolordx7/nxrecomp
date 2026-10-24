@@ -268,7 +268,8 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             }
             if (k == "invert_y") return set_bool(&s->mouse.invert_y);
             if (k == "invert_x") return set_bool(&s->mouse.invert_x);
-            if (k == "menu_touch") return set_bool(&s->mouse.menu_touch);
+            if (k == "menu_cursor") return set_bool(&s->mouse.menu_cursor);
+            if (k == "menu_touch") return true;   // legacy key, dead since it never did anything: accepted and ignored
             if (k == "wheel_beams") return set_bool(&s->mouse.wheel_beams);
             break;
         case Sec::Pad:
@@ -624,7 +625,7 @@ std::string format_settings(const Settings& s) {
     kv("morph_pitch", num(s.mouse.morph_pitch_rad));
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
-    kv("menu_touch", flag(s.mouse.menu_touch));
+    kv("menu_cursor", flag(s.mouse.menu_cursor));
     kv("wheel_beams", flag(s.mouse.wheel_beams));
 
     o += "\n[pad]\n";
