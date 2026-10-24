@@ -240,6 +240,14 @@ To change a key, add a line `Key = action` to `[bindings.all]` (every context) o
 
 `[mouse] menu_cursor`, default `1`: in menus the mouse works like a pointer: a visible cursor, hovering highlights an item, left click activates, right click goes back, the wheel scrolls. While it is on, the left click drives no binding in the menu and map contexts. The old key `menu_touch` is ignored; a file that still has it loads without a warning and nothing changes.
 
+### Lock-on and camera feel (`controls.ini`, `[aim]` and `[camera]`)
+
+`[aim] lock_mode`, default `classic`. `classic` is the game's own lock-on: the view turns to face the target. `free` starts the lock exactly like the game's, then centres the view on the target once. After that the mouse and the right stick keep the view, and it is held so that the locked target always stays on screen inside the margin. The gun and the reticle stay on the target, and shots home and strafing circle the target as in the normal lock. Releasing the lock returns to normal aim. The scan visor always uses the classic lock. Details in `docs/S32.md`.
+
+`[aim] free_lock_margin`, default `0.15`, range `0` to `0.4`: the fraction of the screen kept free along every edge when `lock_mode = free` holds the view. `0` lets the target reach the edge; `0.15` keeps it in the middle 70 percent.
+
+`[camera] gun_drives_view`, default `1`. `1` is the game's own behaviour: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the whole view. `0`: the view follows only the mouse and the stick, and those movements move the gun on screen instead; the view stays still. Applies at once, no restart needed. Set from the F1 page and the launcher.
+
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
 ## Window modes and the picture (`controls.ini`, `[display]`)

@@ -46,6 +46,7 @@
 #include "nxrt/runtime.h"
 #include "nxrt/tt.h"
 #include "play_aim.h"
+#include "play_lockcam.h"
 #include "menu_mouse.h"
 #include "play_engine.h"
 #include "play_selftest.h"
@@ -589,6 +590,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             extras::set_settings(s.extras);
             extras::hdr_refresh_levels();
             apply_fps_counter(s.fps);
+            lockcam_set(s);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -608,6 +610,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
         for (size_t i = 0; i < got; ++i) handle_event(buf[i], now);
     }
     poll_pads(now);
+    lockcam_frame();
     if (st.engine) st.engine->frame_tick();
 
     // what the game is doing: the context, the beam, the pointer
@@ -842,19 +845,43 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
         t_in_cam_think = false;
         *c = saved;
     }
-    if (!off.active() || !read_xf(cam, &xfp, cur)) return 1;
-    float pivot[3] = {cur[3], cur[7], cur[11]};          // free look: the eye itself
-    if (ball) {
-        float pxf[12];
-        uint64_t pp = 0;
-        const uint64_t player = st.player.load();
-        if (!player || !read_xf(player, &pp, pxf)) return 1;
-        pivot[0] = pxf[3]; pivot[1] = pxf[7]; pivot[2] = pxf[11];
+    if (!read_xf(cam, &xfp, cur)) return 1;
+    // Decoupled gun ([camera] gun_drives_view = 0): the camera keeps its own transform without the camera bob (CFirstPersonCameraMP1 keeps that one at +660),
+    // and the difference goes to the gun (play_lockcam.cpp), so the bob moves the gun on screen and not the view.
+    float work[12];
+    std::memcpy(work, cur, sizeof work);
+    bool changed = false;
+    if (!ball && lockcam_gun_decoupled()) {
+        float steady[12];
+        if (guest_read(cam + st.aim->layout().fp_base_xf, steady, sizeof steady)) {
+            bool finite = true;
+            for (float f : steady) finite = finite && std::isfinite(f);
+            if (finite) {
+                lockcam_set_gun_delta(cur, steady);
+                std::memcpy(work, steady, sizeof work);
+                changed = true;
+            }
+        }
+    } else if (!ball) {
+        lockcam_clear_gun_delta();
     }
-    float out[12];
-    orbit_transform(cur, pivot, off.yaw(), off.pitch(), out);
+    if (off.active()) {
+        float pivot[3] = {work[3], work[7], work[11]};          // free look: the eye itself
+        if (ball) {
+            float pxf[12];
+            uint64_t pp = 0;
+            const uint64_t player = st.player.load();
+            if (!player || !read_xf(player, &pp, pxf)) return 1;
+            pivot[0] = pxf[3]; pivot[1] = pxf[7]; pivot[2] = pxf[11];
+        }
+        float out[12];
+        orbit_transform(work, pivot, off.yaw(), off.pitch(), out);
+        std::memcpy(work, out, sizeof work);
+        changed = true;
+    }
+    if (!changed) return 1;
     std::memcpy(memo.orig, cur, sizeof cur);
-    guest_set_transform(&xc, cam, out);
+    guest_set_transform(&xc, cam, work);
     if (read_xf(cam, &xfp, memo.applied)) { memo.have = true; memo.cam = cam; }
     return 1;
 }
@@ -1131,6 +1158,8 @@ bool start(const StartOptions& opt) {
     st.hook_input = hook_add_entry(st.base + kFnProcessInput, &process_input_hook);
     st.hook_fpcam = hook_add_entry(st.base + kFnFpCamThink, &cam_think_hook, nullptr);
     st.hook_ballcam = hook_add_entry(st.base + kFnBallCamThink, &cam_think_hook, &st);
+    lockcam_install(st.base, st.aim.get());
+    lockcam_set(st.settings);
     mm::game_install(st.base);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
@@ -1142,6 +1171,7 @@ void stop() {
     G& st = g();
     if (!st.started) return;
     mm::game_remove();
+    lockcam_remove();
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     if (st.hook_fpcam) hook_remove(st.hook_fpcam);

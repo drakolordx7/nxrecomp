@@ -33,6 +33,17 @@ invert_x = 0
 menu_cursor = 1
 wheel_beams = 1
 
+[aim]
+# Lock-on (hold the lock button): classic is the game's own, the view turns to face the target. free keeps the lock, the homing shots and the strafing, but the view stays under your control (mouse and right stick). Scanning always uses classic.
+lock_mode = classic
+# With free, the view can move once the lock is established, but the locked target stays on screen. This is the part of the screen kept free along every edge, 0 to 0.4 (0.15 = the target stays in the middle 70 percent).
+free_lock_margin = 0.15
+
+[camera]
+# 1: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the whole view (the game's own).
+# 0: the view follows only the mouse and the stick; those movements move the gun on screen and the view stays still.
+gun_drives_view = 1
+
 [pad]
 label_abxy = 1
 deadzone = 0.10
