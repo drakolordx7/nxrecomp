@@ -196,15 +196,50 @@ std::string make_damaged_dump(const std::string& dir, const SynthFiles& files, c
     return path;
 }
 
-// A shader cache folder: results.tsv, three cache files, and a manifest.sha256 listing all four.
-std::string make_shader_folder(const std::string& dir) {
-    fs::create_directories(dir);
-    const SynthFiles items = {
+// The four files of the shader cache tests: results.tsv and three cache files.
+SynthFiles shader_files() {
+    return {
         {"results.tsv", to_bytes("hash\tname\n0123456789abcdef\tshader\n")},
         {"0123456789abcdef.spv", pattern(4096, 11)},
         {"00004b0d6e7742b4.spv", pattern(1000, 12)},
         {"fedcba9876543210.spv", pattern(64, 13)},
     };
+}
+
+// The same four files as one shader pack (MPRSHC01, every entry stored; layout as in src/shadercache.h), as bytes.
+std::vector<uint8_t> make_shader_pack_bytes() {
+    const SynthFiles items = shader_files();
+    auto put = [](std::vector<uint8_t>& v, uint64_t x, int n) {
+        for (int i = 0; i < n; ++i) v.push_back(static_cast<uint8_t>(x >> (8 * i)));
+    };
+    std::vector<uint8_t> out = {'M', 'P', 'R', 'S', 'H', 'C', '0', '1'};
+    put(out, items.size(), 4);
+    put(out, 0, 4);
+    uint64_t table = 0;
+    for (const auto& item : items) table += 2 + item.first.size() + 8 + 8 + 8 + 32 + 1;
+    uint64_t off = 16 + table;
+    std::vector<uint8_t> payload;
+    for (const auto& item : items) {
+        const std::vector<uint8_t>& data = item.second;
+        put(out, item.first.size(), 2);
+        out.insert(out.end(), item.first.begin(), item.first.end());
+        put(out, off, 8);             // data offset
+        put(out, data.size(), 8);     // stored size
+        put(out, data.size(), 8);     // raw size
+        const auto h = mprs_test::synth_sha256(data.data(), data.size());
+        out.insert(out.end(), h.begin(), h.end());
+        out.push_back(0);             // method 0 = stored
+        off += data.size();
+        payload.insert(payload.end(), data.begin(), data.end());
+    }
+    out.insert(out.end(), payload.begin(), payload.end());
+    return out;
+}
+
+// A shader cache folder: results.tsv, three cache files, and a manifest.sha256 listing all four.
+std::string make_shader_folder(const std::string& dir) {
+    fs::create_directories(dir);
+    const SynthFiles items = shader_files();
     std::string manifest;
     for (const auto& [name, data] : items) {
         const auto h = mprs_test::synth_sha256(data.data(), data.size());
@@ -325,6 +360,7 @@ SetupOptions base_opts(const std::string& input, const std::string& keys, const 
     o.skip_textures = true;
     o.verify_input = true;
     o.verify_output = false;
+    o.allow_no_shaders = true;   // most cases have no shader pack; the shader cases set this back to false
     return o;
 }
 
@@ -621,6 +657,79 @@ void case_shader_cache() {
     CHECK(!fs::exists(fs::path(out2) / "shader_cache"));
 }
 
+// ---- case 7b: a shader pack file given with shader_cache_src ----------------------------------------------------------------
+void case_shader_pack_file() {
+    Scratch s("shaderpack");
+    const SynthFiles files = romfs_files();
+    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const std::string pack = s.path("shader_cache.mprshc");
+    write_bytes(pack, make_shader_pack_bytes());
+
+    const std::string out = s.path("out");
+    SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
+    o.allow_no_shaders = false;
+    o.shader_cache_src = pack;
+    RecordingReporter rec;
+    const RunResult rr = run(o, rec);
+    CHECK(!rr.out.threw);
+    CHECK(distinct_runs(rec.begins) == kOrderNoTextures);
+
+    const fs::path spirv = fs::path(out) / "shader_cache" / "spirv";
+    for (const auto& item : shader_files()) CHECK(same_bytes((spirv / item.first).string(), item.second));
+    CHECK_EQ(count_files(spirv.string()), size_t(4));   // results.tsv + 3 .spv
+    CHECK(has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache = shader_cache/spirv"));
+}
+
+// ---- case 7c: no shader pack and no --no-shaders: setup stops before the extraction, with the message -----------------------
+void case_no_shader_pack() {
+    Scratch s("nopack");
+    const SynthFiles files = romfs_files();
+    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, s.path("out"));
+    o.allow_no_shaders = false;
+    expect_refusal(o, Fail::Input, "shader_cache.mprshc");
+}
+
+// ---- case 7d: --no-shaders installs without shaders and says so --------------------------------------------------------------
+void case_no_shaders_flag() {
+    Scratch s("noflag");
+    const SynthFiles files = romfs_files();
+    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const std::string out = s.path("out");
+    SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
+    CHECK(o.allow_no_shaders);
+    RecordingReporter rec;
+    const RunResult rr = run(o, rec);
+    CHECK(!rr.out.threw);
+    CHECK(distinct_runs(rec.begins) == kOrderNoTextures);
+    CHECK(!has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache ="));
+    CHECK(!fs::exists(fs::path(out) / "shader_cache"));
+}
+
+// ---- case 7e: an earlier complete install is kept when no pack is given ------------------------------------------------------
+void case_existing_shader_install() {
+    Scratch s("keep");
+    const SynthFiles files = romfs_files();
+    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const std::string out = s.path("out");
+
+    SetupOptions first = base_opts(d.path, d.keys_file_path, d.build_id, out);
+    first.allow_no_shaders = false;
+    first.shader_cache_src = make_shader_folder(s.path("shaders"));
+    CHECK(!run(first, *std::make_unique<RecordingReporter>()).out.threw);
+
+    // Second run: no pack at all, and the shaders from the first run must be kept (and stay in mpr.ini).
+    SetupOptions again = base_opts(d.path, d.keys_file_path, d.build_id, out);
+    again.allow_no_shaders = false;
+    RecordingReporter rec;
+    const RunResult rr = run(again, rec);
+    CHECK(!rr.out.threw);
+    CHECK(distinct_runs(rec.begins) == kOrderNoTextures);
+    const fs::path spirv = fs::path(out) / "shader_cache" / "spirv";
+    CHECK_EQ(count_files(spirv.string()), size_t(4));
+    CHECK(has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache = shader_cache/spirv"));
+}
+
 // ---- case 8: a hand-edited mpr.ini is left alone ----------------------------------------------------------------------------
 void case_ini_protection() {
     Scratch s("ini");
@@ -688,6 +797,10 @@ int main() {
     case_refusals();
     case_inspect_disk();
     case_shader_cache();
+    case_shader_pack_file();
+    case_no_shader_pack();
+    case_no_shaders_flag();
+    case_existing_shader_install();
     case_ini_protection();
     case_threads();
     case_textures_without_paks();
