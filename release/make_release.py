@@ -10,6 +10,7 @@ Output, in --out (default <repo>/work/release_out):
     mpr-<version>-windows-x64/              the release folder
     mpr-<version>-windows-x64.zip           the same folder zipped: one top-level folder, sorted entries, fixed timestamps
     mpr-<version>-windows-x64.manifest.txt  the audit table and totals (written only on success)
+    mpr-<version>-windows-x64.zip.sha256    the zip's SHA-256 in the usual "<hash>  <name>" form
 Without the shader pack the folder and the zip get the suffix -noshaders.
 The prompt icon pack prompts/prompt_icons.pak and its licence prompts/LICENSE-Kenney-InputPrompts.txt are required,
 read from --prompts-dir (default <repo>/runtime/assets/prompts).
@@ -207,7 +208,8 @@ def plan_items(o):
     items.append((LAUNCHER_NAME, need(o.launcher, LAUNCHER_NAME)))
     if o.shader_pack:
         items.append((PACK_NAME, need(o.shader_pack, 'shader pack')))
-    items.append(('README.txt', need(os.path.join(o.templates, 'README.txt'), 'README.txt template')))
+    for name in ('README.txt', 'HELP.txt'):
+        items.append((name, need(os.path.join(o.templates, name), '%s template' % name)))
     if o.controls:
         items.append(('controls.ini', need(o.controls, 'controls file')))
     elif os.path.isfile(os.path.join(o.templates, 'controls.ini')):
@@ -641,7 +643,8 @@ def build(o, stage_hook=None):
     folder = os.path.join(o.out, base)
     zpath = folder + '.zip'
     table = folder + '.manifest.txt'
-    outputs = [folder, zpath, table]
+    sums = zpath + '.sha256'          # "<sha256>  <zip name>": what `sha256sum -c` and Get-FileHash comparisons expect
+    outputs = [folder, zpath, table, sums]
     try:
         for p in outputs:
             remove_output(p)
@@ -671,6 +674,8 @@ def build(o, stage_hook=None):
         text = render_table(fa, origins, zpath, zsize, zsha)
         with open(table, 'w', encoding='utf-8', newline='\n') as f:
             f.write(text)
+        with open(sums, 'w', encoding='utf-8', newline='\n') as f:
+            f.write('%s  %s\n' % (zsha, os.path.basename(zpath)))
     except Refused as r:
         for p in outputs:
             remove_output(p)
@@ -686,6 +691,7 @@ def build(o, stage_hook=None):
     say('RELEASE OK: %s' % folder)
     say('zip: %s' % zpath)
     say('table: %s' % table)
+    say('checksum: %s' % sums)
     return 0
 
 

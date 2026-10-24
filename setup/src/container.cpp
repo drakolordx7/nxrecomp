@@ -73,7 +73,7 @@ std::unique_ptr<Container> open_container(const std::string& path) {
         collect_pfs(*p, *c, saw_ncz);
         c->kind = saw_ncz ? "NSZ" : "NSP";
     } else if (std::memcmp(head + 0x100, "HEAD", 4) == 0) {
-        u64 root_off = rd64(head + 0x138);
+        u64 root_off = rd64(head + 0x130);        // PartitionFsHeaderAddress (0x138 is the header's size)
         if (root_off < 0x200 || root_off >= c->file->size())
             fail(Fail::Input, "The cartridge dump (XCI) header is damaged.");
         auto root = Pfs::open(make_sub_storage(c->file, root_off, c->file->size() - root_off));
