@@ -67,6 +67,9 @@ public:
     };
     void set_counter(const CounterConfig& c);
 
+    // A drawn arrow at a window pixel (test aid, S28: a screenshot of the game's own frame does not contain the OS cursor). Any thread.
+    void set_pointer(bool show, float x, float y, bool in_screenshots);
+
     // The Renderer overlay hook: builds and draws the menu on top of the frame (no-op while hidden, unless the counter is on).
     void draw(const FrameInfo& f);
     void install_on_renderer();              // renderer->set_overlay_hook(draw)

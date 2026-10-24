@@ -482,6 +482,14 @@ bool set_relative_mouse(bool on) {
 
 bool relative_mouse() { return g_window != nullptr && SDL_GetWindowRelativeMouseMode(g_window); }
 
+// The OS cursor of the window (menus draw it; relative mode hides it by itself). Cheap when nothing changes.
+void set_cursor_visible(bool on) {
+    if (!g_window) return;
+    if (on == SDL_CursorVisible()) return;
+    if (on) SDL_ShowCursor();
+    else SDL_HideCursor();
+}
+
 bool relative_mouse_is_raw() {
     const char* v = SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE);
     return v == nullptr || std::strcmp(v, "0") == 0;

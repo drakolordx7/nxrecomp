@@ -24,7 +24,8 @@ morph_yaw = 0.000767945
 morph_pitch = 0.000767945
 invert_y = 0
 invert_x = 0
-menu_touch = 1
+# In menus the mouse is a pointer: visible cursor, hover highlights, left click activates, right click goes back, the wheel scrolls.
+menu_cursor = 1
 wheel_beams = 1
 
 [pad]
@@ -176,6 +177,8 @@ Left Alt = none
 Mouse2 = none
 
 [bindings.map]
+# X is the map's Key / Legend button (the footer of the map shows it)
+X = btn_x
 Return = confirm
 Keypad Enter = confirm
 Space = confirm

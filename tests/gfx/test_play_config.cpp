@@ -89,7 +89,7 @@ std::vector<Binding> bindings_in(const Settings& s, int ctx) {
 bool same_settings(const Settings& a, const Settings& b) {
     const MouseSettings &ma = a.mouse, &mb = b.mouse;
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
-          ma.menu_touch == mb.menu_touch && ma.wheel_beams == mb.wheel_beams))
+          ma.menu_cursor == mb.menu_cursor && ma.wheel_beams == mb.wheel_beams))
         return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
@@ -464,6 +464,32 @@ NXTEST(inline_comments_and_case) {
     REQUIRE(parse_settings("[MOUSE]\nINVERT_X = TRUE\n[Display]\nWindow_Mode = Borderless\n", &s, &err));
     CHECK(s.mouse.invert_x);
     CHECK_EQ(s.display.window_mode, std::string("borderless"));
+}
+
+NXTEST(menu_touch_legacy_key_is_ignored) {
+    // The old key is accepted silently and does nothing: menu_cursor keeps its default, and the writer never writes menu_touch.
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE(parse_settings("[mouse]\nmenu_touch = 0\n", &s, &err, &w));
+    CHECK(w.empty());
+    CHECK(s.mouse.menu_cursor);
+    CHECK(format_settings(s).find("menu_touch") == std::string::npos);
+}
+
+NXTEST(menu_cursor_parses_and_round_trips) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE(parse_settings("[mouse]\nmenu_cursor = 0\n", &s, &err, &w));
+    CHECK(w.empty());
+    CHECK(!s.mouse.menu_cursor);
+    const std::string text = format_settings(s);
+    CHECK(text.find("menu_cursor = 0") != std::string::npos);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(!r.mouse.menu_cursor);
+    CHECK(same_settings(s, r));
 }
 
 NXTEST(parse_errors_name_the_line) {

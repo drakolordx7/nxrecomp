@@ -45,6 +45,7 @@ float display_refresh_hz();                   // refresh rate of the display the
 // forced to "0" and SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE to "1"). The cursor is hidden and confined while it is on.
 bool set_relative_mouse(bool on);
 bool relative_mouse();
+void set_cursor_visible(bool on);             // the OS cursor over the window (not in relative mode, which hides it); no-op without a window
 bool relative_mouse_is_raw();                 // true when the system-scale hint is off (the unaccelerated setup)
 
 // Polled gamepad state (play mode): what SDL's gamepad layer reports for one open pad. SDL normalises every controller to the Xbox
