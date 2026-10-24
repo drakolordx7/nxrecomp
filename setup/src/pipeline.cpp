@@ -15,6 +15,7 @@
 #include "crypto.h"
 #include "fileio.h"
 #include "nso.h"
+#include "programs.h"
 #include "shadercache.h"
 #include "texcache.h"
 
@@ -264,6 +265,39 @@ std::string make_ini(int quality, bool with_shaders) {
         "[nvn]\nbc7_cache = bc7_cache\nbc7_quality = " + std::to_string(quality) + "\n";
     if (with_shaders) s += "shader_cache = shader_cache/spirv\n";
     return s;
+}
+
+// shader_cache/programs.bin: every shader program of the player's own game, scanned from the RomFS folder, for the runtime to compile
+// ahead of play. Called only after the shader cache was installed. A failed scan is logged and does not fail the setup; a cancel is
+// passed on. Skipped when a valid list with programs is already there (unless verify_output asks for a rescan).
+void write_program_list(const SetupOptions& o, const std::function<bool()>& cancelled) {
+    const std::string path = to_win(path_join(o.out_dir, "shader_cache\\programs.bin"));
+    if (!o.verify_output) {
+        try {
+            const size_t have = read_programs_file(path).size();
+            if (have > 0) {
+                MPRS_LOGI("Shader program list already present (%zu programs).", have);
+                return;
+            }
+        } catch (const Error&) {
+            // missing or damaged: scan again
+        }
+    }
+    const auto t0 = Clock::now();
+    try {
+        ProgramScanStats st;
+        const std::vector<ProgramHashes> progs =
+            scan_shader_programs(path_join(o.out_dir, "romfs"), o.threads, [](u64, u64) {}, cancelled, &st);
+        write_programs_file(path, progs);
+        MPRS_LOGI("Shader programs: %zu listed (%u from MaterialArchive.arc, %u from paks, %u of them duplicates) in %.1f s.", progs.size(),
+                  st.arc.programs, st.pak.programs, st.arc.programs + st.pak.programs - static_cast<u32>(progs.size()),
+                  secs_since(t0));
+    } catch (const Error& e) {
+        if (e.kind == Fail::Cancelled) throw;
+        MPRS_LOGW("Shader program list not written: %s", e.what());
+    } catch (const std::exception& e) {
+        MPRS_LOGW("Shader program list not written: %s", e.what());
+    }
 }
 
 }  // namespace
@@ -539,6 +573,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                 rep.bytes_written += sr.bytes_written;
                 MPRS_LOGI("Shaders: %u files, %u installed, %u already present.", sr.files_total, sr.files_installed, sr.files_skipped);
             }
+            if (shaders) write_program_list(o, cancelled);
             end(Stage::ShaderCache, t0);
         }
 
