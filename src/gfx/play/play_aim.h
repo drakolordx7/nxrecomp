@@ -55,6 +55,9 @@ struct AimParams {
     double yaw_rad = 0.000767945, pitch_rad = 0.000767945;   // radians per count
     bool invert_x = false, invert_y = false;
     double pitch_limit_rad = 0;              // > 0 overrides the tweak's limit
+    // A pad is looking up or down this frame (the right stick's vertical axis, or the gyro): the game's own pitch code owns the pitch (it eases it toward
+    // the stick, or follows the gyro), and this aim adopts what the game made of it instead of writing its own angle over it. The mouse still adds to it.
+    bool pad_look = false;
 };
 
 // Why aim is not applied right now (None = it is).
@@ -128,6 +131,7 @@ private:
     void* set_xf_user_ = nullptr;
     double pitch_ = 0, limit_ = 0;
     bool pitch_valid_ = false;
+    bool pad_look_prev_ = false;           // a pad was looking up or down at the previous call (adopt the game's pitch once more when it lets go)
     AimBlock block_ = AimBlock::None;
     uint64_t applied_ = 0;
     std::atomic<bool> free_lock_{false};

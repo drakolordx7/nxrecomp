@@ -286,8 +286,9 @@ void sample_npad(HidState& s, uint8_t* host, uint32_t idx, const InputSnapshot& 
         for (int k = 0; k < 3; ++k) {
             six.accel[k] = in.six_axis.accel[k];
             six.gyro[k] = in.six_axis.gyro[k];
+            six.angle[k] = in.six_axis.angle[k];
         }
-        six.direction[0] = six.direction[4] = six.direction[8] = 1.0f;
+        for (int k = 0; k < 9; ++k) six.direction[k] = in.six_axis.direction[k];
     }
     // The pad's own style lifo gets the state and SystemExt mirrors it; every other common lifo gets an empty entry, so all of them keep
     // counting (Ryujinx NpadDevices.UpdateInput). A disconnected pad writes empty entries everywhere (attributes cleared).

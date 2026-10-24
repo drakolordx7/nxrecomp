@@ -405,3 +405,74 @@ NXTEST(lockcam_gate_open_only_with_free_lock) {
     const AimBlock free_lock = d.gate(w.pl(), w.mgr());
     CHECK_MSG(free_lock == AimBlock::None, std::string("free lock gate: ") + play::aim_block_name(free_lock));
 }
+
+NXTEST(turn_ramp_speeds_up_with_tau_up_from_rest) {
+    const double dt = 1.0 / 60.0, tau_up = 0.0262, target = 3.0;
+    double omega = 0.0;
+    const double first = play::turn_ramp_step(&omega, target, dt, tau_up, 0.0117);
+    CHECK_NEAR(omega, target * (1.0 - std::exp(-dt / tau_up)), 0.01);
+    CHECK_NEAR(first, omega, 0.0);
+
+    for (int i = 1; i < 5; ++i) play::turn_ramp_step(&omega, target, dt, tau_up, 0.0117);
+    CHECK_NEAR(omega, target * (1.0 - std::exp(-5.0 * dt / tau_up)), 0.01);
+
+    // it approaches the target from below and never passes it
+    for (int i = 0; i < 300; ++i) {
+        const double before = omega;
+        play::turn_ramp_step(&omega, target, dt, tau_up, 0.0117);
+        CHECK_MSG(omega <= target, "omega " + std::to_string(omega) + " past the target");
+        CHECK_MSG(omega >= before, "omega fell while speeding up");
+    }
+}
+
+NXTEST(turn_ramp_frame_rate_independent) {
+    // one second at 60 steps a second and at 144 steps a second, speeding up with tau_up 0.2
+    const double tau_up = 0.2, target = 3.0;
+    double a = 0.0, b = 0.0;
+    for (int i = 0; i < 60; ++i) play::turn_ramp_step(&a, target, 1.0 / 60.0, tau_up, 0.05);
+    for (int i = 0; i < 144; ++i) play::turn_ramp_step(&b, target, 1.0 / 144.0, tau_up, 0.05);
+    CHECK_NEAR(a, b, 1e-6);
+    CHECK_NEAR(a, target * (1.0 - std::exp(-1.0 / tau_up)), 1e-6);
+}
+
+NXTEST(turn_ramp_release_decays_with_tau_down_and_zeroes) {
+    const double dt = 1.0 / 60.0, tau_down = 0.0117;
+    double omega = 3.0;
+    play::turn_ramp_step(&omega, 0.0, dt, 0.0262, tau_down);
+    CHECK_NEAR(omega, 3.0 * std::exp(-dt / tau_down), 1e-12);
+
+    // below 1e-5 with the target at 0 the speed is set to exactly 0
+    double small = 2e-5;
+    play::turn_ramp_step(&small, 0.0, dt, 0.0262, tau_down);
+    CHECK(small == 0.0);
+
+    // a full release comes to exactly 0 well within a second
+    int steps = 1;
+    while (omega != 0.0 && steps < 100) {
+        play::turn_ramp_step(&omega, 0.0, dt, 0.0262, tau_down);
+        ++steps;
+    }
+    CHECK(omega == 0.0);
+    CHECK_MSG(steps < 60, "took " + std::to_string(steps) + " steps to stop");
+}
+
+NXTEST(turn_ramp_reversing_uses_tau_down_first) {
+    // omega +2 and the stick asks for -3: the first step is slowing down, so tau_down (not tau_up) sets its size
+    const double dt = 1.0 / 60.0, tau_up = 0.0262, tau_down = 0.0117;
+    double omega = 2.0;
+    play::turn_ramp_step(&omega, -3.0, dt, tau_up, tau_down);
+    CHECK_NEAR(omega, 2.0 + (-3.0 - 2.0) * (1.0 - std::exp(-dt / tau_down)), 1e-12);
+}
+
+NXTEST(turn_ramp_ignores_bad_dt_and_nan_target) {
+    const double tau_up = 0.0262, tau_down = 0.0117;
+    double omega = 1.5;
+    CHECK(play::turn_ramp_step(&omega, 3.0, 0.0, tau_up, tau_down) == 1.5);
+    CHECK(omega == 1.5);
+    play::turn_ramp_step(&omega, 3.0, -1.0 / 60.0, tau_up, tau_down);
+    CHECK(omega == 1.5);
+    play::turn_ramp_step(&omega, 3.0, std::nan(""), tau_up, tau_down);
+    CHECK(omega == 1.5);
+    play::turn_ramp_step(&omega, std::nan(""), 1.0 / 60.0, tau_up, tau_down);
+    CHECK(omega == 1.5);
+}

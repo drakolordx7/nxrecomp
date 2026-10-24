@@ -129,7 +129,10 @@ struct PadSettings {
     uint64_t remap[kPadSrcCount] = {kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault,
                                     kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault, kPadDefault};
     bool label_abxy = true;        // true: buttons by the label printed on them (Xbox A = Switch A); false: by position (bottom = Switch B)
-    double stick_deadzone = 0.10;  // radial, 0..0.5, applied before the game's own dead zone
+    double stick_deadzone = 0.10;  // left stick, radial, 0..0.5, applied before the game's own dead zone
+    double right_deadzone = 0.10;  // right stick (looking), same rule
+    bool invert_y = false;         // right stick up looks down (in play only: menus and the map keep the stick as it is). Stacks with the game's own option.
+    double look_sens = 1.0;        // 0.25..3: the right stick's deflection is multiplied by this in play (below 1 the turn speed tops out lower, above 1 it tops out sooner)
     double trigger_threshold = 0.35;   // analog trigger travel (0..1) that counts as ZL / ZR pressed
     bool gyro = true;              // pass the gyro to the six-axis sensor
     double gyro_scale = 1.0;

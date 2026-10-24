@@ -89,10 +89,21 @@ void map_pad(const platform::GamepadRaw& raw, const PadSettings& cfg, hid::NpadI
     if (raw.axes[kAxisLeftTrigger] / 32767.0 >= cfg.trigger_threshold) press(PadSrc::LeftTrigger, hid::btn(hid::kBtnZL));
     if (raw.axes[kAxisRightTrigger] / 32767.0 >= cfg.trigger_threshold) press(PadSrc::RightTrigger, hid::btn(hid::kBtnZR));
 
-    const double dz = std::clamp(cfg.stick_deadzone, 0.0, 0.9);
+    const double dz = std::clamp(cfg.stick_deadzone, 0.0, 0.9), rdz = std::clamp(cfg.right_deadzone, 0.0, 0.9);
     out->buttons = bits;
     out->left = stick(norm_axis(raw.axes[kAxisLeftX]), -norm_axis(raw.axes[kAxisLeftY]), dz);
-    out->right = stick(norm_axis(raw.axes[kAxisRightX]), -norm_axis(raw.axes[kAxisRightY]), dz);
+    out->right = stick(norm_axis(raw.axes[kAxisRightX]), -norm_axis(raw.axes[kAxisRightY]), rdz);
+}
+
+hid::StickValue adjust_look_stick(hid::StickValue right, const PadSettings& cfg) {
+    const double k = std::clamp(cfg.look_sens, 0.25, 3.0);
+    double x = right.x / 32767.0 * k, y = right.y / 32767.0 * k * (cfg.invert_y ? -1.0 : 1.0);
+    const double len = std::sqrt(x * x + y * y);
+    if (len > 1.0) {
+        x /= len;
+        y /= len;
+    }
+    return {to_stick(x), to_stick(y)};
 }
 
 uint64_t pad_default_buttons(PadSrc src, bool label_abxy) {

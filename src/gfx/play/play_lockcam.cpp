@@ -54,8 +54,12 @@ thread_local bool t_in_cursor = false, t_in_aimtarget = false, t_in_freelook = f
 
 // the gun's share of the camera bob: vanilla camera * steady camera^-1, applied to the gun's world transform after the game made it
 uint64_t g_cmd75_value = 0;      // the game's CDataEnumValue for command 75 (a stable object)
+uint64_t g_cmd73_value = 0;      // the same for command 73 (see held_input_hook)
+std::atomic<bool> g_pitch_accumulates{false};
 float g_delta[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
 std::atomic<bool> g_delta_on{false};
+double g_turn_omega = 0.0;      // the free lock's turn speed (rad/s), main thread
+constexpr double kTurnTauUp = 0.0262, kTurnTauDown = 0.0117;      // seconds: speeding up toward the stick, slowing down or reversing (fitted to the game's turn, see orientation_hook)
 std::atomic<float> g_turn_input{0.f};      // what TurnInput returned the last time the free lock-on asked it (the right stick's turn)
 
 double wrap_pi(double a) {
@@ -117,18 +121,24 @@ int orientation_hook(::Ctx* c, uint64_t, void*) {
     g_h.player.store(player, std::memory_order_relaxed);
     if (!g_h.aim || !g_h.aim->free_lock_active(player)) {
         g_turn_input.store(0.f, std::memory_order_relaxed);
+        g_turn_omega = 0.0;
         return 0;
     }
     if (g_h.orientation_skipped++ == 0) NXLOG_I(kTag, "free lock-on: the game's turn to the target is skipped (first time); a full stick turn is %.3f rad/s", g_h.aim->stick_turn_rate());
     // the right stick turns the view as it does without a lock: the turn the game worked out in TurnInput (called as if unlocked) times the speed of a full turn
     const double dt = std::isfinite(dt_in) && dt_in > 0.f && dt_in < 0.25f ? dt_in : 0.0;
-    const double stick_yaw = static_cast<double>(g_turn_input.load(std::memory_order_relaxed)) * g_h.aim->stick_turn_rate() * dt;
+    // The game's own turn ramps: Samus's angular velocity is pushed toward stick * full speed (measured with the unlocked body at 60 steps per second, full right
+    // stick from rest: 47, 72, 85, 92, 96 percent of full speed in the first five frames, and 45, 11, 2.6 percent in the three after the stick is let go).
+    const double target = static_cast<double>(g_turn_input.load(std::memory_order_relaxed)) * g_h.aim->stick_turn_rate();
+    const double omega = dt > 0.0 ? turn_ramp_step(&g_turn_omega, target, dt, kTurnTauUp, kTurnTauDown) : 0.0;
+    const double stick_yaw = omega * dt;
     clamp_view(c, player, c->x[1], std::isfinite(stick_yaw) ? stick_yaw : 0.0);
     return 1;      // the body keeps the heading the mouse gave it; x0 (the player) is the return value, untouched
 }
 
 int freelook_hook(::Ctx* c, uint64_t addr, void*) {
     if (t_in_freelook || !g_h.aim) return 0;
+    lockcam_prime(c);      // the first call finds the game's command values (needs the real game: this hook only runs inside it)
     const uint64_t player = c->x[0];
     g_h.player.store(player, std::memory_order_relaxed);
     if (!g_h.aim->free_lock_active(player)) return 0;
@@ -226,7 +236,17 @@ int cursor_update_hook(::Ctx* c, uint64_t addr, void*) {
     return 1;
 }
 
-int held_input_hook(::Ctx* c, uint64_t, void*) {
+thread_local bool t_in_held = false;
+int held_input_hook(::Ctx* c, uint64_t addr, void*) {
+    if (g_cmd73_value && c->x[1] == g_cmd73_value && !t_in_held) {
+        // command 73 is the game's switch for the stick's pitch scheme: held = the stick adds to the pitch target every frame (dual stick), not held = the
+        // stick sets the target angle. Watched here, so play.cpp knows whether the stick's pitch needs the frame time put in (the right stick is scaled by it).
+        t_in_held = true;
+        dispatch_call(c, addr);
+        t_in_held = false;
+        g_pitch_accumulates.store((c->x[0] & 1) != 0, std::memory_order_relaxed);
+        return 1;
+    }
     if (!t_in_cursor || !g_cmd75_value || c->x[1] != g_cmd75_value) return 0;
     c->x[0] = 1;
     return 1;
@@ -248,6 +268,15 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
 }
 
 }  // namespace
+
+double turn_ramp_step(double* omega, double target, double dt, double tau_up, double tau_down) {
+    if (!(dt > 0.0) || !std::isfinite(dt) || !std::isfinite(target)) return *omega;
+    const bool speeding_up = (target * *omega > 0.0 && std::fabs(target) > std::fabs(*omega)) || *omega == 0.0;
+    const double tau = std::max(1e-4, speeding_up ? tau_up : tau_down);
+    *omega += (target - *omega) * (1.0 - std::exp(-dt / tau));
+    if (std::fabs(*omega) < 1e-5 && target == 0.0) *omega = 0.0;
+    return *omega;
+}
 
 void xf_mul(const float a[12], const float b[12], float out[12]) {
     float r[12];
@@ -315,6 +344,17 @@ void lockcam_frame() {
     const double aspect = dl.aspect > 0 ? dl.aspect : static_cast<double>(dl.render_w) / std::max(1, dl.render_h);
     g_h.aim->set_free_lock_view(g_h.margin.load(std::memory_order_relaxed), aspect, dl.fov_offset);
 }
+
+void lockcam_prime(::Ctx* c) {
+    if (g_cmd73_value || !g_h.base) return;
+    const ::Ctx saved = *c;
+    c->x[0] = 73;
+    dispatch_call(c, g_h.base + kFnGetCommandValue);
+    g_cmd73_value = c->x[0];
+    *c = saved;
+}
+
+bool lockcam_pitch_accumulates() { return g_pitch_accumulates.load(std::memory_order_relaxed); }
 
 bool lockcam_gun_decoupled() { return !g_h.gun_drives_view.load(std::memory_order_relaxed); }
 
