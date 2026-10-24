@@ -73,11 +73,13 @@ struct Job {
 struct Entry {
     int state = 0;              // 1 building, 2 done (pipe may be null: the build failed)
     VkPipeline pipe = VK_NULL_HANDLE;
+    void* owner = nullptr;      // the background thread building it (Windows thread handle), for the boost below
+    std::atomic<bool> boosted{false};
 };
 
 std::mutex g_mu;
 std::condition_variable g_cv;
-bool g_inited = false, g_enabled = false, g_stop = false, g_lto = false;
+bool g_inited = false, g_enabled = false, g_stop = false, g_lto = false, g_cold = true;
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_discard{false};
 std::atomic<bool> g_prepare_cache{false};      // shader preparation keeps what it compiled in the pipeline cache file ([nvn] prepare_cache)
@@ -88,17 +90,44 @@ std::vector<RasterKey> g_rasters;
 std::deque<std::array<const ShaderInfo*, 3>> g_programs;   // the most recent programs, for the raster flags that show up later
 std::set<std::array<const ShaderInfo*, 3>> g_seen, g_hot, g_covered;
 std::vector<std::thread> g_workers;
+// Optimised replacements for linked pipelines (gpl_upgrade): the draw links first, a background thread then makes the whole pipeline (or links the
+// same parts with link-time optimisation) and the pipeline lookup swaps it in.
+enum class UpMode { Off, Whole, Lto };
+struct UpJob {
+    GraphicsKey key;
+    const ProgLayout* layout = nullptr;
+    VkPipeline parts[4] = {};
+    std::shared_ptr<PipeUpgrade> up;
+};
+UpMode g_up_mode = UpMode::Off;
+bool g_retain = false;                     // parts keep what a link-time optimised link needs
+std::deque<UpJob> g_up_q;
+std::condition_variable g_up_cv;
+std::vector<std::thread> g_up_workers;
+int g_up_running = 0;
 GplStats g_stats;
 uint64_t g_logged_sig = 0;
 int g_fail_streak = 0;
 int g_running = 0;                         // jobs being built by the workers right now
 
 // Tells the overlay how much shader work is waiting (queued + running). Caller holds g_mu.
-void publish_backlog_locked() { nxrt::gfx::set_shader_backlog(static_cast<int>(g_hot_q.size() + g_cold_q.size()) + g_running); }
+void publish_backlog_locked() { nxrt::gfx::set_shader_backlog(static_cast<int>(g_hot_q.size() + g_cold_q.size() + g_up_q.size()) + g_running + g_up_running); }
 
 thread_local const GraphicsKey* t_link_key = nullptr;      // the draw being linked on this thread, for the log line of a slow part
 
 void predict_int_attributes(GraphicsKey& k);
+
+// Measurement only ([nvn] gpl_ab_pause = N presents): the background threads work in odd windows of N presents and rest in even ones, so the frame time of the two
+// kinds of window shows what the compile threads cost the game. 0 = always work.
+bool ab_pause_on() { return config_get_int("nvn", "gpl_ab_pause", 0) > 0; }
+bool workers_paused() {
+    static const int64_t frames = config_get_int("nvn", "gpl_ab_pause", 0);
+    if (frames <= 0) return false;
+    static std::atomic<int64_t> last{-1};
+    const int64_t w = static_cast<int64_t>(counters().presents.load(std::memory_order_relaxed)) / frames;
+    if (last.exchange(w) != w) NXLOG_I(kTag, "ab: present %lld starts a window with the compile threads %s", static_cast<long long>(w * frames), (w & 1) ? "working" : "resting");
+    return (w & 1) == 0;
+}
 
 using Clock = std::chrono::steady_clock;
 double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
@@ -164,7 +193,7 @@ std::string fo_key(const GraphicsKey& key) {
 // ---- the four builders ------------------------------------------------------------------------------------------------------------
 VkPipeline create_part(VkGraphicsPipelineCreateInfo& gi, const char* what) {
     gi.flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
-    if (g_lto) gi.flags |= VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
+    if (g_retain) gi.flags |= VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
     VkPipeline p = VK_NULL_HANDLE;
     const auto t0 = Clock::now();
     // shader preparation keeps nothing in the app cache file (it would grow to hundreds of MB); the driver's own cache holds the result
@@ -298,6 +327,35 @@ VkPipeline build_fo(const GraphicsKey& key) {
     return create_part(gi, "fragment output part");
 }
 
+// A draw that needs a part a background thread is still building waits for that thread, which runs at below-normal priority and in efficiency mode:
+// on a busy PC it can starve for a long time, and the frame with it. The waiting draw lends the builder normal priority and full speed until it
+// is done (priority inheritance).
+#if defined(_WIN32)
+struct SelfHandle {
+    HANDLE h = nullptr;
+    ~SelfHandle() { if (h) CloseHandle(h); }
+    HANDLE get() {
+        if (!h) h = OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, GetCurrentThreadId());
+        return h;
+    }
+};
+thread_local SelfHandle t_self;
+void boost_thread(void* handle) {
+    if (!handle) return;
+    HANDLE h = static_cast<HANDLE>(handle);
+    SetThreadPriority(h, THREAD_PRIORITY_ABOVE_NORMAL);
+    THREAD_POWER_THROTTLING_STATE st = {};
+    st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+    st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+    st.StateMask = 0;                                    // explicitly not throttled
+    SetThreadInformation(h, ThreadPowerThrottling, &st, sizeof st);
+}
+void* self_handle() { return t_self.get(); }
+#else
+void boost_thread(void*) {}
+void* self_handle() { return nullptr; }
+#endif
+
 // ---- the part cache -------------------------------------------------------------------------------------------------------------
 // The part for `key`: from the cache, from a build in flight (waits for it) or built here. `render` = called by a draw (counted apart from
 // the workers' builds). A part that failed to build is cached as null so it is not retried at every draw.
@@ -308,6 +366,7 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
         Entry& e = it->second;
         if (e.state != 2) {
             const auto t0 = Clock::now();
+            if (render && e.owner && !e.boosted.exchange(true)) boost_thread(e.owner);
             {
                 NXFT("pipe.libwait");
                 g_cv.wait(lk, [&] { return e.state == 2 || g_stop; });
@@ -323,6 +382,7 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
     }
     Entry& e = g_libs[key];
     e.state = 1;
+    if (!render) e.owner = self_handle();
     lk.unlock();
     const auto t0 = Clock::now();
     VkPipeline p;
@@ -334,6 +394,7 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
         p = build();
     }
     const double ms = ms_since(t0);
+    if (e.boosted.load()) set_compile_thread_priority();                 // a draw lent this thread its speed: back to the background settings
     if (p && g_discard.load(std::memory_order_relaxed)) {
         if (ms < 2.0) g_prep_fast.fetch_add(1, std::memory_order_relaxed);
         vkDestroyPipeline(vkdev(), p, nullptr);
@@ -415,8 +476,16 @@ void worker_main() {
         Job j;
         {
             std::unique_lock<std::mutex> lk(g_mu);
-            g_cv.wait(lk, [] { return g_stop || !g_hot_q.empty() || !g_cold_q.empty(); });
-            if (g_stop) return;
+            if (!ab_pause_on()) {
+                g_cv.wait(lk, [] { return g_stop || !g_hot_q.empty() || (g_cold && !g_cold_q.empty()); });
+                if (g_stop) return;
+            } else {
+                for (;;) {
+                    if (g_stop) return;
+                    if ((!g_hot_q.empty() || (g_cold && !g_cold_q.empty())) && !workers_paused()) break;
+                    g_cv.wait_for(lk, std::chrono::milliseconds(20));
+                }
+            }
             if (!g_hot_q.empty()) {
                 j = g_hot_q.front();
                 g_hot_q.pop_front();
@@ -436,6 +505,49 @@ void worker_main() {
     }
 }
 
+void upgrade_main() {
+    log_set_thread_name("nvn-gpl-up");
+    set_compile_thread_priority();
+    for (;;) {
+        UpJob j;
+        {
+            std::unique_lock<std::mutex> lk(g_mu);
+            g_up_cv.wait(lk, [] { return g_stop || !g_up_q.empty(); });
+            if (g_stop) return;
+            j = std::move(g_up_q.front());
+            g_up_q.pop_front();
+            ++g_up_running;
+            publish_backlog_locked();
+        }
+        VkPipeline p = VK_NULL_HANDLE;
+        const auto t0 = Clock::now();
+        {
+            NXFT("pipe.upgrade");
+            if (g_up_mode == UpMode::Lto) {
+                VkPipelineLibraryCreateInfoKHR lci = {VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR};
+                lci.libraryCount = 4;
+                lci.pLibraries = j.parts;
+                VkGraphicsPipelineCreateInfo gi = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &lci};
+                gi.flags |= VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
+                gi.layout = j.layout->layout;
+                if (vkCreateGraphicsPipelines(vkdev(), pipeline_cache_handle(), 1, &gi, nullptr, &p) != VK_SUCCESS) p = VK_NULL_HANDLE;
+                else note_pipeline_created(ms_since(t0), "optimised link");
+            } else {
+                p = build_graphics_pipeline(j.key, *j.layout);
+            }
+        }
+        const double ms = ms_since(t0);
+        j.up->pipe = p;
+        j.up->state.store(1, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            --g_up_running;
+            if (p) { ++g_stats.upgrades_done; g_stats.upgrade_ms += ms; } else ++g_stats.upgrades_failed;
+            publish_backlog_locked();
+        }
+    }
+}
+
 void init_once() {
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_inited) return;
@@ -443,6 +555,12 @@ void init_once() {
     g_stop = false;
     g_enabled = config_get_bool("nvn", "gpl", true) && device().features().graphics_pipeline_library;
     g_lto = config_get_bool("nvn", "gpl_lto", false);
+    g_cold = config_get_bool("nvn", "gpl_cold", true);
+    {
+        const std::string m = config_get_str("nvn", "gpl_upgrade", "whole");
+        g_up_mode = (m == "off" || m == "false" || m == "0") ? UpMode::Off : (m == "lto") ? UpMode::Lto : UpMode::Whole;
+        g_retain = g_lto || g_up_mode == UpMode::Lto;
+    }
     g_on.store(g_enabled, std::memory_order_release);
     if (!g_enabled) {
         NXLOG_I(kTag, "pipeline libraries off (%s)", device().features().graphics_pipeline_library ? "[nvn] gpl is false" : "the GPU or driver does not support them");
@@ -452,7 +570,12 @@ void init_once() {
     const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
     const int64_t want = config_get_int("nvn", "gpl_threads", std::clamp<int64_t>(hw / 6, 1, 4));
     for (int64_t i = 0; i < want; ++i) g_workers.emplace_back(worker_main);
-    NXLOG_I(kTag, "pipeline libraries on: %zu background threads%s", g_workers.size(), g_lto ? ", link-time optimisation requested" : "");
+    if (g_up_mode != UpMode::Off) {
+        const int64_t nup = config_get_int("nvn", "gpl_upgrade_threads", 1);
+        for (int64_t i = 0; i < nup; ++i) g_up_workers.emplace_back(upgrade_main);
+    }
+    NXLOG_I(kTag, "pipeline libraries on: %zu background threads%s; linked pipelines are replaced by %s", g_workers.size(), g_lto ? ", link-time optimisation requested" : "",
+            g_up_mode == UpMode::Off ? "nothing (gpl_upgrade is off)" : g_up_mode == UpMode::Lto ? "link-time optimised links" : "whole pipelines");
 }
 
 // A draw used raster flags the prebuilt parts were not made for: later programs get them ahead too, and so do the recent ones.
@@ -556,7 +679,7 @@ void gpl_program_bound(const ShaderInfo* const stages[6]) {
     queue_program(prog, true);
 }
 
-VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout) {
+VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout, std::shared_ptr<PipeUpgrade>* up) {
     if (!gpl_active()) return VK_NULL_HANDLE;
     // stream-out and tessellated draws, and anything without both a vertex and a fragment shader, are built whole
     if (!key.stage[0] || !key.stage[1] || key.xfb || key.patch_control_points) return VK_NULL_HANDLE;
@@ -608,7 +731,47 @@ VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout) {
     ++g_stats.linked;
     g_stats.link_ms += ms;
     note_pipeline_created(ms, "linked pipeline");
+    if (up && g_up_mode != UpMode::Off && !g_stop) {
+        UpJob j;
+        j.key = key;
+        j.layout = &layout;
+        for (int i = 0; i < 4; ++i) j.parts[i] = parts[i];
+        j.up = std::make_shared<PipeUpgrade>();
+        *up = j.up;
+        g_up_q.push_back(std::move(j));
+        ++g_stats.upgrades_queued;
+        publish_backlog_locked();
+        g_up_cv.notify_one();
+    }
     return pipe;
+}
+
+bool gpl_ab_whole() {
+    static const int64_t frames = config_get_int("nvn", "gpl_ab", 0);
+    if (frames <= 0) return false;
+    static std::atomic<int64_t> last{-1};
+    const int64_t w = static_cast<int64_t>(counters().presents.load(std::memory_order_relaxed)) / frames;
+    if (last.exchange(w) != w) NXLOG_I(kTag, "ab: present %lld starts a window of %s pipelines", static_cast<long long>(w * frames), (w & 1) ? "optimised" : "linked");
+    return (w & 1) != 0;
+}
+
+void gpl_take_upgrade(VkPipeline& current, VkPipeline& alt, std::shared_ptr<PipeUpgrade>& up) {
+    if (up->state.load(std::memory_order_acquire) != 1) return;
+    VkPipeline fresh = up->pipe;
+    if (fresh) {
+        up->pipe = VK_NULL_HANDLE;
+        if (config_get_int("nvn", "gpl_ab", 0) > 0) {
+            alt = fresh;                           // measurement: keep both and let gpl_ab_whole pick
+        } else {
+            const VkPipeline old = current;
+            current = fresh;
+            defer_destroy([old] { vkDestroyPipeline(vkdev(), old, nullptr); });      // the frame being recorded may have bound it
+        }
+        std::lock_guard<std::mutex> lk(g_mu);
+        ++g_stats.upgrades_taken;
+    }
+    up->state.store(2, std::memory_order_release);
+    up.reset();
 }
 
 void gpl_progress_log() {
@@ -617,14 +780,16 @@ void gpl_progress_log() {
         std::lock_guard<std::mutex> lk(g_mu);
         if (!g_inited || !g_enabled) return;
         s = g_stats;
-        const uint64_t sig = s.linked * 3 + s.parts_ahead * 5 + s.parts_at_draw * 7 + s.parts_waited * 11 + s.link_failed * 13;
+        const uint64_t sig = s.linked * 3 + s.parts_ahead * 5 + s.parts_at_draw * 7 + s.parts_waited * 11 + s.link_failed * 13 + s.upgrades_done * 17 + s.upgrades_taken * 19;
         if (sig == g_logged_sig) return;
         g_logged_sig = sig;
     }
     NXLOG_I(kTag, "libraries so far: %llu pipelines linked (%.1f ms in all), parts built ahead %llu (%.0f ms on workers), at the draw %llu (%.1f ms), "
-                  "waited for %llu (%.1f ms), ready %llu, %llu link failures",
+                  "waited for %llu (%.1f ms), ready %llu, %llu link failures; upgrades queued %llu, built %llu (%.0f ms), taken %llu, failed %llu",
             static_cast<unsigned long long>(s.linked), s.link_ms, static_cast<unsigned long long>(s.parts_ahead), s.worker_ms, static_cast<unsigned long long>(s.parts_at_draw),
-            s.draw_part_ms, static_cast<unsigned long long>(s.parts_waited), s.wait_ms, static_cast<unsigned long long>(s.parts_hit), static_cast<unsigned long long>(s.link_failed));
+            s.draw_part_ms, static_cast<unsigned long long>(s.parts_waited), s.wait_ms, static_cast<unsigned long long>(s.parts_hit), static_cast<unsigned long long>(s.link_failed),
+            static_cast<unsigned long long>(s.upgrades_queued), static_cast<unsigned long long>(s.upgrades_done), s.upgrade_ms, static_cast<unsigned long long>(s.upgrades_taken),
+            static_cast<unsigned long long>(s.upgrades_failed));
 }
 
 void program_bound(const ShaderInfo* const stages[6]) { gpl_program_bound(stages); }
@@ -635,18 +800,22 @@ GplStats gpl_stats() {
 }
 
 void gpl_stop() {
-    std::vector<std::thread> workers;
+    std::vector<std::thread> workers, ups;
     {
         std::lock_guard<std::mutex> lk(g_mu);
         if (!g_inited) return;
         g_stop = true;
         workers.swap(g_workers);
+        ups.swap(g_up_workers);
         g_hot_q.clear();
         g_cold_q.clear();
+        g_up_q.clear();
         publish_backlog_locked();
     }
     g_cv.notify_all();
+    g_up_cv.notify_all();
     for (auto& t : workers) t.join();
+    for (auto& t : ups) t.join();
 }
 
 // ---- shader preparation ----------------------------------------------------------------------------------------------------------
@@ -827,10 +996,13 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
 void gpl_shutdown() {
     gpl_stop();
     GplStats s;
+    size_t n_rasters = 0, n_programs_seen = 0;
     {
         std::lock_guard<std::mutex> lk(g_mu);
         if (!g_inited) return;
         s = g_stats;
+        n_rasters = g_rasters.size();
+        n_programs_seen = g_seen.size();
         for (auto& [k, e] : g_libs)
             if (e.pipe) vkDestroyPipeline(vkdev(), e.pipe, nullptr);
         g_libs.clear();
@@ -847,9 +1019,11 @@ void gpl_shutdown() {
         g_fail_streak = 0;
     }
     if (s.linked || s.parts_ahead || s.parts_at_draw)
-        NXLOG_I(kTag, "pipeline libraries: %llu pipelines linked (%.1f ms in all), parts built ahead %llu (%.0f ms on workers), at the draw %llu (%.1f ms), waited for %llu (%.1f ms), ready %llu, %llu link failures",
+        NXLOG_I(kTag, "pipeline libraries: %llu pipelines linked (%.1f ms in all), parts built ahead %llu (%.0f ms on workers), at the draw %llu (%.1f ms), waited for %llu (%.1f ms), ready %llu, %llu link failures; upgrades queued %llu, built %llu (%.0f ms), taken %llu, failed %llu; %zu programs set, %zu raster variants",
                 static_cast<unsigned long long>(s.linked), s.link_ms, static_cast<unsigned long long>(s.parts_ahead), s.worker_ms, static_cast<unsigned long long>(s.parts_at_draw),
-                s.draw_part_ms, static_cast<unsigned long long>(s.parts_waited), s.wait_ms, static_cast<unsigned long long>(s.parts_hit), static_cast<unsigned long long>(s.link_failed));
+                s.draw_part_ms, static_cast<unsigned long long>(s.parts_waited), s.wait_ms, static_cast<unsigned long long>(s.parts_hit), static_cast<unsigned long long>(s.link_failed),
+                static_cast<unsigned long long>(s.upgrades_queued), static_cast<unsigned long long>(s.upgrades_done), s.upgrade_ms, static_cast<unsigned long long>(s.upgrades_taken),
+                static_cast<unsigned long long>(s.upgrades_failed), n_programs_seen, n_rasters);
 }
 
 }  // namespace nxrt::nvn::be::gpu
