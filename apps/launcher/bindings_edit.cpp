@@ -3,6 +3,7 @@
 #include "bindings_edit.h"
 
 #include <cstddef>
+#include <utility>
 
 namespace mprl {
 
@@ -117,7 +118,31 @@ void clear_slot(Settings& s, Act a, int slot) {
     s.bindings.erase(s.bindings.begin() + static_cast<std::ptrdiff_t>(own[static_cast<std::size_t>(slot)]));
 }
 
-void reset_bindings(Settings& s) { s.bindings = nxrt::play::default_settings().bindings; }
+void reset_shown_bindings(Settings& s) {
+    const Settings factory = nxrt::play::default_settings();
+    std::vector<Binding> out;
+    out.reserve(s.bindings.size() + factory.bindings.size());
+    bool placed = false;
+    for (const Binding& b : s.bindings) {
+        if (b.ctx != Ctx::All) {
+            out.push_back(b);
+            continue;
+        }
+        // The first All binding marks the spot: the factory All bindings go there, and the other All bindings are dropped.
+        if (placed) continue;
+        for (const Binding& f : factory.bindings)
+            if (f.ctx == Ctx::All) out.push_back(f);
+        placed = true;
+    }
+    if (!placed) {
+        // No All binding was left: the factory ones go first, as they are in the factory file.
+        std::vector<Binding> all;
+        for (const Binding& f : factory.bindings)
+            if (f.ctx == Ctx::All) all.push_back(f);
+        out.insert(out.begin(), all.begin(), all.end());
+    }
+    s.bindings = std::move(out);
+}
 
 std::wstring act_label(Act a) {
     for (const KeyRow& r : key_rows())

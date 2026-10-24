@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include <cmath>
+#include <filesystem>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -66,7 +67,7 @@ bool SelfTest::parse(const std::string& script, std::string* err) {
         s.verb = p[0];
         if (p.size() > 1) s.a = p[1];
         if (p.size() > 2) s.b = p[2];
-        static const char* kVerbs[] = {"wait", "size", "mode", "altenter", "key", "close", "cap", "measure", "expect_mode", "expect_size", "expect_fps", "expect_late", "set", "expect_present", "expect_cap", "expect_ini", "pass"};
+        static const char* kVerbs[] = {"wait", "size", "mode", "altenter", "key", "close", "cap", "measure", "expect_mode", "expect_size", "expect_fps", "expect_late", "set", "expect_present", "expect_cap", "expect_ini", "pass", "gate", "report"};
         bool known = false;
         for (const char* v : kVerbs) known |= s.verb == v;
         if (!known) {
@@ -97,6 +98,14 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
     if (wait_ > 0) { --wait_; return; }
     if (next_ >= steps_.size()) return;
     const Step& s = steps_[next_];
+    if (s.verb == "gate") {
+        // gate:NAME holds the script until a file named selftest_NAME exists in the working folder, then deletes it and goes on. A person
+        // or a driver script uses it to run the next steps at a moment of its choosing (for example once the game is in play).
+        const std::string path = "selftest_" + s.a;
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return;
+        std::filesystem::remove(path, ec);
+    }
     NXLOG_I("play", "selftest: step %zu: %s %s %s", next_, s.verb.c_str(), s.a.c_str(), s.b.c_str());
     ++next_;
     if (s.verb == "wait") {
@@ -180,6 +189,19 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
         if (t.find(s.a + (s.b.empty() ? "" : ":" + s.b)) == std::string::npos) fail("the settings file does not contain '" + s.a + "'");
     } else if (s.verb == "pass") {
         finish(0, "");
+    } else if (s.verb == "report") {
+        // report[:label]: one log line with what the window looks like now
+        int pw = 0, ph = 0;
+        platform::pixel_size(&pw, &ph);
+        const char* m = "windowed";
+        switch (platform::fullscreen_mode()) {
+            case platform::FullscreenMode::Borderless: m = "borderless"; break;
+            case platform::FullscreenMode::Exclusive: m = "exclusive"; break;
+            default: break;
+        }
+        NXLOG_I("play", "selftest: report %s: mode %s, pixels %dx%d, focused %d, minimised %d, display %.1f Hz, frames %llu", s.a.c_str(), m, pw, ph,
+                platform::focused() ? 1 : 0, platform::minimized() ? 1 : 0, static_cast<double>(platform::display_refresh_hz()),
+                static_cast<unsigned long long>(renderer ? renderer->stats().frames : 0));
     }
 }
 

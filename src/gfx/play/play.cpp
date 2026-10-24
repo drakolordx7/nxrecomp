@@ -347,7 +347,15 @@ void set_window_mode(const std::string& mode) {
                                          : mode == "exclusive" ? platform::FullscreenMode::Exclusive
                                                                : platform::FullscreenMode::Windowed;
     if (platform::fullscreen_mode() == want) return;
-    if (!platform::set_fullscreen(want)) NXLOG_W(kTag, "window mode '%s' was refused", mode.c_str());
+    if (!platform::set_fullscreen(want)) {
+        NXLOG_W(kTag, "window mode '%s' was refused", mode.c_str());
+        // Exclusive fullscreen needs the display to accept a mode change (it does not on a remote or locked session, or with some drivers).
+        // The next best thing is borderless at the desktop mode, which always works; the setting stays as the player chose it.
+        if (want == platform::FullscreenMode::Exclusive && platform::fullscreen_mode() == platform::FullscreenMode::Windowed) {
+            if (platform::set_fullscreen(platform::FullscreenMode::Borderless)) NXLOG_W(kTag, "using borderless fullscreen instead");
+            else NXLOG_W(kTag, "borderless fullscreen was refused too; staying windowed");
+        }
+    }
     st.limiter.reset_schedule();
 }
 
@@ -1009,6 +1017,18 @@ bool load() {
         NXLOG_W(kTag, "%s: %s (the factory settings are in use)", st.path.c_str(), err.c_str());
     } else {
         NXLOG_I(kTag, "settings loaded from %s (%zu bindings)", st.path.c_str(), st.settings.bindings.size());
+    }
+    // An older controls.ini got the newer factory bindings (play_config.cpp, kDefaultAdditions): keep the old file once as .bak, then
+    // write the upgraded one. CopyFileA with bFailIfExists = TRUE leaves an existing .bak alone.
+    if (existed && st.load_ok && st.settings.migrated) {
+        const std::string bak = st.path + ".bak";
+        if (CopyFileA(st.path.c_str(), bak.c_str(), TRUE)) NXLOG_I(kTag, "kept the previous %s as %s", st.path.c_str(), bak.c_str());
+        std::string e3;
+        if (save_settings(st.path, st.settings, &e3))
+            NXLOG_I(kTag, "controls.ini updated to defaults revision %d (added: %s)", st.settings.defaults_rev,
+                    st.settings.migration_added.empty() ? "nothing new" : st.settings.migration_added.c_str());
+        else
+            NXLOG_W(kTag, "cannot save the upgraded %s: %s", st.path.c_str(), e3.c_str());
     }
     // Display extras: a value set in mpr.ini or in the environment (NXRT_HDR_MODE ...) overrides the file; the file overrides the built-in defaults.
     st.settings.extras = merge_env(st.settings.extras);

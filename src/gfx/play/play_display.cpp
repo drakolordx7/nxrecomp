@@ -59,10 +59,19 @@ namespace {
 bool near_ratio(double a, double b) { return std::fabs(a - b) < 0.02; }
 }  // namespace
 
-bool hud_perspective(float* aspect, double display_aspect) {
+bool hud_perspective(float* aspect, double display_aspect, float* fov_degrees) {
     if (!aspect || !(display_aspect > 0)) return false;
     const double a = *aspect;
     if (!near_ratio(a, kHudAspect) && !near_ratio(a, display_aspect)) return false;
+    // A display narrower than 16:9 would cut the sides off a frame drawn for 16:9. Keep the 16:9 width instead and show more above and below:
+    // the vertical angle grows so that the horizontal reach stays what the frame was drawn for. Only the stored 16:9 camera is changed (the
+    // aspect of an already adjusted camera is the display's), so calling this every frame does not compound.
+    if (fov_degrees && display_aspect < kHudAspect - 0.02 && near_ratio(a, kHudAspect) && *fov_degrees > 1.0f && *fov_degrees < 170.0f) {
+        constexpr double kPi = 3.14159265358979323846;
+        const double half = *fov_degrees * kPi / 360.0;
+        const double wide = std::atan(std::tan(half) * (kHudAspect / display_aspect));
+        *fov_degrees = static_cast<float>(wide * 360.0 / kPi);
+    }
     *aspect = static_cast<float>(display_aspect);
     return true;
 }
@@ -77,8 +86,17 @@ bool hud_ortho(float* left, float* right, float* bottom, float* top, double disp
     const double own = w / h;
     if (!near_ratio(own, kHudAspect) && !near_ratio(own, display_aspect)) return false;
     const double cx = (static_cast<double>(*left) + *right) * 0.5;
-    const double nw = h * display_aspect;
     const double dir = span >= 0 ? 1.0 : -1.0;
+    if (display_aspect < kHudAspect - 0.02) {
+        // narrower than 16:9: keep the width the frame was drawn for and grow the height around its centre, so nothing is cut off at the sides
+        const double cy = (static_cast<double>(*top) + *bottom) * 0.5;
+        const double nh = w / display_aspect;
+        const double vdir = (static_cast<double>(*top) - *bottom) >= 0 ? 1.0 : -1.0;
+        *bottom = static_cast<float>(cy - vdir * nh * 0.5);
+        *top = static_cast<float>(cy + vdir * nh * 0.5);
+        return true;
+    }
+    const double nw = h * display_aspect;
     *left = static_cast<float>(cx - dir * nw * 0.5);
     *right = static_cast<float>(cx + dir * nw * 0.5);
     return true;
@@ -218,7 +236,7 @@ int hook_gui_projection(::Ctx* c, uint64_t, void*) {
     float* cc = reinterpret_cast<float*>(cam + kGuiCamC);
     float* d = reinterpret_cast<float*>(cam + kGuiCamD);
     bool changed = false;
-    if (type == 0) changed = hud_perspective(b, disp);                       // fov, aspect, near, far
+    if (type == 0) changed = hud_perspective(b, disp, a);                    // fov (degrees), aspect, near, far
     else if (type == 1) changed = hud_ortho(a, b, cc, d, disp);              // left, right, then the two vertical extents, near, far
     if (changed) s.calls.fetch_add(1, std::memory_order_relaxed);
     {

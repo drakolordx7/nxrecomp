@@ -32,8 +32,10 @@ void bind_slot(nxrt::play::Settings& s, nxrt::play::Act a, int slot, const nxrt:
 // Removes the factory binding in slot 0 or 1 of `a`. Nothing happens when the slot is empty.
 void clear_slot(nxrt::play::Settings& s, nxrt::play::Act a, int slot);
 
-// Every binding goes back to the factory settings (all contexts).
-void reset_bindings(nxrt::play::Settings& s);
+// Puts the factory bindings back for the contexts this tab shows (Ctx::All only). Every All binding is replaced by the factory All
+// bindings, placed where the first All binding was. The bindings of the other contexts (menu, map, gameplay, morph, scan) stay
+// exactly as they were, in the same order.
+void reset_shown_bindings(nxrt::play::Settings& s);
 
 // The name of the action on the list, or an empty string for an action without a row.
 std::wstring act_label(nxrt::play::Act a);

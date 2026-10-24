@@ -421,7 +421,7 @@ NXTEST(file_with_only_mouse_keeps_default_bindings) {
 NXTEST(one_bindings_section_drops_default_bindings) {
     Settings s;
     std::string err;
-    REQUIRE(parse_settings("[bindings.menu]\nReturn = confirm\n", &s, &err));
+    REQUIRE(parse_settings("[bindings.menu]\nReturn = confirm\n[meta]\ndefaults_rev = 2\n", &s, &err));
     CHECK_EQ(s.bindings.size(), 1u);
     CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
     CHECK(act_at(s, "W", Ctx::All) == Act::kCount);
@@ -430,7 +430,7 @@ NXTEST(one_bindings_section_drops_default_bindings) {
 NXTEST(binding_trigger_and_ms_parse) {
     Settings s;
     std::string err;
-    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n", &s, &err));
+    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 2\n", &s, &err));
     REQUIRE_MSG(s.bindings.size() == 3u, "three bindings");
     CHECK(s.bindings[0].in == key_id(SDL_SCANCODE_LCTRL));
     CHECK(s.bindings[0].ctx == Ctx::Gameplay);
@@ -531,7 +531,7 @@ NXTEST(unknown_keys_and_sections_warn) {
     Settings s;
     std::string err;
     std::vector<std::string> w;
-    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n", &s, &err, &w));
+    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 2\n", &s, &err, &w));
     REQUIRE_MSG(w.size() == 2u, "two warnings");
     CHECK_EQ(w[0], std::string("line 2: unknown key 'bogus' in [mouse]"));
     CHECK_EQ(w[1], std::string("line 3: unknown section '[nosuch]'"));
@@ -1319,4 +1319,78 @@ NXTEST(file_without_fps_and_padmap_keeps_defaults) {
     for (int i = 0; i < kPadSrcCount; ++i) {
         CHECK(s.pad.remap[i] == kPadDefault);
     }
+}
+
+// ---- factory-defaults revision ([meta] defaults_rev, kDefaultAdditions in play_config.cpp) --------------------------------------------
+
+NXTEST(old_file_gets_new_factory_binding_on_map) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[bindings.map]\nReturn = confirm\n", &s, &err), err);
+    CHECK(s.migrated);
+    CHECK_EQ(s.defaults_rev, 2);
+    CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
+    CHECK(act_at(s, "Return", Ctx::Map) == Act::Confirm);   // the file's own binding is kept
+    CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 2);
+}
+
+NXTEST(old_file_keeps_users_own_key_on_map) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[bindings.map]\nX = back\n", &s, &err), err);
+    CHECK(s.migrated);
+    CHECK(act_at(s, "X", Ctx::Map) == Act::Back);
+    CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 1);
+}
+
+NXTEST(file_at_current_revision_is_not_migrated) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 2\n[bindings.map]\nReturn = confirm\n", &s, &err), err);
+    CHECK(!s.migrated);
+    CHECK_EQ(s.defaults_rev, 2);
+    CHECK(act_at(s, "X", Ctx::Map) == Act::kCount);   // the user removed X: it stays removed
+}
+
+NXTEST(format_round_trip_keeps_defaults_rev) {
+    const Settings s = default_settings();
+    const std::string text = format_settings(s);
+    CHECK(text.find("[meta]\ndefaults_rev = 2\n") != std::string::npos);
+    Settings back;
+    std::string err;
+    REQUIRE_MSG(parse_settings(text, &back, &err), err);
+    CHECK_EQ(back.defaults_rev, 2);
+    CHECK(!back.migrated);
+    CHECK(same_settings(s, back));
+}
+
+NXTEST(factory_text_is_at_current_revision) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings(default_settings_text(), &s, &err), err);
+    CHECK_EQ(s.defaults_rev, 2);
+    CHECK(!s.migrated);
+    CHECK_EQ(default_settings().defaults_rev, 2);
+    CHECK(act_at(default_settings(), "X", Ctx::Map) == Act::BtnX);
+}
+
+NXTEST(meta_defaults_rev_is_known_and_unknown_meta_key_warns) {
+    Settings s;
+    std::string err;
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 2\n[bindings.all]\nW = fire\n", &s, &err, &w), err);
+    CHECK(w.empty());
+    std::vector<std::string> w2;
+    REQUIRE_MSG(parse_settings("[meta]\nfoo = 1\n", &s, &err, &w2), err);
+    REQUIRE_MSG(w2.size() == 1u, "one warning");
+    CHECK_EQ(w2[0], std::string("line 2: unknown key 'foo' in [meta]"));
+}
+
+NXTEST(file_without_bindings_gets_factory_bindings_at_current_revision) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
+    CHECK(!s.migrated);
+    CHECK_EQ(s.defaults_rev, 2);
+    CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
 }

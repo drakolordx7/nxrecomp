@@ -21,6 +21,8 @@
 //   expect_present:X       fail unless the swapchain presents with mode X (fifo, mailbox, immediate)
 //   expect_cap:N           fail unless the frame limiter's target is N fps
 //   expect_ini:TEXT        fail unless the settings file contains TEXT
+//   gate:NAME              hold the script until a file selftest_NAME exists in the working folder (it is deleted, then the script goes on)
+//   report[:label]         log one line: window mode, pixel size, focus, minimised, refresh rate, frames
 //   pass                   exit code 0 now ("selftest PASS" in the log); without it the process keeps running after the last step
 // A failed expectation logs "selftest FAIL: <why>" and ends the process with exit code 1. Every step is logged ("selftest: step n: ...").
 #pragma once
