@@ -71,6 +71,7 @@ struct Page {
     char out_text[kActCount][128] = {};    // the text of each output field
     std::string out_err[kActCount];        // parse error of each field; empty when its text is valid
     bool aspect_custom = false;            // Display tab: the Custom aspect entry is picked (local, not saved)
+    bool fps_capture = false;              // Display tab: the frame rate counter's hotkey waits for a key (local, not saved)
 };
 
 void mark(Page& p) { p.dirty = true; }
@@ -85,17 +86,33 @@ void stop_rebind(UiHost& host, Page& p) {
     p.rebind = -1;
 }
 
+// Ends the frame rate counter's hotkey capture. The host's capture is cancelled only when it is ours.
+void stop_fps_capture(UiHost& host, Page& p) {
+    if (p.fps_capture && host.capturing()) host.cancel_capture();
+    p.fps_capture = false;
+}
+
 // Takes the captured input, if the host has one. Results are taken every frame, so a stale one never reaches a later rebind.
+// Only one capture runs at a time (the binding row or the frame rate hotkey), so a result goes to whichever one is waiting.
 void poll_capture(UiHost& host, Page& p) {
     InputId id;
     if (host.capture_result(&id)) {
-        if (p.rebind >= 0 && p.rebind < static_cast<int>(p.edit.bindings.size())) {
+        if (p.fps_capture) {
+            // The frame rate hotkey takes keyboard keys only; a mouse button or a wheel notch is dropped and the capture ends.
+            p.fps_capture = false;
+            if (id.kind == InKind::Key) {
+                Settings cur = host.settings();
+                cur.fps.key = id;
+                host.apply(cur);   // live: not part of the working copy
+            }
+        } else if (p.rebind >= 0 && p.rebind < static_cast<int>(p.edit.bindings.size())) {
             p.edit.bindings[static_cast<std::size_t>(p.rebind)].in = id;
             mark(p);
         }
         p.rebind = -1;
-    } else if (p.rebind >= 0 && !host.capturing()) {
+    } else if ((p.rebind >= 0 || p.fps_capture) && !host.capturing()) {
         p.rebind = -1;   // Escape, or the host ended the capture without a result
+        p.fps_capture = false;
     }
 }
 
@@ -126,8 +143,11 @@ void sanitize(Settings& s) {
     s.extras.upscale.sharpness = std::clamp(s.extras.upscale.sharpness, 0.0, 1.0);
 }
 
+// The frame rate counter is live (the hotkey changes it in the game), so the working copy always takes it from the host, never from a
+// stale copy: Apply and save, Revert and Factory defaults leave the counter as it is.
 void apply_now(UiHost& host, Page& p) {
     stop_rebind(host, p);
+    p.edit.fps = host.settings().fps;
     sanitize(p.edit);
     host.apply(p.edit);
     p.dirty = false;
@@ -136,6 +156,7 @@ void apply_now(UiHost& host, Page& p) {
 void revert_to_saved(UiHost& host, Page& p) {
     stop_rebind(host, p);
     p.edit = host.settings();
+    p.edit.fps = host.settings().fps;
     refresh_out_text(p);
     p.dirty = false;
 }
@@ -143,6 +164,7 @@ void revert_to_saved(UiHost& host, Page& p) {
 void load_factory(UiHost& host, Page& p) {
     stop_rebind(host, p);
     p.edit = host.factory();
+    p.edit.fps = host.settings().fps;
     refresh_out_text(p);
     mark(p);
 }
@@ -230,6 +252,87 @@ void mouse_tab(Page& p) {
 
 // ---- Controller ---------------------------------------------------------------------------------------------------------------------
 
+// The 16 controller buttons, in PadSrc order.
+constexpr const char* kPadSrcLabels[kPadSrcCount] = {
+    "A / Cross (bottom)", "B / Circle (right)", "X / Square (left)", "Y / Triangle (top)",
+    "LB / L1",            "RB / R1",            "LT / L2",            "RT / R2",
+    "Menu / Options",     "View / Create",      "Left stick click",   "Right stick click",
+    "D-pad up",           "D-pad down",         "D-pad left",         "D-pad right",
+};
+static_assert(sizeof kPadSrcLabels / sizeof kPadSrcLabels[0] == 16, "one label per controller button");
+
+// The choices of a controller button: Default, Nothing, then the single Switch buttons in kSwitchButtons order.
+constexpr const char* kPadChoiceNames[] = {
+    "Default", "Nothing",
+    "A", "B", "X", "Y", "L", "R", "ZL", "ZR", "Plus", "Minus",
+    "D-pad up", "D-pad down", "D-pad left", "D-pad right", "Left stick click", "Right stick click",
+};
+constexpr int kPadChoiceCount = static_cast<int>(sizeof kPadChoiceNames / sizeof kPadChoiceNames[0]);
+static_assert(kPadChoiceCount == 2 + kSwitchButtonCount, "one choice per Switch button, plus Default and Nothing");
+constexpr const char* kPadCustomLabel = "Custom (edit in controls.ini)";
+
+// The value a choice stores.
+uint64_t pad_choice_value(int c) {
+    if (c == 0) return kPadDefault;
+    if (c == 1) return 0;
+    return static_cast<uint64_t>(hid::btn(kSwitchButtons[c - 2].bit));
+}
+
+// The choice a stored value shows as, or -1 when no choice holds it (a mask such as two buttons, set in the file).
+int pad_choice_of(uint64_t v) {
+    for (int c = 0; c < kPadChoiceCount; ++c)
+        if (pad_choice_value(c) == v) return c;
+    return -1;
+}
+
+void pad_buttons_group(Page& p) {
+    ImGui::SeparatorText("Pad buttons");
+    ImGui::TextWrapped("What each controller button presses on the Switch pad. Default keeps the built-in layout.");
+    if (ImGui::BeginTable("pad_buttons", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Controller button");
+        ImGui::TableSetupColumn("Presses on the Switch pad");
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < kPadSrcCount; ++i) {
+            uint64_t& v = p.edit.pad.remap[i];
+            const int sel = pad_choice_of(v);
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(kPadSrcLabels[i]);
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::SetNextItemWidth(-FLT_MIN);
+            if (ImGui::BeginCombo("##remap", sel >= 0 ? kPadChoiceNames[sel] : kPadCustomLabel)) {
+                if (sel < 0) {   // a mask no choice holds: shown as the current entry, not offered
+                    ImGui::BeginDisabled();
+                    ImGui::Selectable(kPadCustomLabel, true);
+                    ImGui::EndDisabled();
+                }
+                for (int c = 0; c < kPadChoiceCount; ++c) {
+                    if (ImGui::Selectable(kPadChoiceNames[c], c == sel) && c != sel) {
+                        v = pad_choice_value(c);
+                        mark(p);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (ImGui::Button("Reset pad buttons")) {
+        bool changed = false;
+        for (uint64_t& v : p.edit.pad.remap) {
+            if (v != kPadDefault) {
+                v = kPadDefault;
+                changed = true;
+            }
+        }
+        if (changed) mark(p);
+    }
+}
+
 void pad_tab(const LiveStatus& live, Page& p) {
     PadSettings& pad = p.edit.pad;
     const bool by_label = pad.label_abxy;
@@ -261,6 +364,8 @@ void pad_tab(const LiveStatus& live, Page& p) {
     if (ImGui::Checkbox("Rumble", &pad.rumble)) mark(p);
     if (slider("Rumble scale", &pad.rumble_scale, 0.0, 2.0, "%.2f")) mark(p);
 
+    pad_buttons_group(p);
+
     ImGui::SeparatorText("Gamepad");
     if (live.pads == 0) ImGui::TextUnformatted("No gamepad open.");
     else ImGui::Text("%d open: %s", live.pads, live.pad_name.c_str());
@@ -289,7 +394,76 @@ void fps_label(int fps, char* buf, std::size_t n) {
     else std::snprintf(buf, n, "%d fps", fps);
 }
 
-void display_tab(const LiveStatus& live, Page& p) {
+// The frame rate counter. Its controls act on the host at once, not on the working copy: the game's hotkey flips `show` too, so the
+// page reads the host's value every frame and never writes a stale copy. These controls do not mark the page as changed.
+constexpr const char* kCornerNames[] = {"Top left", "Top right", "Bottom left", "Bottom right"};   // in Corner order
+constexpr int kCornerCount = static_cast<int>(sizeof kCornerNames / sizeof kCornerNames[0]);
+constexpr const char* kFpsDetailNames[] = {"Frame rate", "Frame rate and frame time", "Plus 1% low and worst frame"};
+constexpr int kFpsDetailCount = static_cast<int>(sizeof kFpsDetailNames / sizeof kFpsDetailNames[0]);
+
+void set_fps_live(UiHost& host, const FpsSettings& f) {
+    Settings cur = host.settings();
+    cur.fps = f;
+    host.apply(cur);
+}
+
+void fps_group(UiHost& host, Page& p) {
+    const FpsSettings fps = host.settings().fps;
+    ImGui::SeparatorText("Frame rate counter");
+
+    bool show = fps.show;
+    if (ImGui::Checkbox("Show frame rate counter", &show)) {
+        FpsSettings f = fps;
+        f.show = show;
+        set_fps_live(host, f);
+    }
+
+    const int corner = static_cast<int>(fps.corner);
+    if (ImGui::BeginCombo("Corner##fps_corner", kCornerNames[corner])) {
+        for (int i = 0; i < kCornerCount; ++i) {
+            if (ImGui::Selectable(kCornerNames[i], i == corner) && i != corner) {
+                FpsSettings f = fps;
+                f.corner = static_cast<Corner>(i);
+                set_fps_live(host, f);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    const int detail = std::clamp(fps.detail, 0, kFpsDetailCount - 1);
+    if (ImGui::BeginCombo("Detail##fps_detail", kFpsDetailNames[detail])) {
+        for (int i = 0; i < kFpsDetailCount; ++i) {
+            if (ImGui::Selectable(kFpsDetailNames[i], i == detail) && i != detail) {
+                FpsSettings f = fps;
+                f.detail = i;
+                set_fps_live(host, f);
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    bool shots = fps.in_screenshots;
+    if (ImGui::Checkbox("Also draw it in screenshots", &shots)) {
+        FpsSettings f = fps;
+        f.in_screenshots = shots;
+        set_fps_live(host, f);
+    }
+
+    const std::string key = input_name(fps.key);
+    ImGui::Text("Hotkey: %s", key.empty() ? "?" : key.c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Change##fps_key")) {
+        stop_rebind(host, p);
+        p.fps_capture = true;
+        host.begin_capture();
+    }
+    if (p.fps_capture) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("press a keyboard key...");
+    }
+}
+
+void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
     DisplaySettings& d = p.edit.display;
     const int mode = window_mode_index(d.window_mode);
     if (ImGui::BeginCombo("Window mode", kWindowModeNames[mode])) {
@@ -378,6 +552,8 @@ void display_tab(const LiveStatus& live, Page& p) {
     if (slider("Texture LOD bias", &d.lod_bias, -2.0, 2.0, "%.2f")) mark(p);
     if (ImGui::Checkbox("Bloom", &d.bloom)) mark(p);
     if (ImGui::Checkbox("Chromatic aberration", &d.chromatic_aberration)) mark(p);
+
+    fps_group(host, p);
 
     ImGui::SeparatorText("Live");
     ImGui::Text("Window: %s, present mode: %s", cstr(live.window_mode), cstr(live.present_mode));
@@ -570,6 +746,7 @@ void bindings_tab(UiHost& host, Page& p) {
             const bool waiting = p.rebind == row;
             const std::string label = input_button_text(b, waiting) + "##in";
             if (ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, 0.0f))) {
+                stop_fps_capture(host, p);
                 p.rebind = row;
                 host.begin_capture();
             }
@@ -628,6 +805,7 @@ void bindings_tab(UiHost& host, Page& p) {
         b.trig = Trig::Press;
         b.ms = 0;
         p.edit.bindings.push_back(b);
+        stop_fps_capture(host, p);
         p.rebind = static_cast<int>(p.edit.bindings.size()) - 1;
         host.begin_capture();
         mark(p);
@@ -724,6 +902,7 @@ void draw_settings_page(UiHost& host) {
     Page& p = page;
     if (!p.loaded) {
         p.edit = host.settings();
+        p.edit.fps = host.settings().fps;
         refresh_out_text(p);
         p.loaded = true;
     }
@@ -753,7 +932,7 @@ void draw_settings_page(UiHost& host) {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Display")) {
-            display_tab(live, p);
+            display_tab(host, live, p);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Extras")) {

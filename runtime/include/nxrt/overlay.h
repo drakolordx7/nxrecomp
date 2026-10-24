@@ -53,7 +53,16 @@ public:
     void apply_present_pending();
     void apply_window_pending();
 
-    // The Renderer overlay hook: builds and draws the menu on top of the frame (no-op while hidden).
+    // Corner frame-rate counter, off by default. Safe to call from any thread; it takes effect on the next presented frame.
+    struct CounterConfig {
+        bool show = false;
+        int corner = 0;                  // 0 top left, 1 top right, 2 bottom left, 3 bottom right
+        int detail = 1;                  // 0 frame rate; 1 also the frame time; 2 also the 1 % low and the worst frame
+        bool in_screenshots = false;     // leave it in screenshots too (by default it is not drawn into them)
+    };
+    void set_counter(const CounterConfig& c);
+
+    // The Renderer overlay hook: builds and draws the menu on top of the frame (no-op while hidden, unless the counter is on).
     void draw(const FrameInfo& f);
     void install_on_renderer();              // renderer->set_overlay_hook(draw)
 
