@@ -64,3 +64,18 @@ entryhook 0x7100888608
 entryhook 0x7100bd45e0
 #   CPauseScreenManagerMP1::ProcessControllerInput: x0 = the manager, which holds the tab and button labels of the pause screen (clicked like the buttons they show)
 entryhook 0x7100e65bec
+# S32 (freelock; runtime src/gfx/play/play_lockcam.cpp, docs/S32.md): free lock-on, idle sway off, walk bob off.
+#   CPlayerMP1::UpdateOrbitOrientation(float, CStateManager&): x0 = the player; turns the body to face the lock-on target (skipped by free lock-on)
+entryhook 0x7100c77854
+#   CPlayerMP1::ComputeFreeLook(CFinalInput const&, CStateManager const&): x0 = the player; with a lock the pitch target is the direction to the target
+entryhook 0x7100c71638
+#   CPlayerMP1::TurnInput(CStateManager const&, CFinalInput const&) const: x0 = the player; returns the turn input in s0 (zero while locked on)
+entryhook 0x7100cefa54
+#   CPlayerCameraBobMP1::UpdateViewWander(float, CStateManager&, CEntityMP1&): x0 = the bob object; the slow wandering of the view while standing still
+entryhook 0x7100d0ada0
+#   CPlayerCameraBobMP1::CalculateMovingTranslation(float&, float&) const: x0 = the bob object, x1 and x2 = the sideways and vertical walking bob
+entryhook 0x7100d0b17c
+#   CFirstPersonCameraMP1::UpdateTransform(CStateManager&, float): x0 = the camera; while locked on it eases its own view toward the target (skipped by free lock-on)
+entryhook 0x7100d710ac
+#   CPlayerMP1::ValidateCurrentOrbitTargetId(CStateManager&): x0 = the player; returns why the lock breaks (5 = the view turned away); free lock-on turns that into "still locked"
+entryhook 0x7100c765d0
