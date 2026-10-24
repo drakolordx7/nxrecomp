@@ -259,6 +259,12 @@ public:
     // section and constant data come from it).
     const ShaderInfo* find_by_hash(const std::string& hash);
 
+    // A ShaderInfo for pipeline building only (S24, the shader preparation): SPIR-V, stage and reflection from <hash>.spv and its results.tsv line,
+    // no code block, no control section, no constant data. Kept apart from find(): the game's own ShaderInfos never come from here. The
+    // pointer stays valid for the life of the cache; only the SPIR-V words can be dropped (release_stub_spirv) and are read again by
+    // load_stub. Null if the hash has no usable .spv. Any thread.
+    const ShaderInfo* load_stub(const std::string& hash);
+    void release_stub_spirv(const ShaderInfo* s);   // frees the words; the caller guarantees nobody is using them (single threaded point)
     size_t loaded() const;   // ShaderInfos built so far
     size_t missing() const;  // hashes asked for that have no usable .spv (or do not reflect)
     bool is_open() const;
@@ -276,6 +282,7 @@ private:
     std::unordered_map<std::string, std::pair<size_t, size_t>> lines_;     // hash -> (offset, length) in results_
     std::unordered_map<std::string, std::unique_ptr<ShaderInfo>> by_hash_; // null: no usable .spv (logged once)
     std::unordered_set<uintptr_t> bad_controls_;                           // malformed control pointers (logged once)
+    std::unordered_map<std::string, std::unique_ptr<ShaderInfo>> stubs_;   // load_stub (see there); null: no usable .spv
     size_t loaded_ = 0, missing_ = 0;
 };
 

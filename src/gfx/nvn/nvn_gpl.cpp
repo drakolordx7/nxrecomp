@@ -22,8 +22,11 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <mutex>
 #include <set>
@@ -45,6 +48,7 @@
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "nxrt/overlay.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_pipeline.h"
 
@@ -64,7 +68,7 @@ struct Job {
     const ShaderInfo* st[3] = {};
     RasterKey r;
     bool fragment = false;      // the fragment shader part (r unused) instead of the pre-raster part
-};
+    };
 
 struct Entry {
     int state = 0;              // 1 building, 2 done (pipe may be null: the build failed)
@@ -75,6 +79,8 @@ std::mutex g_mu;
 std::condition_variable g_cv;
 bool g_inited = false, g_enabled = false, g_stop = false, g_lto = false;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_discard{false};
+std::atomic<uint64_t> g_prep_fast{0};          // shader preparation: parts that took under 2 ms (the driver found them in its cache)          // shader preparation: a part is thrown away as soon as it is made (the driver keeps what it compiled)
 std::unordered_map<std::string, Entry> g_libs;             // node based: a reference to an entry stays valid while others are added
 std::deque<Job> g_hot_q, g_cold_q;    // hot: programs a command buffer was recorded with (oldest first); cold: set but not yet bound (newest first)
 std::vector<RasterKey> g_rasters;
@@ -84,6 +90,14 @@ std::vector<std::thread> g_workers;
 GplStats g_stats;
 uint64_t g_logged_sig = 0;
 int g_fail_streak = 0;
+int g_running = 0;                         // jobs being built by the workers right now
+
+// Tells the overlay how much shader work is waiting (queued + running). Caller holds g_mu.
+void publish_backlog_locked() { nxrt::gfx::set_shader_backlog(static_cast<int>(g_hot_q.size() + g_cold_q.size()) + g_running); }
+
+thread_local const GraphicsKey* t_link_key = nullptr;      // the draw being linked on this thread, for the log line of a slow part
+
+void predict_int_attributes(GraphicsKey& k);
 
 using Clock = std::chrono::steady_clock;
 double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
@@ -152,7 +166,8 @@ VkPipeline create_part(VkGraphicsPipelineCreateInfo& gi, const char* what) {
     if (g_lto) gi.flags |= VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
     VkPipeline p = VK_NULL_HANDLE;
     const auto t0 = Clock::now();
-    const VkResult r = vkCreateGraphicsPipelines(vkdev(), pipeline_cache_handle(), 1, &gi, nullptr, &p);
+    // shader preparation keeps nothing in the app cache file (it would grow to hundreds of MB); the driver's own cache holds the result
+    const VkResult r = vkCreateGraphicsPipelines(vkdev(), g_discard.load(std::memory_order_relaxed) ? VK_NULL_HANDLE : pipeline_cache_handle(), 1, &gi, nullptr, &p);
     if (r != VK_SUCCESS) {
         NXLOG_E(kTag, "pipeline part (%s) failed (%d)", what, static_cast<int>(r));
         return VK_NULL_HANDLE;
@@ -318,9 +333,27 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
         p = build();
     }
     const double ms = ms_since(t0);
+    if (p && g_discard.load(std::memory_order_relaxed)) {
+        if (ms < 2.0) g_prep_fast.fetch_add(1, std::memory_order_relaxed);
+        vkDestroyPipeline(vkdev(), p, nullptr);
+        p = VK_NULL_HANDLE;
+    }
     lk.lock();
     e.pipe = p;
     e.state = 2;
+    if (render && ms > 8.0 && key[0] != 'V' && key[0] != 'O' && t_link_key) {      // g_mu is held here
+        const std::array<const ShaderInfo*, 3> prog = {t_link_key->stage[0], t_link_key->stage[1], t_link_key->stage[2]};
+        std::string act, pred;
+        for (const SpvIntSlot& sl : key_int_slots(*t_link_key)) act += " " + std::to_string(sl.location) + (sl.is_signed ? "s" : "u");
+        { GraphicsKey pk; pk.stage[0] = t_link_key->stage[0]; predict_int_attributes(pk);
+          for (const SpvIntSlot& sl : key_int_slots(pk)) pred += " " + std::to_string(sl.location) + (sl.is_signed ? "s" : "u"); }
+        NXLOG_W(kTag, "program was set %d, bound %d; queue %zu hot %zu cold, %d running; integer slots of the draw:%s, predicted:%s",
+                static_cast<int>(g_seen.count(prog)), static_cast<int>(g_hot.count(prog)), g_hot_q.size(), g_cold_q.size(), g_running, act.c_str(), pred.c_str());
+    }
+    if (render && ms > 8.0 && key[0] != 'V' && key[0] != 'O' && t_link_key)
+        NXLOG_W(kTag, "a %s part took %.1f ms at the draw (vs %s fs %s, polygon mode %d, depth clamp %d, neg one %d, %u attributes)",
+                key[0] == 'P' ? "pre-raster" : "fragment", ms, t_link_key->stage[0] ? t_link_key->stage[0]->hash.c_str() : "-",
+                t_link_key->stage[1] ? t_link_key->stage[1]->hash.c_str() : "-", t_link_key->polygon_mode, t_link_key->depth_clamp, t_link_key->depth_neg_one, t_link_key->attr_count);
     if (render) {
         ++g_stats.parts_at_draw;
         g_stats.draw_part_ms += ms;
@@ -332,12 +365,39 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
     return p;
 }
 
+// Vertex shaders that read integer attributes (skinned meshes, instances) run as a patched variant, which depends on the vertex formats of the draw. The
+// code of the shader says where the integers go in (spirv_predict_int_inputs); the sign comes from the last draw that fed integers (the engine's
+// vertex data is unsigned unless a draw showed otherwise). The key gets those attributes, so resolve_stage_modules makes the variant a draw with
+// them would use. A draw whose slots differ builds its own part.
+std::atomic<bool> g_pred_signed{false};
+std::mutex g_pred_mu;
+std::unordered_map<const ShaderInfo*, std::vector<SpvIntSlot>> g_pred_cache;
+
+void predict_int_attributes(GraphicsKey& k) {
+    if (!k.stage[0]) return;
+    std::vector<SpvIntSlot> slots;
+    {
+        std::lock_guard<std::mutex> lk(g_pred_mu);
+        auto it = g_pred_cache.find(k.stage[0]);
+        if (it == g_pred_cache.end()) it = g_pred_cache.emplace(k.stage[0], spirv_predict_int_inputs(k.stage[0]->spirv)).first;
+        slots = it->second;
+    }
+    const bool sg = g_pred_signed.load(std::memory_order_relaxed);
+    for (const SpvIntSlot& sl : slots)
+        if (k.attr_count < 16) {
+            KeyAttr& a = k.attr[k.attr_count++];
+            a.location = static_cast<uint8_t>(sl.location);
+            a.format = sg ? VK_FORMAT_R32_SINT : VK_FORMAT_R32_UINT;
+        }
+}
+
 void run_job(const Job& j) {
     const ShaderInfo* st6[6] = {j.st[0], j.st[1], j.st[2], nullptr, nullptr, nullptr};
     const ProgLayout* pl = prog_layout(st6);
     if (!pl) return;
     GraphicsKey k;
     for (int i = 0; i < 3; ++i) k.stage[i] = j.st[i];
+    if (!j.fragment) predict_int_attributes(k);
     StageModules sm;
     if (!resolve_stage_modules(k, &sm)) return;
     if (j.fragment) {
@@ -363,8 +423,15 @@ void worker_main() {
                 j = g_cold_q.back();
                 g_cold_q.pop_back();
             }
+            ++g_running;
+            publish_backlog_locked();
         }
         run_job(j);
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            --g_running;
+            publish_backlog_locked();
+        }
     }
 }
 
@@ -400,6 +467,7 @@ void learn_raster(const RasterKey& r) {
         g_cold_q.push_back(j);
         ++g_stats.jobs;
     }
+    publish_backlog_locked();
     g_cv.notify_all();
 }
 
@@ -442,6 +510,7 @@ static void queue_program(const std::array<const ShaderInfo*, 3>& prog, bool fro
     g_stats.jobs += jobs.size();
     auto& q = front ? g_hot_q : g_cold_q;
     q.insert(q.end(), jobs.begin(), jobs.end());
+    publish_backlog_locked();
     g_cv.notify_all();
 }
 
@@ -487,11 +556,14 @@ VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout) {
     r.clamp = key.depth_clamp;
     r.neg = key.depth_neg_one;
     learn_raster(r);
+    if (const std::vector<SpvIntSlot> ints = key_int_slots(key); !ints.empty()) g_pred_signed.store(ints[0].is_signed, std::memory_order_relaxed);
+    t_link_key = &key;
     VkPipeline parts[4];
     parts[0] = get_part(vi_key(key), true, [&] { return build_vi(key); });
     parts[1] = get_part(pre_key(sm, layout, r), true, [&] { return build_pre(sm.m[0], sm.m[2], layout, r); });
     parts[2] = get_part(fs_key(sm, layout), true, [&] { return build_fs(sm.m[1], layout); });
     parts[3] = get_part(fo_key(key), true, [&] { return build_fo(key); });
+    t_link_key = nullptr;
     bool ok = true;
     for (VkPipeline p : parts) ok = ok && p != VK_NULL_HANDLE;
     VkPipeline pipe = VK_NULL_HANDLE;
@@ -558,9 +630,183 @@ void gpl_stop() {
         workers.swap(g_workers);
         g_hot_q.clear();
         g_cold_q.clear();
+        publish_backlog_locked();
     }
     g_cv.notify_all();
     for (auto& t : workers) t.join();
+}
+
+// ---- shader preparation ----------------------------------------------------------------------------------------------------------
+namespace {
+struct ProgHashes { uint64_t vs, fs, gs; };
+
+bool read_programs_file(const std::string& path, std::vector<ProgHashes>* out, std::string* error) {
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) { *error = "cannot open " + path; return false; }
+    char head[16];
+    bool ok = std::fread(head, 1, 16, f) == 16 && std::memcmp(head, "MPRPRG01", 8) == 0;
+    uint32_t count = 0;
+    if (ok) std::memcpy(&count, head + 8, 4);
+    if (ok) {
+        out->resize(count);
+        ok = count == 0 || std::fread(out->data(), sizeof(ProgHashes), count, f) == count;
+    }
+    std::fclose(f);
+    if (!ok) *error = path + " is not a program list";
+    return ok;
+}
+
+std::string hex16(uint64_t h) {
+    char b[20];
+    std::snprintf(b, sizeof b, "%016llx", static_cast<unsigned long long>(h));
+    return b;
+}
+}  // namespace
+
+// The state file next to the program list: which GPU and driver the preparation ran on and whether it finished. The key changes with the
+// GPU, the driver version, the pipeline cache UUID (a driver update changes it) and the version of the part scheme in this file.
+constexpr int kPrepareScheme = 1;
+std::string prepare_key(uint64_t programs) {
+    const VkPhysicalDeviceProperties& p = device().properties();
+    char uuid[40];
+    for (int i = 0; i < 16; ++i) std::snprintf(uuid + 2 * i, 3, "%02x", p.pipelineCacheUUID[i]);
+    char b[512];
+    std::snprintf(b, sizeof b, "scheme=%d programs=%llu gpu=%s driver=%u api=%u cache=%s salt=%s", kPrepareScheme, static_cast<unsigned long long>(programs),
+                  p.deviceName, p.driverVersion, p.apiVersion, uuid, config_get_str("nvn", "spirv_salt", "").c_str());
+    return b;
+}
+
+bool prepare_state_ready(const std::string& path, const std::string& key) {
+    std::ifstream f(path);
+    if (!f) return false;
+    std::string l;
+    bool key_ok = false, done = false;
+    while (std::getline(f, l)) {
+        while (!l.empty() && l.back() == '\r') l.pop_back();
+        if (l == "key: " + key) key_ok = true;
+        if (l == "complete: 1") done = true;
+    }
+    return key_ok && done;
+}
+
+void write_prepare_state(const std::string& path, const std::string& key, const PrepareResult& r) {
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) return;
+    const char nl = 10;
+    f << "key: " << key << nl << "programs: " << r.programs << nl << "prepared: " << r.prepared << nl << "missing: " << r.missing_shaders << nl
+      << "failed: " << r.failed << nl << "seconds: " << r.seconds << nl << "complete: " << (r.cancelled ? 0 : 1) << nl;
+}
+
+bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
+    PrepareResult local;
+    PrepareResult& r = res ? *res : local;
+    r = PrepareResult{};
+    if (!device().features().graphics_pipeline_library) { r.error = "the GPU or driver does not support pipeline libraries"; return false; }
+    if (!shader_cache().is_open()) { r.error = "no shader cache is open"; return false; }
+    std::string file = o.programs_file;
+    if (file.empty()) file = (std::filesystem::path(shader_cache().dir()).parent_path() / "programs.bin").string();
+    std::vector<ProgHashes> progs;
+    if (!read_programs_file(file, &progs, &r.error)) return false;
+    r.programs = progs.size();
+    const std::string state_path = (std::filesystem::path(file).parent_path() / "prepare.state").string();
+    const std::string key = prepare_key(r.programs);
+    if (o.only_if_needed && !o.force && prepare_state_ready(state_path, key)) {
+        r.already_ready = true;
+        return true;
+    }
+    // fragment shader first: programs that share one are made together, so the part of a shared fragment shader is made once per batch
+    std::sort(progs.begin(), progs.end(), [](const ProgHashes& a, const ProgHashes& b) {
+        return a.fs != b.fs ? a.fs < b.fs : a.vs != b.vs ? a.vs < b.vs : a.gs < b.gs;
+    });
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const int threads = o.threads > 0 ? o.threads : static_cast<int>(hw > 3 ? hw - 2 : 1);
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        g_rasters.assign(1, RasterKey{});
+        g_stop = false;
+    }
+    g_prep_fast.store(0);
+    g_discard.store(true);
+    const auto t0 = Clock::now();
+    constexpr size_t kBatch = 192;                       // programs per batch; the shader modules and SPIR-V of a batch are released after it
+    std::atomic<uint64_t> done{0}, prepared{0}, missing{0}, failed{0}, parts{0};
+    std::atomic<bool> cancel{false};
+    std::mutex progress_mu;
+    auto report = [&] {
+        if (!o.progress) return;
+        std::unique_lock<std::mutex> lk(progress_mu, std::try_to_lock);
+        if (!lk.owns_lock()) return;
+        if (!o.progress(done.load(), r.programs)) cancel.store(true);
+    };
+    for (size_t base = 0; base < progs.size() && !cancel.load(); base += kBatch) {
+        const size_t end = std::min(progs.size(), base + kBatch);
+        std::atomic<size_t> next{base};
+        std::vector<const ShaderInfo*> used;
+        std::mutex used_mu;
+        auto work = [&] {
+            set_compile_thread_priority();
+            std::vector<const ShaderInfo*> mine;
+            for (;;) {
+                if (cancel.load()) break;
+                const size_t i = next.fetch_add(1);
+                if (i >= end) break;
+                const ProgHashes& ph = progs[i];
+                const ShaderInfo* vs = shader_cache().load_stub(hex16(ph.vs));
+                const ShaderInfo* fs = shader_cache().load_stub(hex16(ph.fs));
+                const ShaderInfo* gs = ph.gs ? shader_cache().load_stub(hex16(ph.gs)) : nullptr;
+                if (!vs || !fs || (ph.gs && !gs)) {
+                    missing.fetch_add(1);
+                } else {
+                    mine.push_back(vs); mine.push_back(fs);
+                    if (gs) mine.push_back(gs);
+                    const ShaderInfo* st6[6] = {vs, fs, gs, nullptr, nullptr, nullptr};
+                    const ProgLayout* pl = prog_layout(st6);
+                    GraphicsKey k;
+                    k.stage[0] = vs; k.stage[1] = fs; k.stage[2] = gs;
+                    predict_int_attributes(k);
+                    StageModules sm;
+                    bool ok = pl && resolve_stage_modules(k, &sm) && sm.m[0] && sm.m[1];
+                    if (ok) {
+                        const auto tp = Clock::now();
+                        std::vector<RasterKey> rs;
+                        { std::lock_guard<std::mutex> lk(g_mu); rs = g_rasters; }
+                        for (const RasterKey& rk : rs) {
+                            get_part(pre_key(sm, *pl, rk), false, [&] { return build_pre(sm.m[0], sm.m[2], *pl, rk); });
+                            parts.fetch_add(1);
+                        }
+                        get_part(fs_key(sm, *pl), false, [&] { return build_fs(sm.m[1], *pl); });
+                        parts.fetch_add(1);
+                        (void)tp;
+                    }
+                    if (ok) prepared.fetch_add(1); else failed.fetch_add(1);
+                }
+                done.fetch_add(1);
+                report();
+            }
+            std::lock_guard<std::mutex> lk(used_mu);
+            used.insert(used.end(), mine.begin(), mine.end());
+        };
+        std::vector<std::thread> pool;
+        for (int t = 1; t < threads; ++t) pool.emplace_back(work);
+        work();
+        for (auto& t : pool) t.join();
+        // between batches nothing is creating pipelines: drop the batch's modules, parts and SPIR-V
+        module_cache_clear();
+        {
+            std::lock_guard<std::mutex> lk(g_mu);
+            g_libs.clear();
+        }
+        for (const ShaderInfo* si : used) shader_cache().release_stub_spirv(si);
+    }
+    g_discard.store(false);
+    if (o.progress) o.progress(done.load(), r.programs);
+    r.fast_parts = g_prep_fast.load();
+    r.prepared = prepared.load(); r.missing_shaders = missing.load(); r.failed = failed.load(); r.parts = parts.load();
+    r.cancelled = cancel.load();
+    r.seconds = ms_since(t0) / 1000.0;
+    if (!r.cancelled && r.failed == 0) write_prepare_state(state_path, key, r);
+    else if (r.cancelled) write_prepare_state(state_path, key, r);
+    return true;
 }
 
 void gpl_shutdown() {

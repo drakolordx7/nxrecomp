@@ -894,6 +894,64 @@ const ShaderInfo* ShaderCache::load_locked(const std::string& hash, const uint8_
     return out;
 }
 
+const ShaderInfo* ShaderCache::load_stub(const std::string& hash) {
+    std::string dir, record;
+    bool have_record = false;
+    ShaderInfo* existing = nullptr;
+    {
+        std::lock_guard lk(lock_);
+        if (!open_) return nullptr;
+        auto it = stubs_.find(hash);
+        if (it != stubs_.end()) {
+            if (!it->second) return nullptr;
+            existing = it->second.get();
+            if (!existing->spirv.empty()) return existing;        // checked under the lock: another thread may be putting the words back
+        } else if (auto ln = lines_.find(hash); ln != lines_.end()) {
+            record = column_text(std::string_view(results_.data() + ln->second.first, ln->second.second), resources_col_);
+            have_record = true;
+        }
+        dir = dir_;
+    }
+    std::string bytes;
+    if (!read_file(dir + "/" + hash + ".spv", bytes) || bytes.empty() || bytes.size() % 4) {
+        if (!existing) {
+            std::lock_guard lk(lock_);
+            stubs_.emplace(hash, nullptr);
+        }
+        return nullptr;
+    }
+    std::vector<uint32_t> words(bytes.size() / 4);
+    std::memcpy(words.data(), bytes.data(), bytes.size());
+    if (existing) {                         // the words were dropped: put them back (the reflection is kept)
+        std::lock_guard lk(lock_);
+        if (existing->spirv.empty()) existing->spirv = std::move(words);
+        return existing;
+    }
+    auto info = std::make_unique<ShaderInfo>();
+    info->hash = hash;
+    std::string error;
+    if (!reflect_spirv(words.data(), words.size(), info->refl, &error)) info.reset();
+    if (info && have_record) {
+        std::vector<HarnessResource> list;
+        if (!parse_harness_resources(record, list) || !apply_harness(info->refl, list)) info.reset();
+    }
+    if (info) {
+        info->stage = info->refl.stage;
+        info->spirv = std::move(words);
+    }
+    std::lock_guard lk(lock_);
+    auto [it, fresh] = stubs_.emplace(hash, std::move(info));
+    if (!fresh && it->second && it->second->spirv.empty() && !words.empty()) it->second->spirv = std::move(words);
+    return it->second.get();
+}
+
+void ShaderCache::release_stub_spirv(const ShaderInfo* s) {
+    std::lock_guard lk(lock_);
+    auto it = stubs_.find(s->hash);
+    if (it == stubs_.end() || it->second.get() != s) return;
+    std::vector<uint32_t>().swap(it->second->spirv);
+}
+
 const ShaderInfo* ShaderCache::find_by_hash(const std::string& hash) {
     std::lock_guard lk(lock_);
     auto it = by_hash_.find(hash);
