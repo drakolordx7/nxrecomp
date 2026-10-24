@@ -40,11 +40,9 @@ lock_mode = classic
 free_lock_margin = 0.15
 
 [camera]
-# 1 is the game's own behaviour, 0 turns the effect off.
-# idle_sway: the slow drifting of the first-person view while Samus stands still.
-idle_sway = 1
-# walk_bob: the up-and-down sway of the view while walking.
-walk_bob = 1
+# 1: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the whole view (the game's own).
+# 0: the view follows only the mouse and the stick; those movements move the gun on screen and the view stays still.
+gun_drives_view = 1
 
 [pad]
 label_abxy = 1

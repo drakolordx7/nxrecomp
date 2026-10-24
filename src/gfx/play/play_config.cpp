@@ -307,8 +307,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "free_lock_margin") return set_real(0.0, 0.4, &s->aim.free_lock_margin);
             break;
         case Sec::Camera:
-            if (k == "idle_sway") return set_bool(&s->camera.idle_sway);
-            if (k == "walk_bob") return set_bool(&s->camera.walk_bob);
+            if (k == "gun_drives_view") return set_bool(&s->camera.gun_drives_view);
             break;
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
@@ -735,8 +734,7 @@ std::string format_settings(const Settings& s) {
     kv("lock_mode", lock_mode_name(s.aim.lock_mode));
     kv("free_lock_margin", num(s.aim.free_lock_margin));
     o += "\n[camera]\n";
-    kv("idle_sway", flag(s.camera.idle_sway));
-    kv("walk_bob", flag(s.camera.walk_bob));
+    kv("gun_drives_view", flag(s.camera.gun_drives_view));
 
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));

@@ -31,9 +31,14 @@ struct AimLayout {
     uint32_t camera_state = 0x4d0;           // EPlayerCameraState, 0 = first person (SetCameraState 0xc6bd28)
     uint32_t morph_state = 0x4d4;            // 0 = unmorphed (GetMorphBallTransitionState 0xc686fc)
     uint32_t orbit_state = 0x4e0;            // EPlayerOrbitState, 0 = none, 1 = orbit object (the normal lock-on), 2 point, 3 carcass, 4 forced, 5 grapple (SetOrbitState 0xc77e5c)
-    uint32_t orbit_reached = 0x550;          // byte: set by ValidateCurrentOrbitTargetId once the player has faced the target within 1 degree; from then on the lock breaks when the view
+    uint32_t orbit_reached = 0x550;          // byte: set by ValidateCurrentOrbitTargetId once the view has centred the target (within 1 degree); from then on the lock breaks when the view
                                              // turns away from the target by more than the tweak's angle. Also read by UpdateOrbitOrientation and by the aiming cursor, which only
-                                             // follows the locked target (and swings the arm cannon to it) while it is set. Free lock-on keeps it set and stops the break (play_lockcam.cpp).
+                                             // follows the locked target (and swings the arm cannon to it) while it is set. Cleared when the lock is let go. Free lock-on starts when it is set.
+    uint32_t orbit_target_pos = 0x4f0;       // 3 floats: world position of the locked target (CPlayerMP1::UpdateOrbitInput refreshes it every frame while locked on an object)
+    // first-person camera object (CFirstPersonCameraMP1)
+    uint32_t fp_base_xf = 660;               // 3x4 floats: the camera's own transform before the camera bob is applied (UpdateTransform keeps it; translation = the eye)
+    uint32_t fp_vertical_fov = 0x25c;        // CGameCameraMP1::CurrentFOV_acc: the vertical field of view in degrees (55 for the first person camera)
+    uint32_t fp_aspect = 0x264;              // CGameCamera: the picture's width / height the camera projects with
     uint32_t free_look_pitch = 0x5cc;        // float radians, + = up
     uint32_t free_look_target = 0x5d0;       // float radians: the pitch CPlayerMP1::UpdateFreeLook (every Think) eases free_look_pitch toward; the input code sets it from the stick
     // CStateManager -> CStateManagerGameLogicMP1 -> CCameraManagerMP1
@@ -77,13 +82,30 @@ public:
     GameHints hints(uint64_t player) const;       // player may be 0: only the player-state fields are read then
 
     // Free lock-on ([aim] lock_mode = free, S32): the lock stays, but the mouse keeps the view. Set from the settings at the frame boundary.
-    //   free_lock_active(): the setting is on and the game is in the ordinary lock-on (orbit state 1: an object, not a grapple, a forced orbit, a point
-    //   or a carcass) and the visor is not the scan visor (scanning keeps the classic lock, which centres the object). While it is active the
-    //   aim gate stays open, the hooks in play_lockcam.cpp stop the game from turning the body and the pitch to the target, and apply() keeps
-    //   the "reached" flag set (the arm cannon follows the target) while play_lockcam.cpp stops the view-angle break of the lock.
+    //   free_lock_active(): the setting is on, the game is in the ordinary lock-on (orbit state 1: an object, not a grapple, a forced orbit, a point
+    //   or a carcass), the visor is not the scan visor (scanning keeps the classic lock) and the game's own lock-on has already centred the target
+    //   (the "reached" flag). Before that everything is the game's own, so a new lock starts exactly like the classic one. While it is active the
+    //   aim gate stays open, the hooks in play_lockcam.cpp stop the game from turning the body, the pitch and the camera to the target and from breaking the
+    //   lock when the view turns away, and the view is held so that the target stays inside the margin (keep_target_in_view).
     void set_free_lock(bool on) { free_lock_.store(on, std::memory_order_relaxed); }
     bool free_lock_setting() const { return free_lock_.load(std::memory_order_relaxed); }
     bool free_lock_active(uint64_t player) const;
+    // margin: fraction of the screen kept free along every edge; aspect: width / height of the 3D picture; fov_offset_deg: [display] fov_offset.
+    void set_free_lock_view(double margin, double aspect, double fov_offset_deg);
+
+    // What the view must do so that the locked target stays inside the margin. yaw (body heading, radians, + = turn left) and pitch (radians, + = up) are the
+    // values the view is about to have; they are changed in place and true is returned when they had to be. False when the geometry cannot be read.
+    bool keep_target_in_view(uint64_t player, uint64_t mgr, double* yaw, double* pitch) const;
+    // The player's body transform: where it lives and what it is (false when unreadable).
+    bool body_transform(uint64_t player, uint64_t* xf_addr, float xf[12]) const;
+    // The view pitch the game holds now (CPlayerMP1+0x5cc); false when unreadable.
+    bool view_pitch(uint64_t player, double* pitch) const;
+    // The yaw speed (radians per second) of a full right-stick turn, from the game's player tweak (what ComputeMovement turns the body with); 0 when unreadable.
+    double stick_turn_rate() const;
+    // Another part of the code changed the pitch: keep the aim in step with it.
+    void set_pitch(double pitch) { pitch_ = pitch; pitch_valid_ = true; }
+
+    const AimLayout& layout() const { return l_; }
 
     // One ProcessInput. original runs the game's own function (may be empty). Returns true when aim was applied (the gate was open).
     // dx, dy: raw mouse counts since the previous call (the caller takes them once per rendered frame).
@@ -109,7 +131,13 @@ private:
     AimBlock block_ = AimBlock::None;
     uint64_t applied_ = 0;
     std::atomic<bool> free_lock_{false};
+    std::atomic<double> margin_{0.15}, aspect_{16.0 / 9.0}, fov_offset_{0.0};
 };
+
+// Turns the view (yaw about Y, + = turn left; pitch + = up; radians) just far enough that the direction d (target minus eye, world axes, Y up) lies inside the
+// box |x| <= tan_h * z and |y| <= tan_v * z of the camera space (tan_h, tan_v: tangent of the half field of view times the allowed fraction of the screen).
+// Pitch stays within +-pitch_limit. Targets at the eye or behind the view are turned to first. Returns true when yaw or pitch changed. Public for the tests.
+bool keep_in_view(const double d[3], double* yaw, double* pitch, double tan_h, double tan_v, double pitch_limit);
 
 // The transform maths (row-major 3x4: three rows of {r0, r1, r2, translation}); public for the tests.
 double yaw_of_transform(const float xf[12]);                               // atan2(xf[2], xf[0]): heading about Y (the world is Y up, forward is +Z at 0, + = turn left)

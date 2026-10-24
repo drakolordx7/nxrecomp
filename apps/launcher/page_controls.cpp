@@ -104,7 +104,7 @@ public:
             L"Lock-on camera", {L"Classic (the view turns to the target)", L"Free (you keep control of the view)"},
             [](const Settings& s) { return s.aim.lock_mode == LockMode::Free ? 1 : 0; },
             [](Settings& s, int i) { s.aim.lock_mode = i == 1 ? LockMode::Free : LockMode::Classic; });
-        f.hint(L"Free keeps the game's lock, homing shots and strafing but does not turn the view. Scanning always uses classic.", 2);
+        f.hint(L"Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.", 3);
         f.slider(
             L"Free lock edge margin", 0, 40, [](const Settings& s) { return margin_pos(s.aim.free_lock_margin); },
             [this](Settings& s, int pct) {
@@ -113,11 +113,8 @@ public:
             },
             margin_text);
         f.checkbox(
-            L"Idle view sway (the view drifts while standing still)", [](const Settings& s) { return s.camera.idle_sway; },
-            [](Settings& s, bool v) { s.camera.idle_sway = v; });
-        f.checkbox(
-            L"Walking view bob", [](const Settings& s) { return s.camera.walk_bob; },
-            [](Settings& s, bool v) { s.camera.walk_bob = v; });
+            L"Gun drives the view (the game's own)", [](const Settings& s) { return s.camera.gun_drives_view; },
+            [](Settings& s, bool v) { s.camera.gun_drives_view = v; });
 
         f.heading(L"Button prompts");
         f.combo(

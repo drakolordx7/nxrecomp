@@ -259,7 +259,7 @@ void mouse_tab(Page& p) {
         ImGui::EndCombo();
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Free keeps the game's lock, homing shots and strafing but does not turn the view. Scanning always uses classic.");
+    ImGui::TextDisabled("Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.");
     ImGui::PopTextWrapPos();
     ImGui::BeginDisabled(p.edit.aim.lock_mode != LockMode::Free);
     int margin_pct = static_cast<int>(std::lround(p.edit.aim.free_lock_margin * 100.0));
@@ -268,8 +268,10 @@ void mouse_tab(Page& p) {
         mark(p);
     }
     ImGui::EndDisabled();
-    if (ImGui::Checkbox("Idle view sway (the view drifts while standing still)", &p.edit.camera.idle_sway)) mark(p);
-    if (ImGui::Checkbox("Walking view bob", &p.edit.camera.walk_bob)) mark(p);
+    if (ImGui::Checkbox("Gun drives the view (the game's own: idle sway, walking bob and landing move the view)", &p.edit.camera.gun_drives_view)) mark(p);
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("On: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the whole view. Off: the view follows only the mouse and the stick, and those movements move the gun on screen instead.");
+    ImGui::PopTextWrapPos();
 
     ImGui::Spacing();
     ImGui::TextWrapped("Raw mouse input, no acceleration. Aim only applies in the first-person view when not locked on, not in the morph ball and not in a cutscene. Holding the free look key (Alt) turns the view without turning Samus.");

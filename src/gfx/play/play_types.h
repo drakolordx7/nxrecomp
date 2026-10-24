@@ -188,7 +188,8 @@ struct FpsSettings {
 
 // ---- lock-on and camera feel (S32) --------------------------------------------------------------------------------------------
 // [aim] lock_mode: classic is the game's own lock-on (the view turns to the target); free starts the same way (the game centres the target)
-// and then lets the mouse and the right stick move the view, as long as the target stays on the screen (free_lock_margin). [camera] idle_sway and walk_bob: 1 is the game's own behaviour.
+// and then lets the mouse and the right stick move the view, as long as the target stays on the screen (free_lock_margin).
+// [camera] gun_drives_view: 1 is the game's own behaviour (the gun's idle drift, walking bob and landing dip move the view); 0 keeps the view still.
 enum class LockMode : uint8_t { Classic = 0, Free };
 const char* lock_mode_name(LockMode m);                       // "classic" "free"
 bool parse_lock_mode(const std::string& s, LockMode* out);    // case-insensitive
@@ -198,8 +199,7 @@ struct AimSettings {
                                       // fraction of the screen size kept free along every edge (0 = right at the edge, 0.15 = the middle 70 percent)
 };
 struct CameraSettings {
-    bool idle_sway = true;     // the slow wandering of the first-person view while standing still
-    bool walk_bob = true;      // the up-and-down sway of the view while walking
+    bool gun_drives_view = true;   // [camera] gun_drives_view: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the view
 };
 
 struct Settings {
