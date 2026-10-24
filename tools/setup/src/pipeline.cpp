@@ -258,6 +258,26 @@ std::string find_shader_source(const SetupOptions& o) {
     return "";
 }
 
+// True when an earlier run in out_dir finished with the shaders installed: its state says finished, its mpr.ini has the shader_cache
+// line that run wrote, and results.tsv is on disk. Setup then keeps those shaders when no pack is given.
+bool shader_install_present(const SetupOptions& o, State& st) {
+    if (o.out_dir.empty() || st.get_meta("finished") != "1") return false;
+    std::string ini;
+    if (!read_text_file(path_join(o.out_dir, "mpr.ini"), ini) || ini.find("shader_cache = shader_cache/spirv") == std::string::npos)
+        return false;
+    return path_exists(path_join(path_join(o.out_dir, "shader_cache\\spirv"), "results.tsv"));
+}
+
+// The run can go on without a pack: a pack was found, an earlier run installed the shaders, or --no-shaders was given.
+bool shaders_available(const SetupOptions& o, State& st) {
+    return !find_shader_source(o).empty() || shader_install_present(o, st) || o.allow_no_shaders;
+}
+
+std::string shader_pack_missing_text() {
+    return "Shader pack not found. Put shader_cache.mprshc in the same folder as the setup program (" + exe_dir() +
+           "), or give its path with --shader-pack. The game cannot draw anything without it.";
+}
+
 std::string make_ini(int quality, bool with_shaders) {
     std::string s =
         "; Written by mpr_setup. Setup rewrites this file only while this first line is present; delete the line to keep your edits.\n"
@@ -327,6 +347,9 @@ InputSummary inspect_input(const SetupOptions& o) {
             s.supported = false;
             s.problem = "Not enough free space: setup needs about " + gb(s.disk_needed) + " and the drive has " + gb(s.disk_free) +
                         " free.";
+        } else if (!shaders_available(o, st)) {
+            s.supported = false;
+            s.problem = shader_pack_missing_text();
         }
     } catch (const Error& e) {
         if (e.kind == Fail::Cancelled) throw;
@@ -390,6 +413,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         // ---- Space -----------------------------------------------------------------------------------------------------
         t0 = begin(Stage::Space, 0, "");
         {
+            if (!shaders_available(o, st)) fail(Fail::Input, "%s", shader_pack_missing_text().c_str());
             const std::string exedir = path_join(o.out_dir, "exefs"), romdir = path_join(o.out_dir, "romfs");
             u64 need = 0;
             for (auto& e : d->exefs->entries()) need += bytes_missing(exedir, e.name, e.size);
@@ -558,8 +582,12 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         {
             const std::string src = find_shader_source(o);
             t0 = begin(Stage::ShaderCache, 0, "files");
-            if (src.empty()) {
-                MPRS_LOGI("No shader cache supplied with this build; skipping (the game compiles shaders as it needs them).");
+            if (src.empty() && shader_install_present(o, st)) {
+                MPRS_LOGI("No shader pack given; keeping the shaders already installed in shader_cache\\spirv.");
+                shaders = true;
+            } else if (src.empty()) {
+                if (!o.allow_no_shaders) fail(Fail::Input, "%s", shader_pack_missing_text().c_str());
+                MPRS_LOGW("Skipping the shader pack (--no-shaders). The game will not draw anything until shaders are installed.");
             } else {
                 bool announced = false;
                 ShaderInstallResult sr = install_shader_cache(

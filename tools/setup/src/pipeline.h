@@ -5,7 +5,7 @@
 //   exefs/            the NSOs and main.npdm (rtld, main, sdk, subsdk0, main.npdm), byte-identical to the dump
 //   romfs/            the RomFS as loose files
 //   bc7_cache/        ASTC textures transcoded to BC7, one file per texture, in the runtime's cache format
-//   shader_cache/spirv/   translated shaders (only if a shader cache was supplied)
+//   shader_cache/spirv/   translated shaders from the shader pack (setup stops without a pack, unless --no-shaders or an earlier run installed them)
 //   mpr.ini           [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
 //   setup_state.tsv   what was done, hashes of every output file, quality used; makes re-runs cheap and resumable
 //   setup.log         the log of every run (appended); run_setup opens it itself (log_open) as soon as out_dir exists
@@ -28,7 +28,8 @@ struct SetupOptions {
     std::string out_dir;
     int bc7_quality = 3;                    // 0..6; the runtime reads [nvn] bc7_quality and its cache keys include it. Default = runtime default.
     int threads = 0;                        // 0 = all hardware threads for texture conversion (RomFS copy uses 3)
-    std::string shader_cache_src;           // folder or pack with the translated shaders to install; empty = skip
+    std::string shader_cache_src;           // shader pack file or folder with the translated shaders; empty = shader_cache.mprshc or shader_cache\ next to the setup program
+    bool allow_no_shaders = false;          // developer escape hatch (--no-shaders): with no pack, install without shaders. The game then draws nothing.
     bool verify_input = true;               // check the dump's own hashes (PFS0 hash table, RomFS integrity tree) before writing
     bool verify_output = false;             // re-hash files that are already present instead of trusting their size
     bool skip_textures = false;

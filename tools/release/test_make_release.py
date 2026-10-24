@@ -21,7 +21,7 @@ EXPECTED = sorted([
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
 TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None), 'launcher': (0, None)}
-EXE_REL = 'game-build/build/release/mpr.exe'
+EXE_REL = 'game-build/build/relpkg/mpr.exe'
 
 
 def write(path, data):
@@ -37,13 +37,13 @@ def make_fake_repo(root):
 
     w('LICENSE', b'GNU GENERAL PUBLIC LICENSE, fake text for the test\n')
     w(EXE_REL, b'MZ' + b'\x90' * 64 + b'fake mpr')
-    w('game-build/build/release/mpr.pdb', b'PDB fake, must never ship')
-    w('game-build/build/release/mpr.map', b'MAP fake, must never ship')
+    w('game-build/build/relpkg/mpr.pdb', b'PDB fake, must never ship')
+    w('game-build/build/relpkg/mpr.map', b'MAP fake, must never ship')
     for n in ('astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll'):
-        w('game-build/build/release/' + n, b'MZ fake dll')
+        w('game-build/build/relpkg/' + n, b'MZ fake dll')
     w('tools/setup/build/release/bin/mpr_setup.exe', b'MZ fake setup')
     w('tools/setup/build/release/bin/mpr_setup_cli.exe', b'MZ fake setup cli')
-    w('game-build/build/release/mpr_launcher.exe', b'MZ fake launcher')
+    w('game-build/build/relpkg/mpr_launcher.exe', b'MZ fake launcher')
     w('tools/setup/build/release/bin/astc2bc7.exe', b'MZ tool that must not ship')
     w('work/setup_test/shader_cache.mprshc', mr.PACK_MAGIC + b'\x00' * 1024)
     w('tools/release/templates/README.txt', b'readme\n')
@@ -227,16 +227,36 @@ class BuildTests(unittest.TestCase):
         self.assertIn('MPRSHC01', log)
         self.assertEqual(self.leftovers(self.out), [])
 
-    def test_local_path_is_warning_unless_strict(self):
-        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:\\dev\\x' + b'\x00' * 8)
+    def test_local_path_in_exe_is_refused_by_default(self):
+        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:/dev/x' + b'\x00' * 8)
         code, log = self.run_build()
-        self.assertEqual(code, 0, log)
-        self.assertIn('mpr.exe contains', log)
-        out2 = os.path.join(self.tmp, 'out-strict')
-        code, log = self.run_build(['--strict-paths'], out=out2)
         self.assertEqual(code, 3, log)
         self.assertIn('paths: mpr.exe contains', log)
-        self.assertEqual(self.leftovers(out2), [])
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_local_path_in_exe_only_warns_with_allow_local_paths(self):
+        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:/dev/x' + b'\x00' * 8)
+        code, log = self.run_build(['--allow-local-paths'])
+        self.assertEqual(code, 0, log)
+        self.assertIn('mpr.exe contains', log)
+        self.assertNotIn('paths: ', log)
+        self.assertNotIn('REFUSED', log)
+        self.assertIn('RELEASE OK', log)
+
+    def test_strict_paths_alias_is_accepted_and_is_the_default(self):
+        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:/dev/x' + b'\x00' * 8)
+        code, log = self.run_build(['--strict-paths'])
+        self.assertEqual(code, 3, log)
+        self.assertIn('paths: mpr.exe contains', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_local_path_in_launcher_is_refused_by_default(self):
+        write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'),
+              b'MZ' + b'launcher built at C:/dev/x' + b'\x00' * 8)
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('paths: mpr_launcher.exe contains', log)
+        self.assertEqual(self.leftovers(self.out), [])
 
     def test_real_size_rules_refuse_small_exe(self):
         code, log = self.run_build(real_sizes=True)
@@ -245,7 +265,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_dll_count_other_than_three_is_a_usage_error(self):
-        os.remove(os.path.join(self.repo, 'game-build', 'build', 'release', 'astcdec-sse2-shared.dll'))
+        os.remove(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'astcdec-sse2-shared.dll'))
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
         self.assertEqual(self.leftovers(self.out), [])
@@ -253,21 +273,21 @@ class BuildTests(unittest.TestCase):
     def test_launcher_ships_beside_mpr_exe_and_in_the_zip(self):
         code, log = self.run_build()
         self.assertEqual(code, 0, log)
-        src = os.path.join(self.repo, 'game-build', 'build', 'release', 'mpr_launcher.exe')
+        src = os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe')
         self.assertTrue(os.path.isfile(os.path.join(self.out, ROOT, 'mpr_launcher.exe')))
         with zipfile.ZipFile(os.path.join(self.out, ROOT + '.zip')) as z:
             self.assertIn(ROOT + '/mpr_launcher.exe', z.namelist())
             self.assertEqual(z.read(ROOT + '/mpr_launcher.exe'), read_bytes(src))
 
     def test_missing_launcher_is_a_usage_error(self):
-        os.remove(os.path.join(self.repo, 'game-build', 'build', 'release', 'mpr_launcher.exe'))
+        os.remove(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'))
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
         self.assertIn('mpr_launcher.exe not found', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_launcher_importing_vcruntime_is_refused(self):
-        write(os.path.join(self.repo, 'game-build', 'build', 'release', 'mpr_launcher.exe'),
+        write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'),
               make_pe(['kernel32.dll', 'vcruntime140.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
@@ -358,7 +378,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_dll_with_crt_delay_import_is_refused(self):
-        dll = os.path.join(self.repo, 'game-build', 'build', 'release', 'astcdec-avx2-shared.dll')
+        dll = os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'astcdec-avx2-shared.dll')
         write(dll, make_pe(['kernel32.dll'], delay=['MSVCP140.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
@@ -366,7 +386,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_unreadable_dll_is_a_warning_only(self):
-        dll = os.path.join(self.repo, 'game-build', 'build', 'release', 'astcdec-avx2-shared.dll')
+        dll = os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'astcdec-avx2-shared.dll')
         for label, data in (('not a PE file', b'plain text, not a program'),
                             ('cut short', make_pe(['vcruntime140.dll'])[:300])):
             with self.subTest(label):

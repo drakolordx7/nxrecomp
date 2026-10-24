@@ -3,7 +3,7 @@
 // folder and presses Start. The pipeline runs on a worker thread and reports only by posting messages; every control is
 // touched on the window thread.
 //   mpr_setup.exe [--input <file>] [--keys <file>[,<file>]] [--out <dir>] [--quality N] [--auto-start] [--exit-when-done]
-//                 [--no-message-box]
+//                 [--no-message-box] [--shader-pack <file or folder>] [--no-shaders]
 // --exit-when-done closes the window when the run ends (exit code 0 on success, else the Fail kind; 10 if the dump is not
 // supported) and skips the success summary box. --no-message-box suppresses every MessageBox.
 
@@ -119,6 +119,8 @@ struct CmdLine {
     bool auto_start = false;
     bool exit_when_done = false;
     bool no_message_box = false;
+    std::wstring shader_pack;   // --shader-pack <file or folder>; empty = look next to this program
+    bool no_shaders = false;    // --no-shaders (developer runs)
 };
 
 struct ComRelease {
@@ -198,10 +200,14 @@ CmdLine parse_command_line() {
             c.exit_when_done = true;
         } else if (a == L"--no-message-box") {
             c.no_message_box = true;
+        } else if (a == L"--shader-pack" || a == L"--shader-cache") {
+            c.shader_pack = trim_path(value());
+        } else if (a == L"--no-shaders") {
+            c.no_shaders = true;
         }
     }
     LocalFree(argv);
-    for (auto* p : {&c.input, &c.out}) {
+    for (auto* p : {&c.input, &c.out, &c.shader_pack}) {
         if (!p->empty()) {
             std::error_code ec;
             *p = std::filesystem::absolute(*p, ec).wstring();
@@ -1072,6 +1078,8 @@ mprs::SetupOptions App::make_options() const {
     for (const auto& k : keys_for_run()) o.key_files.push_back(narrow(k));
     o.out_dir = narrow(out_text());
     o.bc7_quality = quality_value();
+    o.shader_cache_src = narrow(cli_.shader_pack);
+    o.allow_no_shaders = cli_.no_shaders;
     return o;
 }
 
