@@ -9,7 +9,7 @@ This tool is GPL-3.0-or-later. Everything below is GPL-compatible.
 | astcenc 5.7.0 (decoder DLLs `astcdec-*-shared.dll`) | ASTC decode inside the texture converter | github.com/ARM-software/astc-encoder, via `tools/textures` | Apache-2.0 (`../textures/licenses/LICENSE.astc-encoder.Apache-2.0`) |
 | `bc7e.ispc` (compiled with ISPC) | BC7 encode | github.com/richgel999/bc7enc_rdo, via `tools/textures` | Apache-2.0 (`../textures/licenses/LICENSE.bc7enc_rdo`) |
 | zstd 1.5.7 (`third_party/zstd`, fetched by `scripts/fetch_zstd.ps1`) | NSZ / XCZ and compressed shader packs | github.com/facebook/zstd | BSD-3-Clause, taken under that option (`licenses/LICENSE.zstd`, `licenses/NOTE.zstd.txt`) |
-| miniz 3.1.2 (	hird_party/miniz, fetched from the official GitHub release) | zlib inflate of the shader program sets (src/programs.cpp) | github.com/richgel999/miniz | MIT (	hird_party/miniz/LICENSE) |
+| miniz 3.1.2 (third_party/miniz, fetched from the official GitHub release) | zlib inflate of the shader program sets (src/programs.cpp) | github.com/richgel999/miniz | MIT (third_party/miniz/LICENSE) |
 | Windows CNG (`bcrypt.dll`) | AES-ECB, SHA-1, SHA-256 | the operating system | none shipped |
 | `tools/textures`, `tools/tiling` | transcoder and Tegra tiling libraries | this project | GPL-3.0-or-later |
 | The runtime's cache hash (`tex_hash_seeded` in `src/texcache.cpp`) | cache keys that equal the game's | `runtime/src/gfx/nvn/nvn_texdata.cpp` | GPL-3.0-or-later, same project |
