@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the Windows x64 release of mpr: a release folder and a zip of it, audited before and after the zip is written.
 
-    python tools/release/make_release.py [--out DIR] [--version V] [--no-shader-pack] [--strict-paths]
+    python tools/release/make_release.py [--out DIR] [--version V] [--no-shader-pack] [--allow-local-paths]
                                          [--deny-hash-dir DIR ...] [--repo DIR] [--exe F] [--setup-bin DIR]
                                          [--shader-pack F] [--templates DIR] [--controls F] [--license F] [--notices F]
                                          [--prompts-dir DIR] [--launcher F]
@@ -142,7 +142,7 @@ def parse_args(argv):
     ap.add_argument('--repo', default=REPO, help='repository root; every default path below is relative to it')
     ap.add_argument('--out', help='output folder (default <repo>/work/release_out)')
     ap.add_argument('--version', help='version in the names (default: today plus git describe --always --dirty)')
-    ap.add_argument('--exe', help='mpr.exe (default <repo>/game-build/build/release/mpr.exe); the astcdec DLLs come from its folder')
+    ap.add_argument('--exe', help='mpr.exe of the package build (default <repo>/game-build/build/relpkg/mpr.exe, made by game-build/scripts/build.ps1 -Release); the astcdec DLLs come from its folder')
     ap.add_argument('--launcher', help='mpr_launcher.exe (default: mpr_launcher.exe in the folder of --exe)')
     ap.add_argument('--setup-bin', help='folder with mpr_setup.exe and mpr_setup_cli.exe (default <repo>/tools/setup/build/release/bin)')
     ap.add_argument('--shader-pack', help='translated shader pack, copied as shader_cache.mprshc '
@@ -156,8 +156,9 @@ def parse_args(argv):
                                           '(default <repo>/runtime/assets/prompts; both required)')
     ap.add_argument('--deny-hash-dir', action='append', default=[], metavar='DIR',
                     help='refuse any release file whose sha256 equals a file directly inside DIR (repeatable, not recursive)')
-    ap.add_argument('--strict-paths', action='store_true',
-                    help='a local-path hit in mpr.exe or mpr_setup*.exe is an error instead of a warning')
+    ap.add_argument('--allow-local-paths', action='store_true',
+                    help='a local-path hit in the executables is only a warning (for development builds)')
+    ap.add_argument('--strict-paths', action='store_true', help=argparse.SUPPRESS)   # old name: now the default, no-op
     return ap.parse_args(argv)
 
 
@@ -169,7 +170,7 @@ def resolve(o):
 
     if o.no_shader_pack and o.shader_pack:
         raise UsageError('--no-shader-pack and --shader-pack cannot be given together')
-    o.exe = os.path.abspath(o.exe or under_repo('game-build', 'build', 'release', EXE_NAME))
+    o.exe = os.path.abspath(o.exe or under_repo('game-build', 'build', 'relpkg', EXE_NAME))
     o.launcher = os.path.abspath(o.launcher or os.path.join(os.path.dirname(o.exe), LAUNCHER_NAME))
     o.setup_bin = os.path.abspath(o.setup_bin or under_repo('tools', 'setup', 'build', 'release', 'bin'))
     if o.no_shader_pack:
@@ -508,7 +509,7 @@ def manifest_problems(text, hashes):
 
 
 def leak_scan(refs, audit, strict):
-    """Local paths or the developer's name inside the executables: warnings, or problems with --strict-paths."""
+    """Local paths or the developer's name inside the executables: problems, or warnings with --allow-local-paths."""
     for rel in LEAK_FILES:
         if rel not in refs:
             continue
@@ -653,7 +654,7 @@ def build(o, stage_hook=None):
             stage_hook(folder)
         expected = set(origins)
 
-        fa = audit_files(folder_refs(folder), expected, deny, leak=True, strict=o.strict_paths)
+        fa = audit_files(folder_refs(folder), expected, deny, leak=True, strict=not o.allow_local_paths)
         if fa.problems:
             raise Refused(fa.problems, fa.warnings)
 

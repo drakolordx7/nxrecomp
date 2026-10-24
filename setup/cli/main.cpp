@@ -37,7 +37,10 @@ void usage() {
         "  --keys <prod.keys>[,<title.keys>]   keys file(s); default: look in the usual emulator folders\n"
         "  --quality <0-6>                     texture conversion quality (default 3; the game reads the same value from mpr.ini)\n"
         "  --threads <n>                       worker threads (default: all)\n"
-        "  --shader-cache <folder|pack>        install this shader cache (default: shader_cache next to this program, if any)\n"
+        "  --shader-pack <file|folder>         the translated shaders to install (default: shader_cache.mprshc, or a shader_cache folder, next to\n"
+        "                                      this program). Setup stops without them.\n"
+        "  --shader-cache <file|folder>        same as --shader-pack (older name)\n"
+        "  --no-shaders                        developer option: install without shaders. The game will not draw anything until they are installed.\n"
         "  --skip-textures                     do not build the texture cache\n"
         "  --no-verify                         skip checking the dump's own hashes (faster, less safe)\n"
         "  --verify-output                     re-hash files that already exist instead of trusting their size\n"
@@ -45,7 +48,7 @@ void usage() {
         "  --find-keys                         list key files found in the usual places and exit\n"
         "  --title-id <16 hex> --build-id <40 hex>   (testing) accept another game\n"
         "\n"
-        "Exit codes: 0 done, 1 error, 2 bad dump, 3 keys, 4 disk, 5 stopped (Ctrl+C; run again to continue).");
+        "Exit codes: 0 done, 1 error, 2 bad dump or missing shader pack, 3 keys, 4 disk, 5 stopped (Ctrl+C; run again to continue).");
 }
 
 class ConsoleReporter : public Reporter {
@@ -137,7 +140,8 @@ int wmain(int argc, wchar_t** wargv) {
         else if (a == "--keys") o.key_files = split_commas(val());
         else if (a == "--quality") o.bc7_quality = std::atoi(val().c_str());
         else if (a == "--threads") o.threads = std::atoi(val().c_str());
-        else if (a == "--shader-cache") o.shader_cache_src = val();
+        else if (a == "--shader-pack" || a == "--shader-cache") o.shader_cache_src = val();
+        else if (a == "--no-shaders") o.allow_no_shaders = true;
         else if (a == "--skip-textures") o.skip_textures = true;
         else if (a == "--no-verify") o.verify_input = false;
         else if (a == "--verify-output") o.verify_output = true;
