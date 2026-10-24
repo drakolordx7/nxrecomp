@@ -50,6 +50,7 @@ def main():
     ap.add_argument('--set', action='append', default=[], help='[display] key=value in controls.ini, e.g. render_scale=200')
     ap.add_argument('--fresh-cache', action='store_true', help='start without pipeline_cache.bin')
     ap.add_argument('--no-report', action='store_true')
+    ap.add_argument('--ini-append', default='', help='text appended to the run folder controls.ini (for example "[fps]\nin_screenshots = 1"; \n is a new line)')
     ap.add_argument('--hogs', type=int, default=0, help='run N busy-loop processes (normal priority) during the run: a repeatable background load')
     ap.add_argument('--prio', default='', help='process priority class of mpr.exe: high | above | idle (default normal)')
     a = ap.parse_args()
@@ -64,6 +65,7 @@ def main():
         k, v = kv.split('=', 1)
         if re.search(r'(?m)^%s\s*=' % k, ini): ini = re.sub(r'(?m)^%s\s*=.*$' % k, '%s = %s' % (k, v), ini)
         else: ini = ini.replace('[display]', '[display]' + chr(10) + '%s = %s' % (k, v), 1)
+    if a.ini_append: ini += chr(10) + a.ini_append.replace(chr(92) + 'n', chr(10)) + chr(10)
     open(os.path.join(run, 'controls.ini'), 'w').write(ini)
     trace = os.path.join(ROOT, 'work', 'prof', a.tag + '.trace')
     if a.fresh_cache and os.path.exists(os.path.join(run, 'pipeline_cache.bin')):

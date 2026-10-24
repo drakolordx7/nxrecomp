@@ -637,4 +637,89 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     return true;
 }
 
+
+std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in) {
+    enum : uint32_t { OpTypeIntOp = 21, OpTypeFloatOp = 22, OpTypeVectorOp = 23, OpTypeArrayOp = 28, OpTypePointerOp = 32, OpConstantOp = 43, OpVariableOp = 59,
+                      OpLoadOp = 61, OpStoreOp = 62, OpAccessChainOp = 65, OpInBoundsAccessChainOp = 66, OpDecorateOp = 71, OpBitcastOp = 124, StorageInputC = 1 };
+    std::vector<SpvIntSlot> result;
+    if (in.size() < 5) return result;
+    uint32_t f32 = 0, v4 = 0;
+    std::map<uint32_t, bool> is_int32;                               // type id -> 32-bit integer
+    std::map<uint32_t, uint32_t> ptr_pointee, array_elem, array_len, const_value, location, var_ptr;
+    std::map<uint32_t, uint32_t> var_elems;                          // candidate Input variable -> number of vec4 elements (1 for a plain vec4)
+    std::vector<Inst> insts;
+    for (size_t i = 5; i < in.size();) {
+        const uint32_t len = in[i] >> 16;
+        if (!len || i + len > in.size()) return result;
+        insts.push_back({i, in[i] & 0xffff, len});
+        i += len;
+    }
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if (n.op == OpTypeFloatOp && n.len >= 3 && w[2] == 32) f32 = w[1];
+        else if (n.op == OpTypeIntOp && n.len == 4 && w[2] == 32) is_int32[w[1]] = true;
+        else if (n.op == OpTypeVectorOp && n.len == 4 && w[3] == 4 && w[2] == f32 && f32) v4 = w[1];
+        else if (n.op == OpTypeArrayOp && n.len == 4) { array_elem[w[1]] = w[2]; array_len[w[1]] = w[3]; }
+        else if (n.op == OpConstantOp && n.len == 4) const_value[w[2]] = w[3];
+        else if (n.op == OpTypePointerOp && n.len == 4 && w[2] == StorageInputC) ptr_pointee[w[1]] = w[3];
+        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariableOp && n.len >= 4 && w[3] == StorageInputC) var_ptr[w[2]] = w[1];
+    }
+    if (!f32 || !v4) return result;
+    for (const auto& [var, ptr] : var_ptr) {
+        if (!location.count(var) || !ptr_pointee.count(ptr)) continue;
+        const uint32_t t = ptr_pointee[ptr];
+        if (t == v4) var_elems[var] = 1;
+        else if (array_elem.count(t) && array_elem[t] == v4 && const_value.count(array_len[t]) && const_value[array_len[t]] <= 16) var_elems[var] = const_value[array_len[t]];
+    }
+    if (var_elems.empty()) return result;
+    // use counts per location: [0] bitcast to a 32-bit integer, [1] anything else
+    std::map<uint32_t, std::pair<uint32_t, uint32_t>> uses;
+    std::map<uint32_t, uint32_t> chain_loc;                          // access chain result -> location
+    std::map<uint32_t, uint32_t> load_loc;                           // load result -> location
+    std::map<uint32_t, uint32_t> pvar_loc;                           // local variable that holds a loaded attribute -> location
+    auto spoil_var = [&](uint32_t var) { for (uint32_t e = 0; e < var_elems[var]; ++e) ++uses[location[var] + e].second; };
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && var_elems.count(w[3])) {
+            const uint32_t var = w[3];
+            const uint32_t indices = n.len - 4;
+            const bool array = var_elems[var] > 1 || indices == 2;
+            const uint32_t want = array ? 2 : 1;
+            // a computed index reads whichever attribute the shader picks at run time: not counted either way
+            if (indices != want || !const_value.count(w[4]) || (want == 2 && !const_value.count(w[5]))) continue;
+            const uint32_t elem = array ? const_value[w[4]] : 0;
+            if (elem >= var_elems[var]) continue;
+            chain_loc[w[2]] = location[var] + elem;
+        } else if (n.op == OpLoadOp && n.len >= 4) {
+            if (chain_loc.count(w[3])) load_loc[w[2]] = chain_loc[w[3]];
+            else if (pvar_loc.count(w[3])) load_loc[w[2]] = pvar_loc[w[3]];          // the value came back out of a local variable
+            else if (var_elems.count(w[3])) spoil_var(w[3]);
+        } else if (n.op == OpStoreOp && n.len >= 3 && load_loc.count(w[2]) && !chain_loc.count(w[1]) && !var_elems.count(w[1])) {
+            auto it = pvar_loc.find(w[1]);                                            // stored into a local variable: later loads of it stand for the attribute
+            if (it != pvar_loc.end() && it->second != load_loc[w[2]]) { ++uses[it->second].second; ++uses[load_loc[w[2]]].second; }
+            else pvar_loc[w[1]] = load_loc[w[2]];
+        }
+    }
+    for (const Inst& n : insts) {
+        const uint32_t* w = &in[n.at];
+        if (n.op == OpLoadOp || n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) continue;
+        if (n.op == OpStoreOp && n.len >= 3 && pvar_loc.count(w[1])) continue;          // the store into a local variable was followed above
+        for (uint32_t k = 1; k < n.len; ++k) {
+            auto it = load_loc.find(w[k]);
+            if (it == load_loc.end()) continue;
+            if (n.op == OpBitcastOp && n.len == 4 && k == 3 && is_int32.count(w[1])) ++uses[it->second].first;
+            else ++uses[it->second].second;
+        }
+    }
+    for (const auto& [loc, u] : uses)
+        if (u.first > 0 && u.second == 0) {
+            SpvIntSlot sl;
+            sl.location = loc;
+            sl.is_signed = false;
+            result.push_back(sl);
+        }
+    return result;
+}
+
 }  // namespace nxrt::nvn::be::gpu

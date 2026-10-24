@@ -39,6 +39,9 @@ public:
     virtual HWND window() const = 0;                     // the launcher window (owner of dialogs)
     virtual const Env& env() const = 0;
     virtual bool controller_connected() const = 0;       // an XInput pad answers
+    virtual bool shader_prepare_offered() const = 0;     // the game folder has a shader list (programs.bin)
+    virtual bool shader_prepare_busy() const = 0;        // setup or shader preparation is running
+    virtual void prepare_shaders_now() = 0;              // run the full shader preparation now (Extras button)
 };
 
 class Form;
@@ -54,6 +57,7 @@ public:
     virtual bool command(int id, int code, HWND ctl) { return false; }
     virtual LRESULT notify(NMHDR* hdr, bool* handled) { *handled = false; return 0; }
     virtual void rebuilt() {}                            // after build() ran again (DPI change)
+    virtual void state_changed() {}                      // the game folder or a running job changed: update the controls that depend on it
 
     HWND hwnd() const { return hwnd_; }
     Host* host() const { return host_; }
@@ -88,7 +92,7 @@ public:
     Form(Page& page, int page_width);
 
     void heading(const wchar_t* text);                   // bold title with some space above
-    void hint(const wchar_t* text, int lines = 1, bool full_width = false);   // grey text under the previous row (control column, or the page width)
+    HWND hint(const wchar_t* text, int lines = 1, bool full_width = false);   // grey text under the previous row (control column, or the page width)
     void gap(int px = 8);
 
     // One column (default) or two: rows then fill left to right. Switching back to 1 starts a new row.

@@ -2,10 +2,13 @@
 // The launcher: a small window that opens before the game. It edits controls.ini in the game folder (display, picture, mouse,
 // keyboard, controller, button prompts, frame rate counter), shows whether the game files are in place, starts the setup tool
 // for the first-time setup, and starts mpr.exe.
-//   mpr_launcher.exe [--game <folder>] [--page <n>] [--auto-play] [--game-args "<text>"] [--setup-args "<text>"]
+//   mpr_launcher.exe [--game <folder>] [--page <n>] [--auto-play] [--auto-prepare] [--no-prepare] [--game-args "<text>"] [--setup-args "<text>"]
 // --game uses that game folder for this run (the folder saved in mpr_launcher.ini is left alone). --page opens that tab.
 // --auto-play saves nothing, opens no window and starts the game at once (for scripted runs). --game-args adds text to
 // the command line of mpr.exe; --setup-args does the same for the setup tool (scripted runs).
+// --auto-prepare runs the shader preparation without asking: at startup when a window is open, and before the game when
+// --auto-play is given (then it waits for it). --no-prepare never asks and never starts the preparation on its own; the
+// Extras tab button still works.
 
 #include <windows.h>
 #include <commctrl.h>
@@ -35,9 +38,12 @@ constexpr wchar_t kTitle[] = L"Metroid Prime Remastered PC";
 constexpr int kLogicalW = 680;
 constexpr int kLogicalH = 650;
 constexpr UINT_PTR kTimerSetup = 1;
+constexpr UINT kMsgPrepareUpdate = WM_APP + 1;     // PrepareRun: the progress or the result changed (posted from its worker thread)
+constexpr UINT kMsgPrepareFinished = WM_APP + 2;   // PrepareRun: the child has exited and its output is read
 
 enum ControlId : int {
     IDC_TITLE = 2000, IDC_STATUS, IDC_FOLDER_LABEL, IDC_FOLDER, IDC_CHANGE, IDC_SETUP, IDC_TABS, IDC_RESET, IDC_NOTE, IDC_SAVE, IDC_PLAY,
+    IDC_PREP_TEXT, IDC_PREP_BAR, IDC_PREP_CANCEL,
 };
 
 std::string narrow(const std::wstring& w) {
@@ -56,12 +62,34 @@ std::wstring widen(const std::string& s) {
     return w;
 }
 
+// Who started a shader preparation: decides what is said when it ends.
+enum class PrepOrigin { automatic, play, extras };
+
+std::wstring with_commas(unsigned long long v) {
+    std::wstring s = std::to_wstring(v);
+    for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(static_cast<size_t>(i), L",");
+    return s;
+}
+
+// Scripted runs (--auto-play): runs the shader preparation and waits for it. False, with *err, when it did not finish.
+bool prepare_blocking(const std::wstring& dir, std::wstring* err) {
+    PrepareRun run;
+    if (!run.start(dir, true, nullptr, 0, 0, err)) return false;
+    run.finish();   // waits until the child has exited and its output has ended
+    const PrepareLine r = run.result();
+    if (r.kind == PrepareKind::ready || r.kind == PrepareKind::done) return true;
+    *err = r.kind == PrepareKind::error ? widen(r.text) : std::wstring(L"Shader preparation did not finish.");
+    return false;
+}
+
 struct CmdLine {
     std::wstring game;
     std::wstring game_args;
     std::wstring setup_args;
     int page = 0;
     bool auto_play = false;
+    bool auto_prepare = false;
+    bool no_prepare = false;
 };
 
 CmdLine parse_cmdline() {
@@ -77,6 +105,8 @@ CmdLine parse_cmdline() {
         else if (a == L"--setup-args" && more) c.setup_args = argv[++i];
         else if (a == L"--page" && more) c.page = _wtoi(argv[++i]);
         else if (a == L"--auto-play") c.auto_play = true;
+        else if (a == L"--auto-prepare") c.auto_prepare = true;
+        else if (a == L"--no-prepare") c.no_prepare = true;
     }
     LocalFree(argv);
     return c;
@@ -99,6 +129,9 @@ public:
     HWND window() const override { return hwnd_; }
     const Env& env() const override { return env_; }
     bool controller_connected() const override { return xinput_pad_connected(); }
+    bool shader_prepare_offered() const override { return shader_prepare_available(game_dir_); }
+    bool shader_prepare_busy() const override { return setup_running_ || prep_.active(); }
+    void prepare_shaders_now() override;
 
 private:
     static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -122,14 +155,20 @@ private:
     void choose_folder();
     void run_setup();
     void play();
+    void launch_game();
     void reset_defaults();
     bool confirm_close();
+    void start_prepare(bool force, bool then_play, PrepOrigin origin);
+    void on_prepare_update();
+    void on_prepare_finished();
+    void cancel_prepare();
 
     CmdLine cmd_;
     Env env_;
     HWND hwnd_ = nullptr;
     HWND title_ = nullptr, status_ = nullptr, folder_label_ = nullptr, folder_ = nullptr, change_ = nullptr, setup_btn_ = nullptr;
     HWND tabs_ = nullptr, reset_ = nullptr, note_ = nullptr, save_ = nullptr, play_ = nullptr;
+    HWND prep_text_ = nullptr, prep_bar_ = nullptr, prep_cancel_ = nullptr;   // shader preparation row, shown while it runs
     HFONT title_font_ = nullptr;
     std::vector<std::unique_ptr<Page>> pages_;
     int current_page_ = 0;
@@ -143,6 +182,12 @@ private:
     bool dirty_ = false;
     bool setup_running_ = false;
     HANDLE setup_proc_ = nullptr;
+    bool setup_first_time_ = false;    // the folder was not ready when the running setup started
+    PrepareRun prep_;
+    bool prep_showing_ = false;        // the progress row is up (layout reserves its space)
+    bool prep_then_play_ = false;      // start the game when this run ends well
+    bool prep_declined_ = false;       // "No" to the Play question: not asked again in this session
+    PrepOrigin prep_origin_ = PrepOrigin::automatic;
     COLORREF status_color_ = kGray;
 };
 
@@ -166,7 +211,7 @@ void App::free_fonts() {
 }
 
 void App::apply_fonts() {
-    for (HWND h : {folder_label_, folder_, change_, setup_btn_, tabs_, reset_, note_, save_, status_})
+    for (HWND h : {folder_label_, folder_, change_, setup_btn_, tabs_, reset_, note_, save_, status_, prep_text_, prep_cancel_})
         if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(env_.font), TRUE);
     SendMessageW(title_, WM_SETFONT, reinterpret_cast<WPARAM>(title_font_), TRUE);
     SendMessageW(play_, WM_SETFONT, reinterpret_cast<WPARAM>(env_.bold), TRUE);
@@ -189,6 +234,10 @@ void App::on_create() {
     note_ = mk(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, IDC_NOTE);
     save_ = mk(L"BUTTON", L"Save", BS_PUSHBUTTON | WS_TABSTOP, IDC_SAVE);
     play_ = mk(L"BUTTON", L"Play", BS_PUSHBUTTON | WS_TABSTOP, IDC_PLAY);
+    prep_text_ = mk(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, IDC_PREP_TEXT);
+    prep_bar_ = mk(L"msctls_progress32", L"", 0, IDC_PREP_BAR);
+    prep_cancel_ = mk(L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP, IDC_PREP_CANCEL);
+    for (HWND h : {prep_text_, prep_bar_, prep_cancel_}) ShowWindow(h, SW_HIDE);   // shown while shaders are prepared
     apply_fonts();
 
     pages_.push_back(make_display_page());
@@ -222,13 +271,21 @@ void App::layout() {
     put(change_, right - bw_setup - gap - bw_change, row, bw_change, env_.S(26));
     put(folder_, fx, row, right - bw_setup - bw_change - 2 * gap - fx, env_.S(26));
     const int tab_top = row + env_.S(40);
-    const int bottom_h = env_.S(56);
+    const int bottom_h = env_.S(56) + (prep_showing_ ? env_.S(32) : 0);
     put(tabs_, S_16, tab_top, w - 2 * S_16, rc.bottom - tab_top - bottom_h);
     const int by = rc.bottom - env_.S(42);
     put(reset_, S_16, by, env_.S(140), env_.S(28));
     put(play_, right - env_.S(100), by, env_.S(100), env_.S(28));
     put(save_, right - env_.S(100) - gap - env_.S(90), by, env_.S(90), env_.S(28));
     put(note_, S_16 + env_.S(150), by + env_.S(5), right - env_.S(200) - gap - env_.S(90) - (S_16 + env_.S(150)), env_.S(20));
+    // shader preparation row, between the tabs and the buttons: status text, progress bar, Cancel
+    const int py = rc.bottom - env_.S(80);
+    const int text_w = env_.S(300);
+    put(prep_text_, S_16, py + env_.S(4), text_w, env_.S(20));
+    const int bar_x = S_16 + text_w + gap;
+    put(prep_bar_, bar_x, py + env_.S(4), right - env_.S(100) - gap - bar_x, env_.S(18));
+    put(prep_cancel_, right - env_.S(100), py, env_.S(100), env_.S(26));
+    for (HWND h : {prep_text_, prep_bar_, prep_cancel_}) ShowWindow(h, prep_showing_ ? SW_SHOW : SW_HIDE);
 
     // pages sit in the display area of the tab control
     RECT tr{};
@@ -323,12 +380,17 @@ void App::refresh_status() {
 }
 
 void App::refresh_buttons() {
-    EnableWindow(save_, dirty_ && !setup_running_);
-    EnableWindow(play_, game_.ready() && !setup_running_);
-    EnableWindow(setup_btn_, !setup_running_);
-    EnableWindow(change_, !setup_running_);
+    const bool busy = setup_running_ || prep_.active();
+    EnableWindow(save_, dirty_ && !busy);
+    EnableWindow(play_, game_.ready() && !busy);
+    EnableWindow(setup_btn_, !busy);
+    EnableWindow(change_, !busy);
     EnableWindow(reset_, !setup_running_);
-    SetWindowTextW(note_, setup_running_ ? L"Setup is running in its own window." : (dirty_ ? L"Unsaved changes" : L""));
+    EnableWindow(prep_cancel_, !prep_.cancel_requested());
+    SetWindowTextW(note_, setup_running_ ? L"Setup is running in its own window."
+                                         : (prep_.active() ? L"Shader preparation is running." : (dirty_ ? L"Unsaved changes" : L"")));
+    for (auto& p : pages_)
+        if (p->hwnd()) p->state_changed();
 }
 
 void App::choose_folder() {
@@ -360,8 +422,9 @@ void App::choose_folder() {
 }
 
 void App::run_setup() {
-    if (setup_running_) return;
+    if (setup_running_ || prep_.active()) return;
     if (dirty_) store_and_save(true);
+    setup_first_time_ = !game_.ready();
     std::wstring err;
     HANDLE proc = nullptr;
     if (!start_setup(game_dir_, &proc, &err, cmd_.setup_args)) {
@@ -387,6 +450,10 @@ void App::on_timer(UINT_PTR id) {
     refresh_status();
     refresh_buttons();
     SetForegroundWindow(hwnd_);
+    // first-time setup that finished: prepare the shaders now, so the first play session has no stutter
+    if (setup_first_time_ && !cmd_.no_prepare && game_.ready() && game_.setup_finished && shader_prepare_available(game_dir_) &&
+        !shader_prepare_done(game_dir_))
+        start_prepare(false, false, PrepOrigin::automatic);
 }
 
 void App::play() {
@@ -394,6 +461,27 @@ void App::play() {
         if (message(hwnd_, L"The game files are not set up yet. Run setup now?", MB_YESNO | MB_ICONQUESTION) == IDYES) run_setup();
         return;
     }
+    if (prep_.active()) return;
+    if (!cmd_.no_prepare && !prep_declined_ && shader_prepare_available(game_dir_) && !shader_prepare_done(game_dir_)) {
+        if (cmd_.auto_prepare) {
+            start_prepare(false, true, PrepOrigin::play);
+            return;
+        }
+        const int r = message(hwnd_,
+                              L"Prepare shaders now? This takes a few minutes and only has to be done once (again after a graphics driver "
+                              L"update). Without it the game stutters while it compiles shaders during the first hours of play.",
+                              MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (r == IDCANCEL) return;
+        if (r == IDYES) {
+            start_prepare(false, true, PrepOrigin::play);
+            return;
+        }
+        prep_declined_ = true;   // No: start the game without it, and do not ask again in this session
+    }
+    launch_game();
+}
+
+void App::launch_game() {
     if (!store_and_save(false)) return;
     std::wstring err;
     if (!start_game(game_dir_, &err, cmd_.game_args)) {
@@ -401,6 +489,94 @@ void App::play() {
         return;
     }
     DestroyWindow(hwnd_);
+}
+
+void App::prepare_shaders_now() {
+    if (prep_.active() || setup_running_) return;
+    if (!shader_prepare_available(game_dir_)) {
+        message(hwnd_, L"This game folder has no shader list (shader_cache\\programs.bin), so there is nothing to prepare. Run setup first.",
+                MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    start_prepare(true, false, PrepOrigin::extras);
+}
+
+// Starts mpr.exe --prepare-shaders (with --if-needed unless force) and shows the progress row. then_play: start the game when it
+// ends well. The result is handled in on_prepare_finished().
+void App::start_prepare(bool force, bool then_play, PrepOrigin origin) {
+    if (prep_.active() || setup_running_) return;
+    std::wstring err;
+    if (!prep_.start(game_dir_, !force, hwnd_, kMsgPrepareUpdate, kMsgPrepareFinished, &err)) {
+        message(hwnd_, err.empty() ? L"Shader preparation could not be started." : err, MB_OK | MB_ICONWARNING);
+        return;
+    }
+    prep_then_play_ = then_play;
+    prep_origin_ = origin;
+    prep_showing_ = true;
+    SendMessageW(prep_bar_, PBM_SETRANGE32, 0, 1);
+    SendMessageW(prep_bar_, PBM_SETPOS, 0, 0);
+    SetWindowTextW(prep_text_, L"Preparing shaders...");
+    layout();
+    refresh_buttons();
+}
+
+// The worker has read new progress or a result. Runs on the UI thread; the worker only posted the message.
+void App::on_prepare_update() {
+    prep_.ack_update();
+    const PrepareLine p = prep_.progress();
+    if (p.kind != PrepareKind::progress || !prep_showing_) return;
+    const int total = static_cast<int>(std::max<unsigned long long>(p.total, 1));
+    const int pos = static_cast<int>(std::min(p.done, p.total));
+    SendMessageW(prep_bar_, PBM_SETRANGE32, 0, total);
+    SendMessageW(prep_bar_, PBM_SETPOS, static_cast<WPARAM>(pos), 0);
+    SetWindowTextW(prep_text_, (L"Preparing shaders: " + with_commas(p.done) + L" of " + with_commas(p.total)).c_str());
+}
+
+// The child has exited and its output is read: join the worker, then say what happened.
+void App::on_prepare_finished() {
+    prep_.finish();
+    const bool cancelled = prep_.cancel_requested();
+    const PrepareLine res = prep_.result();
+    const bool then_play = prep_then_play_;
+    const PrepOrigin origin = prep_origin_;
+    prep_then_play_ = false;
+    prep_showing_ = false;
+    refresh_status();
+    layout();
+    refresh_buttons();
+    SetForegroundWindow(hwnd_);
+    if (cancelled) return;   // the player stopped it; the run starts over the next time
+
+    const bool finished = res.kind == PrepareKind::ready || res.kind == PrepareKind::done;
+    const bool shaders_ready = res.kind == PrepareKind::ready || (res.kind == PrepareKind::done && res.failed == 0);
+    if (!finished) {
+        const std::wstring why = res.kind == PrepareKind::error ? widen(res.text) : std::wstring(L"The run ended without a result.");
+        message(hwnd_, L"Shader preparation did not finish.\n\n" + why, MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (then_play) {
+        launch_game();   // done with some programs left out still starts the game: those compile when needed
+        return;
+    }
+    if (origin == PrepOrigin::extras) {
+        if (shaders_ready) {
+            message(hwnd_, L"Shaders are ready.", MB_OK | MB_ICONINFORMATION);
+        } else if (res.failed > 0) {
+            message(hwnd_,
+                    L"Shader preparation finished, but " + with_commas(static_cast<unsigned long long>(res.failed)) +
+                        L" programs could not be prepared. The game compiles those when it needs them.",
+                    MB_OK | MB_ICONINFORMATION);
+        } else {
+            message(hwnd_, L"Shader preparation finished.", MB_OK | MB_ICONINFORMATION);
+        }
+    }
+}
+
+void App::cancel_prepare() {
+    if (!prep_.active()) return;
+    prep_.cancel();   // TerminateProcess of the preparation child only
+    SetWindowTextW(prep_text_, L"Cancelling...");
+    refresh_buttons();
 }
 
 void App::reset_defaults() {
@@ -419,6 +595,10 @@ bool App::confirm_close() {
         message(hwnd_, L"Setup is still running. Close its window first.", MB_OK | MB_ICONINFORMATION);
         return false;
     }
+    if (prep_.active()) {
+        message(hwnd_, L"Shader preparation is still running. Cancel it first, or wait until it finishes.", MB_OK | MB_ICONINFORMATION);
+        return false;
+    }
     if (!dirty_) return true;
     const int r = message(hwnd_, L"Save your changes before closing?", MB_YESNOCANCEL | MB_ICONQUESTION);
     if (r == IDCANCEL) return false;
@@ -434,6 +614,7 @@ void App::on_command(int id, int code) {
         case IDC_SAVE: store_and_save(false); break;
         case IDC_PLAY: play(); break;
         case IDC_RESET: reset_defaults(); break;
+        case IDC_PREP_CANCEL: cancel_prepare(); break;
     }
 }
 
@@ -463,6 +644,8 @@ LRESULT App::on_message(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_TIMER: on_timer(wp); return 0;
+        case kMsgPrepareUpdate: on_prepare_update(); return 0;
+        case kMsgPrepareFinished: on_prepare_finished(); return 0;
         case WM_CTLCOLORSTATIC: {
             HDC dc = reinterpret_cast<HDC>(wp);
             HWND c = reinterpret_cast<HWND>(lp);
@@ -506,6 +689,10 @@ int App::run() {
 
     if (cmd_.auto_play) {   // scripted start: no window, settings untouched
         std::wstring err;
+        if (cmd_.auto_prepare && !cmd_.no_prepare && shader_prepare_available(dir) && !shader_prepare_done(dir) && !prepare_blocking(dir, &err)) {
+            OutputDebugStringW(err.c_str());
+            return 1;
+        }
         if (!start_game(dir, &err, cmd_.game_args)) {
             OutputDebugStringW(err.c_str());
             return 1;
@@ -564,6 +751,8 @@ int App::run() {
     refresh_buttons();
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
+    if (cmd_.auto_prepare && !cmd_.no_prepare && shader_prepare_available(game_dir_) && !shader_prepare_done(game_dir_))
+        start_prepare(false, false, PrepOrigin::automatic);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
