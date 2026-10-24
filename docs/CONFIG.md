@@ -236,7 +236,7 @@ How it works: the game only knows the Switch pad, so an action is turned into pa
 
 To change a key, add a line `Key = action` to `[bindings.all]` (every context) or to one context (`[bindings.gameplay]`, `[bindings.morph]`, `[bindings.scan]`, `[bindings.menu]`, `[bindings.map]`). `Key = none` switches an input off in that context. Key names are SDL scancode names (`Left Ctrl`, `Page Up`, `Mouse1`, `WheelUp`).
 
-`[meta] defaults_rev` records which revision of the factory bindings the file was written with (the game writes it; a file without the section counts as `0`). When a release adds a new factory binding, the game adds it to an existing `controls.ini` at the next start, but only where that key is still unbound in that context: a key you bound yourself is left as it is. A file written before `[meta]` existed has no record of what you removed, so a key you had unbound there gets its new default once; after that, a key you remove stays removed. The first time this happens the old file is kept next to it as `controls.ini.bak` (an existing `.bak` is never overwritten), and the upgraded file is written at once. The log has one line saying what was added. A file that has no `[bindings.*]` section gets the whole factory set and is not rewritten.
+`[meta] defaults_rev` records the revision of the factory bindings that the file was written with. The game writes it. A file without the section counts as `0`. When a release adds a new factory binding, the game adds it to an existing `controls.ini` at the next start, but only where that key is still unbound in that context. A key you bound yourself is left alone. A file written before `[meta]` existed has no record of what you removed, so a key you had unbound there gets its new default once. After that, a key you remove stays removed. The first time this happens, the old file is kept next to it as `controls.ini.bak` (an existing `.bak` is never overwritten), and the upgraded file is written at once. The log has one line saying what was added. A file with no `[bindings.*]` section gets the whole factory set and is not rewritten.
 
 `[mouse] menu_cursor`, default `1`: in menus the mouse works like a pointer: a visible cursor, hovering highlights an item, left click activates, right click goes back, the wheel scrolls. While it is on, the left click drives no binding in the menu and map contexts. The old key `menu_touch` is ignored; a file that still has it loads without a warning and nothing changes.
 
@@ -244,15 +244,15 @@ Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_cany
 
 ## Window modes and the picture (`controls.ini`, `[display]`)
 
-`window_mode` is `windowed`, `borderless` or `exclusive`. Borderless covers the display at its desktop mode. Exclusive asks Windows for the desktop mode; when the display refuses (a remote or locked session, some drivers), the game logs "window mode 'exclusive' was refused" and uses borderless instead. The setting in the file stays as it was. Alt+Enter and the F1 page switch modes while playing.
+`window_mode` is `windowed`, `borderless` or `exclusive`. Borderless covers the display at its desktop mode. Exclusive asks Windows for the desktop mode. If the display refuses (a remote or locked session, some drivers), the game logs "window mode 'exclusive' was refused" and uses borderless instead. The setting in the file stays as it was. Alt+Enter and the F1 page switch modes while playing.
 
-The game's picture size (internal resolution) is fixed when the game starts: it is the size of the window or screen at that moment (or `render_width` and `render_height`, or `render_scale`). Start in `borderless` on a 4K screen and the game renders at 3840x2160. Start windowed and press Alt+Enter, and the picture keeps the window's size and is scaled up, with bars when `keep_aspect = 1`. For a sharp full screen picture, set the window mode before starting (the launcher does) or give `render_width` and `render_height`.
+The game's picture size (internal resolution) is fixed when the game starts. It is the size of the window or screen at that moment, unless `render_width` and `render_height`, or `render_scale`, are set. Start in `borderless` on a 4K screen and the game renders at 3840x2160. Start windowed and press Alt+Enter, and the picture keeps the window's size and is scaled up, with bars when `keep_aspect = 1`. For a sharp full-screen picture, set the window mode before starting (the launcher does this), or set `render_width` and `render_height`.
 
-A picture narrower than 16:9 (16:10, 3:2, 4:3) keeps the full 16:9 width of the HUD and the menus and shows more above and below them. Wider pictures keep the HUD at 16:9 in the middle, as before.
+On a picture narrower than 16:9 (16:10, 3:2, 4:3), the HUD and the menus keep their full 16:9 width and show more above and below. Wider pictures keep the HUD at 16:9 in the middle, as before.
 
 The frame rate counter (`[fps] corner`) defaults to `top_left`. The bottom corners overlap the menu prompts and the title screen's copyright line.
 
-Self-test steps added (`NXRT_PLAY_SELFTEST`, see `play_selftest.h`): `gate:NAME` holds the script until the file `selftest_NAME` exists in the working folder (it is deleted, then the script goes on), and `report[:label]` logs the window mode, pixel size, focus and frame count.
+New self-test steps (`NXRT_PLAY_SELFTEST`, see `play_selftest.h`). `gate:NAME` holds the script until the file `selftest_NAME` exists in the working folder. The file is then deleted and the script goes on. `report[:label]` logs the window mode, pixel size, focus and frame count.
 
 ## Environment variables read directly
 
