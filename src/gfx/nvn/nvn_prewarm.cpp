@@ -138,6 +138,7 @@ void append_record(const Rec& r) {
 
 void worker_main() {
     log_set_thread_name("nvn-prewarm");
+    set_compile_thread_priority();
     for (;;) {
         std::shared_ptr<Job> j;
         {
@@ -179,6 +180,7 @@ void saver_main() {
                     static_cast<unsigned long long>(g_stats.built), static_cast<unsigned long long>(g_stats.taken), static_cast<unsigned long long>(g_stats.waited),
                     g_stats.wait_ms, static_cast<unsigned long long>(g_stats.claimed));
         }
+        gpl_progress_log();
         if (pipeline_cache_dirty()) {
             lk.unlock();
             pipeline_cache_save();
@@ -223,22 +225,22 @@ void prewarm_record(const GraphicsKey& key) {
     append_record(r);
 }
 
-void prewarm_program(const ShaderInfo* const stages[6]) {
-    if (!stages || !stages[0]) return;
+size_t prewarm_program(const ShaderInfo* const stages[6]) {
+    if (!stages || !stages[0]) return 0;
     prewarm_init();
     std::unique_lock<std::mutex> lk(g_mu);
-    if (!g_enabled || g_stop) return;
+    if (!g_enabled || g_stop) return 0;
     uint64_t h[3];
     for (int i = 0; i < 3; ++i) h[i] = stages[i] ? parse_hash(stages[i]->hash) : 0;
     std::vector<Rec> matches;
     auto range = g_by_vs.equal_range(h[0]);
     for (auto it = range.first; it != range.second; ++it)
         if (g_recs[it->second].h[1] == h[1] && g_recs[it->second].h[2] == h[2]) matches.push_back(g_recs[it->second]);
-    if (matches.empty()) return;
+    if (matches.empty()) return 0;
     lk.unlock();                                                 // prog_layout takes its own lock and calls Vulkan
     const ProgLayout* layout = prog_layout(stages);
     lk.lock();
-    if (!layout || g_stop) return;
+    if (!layout || g_stop) return 0;
     size_t queued = 0;
     for (const Rec& r : matches) {
         auto job = std::make_shared<Job>();
@@ -259,6 +261,7 @@ void prewarm_program(const ShaderInfo* const stages[6]) {
         g_stats.queued += queued;
         g_cv.notify_all();
     }
+    return queued;
 }
 
 bool prewarm_take(const GraphicsKey& key, VkPipeline* out) {
@@ -327,8 +330,12 @@ PrewarmStats prewarm_stats() {
     return g_stats;
 }
 
-void prewarm_program_shaders(const ShaderInfo* const stages[6]) { prewarm_program(stages); }
+// The game set a program's shaders: pipelines recorded for it are built whole; a program with none gets its shader parts compiled ahead
+// instead (nvn_gpl.cpp), so a draw links its pipeline.
+void prewarm_program_shaders(const ShaderInfo* const stages[6]) {
+    gpl_program(stages, prewarm_program(stages) != 0);
+}
 
-void flush_caches() { pipeline_cache_save(); }
+void flush_caches() { pipeline_cache_flush(); }
 
 }  // namespace nxrt::nvn::be::gpu

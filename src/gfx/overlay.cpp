@@ -63,6 +63,12 @@ ImGuiKey map_key(int sc) {
 const double kFpsChoices[] = {0, 30, 60, 90, 120, 144, 165, 240, 360};
 }  // namespace
 
+namespace {
+std::atomic<int> g_shader_backlog{0};
+}
+void set_shader_backlog(int pending) { g_shader_backlog.store(pending < 0 ? 0 : pending, std::memory_order_relaxed); }
+int shader_backlog() { return g_shader_backlog.load(std::memory_order_relaxed); }
+
 struct Overlay::Impl {
     Context ctx;
     ImGuiContext* imgui = nullptr;
@@ -107,6 +113,13 @@ struct Overlay::Impl {
     void build_ui();
     void refresh_counter_text(double now_s);
     void draw_counter(const FrameInfo& f, double now_s);
+    // The "Preparing shaders" note: shown once the backlog has stood for a second and a half, gone a second after it is empty.
+    bool note_enabled = true;
+    bool note_read = false;
+    double note_since_s = -1.0, note_empty_s = -1.0;
+    int note_peak = 0;
+    bool note_visible(double now_s);
+    void draw_note(const FrameInfo& f);
 };
 
 void Overlay::Impl::build_ui() {
@@ -455,16 +468,52 @@ void Overlay::Impl::draw_counter(const FrameInfo& f, double now_s) {
     }
 }
 
+bool Overlay::Impl::note_visible(double now_s) {
+    if (!note_read) {
+        note_read = true;
+        note_enabled = nxrt::config_get_bool("nvn", "compile_note", true);
+    }
+    const int pending = shader_backlog();
+    if (!note_enabled) return false;
+    if (pending > 0) {
+        if (note_since_s < 0) { note_since_s = now_s; note_peak = 0; }
+        note_empty_s = -1.0;
+        note_peak = std::max(note_peak, pending);
+        return now_s - note_since_s >= 1.5;
+    }
+    if (note_since_s < 0) return false;
+    if (note_empty_s < 0) note_empty_s = now_s;
+    if (now_s - note_empty_s >= 1.0) { note_since_s = -1.0; return false; }
+    return now_s - note_since_s >= 1.5;
+}
+
+void Overlay::Impl::draw_note(const FrameInfo& f) {
+    char text[96];
+    const int pending = shader_backlog();
+    if (pending > 0) std::snprintf(text, sizeof text, "Preparing shaders (%d left)", pending);
+    else std::snprintf(text, sizeof text, "Preparing shaders (done)");
+    ImFont* font = ImGui::GetFont();
+    const float size = std::clamp(std::round(static_cast<float>(f.extent.height) / 60.f), 12.f, 28.f);
+    const float pad = size * 0.4f;
+    const ImVec2 sz = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+    const float W = static_cast<float>(f.extent.width), H = static_cast<float>(f.extent.height);
+    const float x0 = (W - sz.x) * 0.5f - pad, y0 = H - size * 0.8f - sz.y - 2.f * pad;
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + sz.x + 2.f * pad, y0 + sz.y + 2.f * pad), IM_COL32(0, 0, 0, 120), size * 0.3f);
+    dl->AddText(font, size, ImVec2(x0 + pad, y0 + pad), IM_COL32(255, 255, 255, 220), text);
+}
+
 void Overlay::draw(const FrameInfo& f) {
     Impl& s = *impl_;
     const bool counter_on = s.counter_show.load(std::memory_order_relaxed);
-    if (!s.visible && !counter_on) {
-        s.last_frame = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
+    const bool note_on = s.note_visible(now_s) && (s.counter_in_shots.load(std::memory_order_relaxed) || !s.ctx.renderer->capture_pending());
+    if (!s.visible && !counter_on && !note_on) {
+        s.last_frame = now;
         s.counter_was_on = false;
         return;
     }
-    const auto now = std::chrono::steady_clock::now();
-    const double now_s = std::chrono::duration<double>(now.time_since_epoch()).count();
     if (counter_on) {
         if (!s.counter_was_on) {          // just switched on: start from an empty history
             s.counter_was_on = true;
@@ -483,7 +532,7 @@ void Overlay::draw(const FrameInfo& f) {
     }
     // a screenshot leaves the counter out unless asked for; with the menu hidden there is then nothing to draw
     const bool show_counter = counter_on && (s.counter_in_shots.load(std::memory_order_relaxed) || !s.ctx.renderer->capture_pending());
-    if (!s.visible && !show_counter) {
+    if (!s.visible && !show_counter && !note_on) {
         s.last_frame = now;
         return;
     }
@@ -502,6 +551,7 @@ void Overlay::draw(const FrameInfo& f) {
     ImGui::NewFrame();
     if (s.visible) s.build_ui();
     if (show_counter) s.draw_counter(f, now_s);
+    if (note_on) s.draw_note(f);
     ImGui::Render();
 
     // one dynamic-rendering pass that draws the ImGui draw data into view

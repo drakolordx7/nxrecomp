@@ -46,6 +46,10 @@ struct SpvIntSlot {
     bool is_signed = false;
 };
 bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<SpvIntSlot>& slots, std::vector<uint32_t>& out);
+// The vertex input locations (is_signed = false) a game would have to feed with integer attributes: the vector inputs whose every use, in any
+// component, is a bitcast to a 32-bit integer (the translator reads raw integer attribute bits that way). A guess from the code alone, made
+// so the patched variant can be compiled before the first draw; a draw whose real integer slots differ builds its own variant.
+std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in);
 
 // A geometry shader the translator made for a console "passthrough" geometry shader (the hardware copies every attribute of the input
 // vertices to the output vertices; the shader code only sets the position and gl_Layer, so its translation writes no Location output at

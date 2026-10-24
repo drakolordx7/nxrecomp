@@ -115,6 +115,7 @@ struct DeviceFeatures {
     bool descriptor_indexing = false, host_query_reset = false;
     bool fragment_shader_interlock = false, depth_clip_control = false, depth_clip_enable = false, custom_border_color = false;
     bool extended_dynamic_state3 = false, vertex_input_dynamic_state = false;
+    bool graphics_pipeline_library = false;   // VK_EXT_graphics_pipeline_library (pipelines linked from separately compiled parts, S24)
     bool external_memory_host = false, push_descriptor = false;
     bool dynamic_rendering_unused_attachments = false;
     bool transform_feedback = false, transform_feedback_queries = false;   // VK_EXT_transform_feedback (the feedback queries: transformFeedbackQueries)
