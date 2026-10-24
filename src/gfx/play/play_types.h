@@ -107,7 +107,7 @@ struct MouseSettings {
     double morph_pitch_rad = 0.000767945;
     bool invert_y = false;                         // false: mouse up looks up
     bool invert_x = false;
-    bool menu_touch = true;                        // in menus the left click is a touch on the Switch touch screen
+    bool menu_cursor = true;                       // in menus the mouse is a pointer: cursor, hover, click, right click, wheel
     bool wheel_beams = true;                       // the wheel cycles beams (the BeamNext / BeamPrev bindings stay either way)
 };
 // ---- pad button remapping ------------------------------------------------------------------------------------------------------------
@@ -205,7 +205,7 @@ const char* default_settings_text();
 
 // ---- the settings file ---------------------------------------------------------------------------------------------------------
 // Plain ini, '#' or ';' starts a comment. Sections and keys are case-insensitive, whitespace around names and values is ignored.
-//   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_touch = 1   wheel_beams = 1     (radians per count)
+//   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_cursor = 1   wheel_beams = 1     (radians per count)
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
 //   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
