@@ -31,7 +31,7 @@ NXTEST(guard_discrete_gpu_discounts_the_largest_device_local_heap) {
     mtype(mp, 0, 0, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     mtype(mp, 1, 1, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     mtype(mp, 2, 2, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-    CHECK_EQ(nxrt::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU), 1);
+    CHECK_EQ(nxrt::gfx::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU), 1);
 }
 
 NXTEST(guard_integrated_gpu_discounts_nothing) {
@@ -39,8 +39,8 @@ NXTEST(guard_integrated_gpu_discounts_nothing) {
     VkPhysicalDeviceMemoryProperties mp{};
     heap(mp, 0, 16 * kGiB, true);
     mtype(mp, 0, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    CHECK_EQ(nxrt::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU), -1);
-    CHECK_EQ(nxrt::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_CPU), -1);
+    CHECK_EQ(nxrt::gfx::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU), -1);
+    CHECK_EQ(nxrt::gfx::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_CPU), -1);
 }
 
 NXTEST(guard_non_discrete_gpu_with_a_private_device_local_heap) {
@@ -49,15 +49,15 @@ NXTEST(guard_non_discrete_gpu_with_a_private_device_local_heap) {
     heap(mp, 1, 2 * kGiB, true);
     mtype(mp, 0, 0, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
     mtype(mp, 1, 1, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    CHECK_EQ(nxrt::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU), 1);
+    CHECK_EQ(nxrt::gfx::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU), 1);
 }
 
 NXTEST(guard_no_device_local_heap) {
     VkPhysicalDeviceMemoryProperties mp{};
     heap(mp, 0, 16 * kGiB, false);
-    CHECK_EQ(nxrt::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU), -1);
+    CHECK_EQ(nxrt::gfx::vk_guard_discount_heap(mp, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU), -1);
 }
 
 NXTEST(guard_gpu_bytes_is_zero_without_an_allocator) {
-    CHECK_EQ(nxrt::vk_guard_gpu_bytes(), 0ull);   // no device in this group: the null allocator reads as 0
+    CHECK_EQ(nxrt::gfx::vk_guard_gpu_bytes(), 0ull);   // no device in this group: the null allocator reads as 0
 }

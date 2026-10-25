@@ -29,9 +29,11 @@ nxrt::GaugeCounter& vk_gauge_swapchains();              // vk.swapchains        
 nxrt::GaugeCounter& vk_gauge_memory_allocs();           // vk.memory_allocs     VkDeviceMemory from vkAllocateMemory (not VMA's own blocks)
 nxrt::GaugeCounter& vk_gauge_memory_bytes();            // vk.memory_bytes      bytes of those allocations
 
+namespace gfx {
 // Memory guard discount (vk_device.cpp). The heap whose usage the guard subtracts from the process commit: the largest device-local heap of a
 // discrete GPU; on other GPUs only a device-local heap that no host-visible memory type uses. -1: subtract nothing.
 int vk_guard_discount_heap(const VkPhysicalDeviceMemoryProperties& mp, VkPhysicalDeviceType type);
 uint64_t vk_guard_gpu_bytes();   // what the guard subtracts now: 0 without a device, with an integrated GPU, or once the device is gone
+}  // namespace gfx
 
 }  // namespace nxrt
