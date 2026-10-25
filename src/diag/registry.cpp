@@ -75,6 +75,29 @@ std::vector<ThreadRecord> diag_threads() {
     return out;
 }
 
+std::vector<ThreadRecord> diag_threads_dup() {
+    std::lock_guard<std::mutex> lk(g_lock);
+    std::vector<ThreadRecord> out;
+    for (auto& t : g_threads) {
+        if (!t.host_tid) continue;
+        ThreadRecord r = t;
+        r.host_handle = nullptr;
+        if (t.host_handle) {
+            HANDLE d = nullptr;
+            if (!DuplicateHandle(GetCurrentProcess(), static_cast<HANDLE>(t.host_handle), GetCurrentProcess(), &d, 0, FALSE, DUPLICATE_SAME_ACCESS)) d = nullptr;
+            r.host_handle = d;
+        }
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+void diag_threads_release(std::vector<ThreadRecord>& recs) {
+    for (ThreadRecord& r : recs)
+        if (r.host_handle) CloseHandle(static_cast<HANDLE>(r.host_handle));
+    recs.clear();
+}
+
 void diag_note_file(const char* what, const char* path) {
     char buf[600];
     snprintf(buf, sizeof buf, "[%lu] %s %s", GetCurrentThreadId(), what ? what : "?", path ? path : "(null)");

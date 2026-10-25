@@ -29,6 +29,10 @@ void diag_unregister_thread();                 // the calling thread; closes its
 void diag_set_thread_ctx(::Ctx* ctx);          // the Ctx now running on this thread (call_guest nesting restores the old one)
 ::Ctx* diag_thread_ctx();                      // thread-local current Ctx or nullptr
 std::vector<ThreadRecord> diag_threads();      // snapshot of the registry (handles stay owned by the registry)
+// Like diag_threads, but every host_handle is a private duplicate made under the registry lock, so a thread that unregisters meanwhile cannot
+// close it under the caller. The caller must pass the vector to diag_threads_release when done.
+std::vector<ThreadRecord> diag_threads_dup();
+void diag_threads_release(std::vector<ThreadRecord>& recs);   // closes the duplicates and clears the vector
 
 // ---- recent files ------------------------------------------------------------------------------------------------------
 // A ring of the last 32 file/dir opens of any thread, printed by the crash handler: what the game was loading.

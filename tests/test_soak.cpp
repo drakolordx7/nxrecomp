@@ -30,6 +30,17 @@ int64_t find_gauge(const char* name, bool* found = nullptr) {
     return -1;
 }
 
+// SEH helper (no C++ objects in the frame): the exception code a guest call to `addr` raises, or 0 when it returns.
+DWORD call_and_catch(uint64_t addr) {
+    ::Ctx c{};
+    __try {
+        nxrt::dispatch_call(&c, addr);
+    } __except (GetExceptionCode() == 0xE0000001u || GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return GetExceptionCode();
+    }
+    return 0;
+}
+
 std::atomic<int> g_a_calls{0}, g_b_calls{0};
 void fn_a(::Ctx*) { g_a_calls++; }
 void fn_b(::Ctx*) { g_b_calls++; }
@@ -184,4 +195,37 @@ NXTEST(sampling_profiler_writes_folded_stacks) {
     std::remove(path.c_str());
     CHECK(all >= 1);
     CHECK(running >= 1);
+}
+
+NXTEST(dispatch_guest_call_to_zero_traps) {
+    // An empty cache entry is {0, nullptr}: a call to address 0 must not "hit" it (that would jump to host address 0, an access violation)
+    // but reach the guest trap (0xE0000001). Twice: the second call runs on a cache the first one has touched.
+    CHECK_EQ(call_and_catch(0), 0xE0000001u);
+    CHECK_EQ(call_and_catch(0), 0xE0000001u);
+}
+
+NXTEST(diag_threads_dup_handles_survive_unregister) {
+    std::atomic<int> phase{0};
+    std::thread t([&] {
+        nxrt::diag_register_thread("dup-test", nullptr);
+        phase = 1;
+        while (phase != 2) std::this_thread::yield();
+        nxrt::diag_unregister_thread();
+        phase = 3;
+    });
+    while (phase != 1) std::this_thread::yield();
+    std::vector<nxrt::ThreadRecord> recs = nxrt::diag_threads_dup();
+    phase = 2;
+    while (phase != 3) std::this_thread::yield();   // the thread has unregistered (and closed the registry's handle)
+    bool found = false;
+    for (auto& r : recs)
+        if (r.name == "dup-test") {
+            found = true;
+            CHECK(r.host_handle != nullptr);
+            CHECK_EQ(GetThreadId(static_cast<HANDLE>(r.host_handle)), r.host_tid);   // still a valid handle to that thread
+        }
+    CHECK(found);
+    nxrt::diag_threads_release(recs);
+    CHECK(recs.empty());
+    t.join();
 }
