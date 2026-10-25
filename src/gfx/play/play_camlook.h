@@ -22,6 +22,8 @@ struct LookParams {
 class LookOffsets {
 public:
     void add(double dx, double dy, const LookParams& p);
+    // The same in radians (a stick turning the camera at a rate times the frame time). dyaw > 0 turns the view left, dpitch > 0 looks up.
+    void add_angles(double dyaw, double dpitch, const LookParams& p);
     void reset() { yaw_ = pitch_ = 0; }
     double yaw() const { return yaw_; }
     double pitch() const { return pitch_; }

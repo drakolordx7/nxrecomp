@@ -40,6 +40,7 @@ struct AimLayout {
     uint32_t fp_vertical_fov = 0x25c;        // CGameCameraMP1::CurrentFOV_acc: the vertical field of view in degrees (55 for the first person camera)
     uint32_t fp_aspect = 0x264;              // CGameCamera: the picture's width / height the camera projects with
     uint32_t free_look_pitch = 0x5cc;        // float radians, + = up
+    uint32_t look_filter = 0x1628;           // pointer to the CIIRFilter (type 0, response 4: y = 0.1 x + 0.4 y[-2] + 0.5 y[-1]) that smooths the pitch target (CPlayerMP1 constructor 0xc678bc)
     uint32_t free_look_target = 0x5d0;       // float radians: the pitch CPlayerMP1::UpdateFreeLook (every Think) eases free_look_pitch toward; the input code sets it from the stick
     // CStateManager -> CStateManagerGameLogicMP1 -> CCameraManagerMP1
     uint32_t mgr_logic = 0x4e0150, logic_camera_mgr = 0x30;
@@ -148,6 +149,10 @@ double yaw_of_transform(const float xf[12]);                               // at
 void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Ry(dyaw) * rotation, translation kept
 
 // Guest memory access used by the driver and the probes (ReadProcessMemory on this process: a bad pointer gives false, never a fault).
+// Adds d to every sample of the game's CIIRFilter (the three history arrays: counts at +8, +76 and +120, samples from +12, +80 and +124). A filter with a
+// DC gain of 1 (this one has) then carries on exactly as if its whole past had been d higher: moving the pitch target by d from outside (the mouse) does
+// not get pulled back by the filter's memory. False when the memory does not look like that filter (counts out of range, a bad address).
+bool shift_look_filter(uint64_t filter, float d);
 bool guest_read(uint64_t addr, void* out, size_t n);
 bool guest_write(uint64_t addr, const void* in, size_t n);
 

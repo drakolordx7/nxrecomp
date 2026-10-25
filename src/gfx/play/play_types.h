@@ -138,6 +138,7 @@ struct PadSettings {
     double gyro_scale = 1.0;
     bool rumble = true;
     double rumble_scale = 1.0;
+    double ball_orbit = 2.0;       // rad/s at full right-stick deflection, 0 = off (0..6). Morph ball camera only.
 };
 struct TimingSettings {
     int tap_ms = 200;              // a press shorter than this is a tap
@@ -235,7 +236,7 @@ const char* default_settings_text();
 //   [meta]     defaults_rev = <n>   (written by the game; the factory-defaults revision of the file, a file without it counts as 0)
 //   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_cursor = 1   wheel_beams = 1     (radians per count)
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
-//   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale
+//   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale ball_orbit
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
 //   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
 //              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration

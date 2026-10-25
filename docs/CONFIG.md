@@ -260,6 +260,8 @@ Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_cany
 
 `[pad] look_sens`, default `1`, range `0.25` to `3`: multiplies the right stick's deflection in play. Below 1, the top turn speed is lower. Above 1, it is reached sooner. Like `invert_y`, it applies in play only.
 
+`[pad] ball_orbit`, default `2`, range `0` to `6`: how fast, in radians per second, the right stick turns the morph ball camera around the ball at full deflection. `0` turns it off. The mouse still orbits the camera as before.
+
 ## Window modes and the picture (`controls.ini`, `[display]`)
 
 `window_mode` is `windowed`, `borderless` or `exclusive`. Borderless covers the display at its desktop mode. Exclusive asks Windows for the desktop mode. If the display refuses (a remote or locked session, some drivers), the game logs "window mode 'exclusive' was refused" and uses borderless instead. The setting in the file stays as it was. Alt+Enter and the F1 page switch modes while playing.
