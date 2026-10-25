@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "game.h"
 #include "log.h"
 #include "ncz.h"
 
@@ -131,12 +132,12 @@ DumpTitle find_program(const Container& c, const KeySet& keys, const std::string
     if (opened == 0 && keyerrs > 0) fail(Fail::Keys, "%s", first_keyerr.c_str());
     if (!program) {
         if (update_seen)
-            fail(Fail::Input, "This is an update (patch) for the game, not the game itself. Setup needs the original v1.0.0 "
-                              "dump (the base game), and updates are not supported.");
+            fail(Fail::Input, "This is an update (patch) for the game, not the game itself. Setup needs the original v%s "
+                              "dump (the base game), and updates are not supported.", game().version);
         if (other) {
             char b[32];
             std::snprintf(b, sizeof b, "%016llX", (unsigned long long)other);
-            fail(Fail::Input, "This dump is a different game (title id %s). Setup needs Metroid Prime Remastered (%s).", b,
+            fail(Fail::Input, "This dump is a different game (title id %s). Setup needs %s (%s).", b, game().title,
                  title_id.c_str());
         }
         fail(Fail::Input, "The dump does not contain the game program. It may be DLC or an incomplete dump.");

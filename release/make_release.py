@@ -32,6 +32,7 @@ import struct
 import subprocess
 import sys
 import time
+import json
 import zipfile
 
 MIB = 1024 * 1024
@@ -40,13 +41,21 @@ GIB = 1024 * MIB
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-EXE_NAME = 'mpr.exe'
-SETUP_EXES = ('mpr_setup.exe', 'mpr_setup_cli.exe')
-LAUNCHER_NAME = 'mpr_launcher.exe'              # starts the game; sits beside mpr.exe, built with the runtime
+# The game this release is for: its program and file names, from games/<id>.json (MPR_RELEASE_GAME, default mpr).
+GAME_ID = os.environ.get('MPR_RELEASE_GAME') or 'mpr'
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'games', GAME_ID + '.json'), encoding='utf-8') as _f:
+    GAME = json.load(_f)
+
+RELEASE_PREFIX = GAME['release_prefix']          # <prefix>-<version>-windows-x64
+EXE_NAME = GAME['exe']
+SETUP_EXES = tuple(GAME['setup_exes'])
+SETUP_GLOB = GAME['setup_glob']
+LAUNCHER_NAME = GAME['launcher']                # starts the game; sits beside the game exe, built with the runtime
+GAME_INI = GAME['game_ini']
 DLL_GLOB = 'astcdec-*-shared.dll'
 DLL_COUNT = 3
-PACK_NAME = 'shader_cache.mprshc'
-PACK_MAGIC = b'MPRSHC01'
+PACK_NAME = GAME['shader_pack']
+PACK_MAGIC = GAME['shader_pack_magic'].encode('ascii')
 PROMPT_FILES = ('prompt_icons.pak', 'LICENSE-Kenney-InputPrompts.txt')   # required, shipped as prompts/<name>
 PROMPT_PACK = 'prompts/prompt_icons.pak'        # the only .pak the audit allows, by exact release path
 PROMPT_MAGIC = b'MPIP'                          # header of the prompt icon pack (scripts/build_prompt_pack.py)
@@ -214,8 +223,8 @@ def plan_items(o):
         items.append(('controls.ini', need(o.controls, 'controls file')))
     elif os.path.isfile(os.path.join(o.templates, 'controls.ini')):
         items.append(('controls.ini', os.path.join(o.templates, 'controls.ini')))
-    if os.path.isfile(os.path.join(o.templates, 'mpr.ini.example')):
-        items.append(('mpr.ini.example', os.path.join(o.templates, 'mpr.ini.example')))
+    if os.path.isfile(os.path.join(o.templates, GAME_INI + '.example')):
+        items.append((GAME_INI + '.example', os.path.join(o.templates, GAME_INI + '.example')))
     items.append(('LICENSE', need(o.license, 'LICENSE')))
     items.append(('THIRD_PARTY_NOTICES.txt', need(o.notices, 'THIRD_PARTY_NOTICES.txt')))
     for name in PROMPT_FILES:
@@ -271,7 +280,7 @@ def source_checks(o):
         with open(o.shader_pack, 'rb') as f:
             head = f.read(len(PACK_MAGIC))
         if head != PACK_MAGIC:
-            problems.append('pack-magic: %s does not start with MPRSHC01' % o.shader_pack)
+            problems.append('pack-magic: %s does not start with %s' % (o.shader_pack, PACK_MAGIC.decode()))
     if problems:
         raise Refused(problems)
 
@@ -357,19 +366,19 @@ def denied_name(rel):
 
 def magic_problems(rel, head):
     if rel == PACK_NAME:
-        return [] if head.startswith(PACK_MAGIC) else ['%s does not start with MPRSHC01' % rel]
+        return [] if head.startswith(PACK_MAGIC) else ['%s does not start with %s' % (rel, PACK_MAGIC.decode())]
     if rel == PROMPT_PACK:
         out = [] if head.startswith(PROMPT_MAGIC) else ['%s does not start with MPIP (prompt icon pack)' % rel]
         out += ['%s starts with %s' % (rel, label) for magic, label in MAGIC_DENY if head.startswith(magic)]
         return out
     root = '/' not in rel
     exempt = root and (rel in (EXE_NAME, LAUNCHER_NAME) or rel.lower().endswith('.dll')
-                       or fnmatch.fnmatch(rel.lower(), 'mpr_setup*.exe'))
+                       or fnmatch.fnmatch(rel.lower(), SETUP_GLOB))
     if exempt:
         return []
     out = []
     if head.startswith(PACK_MAGIC):
-        out.append('%s starts with the shader pack magic MPRSHC01 (only %s may)' % (rel, PACK_NAME))
+        out.append('%s starts with the shader pack magic %s (only %s may)' % (rel, PACK_MAGIC.decode(), PACK_NAME))
     for magic, label in MAGIC_DENY:
         if head.startswith(magic):
             out.append('%s starts with %s' % (rel, label))
@@ -475,7 +484,7 @@ def crt_problems(rel, data, a):
 def size_problem(rel, size):
     if rel == EXE_NAME:
         key = 'exe'
-    elif '/' not in rel and fnmatch.fnmatch(rel.lower(), 'mpr_setup*.exe'):
+    elif '/' not in rel and fnmatch.fnmatch(rel.lower(), SETUP_GLOB):
         key = 'setup'
     elif rel == LAUNCHER_NAME:
         key = 'launcher'
@@ -639,7 +648,7 @@ def build(o, stage_hook=None):
     deny = deny_hashes(o.deny_hash_dir)
     source_checks(o)
 
-    base = 'mpr-%s-windows-x64%s' % (o.version, '' if o.shader_pack else '-noshaders')
+    base = '%s-%s-windows-x64%s' % (RELEASE_PREFIX, o.version, '' if o.shader_pack else '-noshaders')
     folder = os.path.join(o.out, base)
     zpath = folder + '.zip'
     table = folder + '.manifest.txt'

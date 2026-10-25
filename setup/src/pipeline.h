@@ -6,7 +6,7 @@
 //   romfs/            the RomFS as loose files
 //   bc7_cache/        ASTC textures transcoded to BC7, one file per texture, in the runtime's cache format
 //   shader_cache/spirv/   translated shaders from the shader pack (setup stops without a pack, unless --no-shaders or an earlier run installed them)
-//   mpr.ini           [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
+//   <game ini>        (game.h; mpr.ini) [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
 //   setup_state.tsv   what was done, hashes of every output file, quality used; makes re-runs cheap and resumable
 //   setup.log         the log of every run (appended); run_setup opens it itself (log_open) as soon as out_dir exists
 #pragma once
@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "common.h"
+#include "game.h"
 #include "keys.h"
 #include "log.h"
 
@@ -28,15 +29,15 @@ struct SetupOptions {
     std::string out_dir;
     int bc7_quality = 3;                    // 0..6; the runtime reads [nvn] bc7_quality and its cache keys include it. Default = runtime default.
     int threads = 0;                        // 0 = all hardware threads for texture conversion (RomFS copy uses 3)
-    std::string shader_cache_src;           // shader pack file or folder with the translated shaders; empty = shader_cache.mprshc or shader_cache\ next to the setup program
+    std::string shader_cache_src;           // shader pack file or folder with the translated shaders; empty = the game's shader pack (game.h; shader_cache.mprshc) or shader_cache\ next to the setup program
     bool allow_no_shaders = false;          // developer escape hatch (--no-shaders): with no pack, install without shaders. The game then draws nothing.
     bool verify_input = true;               // check the dump's own hashes (PFS0 hash table, RomFS integrity tree) before writing
     bool verify_output = false;             // re-hash files that are already present instead of trusting their size
     bool skip_textures = false;
     bool inspect_only = false;              // open, validate and size up; write nothing
-    // Test hooks (the shipped tool always uses the defaults).
-    std::string expected_title_id = "010012101468C000";
-    std::string expected_build_id = "67C9CA1428222752F951021464A7B3597EB98FEC";   // main NSO build id, hex, first 20 bytes
+    // Test hooks (the shipped tool always uses the defaults, those of the game it is built for: game.h).
+    std::string expected_title_id = game().title_id;
+    std::string expected_build_id = game().build_id;   // main NSO build id, hex, first 20 bytes
 };
 
 struct InputSummary {
