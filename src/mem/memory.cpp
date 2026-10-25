@@ -305,7 +305,7 @@ bool commit(uint64_t addr, uint64_t size, Prot p) {
     uint64_t start = 0, end = 0;
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
-    ww::forget(start, end - start, false);
+    const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);   // the write tracker keeps out of the range while it changes
     if (!VirtualAlloc(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), MEM_COMMIT, protect_of(p))) {
         DWORD e = GetLastError();
         NXLOG_E(kTag, "commit %llx (+%llx): VirtualAlloc failed, error %lu", static_cast<unsigned long long>(start),
@@ -319,7 +319,7 @@ bool decommit(uint64_t addr, uint64_t size) {
     uint64_t start = 0, end = 0;
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
-    ww::forget(start, end - start, false);
+    const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);
     if (!VirtualFree(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), MEM_DECOMMIT)) {
         DWORD e = GetLastError();
         NXLOG_E(kTag, "decommit %llx (+%llx): VirtualFree failed, error %lu", static_cast<unsigned long long>(start),
@@ -334,7 +334,7 @@ bool protect(uint64_t addr, uint64_t size, Prot p) {
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
     const DWORD np = protect_of(p);
-    ww::forget(start, end - start, false);     // pages the write tracker armed get this protection, not its own
+    const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);   // pages the write tracker armed get this protection, not its own
     {   // heap: the page table says whether every page is committed, so one VirtualProtect does it (no VirtualQuery over the view)
         std::lock_guard hk(g_heap_mu);
         if (in_heap_view(start, end)) {
@@ -502,7 +502,7 @@ bool heap_commit(uint64_t offset, uint64_t size) {
     }
     const uint64_t start = offset & ~(kPage - 1);
     const uint64_t end = align_up(offset + size, kPage);
-    ww::forget(kHeapBase + start, end - start, false);   // MEM_COMMIT makes committed pages read-write again
+    const ww::OsWriteScope wws(reinterpret_cast<void*>(kHeapBase + start), end - start);   // MEM_COMMIT makes committed pages read-write again
     if (!VirtualAlloc(reinterpret_cast<void*>(kHeapBase + start), static_cast<SIZE_T>(end - start), MEM_COMMIT,
                       PAGE_READWRITE)) {
         DWORD e = GetLastError();
@@ -535,7 +535,7 @@ bool heap_decommit(uint64_t offset, uint64_t size) {
     // (as in smo-recomp's SetMemoryHeapSize), and the alias views still show the section's contents.
     const uint64_t start = offset & ~(kPage - 1);
     const uint64_t end = align_up(offset + size, kPage);
-    ww::forget(kHeapBase + start, end - start, false);
+    const ww::OsWriteScope wws(reinterpret_cast<void*>(kHeapBase + start), end - start);
     for (uint64_t p = start / kPage; p < end / kPage;) {
         if (!bit_test(p)) {
             p++;
@@ -587,6 +587,7 @@ uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at, Prot p) {
     const DWORD off_hi = static_cast<DWORD>(offset >> 32);
     const DWORD off_lo = static_cast<DWORD>(offset & 0xFFFFFFFFu);
 
+    ww::ban_section(offset, size);   // before the view exists: writes through it would not fault in the primary view
     if (at != 0) {
         void* v = MapViewOfFileEx(g_section, access, off_hi, off_lo, static_cast<SIZE_T>(size), reinterpret_cast<void*>(at));
         if (!v) {
@@ -603,7 +604,6 @@ uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at, Prot p) {
         }
         g_aliases.emplace(at, Alias{size, offset});
         g_alias_used[at] = size;
-        ww::ban_section(offset, size);            // writes through this view would not fault in the primary view
         NXLOG_I(kTag, "heap alias: section %llx (+%llx) at %llx", static_cast<unsigned long long>(offset),
                 static_cast<unsigned long long>(size), static_cast<unsigned long long>(at));
         return at;
@@ -617,7 +617,6 @@ uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at, Prot p) {
         if (v && reinterpret_cast<uint64_t>(v) == cand) {
             g_aliases.emplace(cand, Alias{size, offset});
             g_alias_used[cand] = size;
-            ww::ban_section(offset, size);
             NXLOG_I(kTag, "heap alias: section %llx (+%llx) at %llx", static_cast<unsigned long long>(offset),
                     static_cast<unsigned long long>(size), static_cast<unsigned long long>(cand));
             return cand;

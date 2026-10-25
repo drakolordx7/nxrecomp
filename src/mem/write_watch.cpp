@@ -4,7 +4,9 @@
 //   valid   armed and not written since (the owner's copy of the page is current)
 //   written the CPU wrote it since the owner last asked (take_written)
 //   ban     never arm (another view of the page exists)
-// The fault handler and before_os_write may run on any thread at any time; they only use atomics and VirtualProtect. Regions are
+// The fault handler and before_os_write may run on any thread at any time; they only use atomics, VirtualProtect and the region's
+// slim reader/writer lock: whoever makes pages writable holds it shared, arm() and region_destroy() hold it exclusive, so a page's bit
+// and its protection change together as seen by everybody else (no page ends up read-only without its bit, or armed and writable). Regions are
 // published in a fixed table; a reader counts itself in g_busy while it looks at a region, and region_destroy waits for that count to
 // drop after taking the region out of the table.
 #include "nxrt/write_watch.h"
@@ -36,6 +38,18 @@ struct Region {
     uint64_t nwords = 0;
     std::unique_ptr<std::atomic<uint64_t>[]> prot, valid, written, ban;
     int slot = -1;
+    SRWLOCK lock = SRWLOCK_INIT;
+};
+
+struct SharedLock {
+    explicit SharedLock(Region* r) : r_(r) { AcquireSRWLockShared(&r_->lock); }
+    ~SharedLock() { ReleaseSRWLockShared(&r_->lock); }
+    Region* r_;
+};
+struct ExclusiveLock {
+    explicit ExclusiveLock(Region* r) : r_(r) { AcquireSRWLockExclusive(&r_->lock); }
+    ~ExclusiveLock() { ReleaseSRWLockExclusive(&r_->lock); }
+    Region* r_;
 };
 
 namespace {
@@ -121,6 +135,7 @@ DWORD page_protect(uint64_t addr) {
 }
 
 // One page of a region becomes writable and counts as written. True when the page is ours to handle (the faulting write may retry).
+// The caller holds the region's lock shared.
 bool release_page(Region* r, uint64_t page) {
     const uint64_t b = bit(page);
     const uint64_t w = page >> 6;
@@ -138,8 +153,8 @@ bool release_page(Region* r, uint64_t page) {
         }
         return true;
     }
-    // Not armed (any more): another thread may be making it writable right now, or memory.cpp is changing its protection. Wait a little
-    // for it to become writable; anything else is a real fault.
+    // Not armed (any more): another releaser (also holding the lock shared) may be making it writable right now. Wait a little for it to
+    // become writable; anything else is a real fault.
     for (int i = 0; i < 2000; ++i) {
         const DWORD pr = page_protect(addr) & 0xff;
         if (pr == PAGE_READWRITE || pr == PAGE_EXECUTE_READWRITE) return true;
@@ -161,6 +176,7 @@ LONG CALLBACK on_fault(EXCEPTION_POINTERS* ep) {
     for (int i = 0; i < hi; ++i) {
         Region* r = g_slots[i].load(std::memory_order_seq_cst);
         if (!r || addr < r->base || addr >= r->base + r->npages * kPage) continue;
+        SharedLock lk(r);
         ours |= release_page(r, (addr - r->base) / kPage);
     }
     g_busy.fetch_sub(1, std::memory_order_seq_cst);
@@ -181,6 +197,7 @@ void for_regions(uint64_t addr, uint64_t size, Fn&& fn) {
         const uint64_t lo = std::max(addr, r->base), end = std::min(addr + size, r->base + r->npages * kPage);
         if (lo >= end) continue;
         const uint64_t first = (lo - r->base) / kPage, last = (end - 1 - r->base) / kPage;
+        SharedLock lk(r);
         fn(r, first, last - first + 1);
     }
     g_busy.fetch_sub(1, std::memory_order_seq_cst);
@@ -243,7 +260,9 @@ Region* region_create(uint64_t addr, uint64_t size) {
 
 void region_destroy(Region* r) {
     if (!r) return;
-    // Writable again first (faults on armed pages are still handled while this runs), then out of the table.
+    // Writable again first (faults on armed pages wait for the lock and then find the page writable), then out of the table.
+    {
+    ExclusiveLock lk(r);
     for (uint64_t p = 0; p < r->npages;) {
         if (!test(r->prot.get(), p)) { ++p; continue; }
         uint64_t q = p;
@@ -252,6 +271,7 @@ void region_destroy(Region* r) {
         DWORD was = 0;
         VirtualProtect(reinterpret_cast<void*>(r->base + p * kPage), static_cast<SIZE_T>((q - p) * kPage), PAGE_READWRITE, &was);
         p = q;
+    }
     }
     {
         std::lock_guard<std::mutex> lk(g_mu);
@@ -267,8 +287,12 @@ uint64_t region_pages(const Region* r) { return r ? r->npages : 0; }
 
 bool arm(Region* r, uint64_t first, uint64_t count) {
     if (!r || !count || first >= r->npages || count > r->npages - first) return false;
+    ExclusiveLock lk(r);
     if (any_set(r->ban.get(), first, count)) return false;
     const uint64_t a = r->base + first * kPage, n = count * kPage;
+    // A file read (or a mapping change in memory.cpp) into these pages is in progress: leave them alone. Its scope is published before it
+    // releases pages under the shared lock, so either this sees it, or its release waits for this arm and undoes it.
+    if (os_write_overlaps(a, a + n)) return false;
     // every page committed read-write (the guest may have changed a protection; a page it made read-only is not ours to take)
     for (uint64_t cur = a; cur < a + n;) {
         MEMORY_BASIC_INFORMATION mbi{};
@@ -279,21 +303,14 @@ bool arm(Region* r, uint64_t first, uint64_t count) {
         if ((pr != PAGE_READWRITE && !already) || (mbi.Protect & PAGE_GUARD)) return false;
         cur = std::min<uint64_t>(a + n, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize);
     }
-    // Bits first: a write that lands before the protection does not fault, and the owner's copy (made after this returns) still sees it.
+    // Under the exclusive lock no fault is handled until both bits and protection are in place; a write that faults meanwhile waits and
+    // then releases the page. A write that lands before the protection does not fault, and the owner's copy (made later) still sees it.
     set_bits(r->prot.get(), first, count, true);
     set_bits(r->valid.get(), first, count, true);
     DWORD was = 0;
     if (!VirtualProtect(reinterpret_cast<void*>(a), static_cast<SIZE_T>(n), PAGE_READONLY, &was)) {
         set_bits(r->valid.get(), first, count, false);
         set_bits(r->prot.get(), first, count, false);
-        return false;
-    }
-    // A file read into these pages began meanwhile: give them back. (Its scope is published before it releases pages, so either this
-    // sees it, or its release comes after the protection above and undoes it.)
-    if (os_write_overlaps(a, a + n)) {
-        for (uint64_t q = first; q < first + count; ++q)
-            if (test(r->prot.get(), q)) release_page(r, q);
-        set_bits(r->valid.get(), first, count, false);
         return false;
     }
     return true;

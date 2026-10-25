@@ -115,6 +115,8 @@ std::vector<PendingWrite> g_pending;
 bool g_tracked = false;         // this submission uses tracked barriers
 bool g_pass_unsafe = false;     // a draw of the open pass may write memory other than its attachments
 bool g_prog_writes = false;     // the bound program has storage buffer or storage image bindings
+bool g_mirror_stale = false;    // a GPU write made pages of a pool copy stale while a draw was being set up: bind again at the next draw
+
 uint32_t g_pass_draws = 0;      // draws recorded in the open pass (GPU pass profiler)
 uint64_t g_pass_verts = 0;      // vertices (indices for indexed draws) times instances of those draws
 Frame* F = nullptr;
@@ -131,6 +133,14 @@ enum : uint32_t {
     kPipe = 1, kDesc = 2, kVb = 4, kDynVp = 8, kDynRaster = 16, kDynDepth = 32, kDynStencil = 64, kDynBias = 128, kDynBlend = 256, kAllDirty = 0x1ff
 };
 uint32_t g_dirty = kAllDirty;
+// A command may write [addr, addr + size) of pool memory: device-local copies of those pages are stale, and bindings that point at them are
+// made again (vertex buffers and descriptor sets).
+void gpu_wrote(uint64_t addr, uint64_t size, int use) {
+    if (note_gpu_write(addr, size, use)) {
+        g_dirty |= kVb | kDesc;
+        g_mirror_stale = true;
+    }
+}
 const ProgLayout* g_pl = nullptr;
 VkPipeline g_pipe = VK_NULL_HANDLE;
 VkPrimitiveTopology g_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
@@ -856,7 +866,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                     const int idx = b.nvn.index;
                     if (idx >= 0 && idx < 16 && S.ubo[d.nvn_stage][idx].addr) {
                         const GState::Bind& bind = S.ubo[d.nvn_stage][idx];
-                        BufRef br = resolve_read(bind.addr, std::min<uint64_t>(bind.size, 65536));
+                        BufRef br = resolve_read(bind.addr, bind.size, kReadUniform);
                         const VkDeviceSize align = device().properties().limits.minUniformBufferOffsetAlignment;
                         if (br.ok && (br.offset % align) == 0) {
                             bi = {br.buffer, br.offset, std::min<VkDeviceSize>({bind.size ? bind.size : 65536, br.avail, 65536})};
@@ -878,7 +888,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                         const GState::Bind& bind = S.ssbo[d.nvn_stage][slot];
                         BufRef br = resolve_buffer(bind.addr, bind.size);
                         bi = {br.buffer, br.offset, std::min<VkDeviceSize>(bind.size ? bind.size : br.avail, br.avail)};
-                        if (br.ok) note_gpu_write(bind.addr, bi.range);      // a storage buffer may be written by the shader
+                        if (br.ok) gpu_wrote(bind.addr, bi.range, kWriteStorage);      // a storage buffer may be written by the shader
                     }
                     break;
                 }
@@ -1319,7 +1329,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_xfb_active && g_pipe_xfb && !g_xfb_began && device().features().transform_feedback && S.xfb[0].addr) {
         BufRef xb = resolve_buffer(S.xfb[0].addr, S.xfb[0].size);
         if (xb.ok) {
-            note_gpu_write(S.xfb[0].addr, S.xfb[0].size ? S.xfb[0].size : xb.avail);
+            gpu_wrote(S.xfb[0].addr, S.xfb[0].size ? S.xfb[0].size : xb.avail, kWriteXfb);
             if (!g_xfb_counter) {
                 if (device().create_buffer(256, VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Upload,
                                            &g_xfb_counter, "nvn xfb counter") != VK_SUCCESS)
@@ -1352,7 +1362,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
                 continue;
             }
             const GState::Bind& vb = S.vtx[binding];
-            BufRef br = vb.addr ? resolve_read(vb.addr, vb.size) : BufRef{dummy_buffer(), 0, 65536, false};
+            BufRef br = vb.addr ? resolve_read(vb.addr, vb.size, kReadVertex) : BufRef{dummy_buffer(), 0, 65536, false};
             VkDeviceSize size = vb.size ? std::min<VkDeviceSize>(vb.size, br.avail) : br.avail;
             VkDeviceSize stride = static_cast<VkDeviceSize>(S.stream[binding].stride);
             vkCmdBindVertexBuffers2(F->cb, binding, 1, &br.buffer, &br.offset, &size, &stride);
@@ -1366,7 +1376,8 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             g_vb_bound_in_cb = true;
         }
     }
-    g_dirty = 0;
+    g_dirty = g_mirror_stale ? (kVb | kDesc) : 0;     // a storage buffer of this draw made copied pages stale: the next draw binds again
+    g_mirror_stale = false;
     *topo_out = topo;
     return true;
 }
@@ -1565,7 +1576,7 @@ void do_draw_elements(const P_DrawElements& p) {
         vkCmdBindIndexBuffer(F->cb, u.buffer, u.offset, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(F->cb, static_cast<uint32_t>(idx.size()), std::max<uint32_t>(1, p.instance_count), 0, p.base_vertex, p.base_instance);
     } else {
-        BufRef br = resolve_read(p.index_address, static_cast<uint64_t>(p.count) * isz);
+        BufRef br = resolve_read(p.index_address, static_cast<uint64_t>(p.count) * isz, kReadIndex);
         vkCmdBindIndexBuffer(F->cb, br.buffer, br.offset, vk_index_type(static_cast<int>(p.type)));
         vkCmdDrawIndexed(F->cb, p.count, std::max<uint32_t>(1, p.instance_count), 0, p.base_vertex, p.base_instance);
     }
@@ -1778,7 +1789,7 @@ void do_copy_buffer_texture(const P_CopyBufTex& p, bool to_texture) {
         tex_ensure_current(t, *F);
         tex_transition(t, *F, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         vkCmdCopyImageToBuffer(F->cb, tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, br.buffer, 1, &c);
-        note_gpu_write(p.address, stride * ((rh + bh - 1) / bh) * rd);
+        gpu_wrote(p.address, stride * ((rh + bh - 1) / bh) * rd, kWriteImageCopy);
     }
     memory_barrier(F->cb);
     counters().copies.fetch_add(1, std::memory_order_relaxed);
@@ -1851,7 +1862,7 @@ void do_write_memory(uint64_t gpu_addr, const void* data, uint32_t size) {
     memory_barrier(F->cb);
     BufRef b = resolve_buffer(gpu_addr, size);
     if (!b.ok) return;
-    note_gpu_write(gpu_addr, size);
+    gpu_wrote(gpu_addr, size, kWriteUpdate);
     vkCmdUpdateBuffer(F->cb, b.buffer, b.offset, size, data);
     memory_barrier(F->cb);
 }
@@ -2019,7 +2030,7 @@ void run_list(const CmdList& list, int depth) {
                 end_pass();
                 BufRef b = resolve_buffer(p.address, p.size);
                 if (b.ok) vkCmdFillBuffer(F->cb, b.buffer, b.offset, p.size & ~3ull, p.value);
-                if (b.ok) note_gpu_write(p.address, p.size);
+                if (b.ok) gpu_wrote(p.address, p.size, kWriteFill);
                 memory_barrier(F->cb);
                 counters().clears.fetch_add(1);
                 break;
@@ -2031,7 +2042,7 @@ void run_list(const CmdList& list, int depth) {
                 if (s.ok && d.ok) {
                     VkBufferCopy c = {s.offset, d.offset, p.size};
                     vkCmdCopyBuffer(F->cb, s.buffer, d.buffer, 1, &c);
-                    note_gpu_write(p.dst, p.size);
+                    gpu_wrote(p.dst, p.size, kWriteCopy);
                 }
                 memory_barrier(F->cb);
                 counters().copies.fetch_add(1);

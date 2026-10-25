@@ -405,7 +405,8 @@ constexpr VkPipelineStageFlags2 kDepthStages = VK_PIPELINE_STAGE_2_EARLY_FRAGMEN
 void layout_scope(VkImageLayout layout, bool src, VkPipelineStageFlags2* stage, VkAccessFlags2* access) {
     switch (layout) {
         case VK_IMAGE_LAYOUT_UNDEFINED:
-            *stage = src ? VK_PIPELINE_STAGE_2_NONE : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            // the old contents do not matter, but the memory may have belonged to something still in flight: wait for all earlier commands
+            *stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
             *access = src ? VK_ACCESS_2_NONE : (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
             return;
         case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:

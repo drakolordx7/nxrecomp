@@ -42,7 +42,8 @@ void take_written(Region* r, std::vector<uint64_t>& out);
 // Any thread: the operating system is about to write [p, p + n) (a file read into guest memory): armed pages in the range become writable
 // and count as written. Cheap when no region exists.
 void before_os_write(const void* p, uint64_t n);
-// The same for the lifetime of the object, and no page of the range is armed again until it ends: hold it around the ReadFile calls.
+// The same for the lifetime of the object, and no page of the range is armed again until it ends: hold it around the ReadFile calls,
+// and memory.cpp holds it around every change of mapping or protection it makes.
 class OsWriteScope {
 public:
     OsWriteScope(const void* p, uint64_t n);
