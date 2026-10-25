@@ -23,6 +23,7 @@
 #include "nxrt/write_watch.h"
 #include "vk_gauges.h"
 #include "nvn_gpu_internal.h"
+#include "nvn_mirror_cap.h"
 
 namespace nxrt::nvn::be {
 
@@ -371,6 +372,22 @@ MirrorMode mirror_mode() {
     return m;
 }
 
+// The cap of the copies ([nvn] pool_mirror_mb, or from the card's video memory when it is not set; nvn_mirror_cap.h), logged once.
+uint64_t mirror_budget() {
+    uint64_t vram = 0;
+    if (VkPhysicalDevice pd = device().physical()) {
+        VkPhysicalDeviceMemoryProperties mp{};
+        vkGetPhysicalDeviceMemoryProperties(pd, &mp);
+        for (uint32_t h = 0; h < mp.memoryHeapCount; ++h)
+            if (mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max<uint64_t>(vram, mp.memoryHeaps[h].size);
+    }
+    const int64_t set_mb = config_has("nvn", "pool_mirror_mb") ? std::max<int64_t>(0, config_get_int("nvn", "pool_mirror_mb", 0)) : -1;
+    const MirrorCap c = mirror_cap(vram, set_mb);
+    NXLOG_I(kTag, "pool copies: cap %llu MiB (%s; largest device-local heap %llu MiB)%s", static_cast<unsigned long long>(c.bytes >> 20), c.why,
+            static_cast<unsigned long long>(vram >> 20), c.bytes ? "" : ": no device-local copies");
+    return c.bytes;
+}
+
 uint32_t presents_now() { return static_cast<uint32_t>(counters().presents.load(std::memory_order_relaxed)); }
 
 bool bit_get(const std::vector<uint64_t>& v, uint64_t i) { return (v[static_cast<size_t>(i >> 6)] >> (i & 63)) & 1; }
@@ -390,7 +407,8 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     // Tracked copies change the protection of the CPU's view of the pages. With [nvn] pool_view = false the GPU import is that same view;
     // that combination is not tried: no copy.
     if (!pg->view) return nullptr;
-    static const uint64_t budget = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("nvn", "pool_mirror_mb", 2048))) << 20;
+    static const uint64_t budget = mirror_budget();
+    if (budget == 0) return nullptr;
     if (g_mirror_bytes + pg->size > budget) {
         NXLOG_I(kTag, "pool %p (%llu MiB) gets no device-local copy: over [nvn] pool_mirror_mb", static_cast<void*>(pg->base),
                 static_cast<unsigned long long>(pg->size >> 20));
