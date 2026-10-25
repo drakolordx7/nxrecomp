@@ -35,4 +35,6 @@ NXTEST(explicit_value_wins) {
     CHECK_EQ(mirror_cap(2 * GiB, 512).bytes, 512 * MiB);      // even under 4 GiB
     CHECK_EQ(mirror_cap(24 * GiB, 4096).bytes, 4096 * MiB);   // even over 2048
     CHECK_EQ(mirror_cap(24 * GiB, 0).bytes, 0ull);            // 0 turns the copies off
+    CHECK_EQ(mirror_cap(16 * GiB, -1, true).bytes, 0ull);     // integrated GPU: none by default
+    CHECK_EQ(mirror_cap(16 * GiB, 1024, true).bytes, 1024 * MiB);   // but an explicit value still wins
 }

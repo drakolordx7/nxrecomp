@@ -45,7 +45,14 @@ free_lock_margin = 0.15
 gun_drives_view = 1
 
 [tweaks]
-# One glow colour for the morph ball (its glowing stripes, inner glow, boost glow, trail and light), the arm cannon's charge glow and the suit's lights: off (the game's own) or R,G,B (0..255 each).
+# 1: skip the opening cutscene of a new game (the gunship landing) with the game's own cutscene skip. Other cutscenes play as usual.
+skip_intro = 0
+# 1: end the title's intro movie at once.
+skip_boot_logos = 0
+# 1: the title, main menu, save slots and options run menu_speed (1..4) times faster.
+fast_menus = 0
+menu_speed = 2
+# One glow colour for the morph ball (its glowing stripes, inner glow, boost glow, trail and light) and the arm cannon's charge glow: off (the game's own) or R,G,B (0..255 each).
 glow_color = off
 # auto follows glow_color, off keeps the game's colour for that part, or R,G,B gives the part its own colour.
 suit_glow = auto
