@@ -90,25 +90,25 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         guest_read(player + 0x4d4, &morph_word, sizeof morph_word);
         if (morph_word == 1) {
             LookParams lp;
-            lp.yaw_rad = ms.morph_yaw_rad;
-            lp.pitch_rad = ms.morph_pitch_rad;
+            lp.yaw_rad = ms.alt_yaw_rad;
+            lp.pitch_rad = ms.alt_pitch_rad;
             lp.invert_x = ms.invert_x;
             lp.invert_y = ms.invert_y;
             if (dx != 0 || dy != 0) st.ball_look.add(dx, dy, lp);
             dx = dy = 0;
             // the right stick orbits the camera too, at a speed in radians per second (the game gives the stick no job in the ball, so nothing else moves with it)
             float sx = 0, sy = 0, dt_in = 0;
-            if (host.settings().pad.ball_orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
+            if (host.settings().pad.alt_orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
                 host.right_stick(&sx, &sy);
                 if (sx != 0 || sy != 0) {
-                    const double rate = host.settings().pad.ball_orbit * static_cast<double>(dt_in);
+                    const double rate = host.settings().pad.alt_orbit * static_cast<double>(dt_in);
                     st.ball_look.add_angles(-static_cast<double>(sx) * rate, static_cast<double>(sy) * rate, lp);
                 }
             }
         } else {
             st.ball_look.reset();
         }
-        if (gate == AimBlock::None && host.action_active(Act::FreeLook, now)) {
+        if (gate == AimBlock::None && host.action_active(Act::LookHold, now)) {
             LookParams lp;
             lp.yaw_rad = ms.yaw_rad;
             lp.pitch_rad = ms.pitch_rad;
@@ -275,12 +275,12 @@ void frame(bool in_game, double step, GameFrame* out) {
         for (int i = 0; i < 4; ++i)
             if (hints.owned_beams & (1u << i)) mask |= 1u << game_to_mine[i];
         out->hints_valid = true;
-        out->beam = hints.beam >= 0 ? game_to_mine[hints.beam] : -1;
-        out->beam_mask = mask;
+        out->cycle_index = hints.beam >= 0 ? game_to_mine[hints.beam] : -1;     // set A = the beams
+        out->cycle_mask = mask;
     }
-    if (hints.morphed) out->play_ctx = Ctx::Morph;
-    else if (hints.visor == 2) out->play_ctx = Ctx::Scan;
-    else out->play_ctx = Ctx::Gameplay;
+    if (hints.morphed) out->play_ctx = Ctx::Alt;
+    else if (hints.visor == 2) out->play_ctx = Ctx::Inspect;
+    else out->play_ctx = Ctx::Play;
 }
 
 Act menu_frame(bool menu_up, const mm::Geometry& g) { return mm::game_frame(menu_up, g); }

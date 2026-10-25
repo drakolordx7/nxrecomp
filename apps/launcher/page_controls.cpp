@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Controls tab: mouse sensitivity (horizontal, vertical, morph ball), mouse inversion and the wheel, and the button icon style.
+// Controls tab: mouse sensitivity (horizontal, vertical, the alternate body's camera; mpr: morph ball), mouse inversion and the wheel, and the button icon style.
 // The sensitivity sliders count tenths of the Source scale (1 = 0.1, 100 = 10.0). A slider only writes its value when the player
 // moved it, so a value in the settings file with more digits than the slider can show stays as it is.
 #include <algorithm>
@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "game_info.h"
 #include "pages.h"
 
 namespace mprl {
@@ -15,6 +16,14 @@ namespace mprl {
 namespace {
 
 using nxrt::play::LockMode;
+
+// The game's labels for the alternate-body camera and the wheel cycling (nxrt::play::GameVocabulary), kept for the page's lifetime.
+const wchar_t* vocab_label(const char* nxrt::play::GameVocabulary::* field, const wchar_t* generic, std::wstring* keep) {
+    const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
+    *keep = game_text(v ? v->*field : nullptr, generic);
+    return keep->c_str();
+}
+std::wstring g_alt_camera_label, g_wheel_cycles_label;
 using nxrt::play::PromptStyle;
 using nxrt::play::rad_per_count;
 using nxrt::play::source_sens;
@@ -79,11 +88,11 @@ public:
             [](Settings&, bool) {},   // not saved: only the two sliders are
             [this]() { linked_ = !linked_; });
         f.slider(
-            L"Morph ball camera", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.morph_yaw_rad); },
+            vocab_label(&nxrt::play::GameVocabulary::label_alt_camera, L"Alternate camera", &g_alt_camera_label), kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.alt_yaw_rad); },
             [this](Settings& s, int pos) {
-                if (pos == morph0_) return;
-                s.mouse.morph_yaw_rad = rad_per_count(pos / 10.0);
-                s.mouse.morph_pitch_rad = s.mouse.morph_yaw_rad;
+                if (pos == alt0_) return;
+                s.mouse.alt_yaw_rad = rad_per_count(pos / 10.0);
+                s.mouse.alt_pitch_rad = s.mouse.alt_yaw_rad;
             },
             sens_text);
         f.checkbox(
@@ -93,8 +102,9 @@ public:
             L"Invert horizontal aim", [](const Settings& s) { return s.mouse.invert_x; },
             [](Settings& s, bool v) { s.mouse.invert_x = v; });
         f.checkbox(
-            L"Mouse wheel changes the beam", [](const Settings& s) { return s.mouse.wheel_beams; },
-            [](Settings& s, bool v) { s.mouse.wheel_beams = v; });
+            vocab_label(&nxrt::play::GameVocabulary::label_wheel_cycles, L"Mouse wheel cycles", &g_wheel_cycles_label),
+            [](const Settings& s) { return s.mouse.wheel_cycles; },
+            [](Settings& s, bool v) { s.mouse.wheel_cycles = v; });
         f.checkbox(
             L"Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
             [](Settings& s, bool v) { s.mouse.menu_cursor = v; });
@@ -132,7 +142,7 @@ public:
     void load(const Settings& s) override {
         yaw0_ = slider_pos(s.mouse.yaw_rad);
         pitch0_ = slider_pos(s.mouse.pitch_rad);
-        morph0_ = slider_pos(s.mouse.morph_yaw_rad);
+        alt0_ = slider_pos(s.mouse.alt_yaw_rad);
         margin0_ = margin_pos(s.aim.free_lock_margin);
         linked_ = same_steps(s);
         Page::load(s);
@@ -150,7 +160,7 @@ private:
     }
 
     HWND yaw_ = nullptr, pitch_ = nullptr;
-    int yaw0_ = 0, pitch0_ = 0, morph0_ = 0, margin0_ = 0;   // slider positions as loaded
+    int yaw0_ = 0, pitch0_ = 0, alt0_ = 0, margin0_ = 0;   // slider positions as loaded
     bool linked_ = false;                      // the "same for both" box (not saved)
     bool syncing_ = false;
 };

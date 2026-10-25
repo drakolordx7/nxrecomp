@@ -202,6 +202,10 @@ std::wstring default_game_dir() { return launcher_exe_dir(); }
 std::wstring controls_path(const std::wstring& game_dir) { return (fs::path(game_dir) / L"controls.ini").wstring(); }
 
 std::wstring product_name() { return brand(nxrt::game::info().product); }
+std::wstring game_text(const char* utf8, const wchar_t* fallback) {
+    std::wstring w = brand(utf8);
+    return w.empty() && fallback ? std::wstring(fallback) : w;
+}
 std::wstring game_exe_name() { return brand(nxrt::game::info().exe_name); }
 std::wstring setup_exe_name() { return brand(nxrt::game::info().setup_exe_name); }
 std::wstring shader_pack_name() { return brand(nxrt::game::info().shader_pack); }

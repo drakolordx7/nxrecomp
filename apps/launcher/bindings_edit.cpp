@@ -3,7 +3,10 @@
 #include "bindings_edit.h"
 
 #include <cstddef>
+#include <string>
 #include <utility>
+
+#include "game_info.h"
 
 namespace mprl {
 
@@ -14,39 +17,30 @@ using nxrt::play::InputId;
 using nxrt::play::Settings;
 using nxrt::play::Trig;
 
+// The registered game's rows (nxrt::play::GameVocabulary::labels; Metroid Prime Remastered: games/mpr/mpr_vocabulary.cpp). Without a game: the
+// movement, menu and d-pad rows under generic names.
 const std::vector<KeyRow>& key_rows() {
-    static const std::vector<KeyRow> rows = {
-        {Act::MoveForward, L"Move forward", L"Movement"},
-        {Act::MoveBack, L"Move back", L"Movement"},
-        {Act::MoveLeft, L"Move left", L"Movement"},
-        {Act::MoveRight, L"Move right", L"Movement"},
-
-        {Act::Fire, L"Fire", L"Combat"},
-        {Act::Missile, L"Missile", L"Combat"},
-        {Act::LockOn, L"Lock on", L"Combat"},
-        {Act::FreeLook, L"Free look", L"Combat"},
-        {Act::Jump, L"Jump", L"Combat"},
-        {Act::Morph, L"Morph ball", L"Combat"},
-
-        {Act::Beam1, L"Power beam", L"Beams"},
-        {Act::Beam2, L"Wave beam", L"Beams"},
-        {Act::Beam3, L"Ice beam", L"Beams"},
-        {Act::Beam4, L"Plasma beam", L"Beams"},
-        {Act::BeamNext, L"Next beam", L"Beams"},
-        {Act::BeamPrev, L"Previous beam", L"Beams"},
-
-        {Act::Visor1, L"Combat visor", L"Visors"},
-        {Act::Visor2, L"Scan visor", L"Visors"},
-        {Act::Visor3, L"Thermal visor", L"Visors"},
-        {Act::Visor4, L"X-Ray visor", L"Visors"},
-
-        {Act::Map, L"Map", L"Map and menus"},
-        {Act::Pause, L"Pause", L"Map and menus"},
-        {Act::DpadUp, L"D-pad up", L"Map and menus"},
-        {Act::DpadDown, L"D-pad down", L"Map and menus"},
-        {Act::DpadLeft, L"D-pad left", L"Map and menus"},
-        {Act::DpadRight, L"D-pad right", L"Map and menus"},
-    };
+    static std::vector<std::wstring> text;      // the rows point into it; reserved once, so the pointers stay valid
+    static const std::vector<KeyRow> rows = [] {
+        std::vector<KeyRow> r;
+        const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
+        if (v && v->labels && v->label_count) {
+            text.reserve(2 * v->label_count);
+            for (unsigned i = 0; i < v->label_count; ++i) {
+                text.push_back(game_text(v->labels[i].label, L""));
+                text.push_back(game_text(v->labels[i].group, L""));
+                r.push_back({v->labels[i].act, text[text.size() - 2].c_str(), text.back().c_str()});
+            }
+            return r;
+        }
+        return std::vector<KeyRow>{
+            {Act::MoveForward, L"Move forward", L"Movement"}, {Act::MoveBack, L"Move back", L"Movement"},
+            {Act::MoveLeft, L"Move left", L"Movement"},       {Act::MoveRight, L"Move right", L"Movement"},
+            {Act::Map, L"Map", L"Menus"},                     {Act::Pause, L"Pause", L"Menus"},
+            {Act::DpadUp, L"D-pad up", L"Menus"},             {Act::DpadDown, L"D-pad down", L"Menus"},
+            {Act::DpadLeft, L"D-pad left", L"Menus"},         {Act::DpadRight, L"D-pad right", L"Menus"},
+        };
+    }();
     return rows;
 }
 

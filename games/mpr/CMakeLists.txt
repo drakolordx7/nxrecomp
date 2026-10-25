@@ -9,7 +9,7 @@ set(_mpr "${CMAKE_CURRENT_SOURCE_DIR}")
 set(_rt "${PROJECT_SOURCE_DIR}")
 set(NXRT_GAME_MPR_INCLUDES "${_rt}/include" "${_rt}/games" "${_mpr}" "${_rt}/src/gfx" "${_rt}/src/gfx/play" "${_rt}/src/testtools")
 
-add_library(nxrt_game_mpr_data STATIC "${_mpr}/mpr_data.cpp" "${_mpr}/mpr_defaults.cpp")
+add_library(nxrt_game_mpr_data STATIC "${_mpr}/mpr_data.cpp" "${_mpr}/mpr_defaults.cpp" "${_mpr}/mpr_vocabulary.cpp")
 target_include_directories(nxrt_game_mpr_data PUBLIC ${NXRT_GAME_MPR_INCLUDES})
 target_compile_features(nxrt_game_mpr_data PUBLIC cxx_std_20)
 

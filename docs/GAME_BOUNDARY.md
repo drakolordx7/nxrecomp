@@ -137,19 +137,16 @@ The recompiler (`nxrecomp/`) has no game knowledge. `0x7100000000` there is the 
 
 These are still Metroid-shaped in the base. None of them blocks a second game from building; they limit what it can reuse.
 
-- **Play-mode vocabulary.** `Act` and `Ctx` in `play_types.h` (beams, visors, morph ball, scan), the `Settings` schema (aim, camera,
-  morph, ball orbit, wheel beams), the action names in `controls.ini`, the engine's beam cycling (`play_engine.cpp`) and `GameFrame`'s
-  `beam`/`beam_mask` hints. They were not made generic in this pass: the enums are the keys of `controls.ini`, the launcher's pages and
-  the engine's tables, so renaming them is not a mechanical change. The plan:
-  1. A game action table in `play::GameDefaults`: per action a name (the `controls.ini` key), a group (fire, cycle, select-n, menu) and
-     a default output. `Act` becomes an index into it; the base keeps only the generic groups.
-  2. `Ctx` becomes a small set of generic contexts (menu, play, map, alternate body) with the game naming them; morph ball maps to
-     "alternate body".
-  3. `GameFrame` carries a generic `cycle_index`/`cycle_mask` (today `beam`/`beam_mask`) for the engine's next/previous cycling, and
-     `Settings` moves the game-only blocks (morph, ball orbit, lock-on) into a per-game key/value section the game's F1 tab and its
-     hooks read.
-  4. The launcher's pages list the actions from the table instead of from `Act`.
-  Each step keeps the Metroid file format byte-identical, checked with the existing play_config and launcher tests.
+- **Play-mode vocabulary (done in part).** The base's action and context slots are generic: `Ctx` is All, Play, Alt (the alternate body),
+  Map, Menu, Inspect; the game actions are Primary, Target, Secondary, Jump, AltForm, LookHold, Map, Pause, Confirm, Back, the selects
+  SetA1..4 / SetB1..4 and the cycle SetANext / SetAPrev; `GameFrame` carries `cycle_index` / `cycle_mask`; the engine cycles set A; the
+  settings fields are `alt_yaw_rad`, `alt_pitch_rad`, `wheel_cycles`, `alt_orbit`. The game names them through
+  `play::GameVocabulary` (in `GameDefaults`; Metroid: `games/mpr/mpr_vocabulary.cpp`): the settings-file name and factory output of every
+  action, the context names, the launcher's Keyboard rows and the keys and labels of the alternate-body and cycle settings. Metroid's
+  `controls.ini` is unchanged (same names, same keys; the play_config and launcher tests read and write it). Without a game the slots keep
+  generic names and the game actions have no factory output. What is still fixed in the base: the number and kinds of slots (four-member
+  sets A and B, one alternate body, one inspect context), the `[aim]` (lock-on) and `[camera]` sections, and one launcher sentence on the
+  Keyboard page that lists Metroid's contexts.
 - **Moved code keeps namespace `nxrt::play`.** Done to keep the move mechanical; rename to `nxrt::games::mpr` later.
 - **Test tooling vocabulary.** `tt::GameState` fields (morph, beam, visor, missiles), the hash over them (`tt_core.cpp`) and the item
   names in `tt_script.cpp`.

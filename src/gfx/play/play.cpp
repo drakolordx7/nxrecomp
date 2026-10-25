@@ -128,7 +128,7 @@ public:
     bool pad_look(bool gyro_enabled) const {
         return std::abs(right_y_.load(std::memory_order_relaxed)) > 650 || (gyro_enabled && gyro_pitch_.load(std::memory_order_relaxed) > 0.02f);
     }
-    // The right stick as the game gets it (dead zone, invert and sensitivity applied), -1..1, + = right and up: the morph ball camera orbits with it.
+    // The right stick as the game gets it (dead zone, invert and sensitivity applied), -1..1, + = right and up: the alternate body's camera (mpr: the morph ball camera) orbits with it.
     void right_stick(float* x, float* y) const {
         *x = right_x_f_.load(std::memory_order_relaxed);
         *y = right_y_f_.load(std::memory_order_relaxed);
@@ -540,7 +540,7 @@ void poll_pads(uint64_t now) {
         map_rumble(l, h, st.settings.pad, &lo, &hi);
     }
     const Ctx cx = st.engine ? st.engine->context() : Ctx::Menu;
-    const bool look_ctx = cx == Ctx::Gameplay || cx == Ctx::Morph || cx == Ctx::Scan;      // the right stick is a look only in play
+    const bool look_ctx = cx == Ctx::Play || cx == Ctx::Alt || cx == Ctx::Inspect;      // the right stick is a look only in play
     const bool rumble_changed = lo != st.rumble_lo || hi != st.rumble_hi;
     const bool rumble_refresh = (lo || hi) && now - st.last_rumble_ns > 100 * kMs;
     for (size_t i = 0; i < n; ++i) {
@@ -649,12 +649,12 @@ int update_hook(::Ctx*, uint64_t, void*) {
     if (gp && gp->frame_begin) gp->frame_begin();
     if (st.engine) st.engine->frame_tick();
 
-    // what the game is doing: the context, the beam, the pointer
+    // what the game is doing: the context, the cycle hint, the pointer
     const uint64_t pi = st.last_pi_ns.load();
     // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
     // can take 100 ms or more per frame under load) must not read as a menu.
     const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
-    // The game's part (play_game.h GamePlay::frame): the gyro's pitch-rate scale for this step, the beam hints, the context while in game. This
+    // The game's part (play_game.h GamePlay::frame): the gyro's pitch-rate scale for this step, the cycle hint, the context while in game. This
     // step's length is known here, before the game reads the sample (the timestep hook on the same frame update runs first: hooks of one address run
     // in registration order).
     GameFrame gf;
@@ -663,7 +663,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
         gp->frame(in_game, step, &gf);
     }
     if (st.source_owner) st.source_owner->set_look_scale(gf.look_scale);
-    if (gf.hints_valid) st.engine->set_game_hints(gf.beam, gf.beam_mask, now);
+    if (gf.hints_valid) st.engine->set_cycle_hint(gf.cycle_index, gf.cycle_mask, now);
     const uint64_t map_acts = st.engine->activations(Act::Map);
     if (in_game && map_acts != st.map_acts_seen) st.map_hint = true;
     st.map_acts_seen = map_acts;

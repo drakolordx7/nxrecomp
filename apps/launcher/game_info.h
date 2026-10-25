@@ -18,6 +18,8 @@ std::wstring product_name();      // the window title and the dialogs: "Metroid 
 std::wstring game_exe_name();     // "mpr.exe"
 std::wstring setup_exe_name();    // "mpr_setup.exe"
 std::wstring shader_pack_name();  // the shader pack next to the launcher: "shader_cache.mprshc"
+// A text of the registered game (UTF-8) as a wide string, or `fallback` when the game gives none.
+std::wstring game_text(const char* utf8, const wchar_t* fallback);
 
 struct GameStatus {
     bool exefs = false;           // exefs\main exists

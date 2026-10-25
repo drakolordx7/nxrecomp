@@ -27,18 +27,18 @@ bool mpr_mouse_tab(int where, Settings& edit) {
     if (where == 0) {
         ImGui::Spacing();
         ImGui::TextUnformatted("Morph ball camera (mouse orbits the camera around the ball)");
-        double src = source_sens(m.morph_yaw_rad);
+        double src = source_sens(m.alt_yaw_rad);
         if (slider("Ball camera horizontal", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-            m.morph_yaw_rad = rad_per_count(src);
+            m.alt_yaw_rad = rad_per_count(src);
             changed = true;
         }
-        src = source_sens(m.morph_pitch_rad);
+        src = source_sens(m.alt_pitch_rad);
         if (slider("Ball camera vertical", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-            m.morph_pitch_rad = rad_per_count(src);
+            m.alt_pitch_rad = rad_per_count(src);
             changed = true;
         }
     } else if (where == 1) {
-        if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_beams)) changed = true;
+        if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_cycles)) changed = true;
     } else if (where == 2) {
         ImGui::Spacing();
         static const char* const kLockModeLabels[] = {"Classic (the view turns to the target)", "Free (you keep control of the view)"};

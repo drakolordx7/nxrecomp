@@ -31,7 +31,7 @@ Engine::Engine(const Settings& s) : st_(s) {
 }
 
 bool Engine::is_select(Act a) {
-    return (a >= Act::Beam1 && a <= Act::Visor4) || a == Act::BeamNext || a == Act::BeamPrev;
+    return (a >= Act::SetA1 && a <= Act::SetB4) || a == Act::SetANext || a == Act::SetAPrev;
 }
 
 // The bindings that apply to one input in context c: the context's own, else those of the `all` layer. In the menu contexts the left
@@ -201,16 +201,16 @@ void Engine::release_all(uint64_t now) {
     step(now);
 }
 
-void Engine::set_game_hints(int current_beam, unsigned beam_mask, uint64_t now) {
+void Engine::set_cycle_hint(int current, unsigned mask, uint64_t now) {
     std::lock_guard<std::mutex> lk(mu_);
     const bool recent = !sels_.empty() || (last_select_ns_ && now >= last_select_ns_ && now - last_select_ns_ < 300 * kMs);
-    if (current_beam >= 0 && current_beam < 4 && !recent) beam_ = current_beam;
-    beam_mask_ = beam_mask & 0x0f ? beam_mask & 0x0f : 0x0f;
+    if (current >= 0 && current < 4 && !recent) cycle_ = current;
+    cycle_mask_ = mask & 0x0f ? mask & 0x0f : 0x0f;
 }
 
-int Engine::tracked_beam() const {
+int Engine::tracked_cycle() const {
     std::lock_guard<std::mutex> lk(mu_);
-    return beam_;
+    return cycle_;
 }
 
 bool Engine::binding_active(int b, uint64_t now) const {
@@ -247,17 +247,17 @@ void Engine::pulse(Act a, uint64_t now, int ms) {
 }
 
 void Engine::select(Act a, uint64_t now) {
-    if (a == Act::BeamNext || a == Act::BeamPrev) {
-        const int dir = a == Act::BeamNext ? 1 : 3;
-        int i = beam_;
+    if (a == Act::SetANext || a == Act::SetAPrev) {
+        const int dir = a == Act::SetANext ? 1 : 3;
+        int i = cycle_;
         for (int n = 0; n < 4; ++n) {
             i = (i + dir) % 4;
-            if (beam_mask_ & (1u << i)) break;
+            if (cycle_mask_ & (1u << i)) break;
         }
-        beam_ = i;
-        a = static_cast<Act>(static_cast<int>(Act::Beam1) + i);
-    } else if (a >= Act::Beam1 && a <= Act::Beam4) {
-        beam_ = static_cast<int>(a) - static_cast<int>(Act::Beam1);
+        cycle_ = i;
+        a = static_cast<Act>(static_cast<int>(Act::SetA1) + i);
+    } else if (a >= Act::SetA1 && a <= Act::SetA4) {
+        cycle_ = static_cast<int>(a) - static_cast<int>(Act::SetA1);
     }
     // One pulse per select, queued behind the previous one with a release gap of one pulse, so the game never sees two combinations at once.
     const uint64_t pulse = static_cast<uint64_t>(st_.timing.pulse_ms) * kMs;
@@ -272,7 +272,7 @@ void Engine::on_activate(int b, uint64_t now) {
     acts_[static_cast<int>(bind.act)]++;
     last_ = bind.act;
     if (!is_select(bind.act)) return;
-    if (bind.in.kind == InKind::Wheel && (bind.act == Act::BeamNext || bind.act == Act::BeamPrev) && !st_.mouse.wheel_beams) return;
+    if (bind.in.kind == InKind::Wheel && (bind.act == Act::SetANext || bind.act == Act::SetAPrev) && !st_.mouse.wheel_cycles) return;
     select(bind.act, now);
 }
 

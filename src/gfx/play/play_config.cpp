@@ -273,8 +273,8 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Mouse:
             if (k == "yaw") return set_num(&s->mouse.yaw_rad);
             if (k == "pitch") return set_num(&s->mouse.pitch_rad);
-            if (k == "morph_yaw") return set_num(&s->mouse.morph_yaw_rad);
-            if (k == "morph_pitch") return set_num(&s->mouse.morph_pitch_rad);
+            if (k == key_alt_yaw()) return set_num(&s->mouse.alt_yaw_rad);
+            if (k == key_alt_pitch()) return set_num(&s->mouse.alt_pitch_rad);
             if (k == "yaw_source" || k == "pitch_source") {   // Source scale, converted to radians per count
                 double x = 0;
                 if (!set_num(&x)) return false;
@@ -285,7 +285,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "invert_x") return set_bool(&s->mouse.invert_x);
             if (k == "menu_cursor") return set_bool(&s->mouse.menu_cursor);
             if (k == "menu_touch") return true;   // legacy key, dead since it never did anything: accepted and ignored
-            if (k == "wheel_beams") return set_bool(&s->mouse.wheel_beams);
+            if (k == key_wheel_cycles()) return set_bool(&s->mouse.wheel_cycles);
             break;
         case Sec::Aim:
             if (k == "lock_mode") {
@@ -313,7 +313,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "gyro_scale") return set_num(&s->pad.gyro_scale);
             if (k == "rumble") return set_bool(&s->pad.rumble);
             if (k == "rumble_scale") return set_num(&s->pad.rumble_scale);
-            if (k == "ball_orbit") return set_real(0.0, 6.0, &s->pad.ball_orbit);
+            if (k == key_alt_orbit()) return set_real(0.0, 6.0, &s->pad.alt_orbit);
             break;
         case Sec::Timing:
             if (k == "tap_ms") return set_int(1, 5000, &s->timing.tap_ms);
@@ -739,12 +739,12 @@ std::string format_settings(const Settings& s) {
     o += "\n[mouse]\n";
     kv("yaw", num(s.mouse.yaw_rad));
     kv("pitch", num(s.mouse.pitch_rad));
-    kv("morph_yaw", num(s.mouse.morph_yaw_rad));
-    kv("morph_pitch", num(s.mouse.morph_pitch_rad));
+    kv(key_alt_yaw(), num(s.mouse.alt_yaw_rad));
+    kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_cursor", flag(s.mouse.menu_cursor));
-    kv("wheel_beams", flag(s.mouse.wheel_beams));
+    kv(key_wheel_cycles(), flag(s.mouse.wheel_cycles));
 
     o += "\n[aim]\n";
     kv("lock_mode", lock_mode_name(s.aim.lock_mode));
@@ -763,7 +763,7 @@ std::string format_settings(const Settings& s) {
     kv("gyro_scale", num(s.pad.gyro_scale));
     kv("rumble", flag(s.pad.rumble));
     kv("rumble_scale", num(s.pad.rumble_scale));
-    kv("ball_orbit", num(s.pad.ball_orbit));
+    kv(key_alt_orbit(), num(s.pad.alt_orbit));
 
     o += "\n[padmap]\n";
     for (int i = 0; i < kPadSrcCount; ++i) {

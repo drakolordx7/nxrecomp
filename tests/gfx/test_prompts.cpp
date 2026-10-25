@@ -108,14 +108,14 @@ NXTEST(keyboard_style_follows_the_bindings_of_the_context) {
     // menu: confirm = Return, back = Escape; gameplay: jump (B) = Space, morph (Y) = Left Ctrl, fire (ZR) = left mouse button
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::A), std::string("kbm/return"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::B), std::string("kbm/escape"));
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::B), std::string("kbm/space"));
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::Y), std::string("kbm/left ctrl"));
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::ZR), std::string("kbm/mouse1"));
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::BPressed), std::string("kbm/space_pressed"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::B), std::string("kbm/space"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::Y), std::string("kbm/left ctrl"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::ZR), std::string("kbm/mouse1"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::BPressed), std::string("kbm/space_pressed"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::L), std::string("kbm/q"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::R), std::string("kbm/e"));
     // A is only bound in menus and the map: in gameplay the prompt still shows the menu key
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::A), std::string("kbm/return"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::A), std::string("kbm/return"));
     // X is bound only in the map (its Key / Legend button): the map shows it, and the other contexts find it there
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Map, Icon::X), std::string("kbm/x"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::X), std::string("kbm/x"));
@@ -127,16 +127,16 @@ NXTEST(keyboard_style_follows_a_rebind) {
     CHECK(parse_input("G", &in));
     Binding b;
     b.in = in;
-    b.ctx = Ctx::Gameplay;
+    b.ctx = Ctx::Play;
     b.act = Act::Jump;
     s.bindings.insert(s.bindings.begin(), b);           // G jumps now, ahead of Space
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::B), std::string("kbm/g"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::B), std::string("kbm/g"));
     // the [switch] table: jump on A instead of B moves the prompt
     Settings t = default_settings();
     Output o;
     CHECK(parse_output("A", &o));
     t.out[static_cast<int>(Act::Jump)] = o;
-    CHECK_EQ(name_of(t, PromptStyle::Keyboard, Ctx::Gameplay, Icon::A), std::string("kbm/space"));
+    CHECK_EQ(name_of(t, PromptStyle::Keyboard, Ctx::Play, Icon::A), std::string("kbm/space"));
     // a context binding beats the `all` layer for the same input: Space confirms in menus, so it is not the key of jump there
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::B), std::string("kbm/escape"));
 }
@@ -153,7 +153,7 @@ NXTEST(keyboard_style_follows_a_rebound_jump_key) {
         ++changed;
     }
     CHECK_EQ(changed, 1);
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::B), std::string("kbm/g"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::B), std::string("kbm/g"));
 }
 
 NXTEST(pad_styles_follow_a_pad_remap) {
@@ -201,7 +201,7 @@ NXTEST(map_sticks_show_the_mouse_buttons_that_drive_the_map) {
 NXTEST(stick_icons_keep_the_games_icon_outside_the_keyboard_map) {
     const Settings s = default_settings();
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::LStick), std::string());
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Gameplay, Icon::RStick), std::string());
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::RStick), std::string());
     CHECK_EQ(name_of(s, PromptStyle::Xbox, Ctx::Map, Icon::LStick), std::string());
     CHECK_EQ(name_of(s, PromptStyle::PlayStation, Ctx::Map, Icon::RStick), std::string());
     CHECK_EQ(name_of(s, PromptStyle::Switch, Ctx::Map, Icon::RStick), std::string());

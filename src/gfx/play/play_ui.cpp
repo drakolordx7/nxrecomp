@@ -65,7 +65,7 @@ struct Page {
     bool loaded = false;
     bool dirty = false;                    // the working copy differs from the settings in force (set by every change)
     Settings edit;
-    Ctx ctx = Ctx::Gameplay;               // the context shown in the Bindings tab
+    Ctx ctx = Ctx::Play;               // the context shown in the Bindings tab
     int rebind = -1;                       // index into edit.bindings of the row waiting for an input; -1 = none
     bool link_pitch = true;                // Mouse tab: moving the horizontal sensitivity moves the vertical one too (local, not saved)
     bool out_tab_open = false;             // the Switch layout tab was open last frame; its fields are refilled when it opens
@@ -799,7 +799,7 @@ void bindings_tab(UiHost& host, Page& p) {
         Binding b;
         b.in = InputId{};
         b.ctx = p.ctx;
-        b.act = Act::Fire;
+        b.act = Act::Primary;
         b.trig = Trig::Press;
         b.ms = 0;
         p.edit.bindings.push_back(b);
@@ -814,9 +814,12 @@ void bindings_tab(UiHost& host, Page& p) {
 // ---- Switch layout ------------------------------------------------------------------------------------------------------------------
 
 void switch_tab(Page& p) {
-    ImGui::TextWrapped("What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
-                       "and stick directions LS_UP LS_DOWN LS_LEFT LS_RIGHT RS_UP RS_DOWN RS_LEFT RS_RIGHT, joined by +. "
-                       "beam_next and beam_prev have no fixed output (they pick beam_1 to beam_4).");
+    // The cycling actions by the game's names (mpr: beam_next and beam_prev ... beam_1 to beam_4).
+    const std::string help = std::string("What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
+                                         "and stick directions LS_UP LS_DOWN LS_LEFT LS_RIGHT RS_UP RS_DOWN RS_LEFT RS_RIGHT, joined by +. ") +
+                             act_info(Act::SetANext).name + " and " + act_info(Act::SetAPrev).name + " have no fixed output (they pick " +
+                             act_info(Act::SetA1).name + " to " + act_info(Act::SetA4).name + ").";
+    ImGui::TextWrapped("%s", help.c_str());
     if (ImGui::BeginTable("switch_out", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 150.0f);
         ImGui::TableSetupColumn("Output");

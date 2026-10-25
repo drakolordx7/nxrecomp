@@ -236,8 +236,11 @@ const GameDefaultAddition kAdditions[] = {
 
 }  // namespace
 
+const GameVocabulary& mpr_vocabulary();     // mpr_vocabulary.cpp
+
 const GameDefaults& mpr_game_defaults() {
-    static const GameDefaults d{settings_text(), kDefaultsRev, kAdditions, static_cast<unsigned>(sizeof kAdditions / sizeof kAdditions[0])};
+    static const GameDefaults d{settings_text(), kDefaultsRev, kAdditions, static_cast<unsigned>(sizeof kAdditions / sizeof kAdditions[0]),
+                                &mpr_vocabulary()};
     return d;
 }
 
