@@ -2,8 +2,9 @@
 // Tweaks tab: optional looks ([tweaks] in controls.ini, play_tweaks.h), off by default. S44: the glow colour, three 0..255 sliders with a
 // colour swatch and a Reset button. A part with its own colour in the file (ball_glow / gun_glow = R,G,B) keeps it; the page only switches a
 // part between following the glow colour and the game's own. S45: the suit and arm cannon colour (suit_color, gun_color), each a check box,
-// three sliders and a swatch, with their own Reset.
+// three sliders and a swatch like the glow, the three colours side by side, with their own Reset.
 #include <algorithm>
+#include <initializer_list>
 #include <memory>
 #include <string>
 
@@ -64,38 +65,39 @@ public:
 
     void build(Form& f) override {
         register_swatch(host()->env().inst);
-        f.heading(L"Glow colour");
+        // the page does not scroll: the three colours side by side, the glow (S44), the suit's paint and the arm cannon's paint (S45)
+        f.heading(L"Glow and paint colours");
+        f.compact(true);
+        f.columns(3);
         f.checkbox(
-            L"Use a custom glow colour", [](const Settings& s) { return s.tweaks.glow_on; }, [](Settings& s, bool v) { s.tweaks.glow_on = v; },
+            L"Glow colour", [](const Settings& s) { return s.tweaks.glow_on; }, [](Settings& s, bool v) { s.tweaks.glow_on = v; },
             [this]() { update_swatches(); });
-        f.hint(L"Off: the game's own colours. On: the morph ball's glow (stripes, inner glow, boost glow, trail, light), the arm cannon's charge glow and the suit's lights take this colour, live in the game.", 2);
-        rgb_rows(f, glow_, &TweakSettings::glow);
-        reset_id_ = f.button(L"Reset to the game's colours", 200);
-        f.hint(L"The colour multiplies the game's glow: the ball's white glow takes it exactly, the yellow charge mixes with it, and a darker colour gives a dimmer glow. The cannon's own lit panels keep their colour.", 2);
-
-        f.heading(L"Per part");
-        f.combo(
-            L"Suit", {L"Use the glow colour", L"The game's own colour"}, [](const Settings& s) { return part_index(s.tweaks.suit.mode); },
-            [](Settings& s, int i) { set_part(&s.tweaks.suit, i); });
-        f.combo(
-            L"Morph ball", {L"Use the glow colour", L"The game's own colour"}, [](const Settings& s) { return part_index(s.tweaks.ball.mode); },
-            [](Settings& s, int i) { set_part(&s.tweaks.ball, i); });
-        f.combo(
-            L"Arm cannon", {L"Use the glow colour", L"The game's own colour"}, [](const Settings& s) { return part_index(s.tweaks.gun.mode); },
-            [](Settings& s, int i) { set_part(&s.tweaks.gun, i); });
-        f.hint(L"A part can also get its own colour in controls.ini: [tweaks] suit_glow, ball_glow or gun_glow = R,G,B.", 1);
-
-        f.heading(L"Suit and arm cannon colour");
         f.checkbox(
             L"Suit colour", [](const Settings& s) { return s.tweaks.suit_color_on; }, [](Settings& s, bool v) { s.tweaks.suit_color_on = v; },
             [this]() { update_swatches(); });
-        rgb_rows(f, suit_, &TweakSettings::suit_color);
         f.checkbox(
             L"Arm cannon colour", [](const Settings& s) { return s.tweaks.gun_color_on; }, [](Settings& s, bool v) { s.tweaks.gun_color_on = v; },
             [this]() { update_swatches(); });
-        rgb_rows(f, gun_, &TweakSettings::gun_color);
-        reset_paint_id_ = f.button(L"Reset to the game's paint", 200);
-        f.hint(L"Repaints the suit (the morph ball follows it) and the arm cannon's shell in any colour from black to white, keeping the shading and detail of the game's textures. The visor, the lights and the glow keep their colours. Off: the game's own paint.", 2);
+        rgb_rows(f, {&glow_, &suit_, &gun_}, {&TweakSettings::glow, &TweakSettings::suit_color, &TweakSettings::gun_color});
+        reset_id_ = f.button(L"Reset the glow", 150, true);
+        reset_paint_id_ = f.button(L"Reset the paint", 150, true);
+        f.compact(false);
+        f.columns(1);
+        f.hint(L"Glow: the morph ball's glow (stripes, inner glow, boost glow, trail, light), the arm cannon's charge glow and the suit's lights; the colour multiplies the game's glow. Paint: the suit (the morph ball follows it) and the arm cannon's shell, black to white, keeping the game's shading and detail; the visor and the lights keep their colours. Off: the game's own.", 4, true);
+
+        f.heading(L"Glow per part");
+        f.columns(3);
+        f.combo(
+            L"Suit", {L"Glow colour", L"The game's own"}, [](const Settings& s) { return part_index(s.tweaks.suit.mode); },
+            [](Settings& s, int i) { set_part(&s.tweaks.suit, i); });
+        f.combo(
+            L"Morph ball", {L"Glow colour", L"The game's own"}, [](const Settings& s) { return part_index(s.tweaks.ball.mode); },
+            [](Settings& s, int i) { set_part(&s.tweaks.ball, i); });
+        f.combo(
+            L"Arm cannon", {L"Glow colour", L"The game's own"}, [](const Settings& s) { return part_index(s.tweaks.gun.mode); },
+            [](Settings& s, int i) { set_part(&s.tweaks.gun, i); });
+        f.columns(1);
+        f.hint(L"A part can also get its own glow colour in controls.ini: [tweaks] suit_glow, ball_glow or gun_glow = R,G,B.", 1, true);
     }
 
     void load(const Settings& s) override {
@@ -135,26 +137,35 @@ private:
     };
     using RgbField = GlowRgb TweakSettings::*;
 
-    // Red, Green and Blue sliders (0..255) of one colour of [tweaks], and a swatch row under them.
-    void rgb_rows(Form& f, RgbRows& rows, RgbField field) {
-        const auto get = [field](int ch) {
-            return [field, ch](const Settings& s) {
-                const GlowRgb& c = s.tweaks.*field;
-                return int(ch == 0 ? c.r : ch == 1 ? c.g : c.b);
-            };
+    static Form::GetInt channel_get(RgbField field, int ch) {
+        return [field, ch](const Settings& s) {
+            const GlowRgb& c = s.tweaks.*field;
+            return int(ch == 0 ? c.r : ch == 1 ? c.g : c.b);
         };
-        const auto set = [field](int ch) {
-            return [field, ch](Settings& s, int v) {
-                GlowRgb& c = s.tweaks.*field;
-                (ch == 0 ? c.r : ch == 1 ? c.g : c.b) = uint8_t(v);
-            };
+    }
+    static Form::SetInt channel_set(RgbField field, int ch) {
+        return [field, ch](Settings& s, int v) {
+            GlowRgb& c = s.tweaks.*field;
+            (ch == 0 ? c.r : ch == 1 ? c.g : c.b) = uint8_t(v);
         };
-        rows.r = f.slider(L"Red", 0, 255, get(0), set(0), byte_text, [this]() { update_swatches(); });
-        rows.g = f.slider(L"Green", 0, 255, get(1), set(1), byte_text, [this]() { update_swatches(); });
-        rows.b = f.slider(L"Blue", 0, 255, get(2), set(2), byte_text, [this]() { update_swatches(); });
-        const RECT sw = f.custom_row(L"Colour", 28);
-        const int swatch_w = std::min<int>(sw.right - sw.left, host()->env().S(160));
-        rows.swatch = f.create(kSwatchClass, L"", WS_CHILD | WS_VISIBLE, sw.left, sw.top, swatch_w, sw.bottom - sw.top);
+    }
+
+    // Red, Green and Blue sliders (0..255) and a swatch for each colour, one colour per column of the form (rows fill left to right).
+    void rgb_rows(Form& f, std::initializer_list<RgbRows*> rows, std::initializer_list<RgbField> fields) {
+        const wchar_t* names[3] = {L"Red", L"Green", L"Blue"};
+        for (int ch = 0; ch < 3; ++ch) {
+            auto field = fields.begin();
+            for (RgbRows* r : rows) {
+                HWND h = f.slider(names[ch], 0, 255, channel_get(*field, ch), channel_set(*field, ch), byte_text, [this]() { update_swatches(); });
+                (ch == 0 ? r->r : ch == 1 ? r->g : r->b) = h;
+                ++field;
+            }
+        }
+        for (RgbRows* r : rows) {
+            const RECT sw = f.custom_row(L"Colour", 28);
+            const int swatch_w = std::min<int>(sw.right - sw.left, host()->env().S(160));
+            r->swatch = f.create(kSwatchClass, L"", WS_CHILD | WS_VISIBLE, sw.left, sw.top, swatch_w, sw.bottom - sw.top);
+        }
     }
 
     static void update_swatch(const RgbRows& rows) {

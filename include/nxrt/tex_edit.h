@@ -8,7 +8,7 @@
 //   * The edited data is made once per (texture content, generation) and kept in memory, so uploading the same texture again costs a copy. It never
 //     goes into the BC7 disk cache, which stays the game's own look.
 //   * texture_edit_changed (after the host's answers changed, e.g. a new colour): a worker thread makes the new data of every live texture that
-//     matches (or was edited before) and only then asks for those textures to be uploaded again, so the render thread does not wait for the encode.
+//     matches (or was edited before) and asks for each to be uploaded again once its data is ready, so the render thread does not wait for the encode.
 // All callbacks may run on any thread (render thread, background texture jobs, the worker) and must be thread safe.
 #pragma once
 #include <cstddef>

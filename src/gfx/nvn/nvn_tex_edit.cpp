@@ -104,8 +104,8 @@ gfx::TexEditReq req_of(const Texture& t, const uint8_t* src) {
     return r;
 }
 
-// One pass after texture_edit_changed: new data for every live texture that matches, then the matching ones and the ones edited before are
-// uploaded again (they ask prepare_texture again, which finds the new data kept here).
+// One pass after texture_edit_changed: new data for every live texture that matches, each uploaded again once its data is ready, and the ones
+// edited before that no longer match uploaded again as the game's (they ask prepare_texture again, which finds the new data kept here).
 void rebuild_once() {
     gfx::TexEditHooks h;
     const bool have = hooks_copy(h);
@@ -136,7 +136,12 @@ void rebuild_once() {
             PreparedTexture tmp;
             if (prepare_guarded(*t, caps, tmp)) ++made;   // keeps the edited data in the memo
         }
-        if (id || was_edited.count(t->id)) dirty.push_back(t);
+        if (id || was_edited.count(t->id)) {
+            // uploaded again as soon as its own data is ready: the first textures change while the others are still being made
+            dirty.push_back(t);
+            t->cpu_dirty.store(true);
+            gpu::mark_texture_cpu_dirty(t);
+        }
         if (!id && was_edited.count(t->id)) not_edited.push_back(t->id);
     }
     {
@@ -146,11 +151,6 @@ void rebuild_once() {
         s.st.rebuilds++;
         s.st.last_rebuild_ms = ms_since(t0);
         s.st.last_rebuild_textures = made;
-    }
-    for (Texture* t : dirty) {
-        if (t->destroyed.load()) continue;
-        t->cpu_dirty.store(true);
-        gpu::mark_texture_cpu_dirty(t);
     }
     NXLOG_I(kTag, "rebuild: %u textures edited, %zu uploaded again, %.1f ms (%zu ASTC textures looked at)", made, dirty.size(), ms_since(t0), all.size());
 }
