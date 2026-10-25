@@ -83,3 +83,9 @@ entryhook 0x7100c7ad8c
 entryhook 0x7100cb6250
 #   CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: free lock-on tells the aiming cursor that the aim-follow command is held while the lock is on
 entryhook 0x71004d7540
+# S42 (crashes, branch crashes; runtime src/gfx/play/play_scenefix.cpp, docs/S42.md): a ModCon scene node can be in a render list before its model
+# data is loaded; the decal render queries then read its bounds through a null pointer (CFrustumPlanes::BoxInFrustumPlanes on address 0x190).
+#   CModConSceneNode::ProcessRenderQuery(CSceneRenderQuery const&, CSceneRenderQueryResult&): x0 = node; skipped while the node's data is not loaded
+entryhook 0x71001b57ac
+#   CModConSceneNodeMP1::ProcessRenderQuery (the override the game's nodes use): the same
+entryhook 0x7100fba8b8
