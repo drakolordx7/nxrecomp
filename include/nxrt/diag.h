@@ -28,7 +28,7 @@ size_t diag_register_thread(const char* name, ::Ctx* ctx, uint64_t guest_tid = 0
 void diag_unregister_thread();                 // the calling thread; closes its handle
 void diag_set_thread_ctx(::Ctx* ctx);          // the Ctx now running on this thread (call_guest nesting restores the old one)
 ::Ctx* diag_thread_ctx();                      // thread-local current Ctx or nullptr
-std::vector<ThreadRecord> diag_threads();      // snapshot of the registry (handles stay owned by the registry)
+std::vector<ThreadRecord> diag_threads();      // snapshot of the registry (names, tids, Ctx only: host_handle is always null; use diag_threads_dup for a usable handle)
 // Like diag_threads, but every host_handle is a private duplicate made under the registry lock, so a thread that unregisters meanwhile cannot
 // close it under the caller. The caller must pass the vector to diag_threads_release when done.
 std::vector<ThreadRecord> diag_threads_dup();
