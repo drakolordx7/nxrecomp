@@ -2,6 +2,7 @@
 // S44: the F1 page's Tweaks tab (play_ui.cpp): the glow colour. The game shows the values while the tab is open, before
 // they are saved (glow_preview); closing the page without saving goes back to the saved colours.
 #include "imgui.h"
+#include "mpr/mpr_tint.h"
 #include "play_glow.h"
 
 namespace nxrt::play {
@@ -75,6 +76,30 @@ bool glow_tab(Settings& edit) {
     ImGui::TextDisabled("The colour multiplies the game's glow: the ball's white glow takes it exactly, the charge's yellow mixes with it (magenta gives a pink-red charge), and a darker colour gives a dimmer glow. The cannon's own lit panels keep their colour.");
     ImGui::PopTextWrapPos();
     glow_preview(t);
+
+    // S45: suit and arm cannon paint (texture recolour, games/mpr/mpr_tint.h)
+    ImGui::Separator();
+    ImGui::TextUnformatted("Suit and arm cannon colour");
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextDisabled("Repaints the suit (the morph ball follows it) and the arm cannon's shell in any colour from black to white, keeping the shading and detail of the game's textures. The visor, the lights and the glow keep their colours. The game shows a change about a quarter of a second after the slider stops.");
+    ImGui::PopTextWrapPos();
+    if (ImGui::Checkbox("Suit colour", &t.suit_color_on)) changed = true;
+    ImGui::BeginDisabled(!t.suit_color_on);
+    if (rgb_sliders("suit_color", &t.suit_color)) changed = true;
+    ImGui::EndDisabled();
+    if (ImGui::Checkbox("Arm cannon colour", &t.gun_color_on)) changed = true;
+    ImGui::BeginDisabled(!t.gun_color_on);
+    if (rgb_sliders("gun_color", &t.gun_color)) changed = true;
+    ImGui::EndDisabled();
+    if (ImGui::Button("Reset to the game's paint")) {
+        const TweakSettings def;
+        t.suit_color_on = def.suit_color_on;
+        t.suit_color = def.suit_color;
+        t.gun_color_on = def.gun_color_on;
+        t.gun_color = def.gun_color;
+        changed = true;
+    }
+    tint_preview(t);
     return changed;
 }
 
