@@ -1,6 +1,6 @@
 """Test for bc7dec.exe: builds DDS files with known BC7 mode-6 solid-colour blocks and checks the decode.
 
-Run:  C:\\mpr\\tools\\.venv\\Scripts\\python.exe test_bc7dec.py [--bc7dec <exe>]
+Run:  tools\.venv\Scripts\python.exe test_bc7dec.py [--bc7dec <exe>]   (from the project root)
 
 Layout of each block is taken from the reference decoder's bitfield struct (bc7decomp_ref.cpp, bc7_mode_6):
   bits 0-6 mode (value 1<<6), then R0 R1 G0 G1 B0 B1 A0 A1 (7 bits each), P0 (1 bit),

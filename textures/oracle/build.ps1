@@ -1,5 +1,5 @@
 # Builds bc7dec.exe (independent BC7 decoder) with clang-cl + Ninja into tools\textures\build\oracle\.
-# Run:  pwsh -File C:\mpr\tools\textures\oracle\build.ps1
+# Run:  pwsh -File tools\textures\oracle\build.ps1   (from the project root)
 $ErrorActionPreference = 'Stop'
 $here   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $build  = [System.IO.Path]::GetFullPath((Join-Path $here '..\build\oracle'))
