@@ -49,7 +49,7 @@ Rules:
 | `sched` | `priority_class` | `auto` | `NXRT_SCHED_PRIORITY_CLASS` | `src/kernel/sched.cpp` | Process priority class: `auto` (high when play mode has a window, otherwise left alone), `high`, `above_normal`, `normal`. The guest threads are pinned with the wake-up boost off, so under background CPU load a woken thread waits a scheduler quantum; see debug note 221. |
 | `sched` | `spin_yield` | `true` | `NXRT_SCHED_SPIN_YIELD` | `src/kernel/busy_mutex.cpp` | The guest's `wfe` (and, every 64th time, `yield`) hand the host processor to another ready thread instead of spinning (debug note 420). `false`: a pause only. |
 | `sched` | `starvation_guard` | `true` | `NXRT_SCHED_STARVATION_GUARD` | `src/kernel/starvation_guard.cpp` | A guest thread that stays ready without running (because other programs keep the host processor busy) is boosted to top priority for 450 ms, and its yields stop handing the processor over. See debug note 422. |
-| `game` | `modcon_query_guard` | `true` | `NXRT_GAME_MODCON_QUERY_GUARD` | `src/gfx/play/play_scenefix.cpp` | A decal render query skips a model scene node that is already in the scene's lists but whose model data has not loaded yet, as the normal draw path does. Without it, such a node crashes the game in `CFrustumPlanes::BoxInFrustumPlanes` (S42). `false` runs the game's code unchanged, for reproducing the crash. Needs the hook sites in `main.sites`. Read once. |
+| `game` | `modcon_query_guard` | `true` | `NXRT_GAME_MODCON_QUERY_GUARD` | `games/mpr/play_scenefix.cpp` | A decal render query skips a model scene node that is already in the scene's lists but whose model data has not loaded yet, as the normal draw path does. Without it, such a node crashes the game in `CFrustumPlanes::BoxInFrustumPlanes` (S42). `false` runs the game's code unchanged, for reproducing the crash. Needs the hook sites in `main.sites`. Read once. |
 | `sched` | `starvation_ms` | `300` | `NXRT_SCHED_STARVATION_MS` | `src/kernel/starvation_guard.cpp` | How long a guest thread must stay ready and unscheduled before the guard boosts it, counted in 150 ms polls. |
 | `ipc` | `stub_result` | `0xBCBD5` | `NXRT_IPC_STUB_RESULT` | `src/ipc/stub.cpp` | Result every stub-service command answers. `0` answers success with an empty reply (bring-up probe: the guest then reads zeros, so it only maps which services it asks for next). |
 | `hle` | `trace` | empty | `NXRT_HLE_TRACE` | `src/core/dispatch.cpp` | Name prefix of the imports to log. Every call of an import whose name starts with it is logged in order (`hle-trace #n name(x0..x3) lr -> result`). Empty: off. Use it to see the order in which the game calls an API during start-up. |
@@ -76,6 +76,7 @@ Rules:
 | `nvn` | `shader_cache` | `` | `NXRT_NVN_SHADER_CACHE` | `src/gfx/nvn/nvn_shaders.cpp` | Folder with `<code hash>.spv` and `results.tsv` (translated shaders). Empty: `./shader_cache/spirv`, then `shader_cache/spirv` beside the executable. |
 | `nvn` | `bc7_cache` | `bc7_cache` | `NXRT_NVN_BC7_CACHE` | `src/gfx/nvn/nvn_texdata.cpp` | Folder of ASTC to BC7 transcodes, keyed by a hash of the source bytes. Empty disables. |
 | `nvn` | `bc7_quality` | `3` | `NXRT_NVN_BC7_QUALITY` | `src/gfx/nvn/nvn_texdata.cpp` | bc7e preset 0-6 for transcodes done at run time (the setup tool uses 5). |
+| `nvn` | `tex_edit_quality` | `1` | `NXRT_NVN_TEX_EDIT_QUALITY` | `src/gfx/nvn/nvn_tex_edit.cpp` | bc7e preset 0-6 for textures the game module repaints (suit and arm cannon colour, S45). Lower is faster. |
 | `nvn` | `pipeline_cache` | `pipeline_cache.bin` | `NXRT_NVN_PIPELINE_CACHE` | `src/gfx/nvn/nvn_pipeline.cpp` | VkPipelineCache file, loaded with the first pipeline and written every 2 s while new pipelines appear (the prewarm's background thread does this, so only with `prewarm` on), and at shutdown. Empty disables. |
 | `nvn` | `pipeline_keys` | `pipeline_keys.bin` | `NXRT_NVN_PIPELINE_KEYS` | `src/gfx/nvn/nvn_prewarm.cpp` | Key file of the pipeline prewarm: every pipeline created at a draw is appended; the next run builds the recorded pipelines of a program on worker threads when the game sets its shaders. Empty disables the prewarm. Pipelines the key file does not know are linked from shader parts instead (`gpl`) and recorded here for the next run. |
 | `nvn` | `prewarm` | `true` | `NXRT_NVN_PREWARM` | `src/gfx/nvn/nvn_prewarm.cpp` | `false` turns the pipeline prewarm (recording and building ahead) off. The pipeline cache file is still used. |
@@ -279,6 +280,16 @@ All off by default; with them off the game starts and plays as it always did. Th
 The launcher's Tweaks tab and the F1 page's Tweaks tab have the switch, three sliders with a colour swatch, a Reset button that goes back to the game's colours, and the per-part choice. The F1 page shows the colour in the game while the sliders move; Apply and save keeps it.
 
 `NXRT_GLOW_TEST_FILE` (environment, test aid): a file of `[tweaks]` lines. When it changes, its values replace the saved ones in the running game (checked twice a second).
+
+### Suit and arm cannon colour (`controls.ini`, `[tweaks]`)
+
+`[tweaks] suit_color`, default `off`: `off` keeps the game's paint. `R,G,B` (0 to 255 each) repaints Samus's suit in that colour, anything from black to white, keeping the shading and detail of the game's textures. The morph ball and the spider ball follow it. The visor, the lights painted on the suit and the glow keep their colours (the glow has `glow_color`).
+
+`[tweaks] gun_color`, default `off`: the same for the arm cannon's shell (first person, every suit and beam).
+
+Both are on the launcher's Tweaks tab and the F1 page's Tweaks tab (a switch, three sliders and a swatch each, and "Reset the paint"). A change shows in the game about a quarter of a second after the slider stops; the textures are repainted in the background (about 0.1 to 0.15 s per texture). Details in `docs/S45.md`.
+
+`NXRT_TINT_TEST_FILE` (environment, test aid): a file of `[tweaks]` lines (`suit_color = ...`, `gun_color = ...`). When it changes, its values replace the saved ones in the running game (checked twice a second).
 
 ### Controller sticks (`controls.ini`, `[pad]`)
 

@@ -6,7 +6,9 @@
 #include <cstring>
 #include <set>
 
-
+#ifdef NXRT_TEST_GAME_REGISTER
+void NXRT_TEST_GAME_REGISTER();     // the test game (CMakeLists.txt NXRT_TEST_GAME): the tests run with its tables registered (docs/GAME_BOUNDARY.md)
+#endif
 
 namespace nxtest {
 std::vector<Case>& cases() {
@@ -33,6 +35,9 @@ void skip(const char* why) {
 int main(int argc, char** argv) {
     using namespace nxtest;
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+#ifdef NXRT_TEST_GAME_REGISTER
+    NXRT_TEST_GAME_REGISTER();
+#endif
     // The runtime opens its shader cache only from [nvn] shader_cache / NXRT_NVN_SHADER_CACHE (no work-folder fallback),
     // so the test process points it at the game's cache unless the environment already sets it.
     if (!std::getenv("NXRT_NVN_SHADER_CACHE") && !project_root().empty()) _putenv_s("NXRT_NVN_SHADER_CACHE", project_path("work/shader_cache/spirv").c_str());

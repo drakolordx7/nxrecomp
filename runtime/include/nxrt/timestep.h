@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Frame time for the game's step (S11, docs/S11.md): the retail game runs one tick of a hard-coded 1/60 s for every call of
-// CGameArchitectureSupport::Update, so rendering faster speeds the whole game up. This module measures the real time of each frame and
-// feeds it to the game instead of the constant: the entry hook on Update computes the step, mid hooks load it into the registers that
-// held the 1/60 immediates (recomp/games/mpr/main.sites lists the sites), and a few per-frame counters that are not driven by that dt
-// (render timings, texture streaming, the friction of one walk state, the background-work budget, the movie clock) are corrected.
+// Frame time for the game's step (S11, docs/S11.md): a retail game that runs one tick of a hard-coded 1/60 s for every call of its
+// frame update speeds up when it renders faster. This module measures the real time of each frame and feeds it to the game instead of the
+// constant: the entry hook on the frame update computes the step, mid hooks load it into the registers that held the 1/60 immediates, and a
+// few per-frame counters that are not driven by that dt (render timings, texture streaming, a per-tick friction, the background-work budget,
+// the movie clock) are corrected. The mechanism is the game's own business only through Sites: the registered game (nxrt/game.h) lists
+// where those places are (Metroid Prime Remastered: games/mpr/mpr_sites.h, the same addresses as recomp/games/mpr/main.sites).
 //
 // Configuration, section [time] (env NXRT_TIME_<KEY>):
 //   mode = real | fixed | off     real (default): the step is the measured frame time, clamped and smoothed.
@@ -16,12 +17,12 @@
 //   smooth = 4                    real mode: the step is the mean of the last N frame times (1 = raw); a jump of more than 50 % restarts it
 //   pace = 1                      hold the frame until the minimum step has passed (stops an uncapped limiter from running the game faster)
 //   movie_real = 1                the movie list's clock is real elapsed time (audio plays in real time), not the step
-//   fix_friction = 1              CPlayerMP1::GetDampedClampedVelocityWR in-air walk friction (3.5 per 1/60 s) scaled by the step
-//   fix_render_timings = 1        NRenderUtilMPT::TickRenderTimings advances by the step (texture scroll, UV animation, water)
+//   fix_friction = 1              per-tick float constants (Load::ScaledFloat; Metroid: the in-air walk friction, 3.5 per 1/60 s) scaled by the step
+//   fix_render_timings = 1        the render-timing clock (Sites::tick_render_timings) advances by the step (texture scroll, UV animation, water)
 //   fix_streaming = 1             texture streaming ages its entries by the step instead of 1/60
-//   fix_budget = 1                the background-work budget after the tick (14 ms) scales with the step
-//   fix_stuck_tracker = 1         CPlayerMPStuckTracker: the player's "am I stuck" test keeps 20 samples, one per tick; at more than 60 ticks per second the window
-//                                 is shorter than the test was made for and a slow moment (the top of a jump) reads as stuck. Samples are taken once per 1/60 s of game time.
+//   fix_budget = 1                the background-work budget after the tick (Metroid: 14 ms) scales with the step
+//   fix_stuck_tracker = 1         a per-tick sampler (Sites::per_tick_sampler; Metroid: the player's "am I stuck" test, 20 samples, one per tick) takes one sample
+//                                 per 1/60 s of game time, so its window keeps its length at more than 60 ticks per second.
 //   log_every = 0                 log one line of frame statistics every N frames (0 = off)
 //   csv = <file>                  write one line per frame: frame, host time (s), measured elapsed, step used, sum of steps, movie frames delivered, render-timing clock
 //   game_base = 0x7100000000      guest address of the main module
@@ -60,11 +61,36 @@ struct Config {
 Config load_config();                       // reads [time]
 const char* mode_name(Mode m);
 
-// The game's own constants (what the retail code loads): 0x3C888889 and 0x3C656042 as floats.
+// The retail step (what the code loads, 0x3C888889 as a float).
 constexpr float kGameStep = 0.016666668f;   // 1/60
-constexpr float kGameBudget = 0.014f;       // the extra-processing budget, seconds
-constexpr double kRenderCounterWrap = 53000.0;   // TickRenderTimings keeps frame % 0xD2F0
 float scale60(float dt);                    // dt / (1/60): exactly 1.0f when dt is the game's own step
+
+// ---- where the step goes: the game's sites (offsets in main, nxrt/game.h Info::timestep) ------------------------------------------------
+// What one mid hook loads into its register just before the instruction that reads the immediate.
+enum class Load : uint8_t {
+    Step = 1,       // w<reg> = step (float bits)
+    NegStep,        // w<reg> = -step
+    Budget,         // w<reg> = value * step * 60 (float bits)                        [time] fix_budget
+    ScaledFloat,    // s<reg> = value * step * 60, the rest of v<reg> zeroed           [time] fix_friction
+    Stream1,        // w<reg> = step                                                  [time] fix_streaming
+    Stream2,        // w<reg> = 2 * step                                              [time] fix_streaming
+};
+struct MidSite {
+    uint64_t offset;
+    Load load;
+    uint8_t reg;
+    float value = 0.f;              // Budget, ScaledFloat: the retail per-1/60 s value
+};
+struct Sites {
+    uint64_t frame_update = 0;          // entry: once per rendered frame, before the tick (measures the frame); 0 = no step hooks at all
+    const MidSite* mids = nullptr;      // mid hooks, registered in this order
+    uint32_t mid_count = 0;
+    uint64_t tick_render_timings = 0;   // entry, handled: the per-frame render-timing clock: u32 frame counter / 60 (0 = none)
+    uint64_t render_timing_counter = 0; // data: that u32 counter; the float seconds follow at +4
+    double render_counter_wrap = 0;     // the counter is kept modulo this (0 = no wrap)
+    uint64_t movie_update = 0;          // entry: s0 = the movie clock's delta seconds (0 = none)
+    uint64_t per_tick_sampler = 0;      // entry, handled: a function that must run once per 1/60 s of game time; x0 stays as the result (0 = none)
+};
 
 // ---- the frame-time policy (pure, no clock) -----------------------------------------------------------------------------------
 class Stepper {
@@ -120,21 +146,5 @@ void set_clock_for_tests(ClockFn fn);
 void set_deterministic_for_tests(double step_seconds);
 // The script step `@rate <hz>` (test tooling): from the next frame on the game step is exactly 1/hz, nothing waits (hz > 0), or the configured mode again (0).
 void set_run_rate(double hz);
-
-// Guest addresses of the sites, main-module relative (docs/S11.md has what each does).
-namespace site {
-constexpr uint64_t kUpdate = 0x3c81c8;
-constexpr uint64_t kDtClamp = 0x3c8238;          // mid: w8 = step (elapsed clamp)
-constexpr uint64_t kDtLoop = 0x3c830c;           // mid: w27 = step
-constexpr uint64_t kDtFloor = 0x3c8354;          // mid: w8 = -step
-constexpr uint64_t kBudget0 = 0x3c8634, kBudget1 = 0x3c8648, kBudget2 = 0x3c86f4, kBudget3 = 0x3c8708;   // mid: w8 = budget
-constexpr uint64_t kFriction = 0xcee3ec;         // mid: s1 = 3.5 * scale60(step)
-constexpr uint64_t kTickRenderTimings = 0xc32890;   // entry, handled
-constexpr uint64_t kStreamA0 = 0xfe268, kStreamA1 = 0xfe274;   // mid: w8 = step, 2 * step
-constexpr uint64_t kStreamB0 = 0xff2fc, kStreamB1 = 0xff308;   // mid: w9 = step, 2 * step
-constexpr uint64_t kMovieUpdate = 0x3669ec;      // entry: s0 = elapsed
-constexpr uint64_t kStuckAddState = 0xd801d8;     // entry, handled: CPlayerStuckTrackerMP1::AddState(this, state, pos, vel, input); x0 = this stays as the result
-constexpr uint64_t kRenderTimingCounter = 0x459cc10;   // u32 frame counter (data); the float seconds follow at +4
-}  // namespace site
 
 }  // namespace nxrt::timestep

@@ -21,14 +21,11 @@
 #include "nxrt/log.h"
 #include "nxrt/services.h"
 #include "nxrt/tex_override.h"
-#include "pak.h"
-#include "txtr.h"
 
 namespace nxrt::play {
 
 namespace {
 constexpr const char* kTag = "prompts";
-constexpr uint32_t kIconSize = 36;
 
 uint32_t get_u32(const uint8_t* p) { return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24); }
 
@@ -157,46 +154,26 @@ void load_pack_locked(State& s) {
     NXLOG_W(kTag, "no icon pack (prompt_icons.pak) found: the game's own button icons stay");
 }
 
-// Reads the icon textures from the player's own paks and remembers a hash of each tiled buffer, so the hook can tell them from other textures.
-// Every icon has up to two copies: the one of the in-game interface (GuiSysMP1.pak, blue) and the front end's own (PreloadFrontEndMPT.pak,
-// red: the title screen and the menus draw those).
+// Asks the game to read its icon textures from the player's own files and remembers a hash of each tiled buffer, so the hook can tell them
+// from other textures (PromptGame::scan; an icon can have more than one copy).
 void scan_ids_locked(State& s) {
     if (s.ids_tried) return;
     s.ids_tried = true;
+    const PromptGame* g = prompt_game();
+    if (!g || !g->scan) return;
     const std::string romfs = services::romfs_dir();
-    std::map<std::string, std::unique_ptr<mprs::Pak>> paks;
-    int found = 0;
-    const auto add = [&](Icon ic, const std::string& rel, const std::string& uuid) {
-        try {
-            auto it = paks.find(rel);
-            if (it == paks.end()) {
-                const std::filesystem::path p = std::filesystem::path(romfs) / rel;
-                it = paks.emplace(rel, mprs::Pak::open(mprs::open_file_storage(p.string()))).first;
-            }
-            const mprs::Pak& pak = *it->second;
-            for (const mprs::PakEntry& e : pak.assets()) {
-                if (std::strcmp(e.type, "TXTR") != 0 || e.id.str() != uuid) continue;
-                const mprs::TxtrInfo info = mprs::txtr_read_info(pak, e);
-                if (info.width != kIconSize || info.height != kIconSize || info.mips != 1) break;
-                const std::vector<mprs::u8> buf = mprs::txtr_read_tiled(pak, e, info);
-                s.ids[{buf.size(), prompt_hash(buf.data(), buf.size())}] = ic;
-                if (std::find(s.id_sizes.begin(), s.id_sizes.end(), buf.size()) == s.id_sizes.end()) s.id_sizes.push_back(buf.size());
-                ++found;
-                break;
-            }
-        } catch (const std::exception& ex) {
-            NXLOG_W(kTag, "%s in %s: %s", icon_asset_name(ic), rel.c_str(), ex.what());
-        }
-    };
-    for (int i = 0; i < kIconCount; ++i) {
-        const Icon ic = static_cast<Icon>(i);
-        add(ic, icon_pak_file(ic), icon_asset_uuid(ic));
-        if (const char* front = icon_front_uuid(ic)) add(ic, "Preload/MPRT/PreloadFrontEndMPT.pak", front);
-    }
+    const int found = g->scan(romfs, [](void* user, Icon ic, const uint8_t* buf, size_t size) {
+        State& st = *static_cast<State*>(user);
+        st.ids[{size, prompt_hash(buf, size)}] = ic;
+        if (std::find(st.id_sizes.begin(), st.id_sizes.end(), size) == st.id_sizes.end()) st.id_sizes.push_back(size);
+    }, &s);
     NXLOG_I(kTag, "recognised %d icon textures (%d icons, in-game and front end copies) in %s", found, kIconCount, romfs.c_str());
 }
 
 bool hook(const gfx::TexOverrideReq& r, uint8_t* rgba, void*) {
+    const PromptGame* g = prompt_game();
+    if (!g || g->icon_size == 0) return false;
+    const uint32_t kIconSize = g->icon_size;
     if (r.width != kIconSize || r.height != kIconSize || !r.tiled) return false;
     State& s = st();
     std::lock_guard<std::mutex> lk(s.mu);
@@ -212,10 +189,11 @@ bool hook(const gfx::TexOverrideReq& r, uint8_t* rgba, void*) {
         const uint8_t* px = s.pack.find(name);
         if (!px && name.compare(0, 4, "kbm/") == 0) px = s.pack.find("kbm/any");
         if (!px || s.pack.width() != kIconSize || s.pack.height() != kIconSize) return false;
-        // The game stores its UI textures upside down (row 0 of the storage is the bottom row of the picture; the UI flips v when it draws), so
-        // the upright icon of the pack goes in with its rows reversed.
+        // A game that stores its UI textures upside down (row 0 of the storage is the bottom row of the picture; the UI flips v when it draws) gets
+        // the upright icon of the pack with its rows reversed.
         for (uint32_t y = 0; y < kIconSize; ++y)
-            std::memcpy(rgba + static_cast<size_t>(y) * kIconSize * 4, px + static_cast<size_t>(kIconSize - 1 - y) * kIconSize * 4, static_cast<size_t>(kIconSize) * 4);
+            std::memcpy(rgba + static_cast<size_t>(y) * kIconSize * 4, px + static_cast<size_t>(g->upside_down ? kIconSize - 1 - y : y) * kIconSize * 4,
+                        static_cast<size_t>(kIconSize) * 4);
         if (s.hits++ < 40) NXLOG_I(kTag, "%s -> %s", icon_asset_name(it->second), name.c_str());
         return true;
     }

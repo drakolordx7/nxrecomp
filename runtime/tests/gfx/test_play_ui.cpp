@@ -162,8 +162,8 @@ NXTEST_CHILD(play_ui_300_bindings) {
         play::Binding b;
         b.in.kind = play::InKind::Key;
         b.in.code = 4 + i % 26;   // SDL scancodes of the letters
-        b.ctx = (i % 2) ? play::Ctx::Gameplay : play::Ctx::Menu;
-        b.act = play::Act::Fire;
+        b.ctx = (i % 2) ? play::Ctx::Play : play::Ctx::Menu;
+        b.act = play::Act::Primary;
         b.trig = play::Trig::Tap;   // a timed trigger: the ms column is enabled
         b.ms = 200;
         host.settings_.bindings.push_back(b);

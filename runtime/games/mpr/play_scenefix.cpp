@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Guards for latent races in the game's own scene code (S42). See play_scenefix.h.
-#include "play/play_scenefix.h"
+#include "play_scenefix.h"
 
 #include <atomic>
 #include <cstring>

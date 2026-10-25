@@ -15,7 +15,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
-#include "play/play_aim.h"
+#include "play_aim.h"
 #include "play/play_types.h"
 
 namespace nxrt::play {

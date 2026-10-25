@@ -14,10 +14,12 @@
 #include "nxrt/config.h"
 #include "nxrt/hooks.h"
 #include "nxrt/timestep.h"
+#include "mpr/mpr_sites.h"     // the sites the registered test game (Metroid Prime Remastered) lists
 
 NXTEST_GROUP(timestep)
 
 namespace ts = nxrt::timestep;
+namespace mpr_site = nxrt::games::mpr::site;
 
 // Tolerance checks that print the expected and the actual value on failure.
 #define CHECK_NEAR(actual, expected, tol)                                                                                    \
@@ -92,7 +94,7 @@ ts::Config base_cfg(ts::Mode m) {
 // Config whose render counter sits at buf: game_base + kRenderTimingCounter == buf (unsigned wrap-around is intended).
 ts::Config render_cfg(const uint8_t* buf) {
     ts::Config c = base_cfg(ts::Mode::Real);
-    c.game_base = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(buf)) - ts::site::kRenderTimingCounter;
+    c.game_base = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(buf)) - mpr_site::kRenderTimingCounter;
     return c;
 }
 
@@ -216,31 +218,31 @@ NXTEST(update_hook_real_mode) {
 
     // First frame: the game's own step.
     g_now = 100.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_EXACT(ts::current_dt(), ts::kGameStep);
 
     // Second frame 1/120 s later: the measured step.
     g_now = 100.0 + 1.0 / 120.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 120.0, 1e-7);
     const float dt = ts::current_dt();
 
     ctx.x[27] = 0xdeadbeefcafeull;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kDtLoop), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kDtLoop), 0);
     CHECK_EQ(lo32(ctx.x[27]), bits(dt));
     CHECK_EQ(ctx.x[27] >> 32, 0ull);
 
     ctx.x[8] = 0xdeadbeefcafeull;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kDtClamp), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kDtClamp), 0);
     CHECK_EQ(lo32(ctx.x[8]), bits(dt));
     CHECK_EQ(ctx.x[8] >> 32, 0ull);
 
     ctx.x[8] = 0xdeadbeefcafeull;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kDtFloor), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kDtFloor), 0);
     CHECK_EQ(lo32(ctx.x[8]), bits(-dt));
     CHECK_EQ(ctx.x[8] >> 32, 0ull);
 
-    const uint64_t budgets[] = {ts::site::kBudget0, ts::site::kBudget1, ts::site::kBudget2, ts::site::kBudget3};
+    const uint64_t budgets[] = {mpr_site::kBudget0, mpr_site::kBudget1, mpr_site::kBudget2, mpr_site::kBudget3};
     for (uint64_t off : budgets) {
         ctx.x[8] = 0xdeadbeefcafeull;
         CHECK_EQ(nx_site_midhook(&ctx, b + off), 0);
@@ -249,7 +251,7 @@ NXTEST(update_hook_real_mode) {
 
     // A hitch of one second: the step is clamped to the slowest allowed frame, 1/30 s.
     g_now += 1.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 30.0, 1e-7);
     CHECK_EQ(ts::stats().frames, 3ull);
     CHECK(ts::active());
@@ -267,13 +269,13 @@ NXTEST(update_hook_deterministic) {
 
     // The clock does not move, yet every frame gets the deterministic step and nothing waits.
     for (int i = 0; i < 3; i++) {
-        CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+        CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
         CHECK_NEAR(ts::current_dt(), 1.0 / 120.0, 1e-7);
     }
     CHECK_EQ(ts::stats().waits, 0ull);
 
     ctx.x[27] = 0;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kDtLoop), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kDtLoop), 0);
     CHECK_EQ(lo32(ctx.x[27]), bits(1.0f / 120.0f));
 }
 
@@ -289,7 +291,7 @@ NXTEST(update_hook_fixed) {
     // The clock moves 1 ms per call, less than the 1/144 s period, so the pacing holds the frame.
     g_now = 50.0;
     for (int i = 0; i < 3; i++) {
-        CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+        CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
         CHECK_NEAR(ts::current_dt(), 1.0 / 144.0, 1e-7);
         g_now += 0.001;
     }
@@ -307,9 +309,9 @@ NXTEST(update_hook_off) {
 
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     ctx.x[27] = 0x1234ull;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kDtLoop), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kDtLoop), 0);
     CHECK_EQ(ctx.x[27], 0x1234ull);
     CHECK(!ts::active());
 }
@@ -324,23 +326,23 @@ NXTEST(friction_hook) {
     ::Ctx ctx{};
 
     g_now = 300.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 120.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
 
     ctx.v[1].f32[0] = 3.5f;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kFriction), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kFriction), 0);
     CHECK_NEAR(ctx.v[1].f32[0], 3.5f * ts::scale60(ts::current_dt()), 1e-6);
 
     // With fix_friction = 0 the game's 3.5 stays.
     ts::remove();
     c.fix_friction = false;
     ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 120.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     ctx.v[1].f32[0] = 3.5f;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kFriction), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kFriction), 0);
     CHECK_EXACT(ctx.v[1].f32[0], 3.5f);
 }
 
@@ -353,41 +355,41 @@ NXTEST(streaming_hooks) {
     ::Ctx ctx{};
 
     g_now = 400.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 240.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     const float dt = ts::current_dt();
     CHECK_NEAR(dt, 1.0 / 240.0, 1e-7);
 
     ctx.x[8] = 0;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamA0), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamA0), 0);
     CHECK_EQ(lo32(ctx.x[8]), bits(dt));
 
     ctx.x[8] = 0;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamA1), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamA1), 0);
     CHECK_EQ(lo32(ctx.x[8]), bits(2.0f * dt));
 
     ctx.x[9] = 0;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamB0), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamB0), 0);
     CHECK_EQ(lo32(ctx.x[9]), bits(dt));
 
     ctx.x[9] = 0;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamB1), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamB1), 0);
     CHECK_EQ(lo32(ctx.x[9]), bits(2.0f * dt));
 
     // With fix_streaming = 0 the registers are not touched.
     ts::remove();
     c.fix_streaming = false;
     ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 240.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     ctx.x[8] = 0x1111222233334444ull;
     ctx.x[9] = 0x5555666677778888ull;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamA0), 0);
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamA1), 0);
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamB0), 0);
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kStreamB1), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamA0), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamA1), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamB0), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamB1), 0);
     CHECK_EQ(ctx.x[8], 0x1111222233334444ull);
     CHECK_EQ(ctx.x[9], 0x5555666677778888ull);
 }
@@ -404,8 +406,8 @@ NXTEST(render_timings_hook) {
     ts::set_deterministic_for_tests(1.0 / 60.0);
     ts::Config c = render_cfg(buf);
     ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kUpdate), 0);
-    for (int i = 0; i < 3; i++) CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kTickRenderTimings), 1);
+    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
+    for (int i = 0; i < 3; i++) CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 1);
     CHECK_EQ(load_u32(buf), 3u);
     CHECK_EXACT(load_f32(buf + 4), 3.0f / 60.0f);
     CHECK_EXACT(ctx.v[0].f32[0], 3.0f / 60.0f);
@@ -416,8 +418,8 @@ NXTEST(render_timings_hook) {
     ts::set_deterministic_for_tests(1.0 / 240.0);
     c = render_cfg(buf);
     ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kUpdate), 0);
-    for (int i = 0; i < 4; i++) CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kTickRenderTimings), 1);
+    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
+    for (int i = 0; i < 4; i++) CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 1);
     CHECK_EQ(load_u32(buf), 1u);
     CHECK_NEAR(load_f32(buf + 4), 1.0f / 60.0f, 1e-6);
 
@@ -428,8 +430,8 @@ NXTEST(render_timings_hook) {
     ts::set_deterministic_for_tests(1.0 / 60.0);
     c = render_cfg(buf);
     ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kUpdate), 0);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kTickRenderTimings), 1);
+    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 1);
     CHECK_EQ(load_u32(buf), 0u);
     CHECK_EXACT(load_f32(buf + 4), 0.0f);
 
@@ -442,8 +444,8 @@ NXTEST(render_timings_hook) {
     c = render_cfg(buf);
     c.fix_render_timings = false;
     ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kUpdate), 0);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + ts::site::kTickRenderTimings), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 0);
     CHECK(std::memcmp(buf, snap, sizeof buf) == 0);
 }
 
@@ -459,21 +461,21 @@ NXTEST(movie_hook) {
     ::Ctx ctx{};
 
     g_now = 50.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
 
     // First movie call: no previous call, so the incoming value stays.
     ctx.v[0].f32[0] = 0.0166f;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kMovieUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_EXACT(ctx.v[0].f32[0], 0.0166f);
 
     // Real elapsed time since the last call: 8.3 ms.
     g_now = 50.0083;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kMovieUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_NEAR(ctx.v[0].f32[0], 0.0083f, 1e-6);
 
     // Two seconds later: clamped to movie_max.
     g_now = 52.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kMovieUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_EXACT(ctx.v[0].f32[0], 0.5f);
 
     const ts::Stats st = ts::stats();
@@ -485,11 +487,11 @@ NXTEST(movie_hook) {
     c.movie_real = false;
     ts::install(c);
     g_now = 70.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     ctx.v[0].f32[0] = 0.25f;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kMovieUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     g_now = 71.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kMovieUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_EXACT(ctx.v[0].f32[0], 0.25f);
     CHECK_EQ(ts::stats().movie_calls, 0ull);
 }
@@ -507,9 +509,9 @@ NXTEST(pacing_real_mode_waits) {
 
     // The second frame comes 0.5 ms after the first, shorter than the 1/480 s minimum: the frame is held until the minimum has passed.
     g_now = 10.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now = 10.0005;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 480.0, 1e-7);
     CHECK_EQ(ts::stats().waits, 1ull);
 }
@@ -526,19 +528,19 @@ NXTEST(retail_off_rate_paces_without_touching_the_step) {
 
     // The Update hook runs (frames are counted and paced) but the game keeps its own 1/60: active() is false and no register is touched.
     g_now = 5.0;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now = 5.002;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK(!ts::active());
     CHECK_EQ(ts::stats().frames, 2ull);
     CHECK_EQ(ts::stats().waits, 1ull);                         // 2 ms after the first frame is shorter than the 10 ms period
     ctx.x[27] = 0x1234;
-    CHECK_EQ(nx_site_midhook(&ctx, b + ts::site::kDtLoop), 0);
+    CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kDtLoop), 0);
     CHECK_EQ(ctx.x[27], 0x1234ull);
     ctx.v[0].f32[0] = 0.0166f;
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kMovieUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_EXACT(ctx.v[0].f32[0], 0.0166f);
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kTickRenderTimings), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kTickRenderTimings), 0);
 }
 
 NXTEST(update_loop_runs_one_tick_per_frame) {
@@ -557,11 +559,11 @@ NXTEST(update_loop_runs_one_tick_per_frame) {
         double elapsed_in_game = 0, accum = 0;     // Update's accumulator (this+0xa0)
         int ticks = 0;
         g_now = 1000.0;
-        nx_hook_entry(&ctx, b + ts::site::kUpdate);
+        nx_hook_entry(&ctx, b + mpr_site::kUpdate);
         for (int frame = 0; frame < 50; frame++) {
             g_now += 1.0 / hz;
-            nx_hook_entry(&ctx, b + ts::site::kUpdate);
-            nx_site_midhook(&ctx, b + ts::site::kDtLoop);
+            nx_hook_entry(&ctx, b + mpr_site::kUpdate);
+            nx_site_midhook(&ctx, b + mpr_site::kDtLoop);
             float step;
             const uint32_t w = lo32(ctx.x[27]);
             std::memcpy(&step, &w, 4);
@@ -596,12 +598,12 @@ NXTEST(stuck_tracker_samples_once_per_tick_at_240hz) {
     ::Ctx ctx{};
 
     // One frame publishes the step; the tracker is then called once per player tick (every call here).
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 240.0, 1e-7);
 
     int zeros = 0;
     for (int i = 1; i <= 12; i++) {
-        const int r = nx_hook_entry(&ctx, b + ts::site::kStuckAddState);
+        const int r = nx_hook_entry(&ctx, b + mpr_site::kStuckAddState);
         if (r == 0) zeros++;
         if (i % 4 == 0) CHECK_EQ(r, 0);
         else CHECK(r != 0);
@@ -618,9 +620,9 @@ NXTEST(stuck_tracker_samples_every_call_at_60hz) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 60.0, 1e-7);
-    for (int i = 0; i < 24; i++) CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kStuckAddState), 0);
+    for (int i = 0; i < 24; i++) CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kStuckAddState), 0);
 }
 
 NXTEST(stuck_tracker_samples_60_of_144) {
@@ -632,11 +634,11 @@ NXTEST(stuck_tracker_samples_60_of_144) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 144.0, 1e-7);
     int zeros = 0;
     for (int i = 0; i < 144; i++)
-        if (nx_hook_entry(&ctx, b + ts::site::kStuckAddState) == 0) zeros++;
+        if (nx_hook_entry(&ctx, b + mpr_site::kStuckAddState) == 0) zeros++;
     CHECK_NEAR(zeros, 60, 1);
 }
 
@@ -652,7 +654,7 @@ NXTEST(stuck_tracker_off_by_config) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kUpdate), 0);
-    for (int i = 0; i < 12; i++) CHECK_EQ(nx_hook_entry(&ctx, b + ts::site::kStuckAddState), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
+    for (int i = 0; i < 12; i++) CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kStuckAddState), 0);
     nxrt::config_clear();
 }

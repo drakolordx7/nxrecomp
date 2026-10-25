@@ -7,6 +7,7 @@
 #include <set>
 
 #include "nxrt/config.h"
+#include "nxrt/game.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
@@ -176,16 +177,6 @@ int parse_region(const std::string& s, int def) {
     return def;
 }
 
-uint32_t default_language_mask() {
-    // control.nacp SupportedLanguage of Metroid Prime Remastered 1.0.0: 13 languages.
-    uint32_t m = 0;
-    for (Language l : {Language::AmericanEnglish, Language::BritishEnglish, Language::Japanese, Language::French, Language::German,
-                       Language::LatinAmericanSpanish, Language::Spanish, Language::Italian, Language::Dutch, Language::CanadianFrench,
-                       Language::Korean, Language::TraditionalChinese, Language::SimplifiedChinese})
-        m |= 1u << static_cast<uint32_t>(l);
-    return m;
-}
-
 uint32_t parse_language_mask(const std::string& s, uint32_t def) {
     const std::string t = trim(s);
     if (t.empty()) return def;
@@ -212,21 +203,30 @@ bool parse_uid(const std::string& s, uint64_t& hi, uint64_t& lo) {
     return true;
 }
 
-TitleProfile load_profile() {
+// The defaults before the ini: the registered game's own facts (nxrt/game.h, Info::title_defaults), else the neutral ones of the struct.
+TitleProfile game_defaults() {
     TitleProfile p;
+    if (const game::Info* g = game::current(); g && g->title_defaults) g->title_defaults(p);
+    if (p.supported_languages == 0) p.supported_languages = 1u << static_cast<uint32_t>(Language::AmericanEnglish);
+    return p;
+}
+
+TitleProfile load_profile() {
+    TitleProfile p = game_defaults();
+    const uint64_t game_owner = p.save_data_owner_id;      // 0: the save data owner is the program id
     p.program_id = static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(p.program_id)));
     // [process] program_id (kernel GetInfo ProgramId) overrides when it is set explicitly.
     if (config_has("process", "program_id")) p.program_id = static_cast<uint64_t>(config_get_int("process", "program_id", 0));
     p.name = config_get_str("title", "name", p.name.c_str());
     p.display_version = config_get_str("title", "display_version", p.display_version.c_str());
-    p.supported_languages = parse_language_mask(config_get_str("title", "supported_languages", ""), default_language_mask());
-    p.save_data_owner_id = static_cast<uint64_t>(config_get_int("title", "save_owner_id", static_cast<int64_t>(p.program_id)));
+    p.supported_languages = parse_language_mask(config_get_str("title", "supported_languages", ""), p.supported_languages);
+    p.save_data_owner_id = static_cast<uint64_t>(config_get_int("title", "save_owner_id", static_cast<int64_t>(game_owner ? game_owner : p.program_id)));
     p.account_save_size = static_cast<uint64_t>(config_get_int("title", "account_save_size", static_cast<int64_t>(p.account_save_size)));
     p.account_save_journal = static_cast<uint64_t>(config_get_int("title", "account_save_journal", static_cast<int64_t>(p.account_save_journal)));
-    p.device_save_size = static_cast<uint64_t>(config_get_int("title", "device_save_size", 0));
-    p.device_save_journal = static_cast<uint64_t>(config_get_int("title", "device_save_journal", 0));
-    p.cache_save_size = static_cast<uint64_t>(config_get_int("title", "cache_save_size", 0));
-    p.cache_save_journal = static_cast<uint64_t>(config_get_int("title", "cache_save_journal", 0));
+    p.device_save_size = static_cast<uint64_t>(config_get_int("title", "device_save_size", static_cast<int64_t>(p.device_save_size)));
+    p.device_save_journal = static_cast<uint64_t>(config_get_int("title", "device_save_journal", static_cast<int64_t>(p.device_save_journal)));
+    p.cache_save_size = static_cast<uint64_t>(config_get_int("title", "cache_save_size", static_cast<int64_t>(p.cache_save_size)));
+    p.cache_save_journal = static_cast<uint64_t>(config_get_int("title", "cache_save_journal", static_cast<int64_t>(p.cache_save_journal)));
     p.main_thread_stack = static_cast<uint64_t>(config_get_int("title", "main_thread_stack", static_cast<int64_t>(p.main_thread_stack)));
     p.main_thread_priority = static_cast<int>(config_get_int("title", "main_thread_priority", p.main_thread_priority));
     p.main_thread_core = static_cast<int>(config_get_int("title", "main_thread_core", p.main_thread_core));
@@ -263,7 +263,7 @@ const TitleProfile& profile() {
 
 uint64_t program_id_now() {
     if (config_has("process", "program_id")) return static_cast<uint64_t>(config_get_int("process", "program_id", 0));
-    return static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(TitleProfile{}.program_id)));
+    return static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(game_defaults().program_id)));
 }
 
 void profile_reload() {
@@ -291,7 +291,8 @@ std::string save_dir() {
     std::string d = config_get_str("fs", "save_dir", "");
     if (!d.empty()) return d;
     const char* appdata = std::getenv("APPDATA");
-    return std::string(appdata && *appdata ? appdata : ".") + "\\MPRRecomp\\save";
+    const char* folder = game::info().save_folder;
+    return std::string(appdata && *appdata ? appdata : ".") + "\\" + (folder && *folder ? folder : "nxrt") + "\\save";
 }
 
 }  // namespace nxrt::services

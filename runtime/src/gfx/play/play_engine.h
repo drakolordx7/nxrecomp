@@ -8,9 +8,9 @@
 //  * Triggers: press = active while held. tap = a pulse of [timing] pulse_ms right after a release that came within the tap window.
 //    hold = active while held, from the hold delay on. toggle = each press flips it. doubletap = active while held when the press came
 //    within the window after the previous release of the same input. A mouse wheel notch is a pulse for every trigger except toggle (which flips).
-//  * Beam / visor selects (and the wheel cycling) are edge actions: when the binding becomes active the select output is pressed for pulse_ms,
-//    however long the key stays down. BeamNext / BeamPrev walk the tracked beam (the last one selected through the engine or told by
-//    set_game_hints) over the beams in the hint mask.
+//  * Set A / set B selects (mpr: beams / visors) and the wheel cycling are edge actions: when the binding becomes active the select output is
+//    pressed for pulse_ms, however long the key stays down. SetANext / SetAPrev walk the tracked set-A member (the last one selected through
+//    the engine or told by set_cycle_hint) over the members in the hint mask.
 //  * Changing the context consumes every held input whose bindings differ in the new context: it does nothing until it is released.
 //  * Stick contributions are summed per stick and normalised to length 1 (W + D is a diagonal, not 1.41).
 #pragma once
@@ -54,10 +54,11 @@ public:
     // a pulse that is only a few milliseconds of one frame can be eaten before the tick sees it.
     void frame_tick();
 
-    // What the game knows: the beam currently selected (0 power, 1 wave, 2 ice, 3 plasma; -1 = unknown) and a bit mask of the beams the player owns.
+    // What the game knows: the set-A member currently selected (0..3 = SetA1..SetA4; -1 = unknown) and a bit mask of the members the player
+    // can select (mpr: the beam in use and the beams owned).
     // The game's view is adopted only when no select of ours is pending or recent (the game needs a frame or two to act on a pulse).
-    void set_game_hints(int current_beam, unsigned beam_mask, uint64_t now_ns);
-    int tracked_beam() const;
+    void set_cycle_hint(int current, unsigned mask, uint64_t now_ns);
+    int tracked_cycle() const;
 
     // The Switch-side result at time now. Thread safe.
     EngineOut output(uint64_t now_ns);
@@ -100,12 +101,12 @@ private:
     std::vector<Sel> sels_;                               // select pulses, queued so that two selects never overlap
     uint64_t acts_[kActCount] = {};
     Act last_ = Act::None;
-    int beam_ = 0;
+    int cycle_ = 0;
     uint64_t last_select_ns_ = 0;
     uint64_t frame_ = 0;
     bool frames_used_ = false;
     static constexpr uint64_t kPulseFrames = 2;
-    unsigned beam_mask_ = 0x0f;
+    unsigned cycle_mask_ = 0x0f;
     float aux_[4] = {};
 };
 

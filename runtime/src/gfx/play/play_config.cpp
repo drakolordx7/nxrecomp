@@ -15,6 +15,8 @@
 #include <system_error>
 #include <vector>
 
+#include "nxrt/game.h"
+
 namespace nxrt::play {
 namespace {
 
@@ -148,21 +150,12 @@ Settings builtin_settings() {
 
 enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Tweaks, Bindings };
 
-// The factory-defaults revision this build writes ([meta] defaults_rev). Bump it together with a new entry in kDefaultAdditions.
-constexpr int kDefaultsRev = 2;
-
-// Factory bindings that an older controls.ini does not have. A file that has [bindings.*] sections and a defaults_rev below `rev` gets
-// each entry with rev above its own (only where the input is still unbound in that context, so the user's own choice wins).
-// Append new factory bindings here with the next rev; bump kDefaultsRev.
-struct DefaultAddition {
-    int rev;
-    Ctx ctx;
-    const char* input;
-    Act act;
-};
-const DefaultAddition kDefaultAdditions[] = {
-    {2, Ctx::Map, "X", Act::BtnX},   // the map's Key / Legend button (its footer shows X)
-};
+// The factory-defaults revision this build writes ([meta] defaults_rev) and the factory bindings an older controls.ini does not have: the
+// game's (play_types.h GameDefaults).
+int defaults_rev() {
+    const GameDefaults* d = game_defaults();
+    return d ? d->defaults_rev : 0;
+}
 
 const char* sec_label(Sec s) {
     switch (s) {
@@ -281,8 +274,8 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Mouse:
             if (k == "yaw") return set_num(&s->mouse.yaw_rad);
             if (k == "pitch") return set_num(&s->mouse.pitch_rad);
-            if (k == "morph_yaw") return set_num(&s->mouse.morph_yaw_rad);
-            if (k == "morph_pitch") return set_num(&s->mouse.morph_pitch_rad);
+            if (k == key_alt_yaw()) return set_num(&s->mouse.alt_yaw_rad);
+            if (k == key_alt_pitch()) return set_num(&s->mouse.alt_pitch_rad);
             if (k == "yaw_source" || k == "pitch_source") {   // Source scale, converted to radians per count
                 double x = 0;
                 if (!set_num(&x)) return false;
@@ -293,7 +286,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "invert_x") return set_bool(&s->mouse.invert_x);
             if (k == "menu_cursor") return set_bool(&s->mouse.menu_cursor);
             if (k == "menu_touch") return true;   // legacy key, dead since it never did anything: accepted and ignored
-            if (k == "wheel_beams") return set_bool(&s->mouse.wheel_beams);
+            if (k == key_wheel_cycles()) return set_bool(&s->mouse.wheel_cycles);
             break;
         case Sec::Aim:
             if (k == "lock_mode") {
@@ -327,7 +320,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "gyro_scale") return set_num(&s->pad.gyro_scale);
             if (k == "rumble") return set_bool(&s->pad.rumble);
             if (k == "rumble_scale") return set_num(&s->pad.rumble_scale);
-            if (k == "ball_orbit") return set_real(0.0, 6.0, &s->pad.ball_orbit);
+            if (k == key_alt_orbit()) return set_real(0.0, 6.0, &s->pad.alt_orbit);
             break;
         case Sec::Timing:
             if (k == "tap_ms") return set_int(1, 5000, &s->timing.tap_ms);
@@ -504,7 +497,9 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
 // Adds the factory bindings newer than `file_rev` to a file that has bindings sections. A binding is added only when no binding of the
 // same context already uses that input. Sets *added to a description of what was added (for the log line).
 void apply_default_additions(Settings* s, int file_rev, std::string* added) {
-    for (const DefaultAddition& d : kDefaultAdditions) {
+    const GameDefaults* gd = game_defaults();
+    for (unsigned i = 0; gd && i < gd->addition_count; ++i) {
+        const GameDefaultAddition& d = gd->additions[i];
         if (d.rev <= file_rev) continue;
         InputId id;
         if (!parse_input(d.input, &id)) continue;
@@ -680,17 +675,17 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
     if (pad_has_deadzone && !pad_has_right_deadzone) s->pad.right_deadzone = s->pad.stick_deadzone;
 
     if (has_bindings) {
-        // A file with bindings written by an older revision gets the newer factory bindings it lacks (see kDefaultAdditions).
+        // A file with bindings written by an older revision gets the newer factory bindings it lacks (see GameDefaults).
         const int file_rev = s->defaults_rev;   // 0 when the file has no [meta]
-        if (file_rev < kDefaultsRev) {
+        if (file_rev < defaults_rev()) {
             std::string added;
             apply_default_additions(s, file_rev, &added);
-            s->defaults_rev = kDefaultsRev;
+            s->defaults_rev = defaults_rev();
             s->migrated = true;
             s->migration_added = added;
         }
     } else if (with_default_bindings) {
-        s->defaults_rev = kDefaultsRev;   // the factory bindings were applied, so the result is at the current revision
+        s->defaults_rev = defaults_rev();   // the factory bindings were applied, so the result is at the current revision
     }
     return true;
 }
@@ -713,13 +708,20 @@ bool parse_lock_mode(const std::string& s, LockMode* out) {
     return false;
 }
 
+const GameDefaults* game_defaults() { return game::info().play_defaults; }
+
+const char* default_settings_text() {
+    const GameDefaults* d = game_defaults();
+    return d && d->settings_text ? d->settings_text : "";
+}
+
 Settings default_settings() {
     Settings s;
     std::string err;
     // The factory text has a [bindings.*] section, so parse_settings does not look at the factory bindings again.
     if (!parse_settings(default_settings_text(), &s, &err)) {
         s = builtin_settings();
-        s.defaults_rev = kDefaultsRev;
+        s.defaults_rev = defaults_rev();
     }
     return s;
 }
@@ -740,18 +742,19 @@ std::string format_settings(const Settings& s) {
     auto kv = [&o](const char* key, const std::string& value) { o += std::string(key) + " = " + value + "\n"; };
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
 
-    o += "# Metroid Prime Remastered, play mode: controls and display.\n";
+    const char* title = game::info().title;
+    o += (title && *title) ? std::string("# ") + title + ", play mode: controls and display.\n" : std::string("# Play mode: controls and display.\n");
     o += "\n[meta]\n";
     kv("defaults_rev", std::to_string(s.defaults_rev));
     o += "\n[mouse]\n";
     kv("yaw", num(s.mouse.yaw_rad));
     kv("pitch", num(s.mouse.pitch_rad));
-    kv("morph_yaw", num(s.mouse.morph_yaw_rad));
-    kv("morph_pitch", num(s.mouse.morph_pitch_rad));
+    kv(key_alt_yaw(), num(s.mouse.alt_yaw_rad));
+    kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_cursor", flag(s.mouse.menu_cursor));
-    kv("wheel_beams", flag(s.mouse.wheel_beams));
+    kv(key_wheel_cycles(), flag(s.mouse.wheel_cycles));
 
     o += "\n[aim]\n";
     kv("lock_mode", lock_mode_name(s.aim.lock_mode));
@@ -773,7 +776,7 @@ std::string format_settings(const Settings& s) {
     kv("gyro_scale", num(s.pad.gyro_scale));
     kv("rumble", flag(s.pad.rumble));
     kv("rumble_scale", num(s.pad.rumble_scale));
-    kv("ball_orbit", num(s.pad.ball_orbit));
+    kv(key_alt_orbit(), num(s.pad.alt_orbit));
 
     o += "\n[padmap]\n";
     for (int i = 0; i < kPadSrcCount; ++i) {

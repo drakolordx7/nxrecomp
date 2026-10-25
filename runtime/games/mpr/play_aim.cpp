@@ -2,7 +2,7 @@
 // Play mode raw mouse aim, see play_aim.h.
 #include "play_aim.h"
 
-#include "play_display.h"
+#include "display_hooks.h"
 
 #include <windows.h>
 

@@ -12,7 +12,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
-#include "play_display.h"
+#include "display_hooks.h"
 #include "play_lookrate.h"
 
 namespace nxrt::play {

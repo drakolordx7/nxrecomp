@@ -5,7 +5,7 @@
 #include <cmath>
 #include <string>
 
-#include "play/play_aim.h"
+#include "mpr/play_aim.h"
 #include "play/play_camlook.h"
 
 NXTEST_GROUP(play_camlook)

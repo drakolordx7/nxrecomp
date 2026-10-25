@@ -80,9 +80,9 @@ NXTEST(every_row_has_an_action_name) {
 }
 
 NXTEST(factory_fire_is_left_mouse_only) {
-    // The factory layer has one key for fire: Mouse1 (play_defaults.cpp, [bindings.all]).
+    // The factory layer has one key for fire: Mouse1 (the registered game's factory controls.ini: games/mpr/mpr_defaults.cpp, [bindings.all]).
     const Settings s = nxrt::play::default_settings();
-    const std::vector<InputId> in = inputs_for(s, Act::Fire);
+    const std::vector<InputId> in = inputs_for(s, Act::Primary);
     CHECK_EQ(in.size(), 1u);
     CHECK(in.size() == 1 && same_input(in[0], mouse(1)));
 }
@@ -90,21 +90,21 @@ NXTEST(factory_fire_is_left_mouse_only) {
 NXTEST(bind_slot_replaces_slot_zero_and_keeps_trigger) {
     Settings s = nxrt::play::default_settings();
     for (Binding& b : s.bindings)
-        if (b.ctx == Ctx::All && b.act == Act::Fire) {
+        if (b.ctx == Ctx::All && b.act == Act::Primary) {
             b.trig = Trig::Hold;
             b.ms = 300;
         }
     Act displaced = Act::Jump;
-    bind_slot(s, Act::Fire, 0, key("G"), &displaced);
+    bind_slot(s, Act::Primary, 0, key("G"), &displaced);
     CHECK_EQ(displaced, Act::None);
 
-    const std::vector<InputId> in = inputs_for(s, Act::Fire);
+    const std::vector<InputId> in = inputs_for(s, Act::Primary);
     CHECK_EQ(in.size(), 1u);
     CHECK(in.size() == 1 && same_input(in[0], key("G")));
 
     bool found = false;
     for (const Binding& b : s.bindings) {
-        if (b.ctx != Ctx::All || b.act != Act::Fire || !same_input(b.in, key("G"))) continue;
+        if (b.ctx != Ctx::All || b.act != Act::Primary || !same_input(b.in, key("G"))) continue;
         found = true;
         CHECK(b.trig == Trig::Hold);
         CHECK_EQ(b.ms, 300);
@@ -114,8 +114,8 @@ NXTEST(bind_slot_replaces_slot_zero_and_keeps_trigger) {
 
 NXTEST(bind_slot_slot_one_appends) {
     Settings s = nxrt::play::default_settings();
-    bind_slot(s, Act::Fire, 1, key("G"), nullptr);
-    const std::vector<InputId> in = inputs_for(s, Act::Fire);
+    bind_slot(s, Act::Primary, 1, key("G"), nullptr);
+    const std::vector<InputId> in = inputs_for(s, Act::Primary);
     CHECK_EQ(in.size(), 2u);
     CHECK(in.size() == 2 && same_input(in[0], mouse(1)) && same_input(in[1], key("G")));
 }
@@ -133,9 +133,9 @@ NXTEST(bind_slot_same_key_in_other_slot_is_dropped) {
     // Mouse1 is already the first key of Fire. Setting it as the second key leaves one Mouse1 only.
     Settings s = nxrt::play::default_settings();
     Act displaced = Act::Jump;
-    bind_slot(s, Act::Fire, 1, mouse(1), &displaced);
+    bind_slot(s, Act::Primary, 1, mouse(1), &displaced);
     CHECK_EQ(displaced, Act::None);
-    const std::vector<InputId> in = inputs_for(s, Act::Fire);
+    const std::vector<InputId> in = inputs_for(s, Act::Primary);
     CHECK_EQ(in.size(), 1u);
     CHECK(in.size() == 1 && same_input(in[0], mouse(1)));
 }
@@ -143,53 +143,53 @@ NXTEST(bind_slot_same_key_in_other_slot_is_dropped) {
 NXTEST(binding_space_to_fire_displaces_jump) {
     Settings s = nxrt::play::default_settings();
     Act displaced = Act::None;
-    bind_slot(s, Act::Fire, 0, key("Space"), &displaced);
+    bind_slot(s, Act::Primary, 0, key("Space"), &displaced);
     CHECK_EQ(displaced, Act::Jump);
     CHECK(inputs_for(s, Act::Jump).empty());
-    const std::vector<InputId> in = inputs_for(s, Act::Fire);
+    const std::vector<InputId> in = inputs_for(s, Act::Primary);
     CHECK(in.size() == 1 && same_input(in[0], key("Space")));
 }
 
 NXTEST(clear_slot_removes_one_key) {
     Settings s = nxrt::play::default_settings();
-    bind_slot(s, Act::Fire, 1, key("G"), nullptr);
-    clear_slot(s, Act::Fire, 0);
-    const std::vector<InputId> after_first = inputs_for(s, Act::Fire);
+    bind_slot(s, Act::Primary, 1, key("G"), nullptr);
+    clear_slot(s, Act::Primary, 0);
+    const std::vector<InputId> after_first = inputs_for(s, Act::Primary);
     CHECK(after_first.size() == 1 && same_input(after_first[0], key("G")));
-    clear_slot(s, Act::Fire, 0);   // G is slot 0 now
-    CHECK(inputs_for(s, Act::Fire).empty());
-    clear_slot(s, Act::Fire, 1);   // empty slot: nothing happens
-    CHECK(inputs_for(s, Act::Fire).empty());
+    clear_slot(s, Act::Primary, 0);   // G is slot 0 now
+    CHECK(inputs_for(s, Act::Primary).empty());
+    clear_slot(s, Act::Primary, 1);   // empty slot: nothing happens
+    CHECK(inputs_for(s, Act::Primary).empty());
 }
 
 NXTEST(reset_restores_factory_bindings) {
     Settings s = nxrt::play::default_settings();
-    bind_slot(s, Act::Fire, 0, key("G"), nullptr);
+    bind_slot(s, Act::Primary, 0, key("G"), nullptr);
     clear_slot(s, Act::Jump, 0);
     reset_shown_bindings(s);
 
     const Settings factory = nxrt::play::default_settings();
     CHECK_EQ(s.bindings.size(), factory.bindings.size());
     CHECK(same_list(s.bindings, factory.bindings));
-    const std::vector<InputId> in = inputs_for(s, Act::Fire);
+    const std::vector<InputId> in = inputs_for(s, Act::Primary);
     CHECK(in.size() == 1 && same_input(in[0], mouse(1)));
 }
 
 NXTEST(reset_shown_bindings_leaves_other_contexts_alone) {
     // Edit the factory layer (the keys this tab shows) and every other context.
     Settings s = nxrt::play::default_settings();
-    bind_slot(s, Act::Fire, 0, key("G"), nullptr);
+    bind_slot(s, Act::Primary, 0, key("G"), nullptr);
     clear_slot(s, Act::Jump, 0);
     bind_slot(s, Act::Jump, 1, key("Z"), nullptr);
     s.bindings.push_back(binding("H", Ctx::Menu, Act::Confirm));
     s.bindings.push_back(binding("J", Ctx::Map, Act::Map));
-    s.bindings.push_back(binding("K", Ctx::Morph, Act::Jump));
-    s.bindings.push_back(binding("L", Ctx::Scan, Act::Visor2));
-    s.bindings.push_back(binding("M", Ctx::Gameplay, Act::Fire));
-    s.bindings.push_back(binding("N", Ctx::Gameplay, Act::Jump));
+    s.bindings.push_back(binding("K", Ctx::Alt, Act::Jump));
+    s.bindings.push_back(binding("L", Ctx::Inspect, Act::SetB2));
+    s.bindings.push_back(binding("M", Ctx::Play, Act::Primary));
+    s.bindings.push_back(binding("N", Ctx::Play, Act::Jump));
     // Remove the first gameplay binding (M); N stays.
     for (auto it = s.bindings.begin(); it != s.bindings.end(); ++it) {
-        if (it->ctx != Ctx::Gameplay) continue;
+        if (it->ctx != Ctx::Play) continue;
         s.bindings.erase(it);
         break;
     }
@@ -202,7 +202,7 @@ NXTEST(reset_shown_bindings_leaves_other_contexts_alone) {
     CHECK(same_list(layer(s, true), layer(factory, true)));
     CHECK(same_list(layer(s, false), others_before));
     CHECK_EQ(s.bindings.size(), layer(factory, true).size() + others_before.size());
-    const std::vector<InputId> fire = inputs_for(s, Act::Fire);
+    const std::vector<InputId> fire = inputs_for(s, Act::Primary);
     CHECK(fire.size() == 1 && same_input(fire[0], mouse(1)));
     const std::vector<InputId> jump = inputs_for(s, Act::Jump);
     CHECK(jump.size() == 1 && same_input(jump[0], key("Space")));
@@ -239,22 +239,22 @@ NXTEST(other_contexts_are_not_touched) {
 
     // G is only a menu key: binding it to fire displaces nothing, and clearing fire's key leaves the menu key alone.
     Act displaced = Act::Jump;
-    bind_slot(s, Act::Fire, 0, key("G"), &displaced);
+    bind_slot(s, Act::Primary, 0, key("G"), &displaced);
     CHECK_EQ(displaced, Act::None);
     CHECK_EQ(menu_count(), 1);
-    clear_slot(s, Act::Fire, 0);
+    clear_slot(s, Act::Primary, 0);
     CHECK_EQ(menu_count(), 1);
 }
 
 NXTEST(inputs_for_without_bindings_is_empty) {
     Settings s = nxrt::play::default_settings();
-    for (int i = 0; i < 4 && !inputs_for(s, Act::Fire).empty(); ++i) clear_slot(s, Act::Fire, 0);
-    CHECK(inputs_for(s, Act::Fire).empty());
+    for (int i = 0; i < 4 && !inputs_for(s, Act::Primary).empty(); ++i) clear_slot(s, Act::Primary, 0);
+    CHECK(inputs_for(s, Act::Primary).empty());
     CHECK(inputs_for(s, Act::BtnA).empty());
 }
 
 NXTEST(act_label_comes_from_the_rows) {
     CHECK(act_label(Act::Jump) == L"Jump");
-    CHECK(act_label(Act::Morph) == L"Morph ball");
+    CHECK(act_label(Act::AltForm) == L"Morph ball");
     CHECK(act_label(Act::BtnA).empty());
 }

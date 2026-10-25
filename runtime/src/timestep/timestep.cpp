@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nxrt/game.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/movie.h"
@@ -59,7 +60,7 @@ Config load_config() {
     c.movie_max = std::clamp(config_get_double("time", "movie_max", 0.5), 0.01, 5.0);
     c.log_every = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "log_every", 0), 0, 1000000));
     c.csv = config_get_str("time", "csv", "");
-    c.game_base = static_cast<uint64_t>(config_get_int("time", "game_base", 0x7100000000ll));
+    c.game_base = static_cast<uint64_t>(config_get_int("time", "game_base", static_cast<int64_t>(game::info().main_base)));
     return c;
 }
 
@@ -159,6 +160,7 @@ struct G {
     double render_frames = 0;
     double stuck_acc = 0.0;        // game time since the last stuck-tracker sample
     uint64_t render_addr = 0;
+    double render_wrap = 0;            // the game's wrap of the render-timing counter (Sites::render_counter_wrap)
 
     // statistics
     Stats st;
@@ -285,42 +287,38 @@ int hook_update(::Ctx*, uint64_t, void*) {
     return 0;
 }
 
-// ---- mid hooks: the registers that held an immediate --------------------------------------------------------------------------------
-enum Tag : uintptr_t { kStep = 1, kNegStep, kBudget, kFriction, kStream1, kStream2 };
-uintptr_t pack(Tag t, int reg) { return static_cast<uintptr_t>(t) | (static_cast<uintptr_t>(reg) << 8); }
-
+// ---- mid hooks: the registers that held an immediate (user = the game's MidSite) -------------------------------------------------------
 int hook_mid(::Ctx* c, uint64_t, void* user) {
     G& s = g();
     if (!s.active.load(std::memory_order_acquire)) return 0;
-    const uintptr_t u = reinterpret_cast<uintptr_t>(user);
-    const Tag tag = static_cast<Tag>(u & 0xff);
-    const int reg = static_cast<int>(u >> 8);
+    const MidSite& site = *static_cast<const MidSite*>(user);
+    const int reg = site.reg;
     float dt;
     {
         const uint32_t b = s.dt_bits.load(std::memory_order_acquire);
         std::memcpy(&dt, &b, 4);
     }
-    switch (tag) {
-        case kStep:
+    switch (site.load) {
+        case Load::Step:
             c->x[reg] = f2u(dt);
             break;
-        case kNegStep:
+        case Load::NegStep:
             c->x[reg] = f2u(-dt);
             break;
-        case kBudget:
-            if (s.cfg.fix_budget) c->x[reg] = f2u(kGameBudget * scale60(dt));
+        case Load::Budget:
+            if (s.cfg.fix_budget) c->x[reg] = f2u(site.value * scale60(dt));
             break;
-        case kFriction:
+        case Load::ScaledFloat:
             if (s.cfg.fix_friction) {
-                c->v[1].u64[1] = 0;
-                c->v[1].u64[0] = 0;
-                c->v[1].f32[0] = 3.5f * scale60(dt);
+                c->v[reg].u64[1] = 0;
+                c->v[reg].u64[0] = 0;
+                c->v[reg].f32[0] = site.value * scale60(dt);
             }
             break;
-        case kStream1:
+        case Load::Stream1:
             if (s.cfg.fix_streaming) c->x[reg] = f2u(dt);
             break;
-        case kStream2:
+        case Load::Stream2:
             if (s.cfg.fix_streaming) c->x[reg] = f2u(2.0f * dt);
             break;
     }
@@ -330,7 +328,7 @@ int hook_mid(::Ctx* c, uint64_t, void* user) {
 // ---- NRenderUtilMPT::TickRenderTimings: retail counts one frame per call and stores counter / 60 seconds ---------------------------
 int hook_render_timings(::Ctx* c, uint64_t, void*) {
     G& s = g();
-    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_render_timings) return 0;
+    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_render_timings || !s.render_addr) return 0;
     const float dt = read_dt();
     uint32_t* counter = reinterpret_cast<uint32_t*>(s.render_addr);
     float* secs = reinterpret_cast<float*>(s.render_addr + 4);
@@ -339,7 +337,8 @@ int hook_render_timings(::Ctx* c, uint64_t, void*) {
         s.render_init = true;
     }
     s.render_frames += static_cast<double>(scale60(dt));
-    while (s.render_frames >= kRenderCounterWrap) s.render_frames -= kRenderCounterWrap;
+    if (s.render_wrap > 0)
+        while (s.render_frames >= s.render_wrap) s.render_frames -= s.render_wrap;
     const uint32_t whole = static_cast<uint32_t>(s.render_frames);
     const float seconds = static_cast<float>(s.render_frames) / 60.0f;
     *counter = whole;
@@ -394,24 +393,18 @@ int hook_movie(::Ctx* c, uint64_t, void*) {
 void add_hooks(const Config& c) {
     G& s = g();
     const uint64_t b = c.game_base;
-    auto E = [&](uint64_t off, SiteHookFn fn) { s.hooks.push_back(hook_add_entry(b + off, fn, nullptr)); };
-    auto M = [&](uint64_t off, Tag t, int reg) { s.hooks.push_back(hook_add_mid(b + off, &hook_mid, reinterpret_cast<void*>(pack(t, reg)))); };
-    E(site::kUpdate, &hook_update);
-    M(site::kDtClamp, kStep, 8);
-    M(site::kDtLoop, kStep, 27);
-    M(site::kDtFloor, kNegStep, 8);
-    M(site::kBudget0, kBudget, 8);
-    M(site::kBudget1, kBudget, 8);
-    M(site::kBudget2, kBudget, 8);
-    M(site::kBudget3, kBudget, 8);
-    M(site::kFriction, kFriction, 1);
-    M(site::kStreamA0, kStream1, 8);
-    M(site::kStreamA1, kStream2, 8);
-    M(site::kStreamB0, kStream1, 9);
-    M(site::kStreamB1, kStream2, 9);
-    E(site::kTickRenderTimings, &hook_render_timings);
-    E(site::kMovieUpdate, &hook_movie);
-    E(site::kStuckAddState, &hook_stuck_add_state);
+    const Sites* sites = game::info().timestep;
+    if (!sites || !sites->frame_update) {
+        NXLOG_I(kTag, "the game lists no frame-step sites: the retail step stays");
+        return;
+    }
+    auto E = [&](uint64_t off, SiteHookFn fn) { if (off) s.hooks.push_back(hook_add_entry(b + off, fn, nullptr)); };
+    E(sites->frame_update, &hook_update);
+    for (uint32_t i = 0; i < sites->mid_count; ++i)
+        s.hooks.push_back(hook_add_mid(b + sites->mids[i].offset, &hook_mid, const_cast<MidSite*>(&sites->mids[i])));
+    E(sites->tick_render_timings, &hook_render_timings);
+    E(sites->movie_update, &hook_movie);
+    E(sites->per_tick_sampler, &hook_stuck_add_state);
 }
 
 }  // namespace
@@ -428,7 +421,9 @@ void install(const Config& cfg) {
     s.frame = 0;
     s.have_last = s.have_movie = s.render_init = false;
     s.render_frames = 0;
-    s.render_addr = cfg.game_base + site::kRenderTimingCounter;
+    const Sites* sites = game::info().timestep;
+    s.render_addr = sites && sites->render_timing_counter ? cfg.game_base + sites->render_timing_counter : 0;
+    s.render_wrap = sites ? sites->render_counter_wrap : 0.0;
     s.st = Stats{};
     s.sum_elapsed = 0;
     s.n_elapsed = 0;

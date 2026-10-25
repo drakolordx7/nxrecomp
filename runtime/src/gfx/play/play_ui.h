@@ -25,7 +25,7 @@ struct LiveStatus {
     int width = 0, height = 0;         // window size in pixels
     EngineOut out;                     // what the keyboard and mouse press on the Switch pad right now
     double pitch_deg = 0;              // the aim's pitch
-    uint64_t input_calls = 0;          // CPlayerMP1::ProcessInput calls seen (0: the game has not reached gameplay)
+    uint64_t input_calls = 0;          // the game's per-tick player-input calls seen (GameHost::input_tick; 0: the game has not reached gameplay)
 };
 
 class UiHost {

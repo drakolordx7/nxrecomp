@@ -85,20 +85,21 @@ private:
 };
 
 // ---- title profile --------------------------------------------------------------------------------------------------------
-// Facts about the program and the console that several services answer from. Defaults are Metroid Prime Remastered 1.0.0 (main.npdm
-// and control.nacp of the dump); every field can be overridden by an ini key (docs/CONFIG.md, sections [title] and [system]).
+// Facts about the program and the console that several services answer from. The defaults below are neutral; the registered game fills
+// its own (nxrt/game.h, Info::title_defaults: its main.npdm and control.nacp values) and every field can be overridden by an ini key
+// (docs/CONFIG.md, sections [title] and [system]).
 enum class Language : uint32_t {   // nn::settings::Language / set LanguageCode order (Switchbrew "Settings services")
     Japanese = 0, AmericanEnglish, French, German, Italian, Spanish, Chinese, Korean, Dutch, Portuguese, Russian, Taiwanese,
     BritishEnglish, CanadianFrench, LatinAmericanSpanish, SimplifiedChinese, TraditionalChinese, BrazilianPortuguese, Count
 };
 struct TitleProfile {
-    uint64_t program_id = 0x010012101468C000ull;          // [title] program_id
-    std::string name = "Metroid Prime Remastered";         // [title] name
-    std::string display_version = "1.0.0";                 // [title] display_version
+    uint64_t program_id = 0;                               // [title] program_id
+    std::string name;                                      // [title] name
+    std::string display_version;                           // [title] display_version
     uint32_t supported_languages = 0;                      // bit n = Language n; [title] supported_languages (comma list of names, or a hex mask)
-    uint64_t save_data_owner_id = 0x010012101468C000ull;   // [title] save_owner_id
-    uint64_t account_save_size = 4ull << 20;               // [title] account_save_size   (control.nacp UserAccountSaveDataSize 4 MiB)
-    uint64_t account_save_journal = 1ull << 20;            // [title] account_save_journal (UserAccountSaveDataJournalSize 1 MiB)
+    uint64_t save_data_owner_id = 0;                       // [title] save_owner_id (default: the program id)
+    uint64_t account_save_size = 0;                        // [title] account_save_size   (control.nacp UserAccountSaveDataSize)
+    uint64_t account_save_journal = 0;                     // [title] account_save_journal (UserAccountSaveDataJournalSize)
     uint64_t device_save_size = 0, device_save_journal = 0;   // none
     uint64_t cache_save_size = 0, cache_save_journal = 0;     // none
     uint64_t main_thread_stack = 0x100000;                 // main.npdm default stack size
@@ -109,17 +110,17 @@ struct TitleProfile {
     std::string firmware = "12.1.0";                       // [system] firmware  (set:sys GetFirmwareVersion)
     std::string device_nickname = "nxrt";                  // [system] nickname
     bool docked = true;                                    // [am] operation_mode = docked|handheld
-    std::string user_nickname = "Samus";                   // [account] nickname
-    uint64_t user_uid_hi = 0x0000000000000001ull, user_uid_lo = 0x4d50525265636f6dull;   // [account] uid = 32 hex digits
+    std::string user_nickname = "Player";                  // [account] nickname
+    uint64_t user_uid_hi = 0x0000000000000001ull, user_uid_lo = 0x6e78727475736572ull;   // [account] uid = 32 hex digits ("nxrtuser")
 };
-uint64_t program_id_now();               // [process] program_id if set, else [title] program_id, else the MPR title id; read from the config on every call
+uint64_t program_id_now();               // [process] program_id if set, else [title] program_id, else the game's title id; read from the config on every call
 const TitleProfile& profile();           // loaded from the config on first use
 void profile_reload();                   // tests: re-read the config
 const char* language_code(Language l);   // "en-US", "ja", ... (the 8-byte LanguageCode string)
 uint64_t language_code_u64(Language l);  // the same string as the little-endian u64 the settings services return
 
 // The host folder game data is served from ([fs] romfs, default "game/romfs" relative to the working directory, resolved at first
-// use) and the folder save data lives in ([fs] save_dir, default %APPDATA%\MPRRecomp\save).
+// use) and the folder save data lives in ([fs] save_dir, default %APPDATA%\<game save folder>\save, nxrt/game.h).
 std::string romfs_dir();
 std::string save_dir();
 

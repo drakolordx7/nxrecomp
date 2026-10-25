@@ -2,10 +2,13 @@
 // Button prompts (S17): which icon of the prompt pack stands in for each of the game's own button icons. Pure functions, no
 // game memory and no graphics; prompts.cpp does the texture side.
 //
-// The game draws its prompts ("PRESS (A) TO START", the footer of the menus, tutorial texts) with 19 small BC7 textures,
-// TXTR_ButtonA, TXTR_ButtonB ... TXTR_DPadIdle, and the two stick icons TXTR_LStickIdle and TXTR_RStickIdle, in GuiSysMP1.pak and
-// PreloadFrontEndMPT.pak. Each of them is one Icon here.
+// A game draws its prompts ("PRESS (A) TO START", the footer of the menus, tutorial texts) with small textures, one per Switch button glyph
+// (Icon below). Which textures those are, and how to find them in the game's files, is the game's (PromptGame, nxrt/game.h Info::prompts).
+// Metroid Prime Remastered: 19 small BC7 textures TXTR_ButtonA ... TXTR_DPadIdle and the two stick icons in GuiSysMP1.pak and
+// PreloadFrontEndMPT.pak (games/mpr/mpr_prompts.cpp).
 #pragma once
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "play_types.h"
@@ -22,12 +25,32 @@ enum class Icon : uint8_t {
 };
 constexpr int kIconCount = static_cast<int>(Icon::kCount);
 
-Btn icon_button(Icon i);
+// ---- the game's side -----------------------------------------------------------------------------------------------------------------
+struct PromptIcon {
+    Btn btn;
+    bool pressed;
+    const char* asset;          // the texture's name in the game's files (logs): "TXTR_ButtonA"
+    const char* uuid;           // its asset id there, canonical lower-case text
+    const char* pak;            // the archive under the RomFS folder: "Preload/MPR1/GuiSysMP1.pak"
+    const char* front_uuid;     // a second copy of the icon (Metroid: the front end's own, in front_pak), or nullptr
+};
+struct PromptGame {
+    const PromptIcon* icons = nullptr;   // kIconCount entries in Icon order
+    const char* front_pak = "";          // the archive of the second copies
+    uint32_t icon_size = 0;              // width = height of the icon textures in pixels (single level)
+    bool upside_down = false;            // the game stores its UI textures bottom row first (the pack's upright icon goes in with its rows reversed)
+    // Reads every icon texture (both copies) from the game files under `romfs` and calls found() with each one's tiled bytes, as the game uploads
+    // them. Returns how many were found.
+    int (*scan)(const std::string& romfs, void (*found)(void* user, Icon icon, const uint8_t* tiled, size_t size), void* user) = nullptr;
+};
+const PromptGame* prompt_game();        // the registered game's, or nullptr (then the game's own icons stay)
+
+Btn icon_button(Icon i);                // Btn::None without a game
 bool icon_pressed(Icon i);
-const char* icon_asset_name(Icon i);    // "TXTR_ButtonA" (the name in the game's pak, for logs)
-const char* icon_asset_uuid(Icon i);    // the asset id in its pak, canonical lower-case text
-const char* icon_pak_file(Icon i);      // pak path under the RomFS folder, "Preload/MPR1/GuiSysMP1.pak"
-const char* icon_front_uuid(Icon i);    // the id of the front end's own copy of the icon in Preload/MPRT/PreloadFrontEndMPT.pak (title, menus), or nullptr
+const char* icon_asset_name(Icon i);    // "" without a game
+const char* icon_asset_uuid(Icon i);
+const char* icon_pak_file(Icon i);
+const char* icon_front_uuid(Icon i);    // nullptr when the icon has no second copy
 
 struct ResolveIn {
     PromptStyle style = PromptStyle::Switch;   // never Auto: the caller resolves Auto first

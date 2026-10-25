@@ -38,7 +38,7 @@ Settings settings_from(const std::string& body) {
 }
 
 // Switches an engine (which starts in the menu context) to gameplay at t = 1000 ms.
-void to_gameplay(Engine& e) { e.set_context(Ctx::Gameplay, ms(1000)); }
+void to_gameplay(Engine& e) { e.set_context(Ctx::Play, ms(1000)); }
 
 bool has(const EngineOut& o, hid::NpadButtonBit b) { return (o.buttons & hid::btn(b)) != 0; }
 
@@ -213,7 +213,7 @@ NXTEST(beam_key_pulses_select_only) {
     e.key(SDL_SCANCODE_4, true, ms(1000));
     CHECK(e.output(ms(1040)).buttons == (hid::btn(hid::kBtnX) | hid::btn(hid::kBtnLeft)));
     e.key(SDL_SCANCODE_4, false, ms(1100));
-    CHECK(e.tracked_beam() == 3);
+    CHECK(e.tracked_cycle() == 3);
     CHECK(idle(e.output(ms(1150))));
 
     // Beam 1 (power, X+UP) held for one second: the select pulse is 80 ms long, the hold does not extend it.
@@ -221,39 +221,39 @@ NXTEST(beam_key_pulses_select_only) {
     CHECK(e.output(ms(1340)).buttons == (hid::btn(hid::kBtnX) | hid::btn(hid::kBtnUp)));
     CHECK(idle(e.output(ms(1500))));
     e.key(SDL_SCANCODE_1, false, ms(2300));
-    CHECK(e.tracked_beam() == 0);
+    CHECK(e.tracked_cycle() == 0);
 
     // beam_next cycles 0 -> 1 -> 2 -> 3 -> 0 over the owned beams (all four by default).
     e.key(SDL_SCANCODE_E, true, ms(3000));
     e.key(SDL_SCANCODE_E, false, ms(3050));
-    CHECK(e.tracked_beam() == 1);
+    CHECK(e.tracked_cycle() == 1);
     e.key(SDL_SCANCODE_E, true, ms(3100));
     e.key(SDL_SCANCODE_E, false, ms(3150));
-    CHECK(e.tracked_beam() == 2);
+    CHECK(e.tracked_cycle() == 2);
     e.key(SDL_SCANCODE_E, true, ms(3200));
     e.key(SDL_SCANCODE_E, false, ms(3250));
-    CHECK(e.tracked_beam() == 3);
+    CHECK(e.tracked_cycle() == 3);
     e.key(SDL_SCANCODE_E, true, ms(3300));
     e.key(SDL_SCANCODE_E, false, ms(3350));
-    CHECK(e.tracked_beam() == 0);
+    CHECK(e.tracked_cycle() == 0);
 }
 
 NXTEST(beam_cycle_skips_unowned_beams) {
     Engine e(settings_from("[bindings.all]\nE = beam_next\nR = beam_prev\n"));
     to_gameplay(e);
-    e.set_game_hints(2, 0b0101, ms(0));   // owns beams 0 and 2 only; currently on beam 2
-    CHECK(e.tracked_beam() == 2);
+    e.set_cycle_hint(2, 0b0101, ms(0));   // owns beams 0 and 2 only; currently on beam 2
+    CHECK(e.tracked_cycle() == 2);
     e.key(SDL_SCANCODE_E, true, ms(1000));   // 2 -> 3 is not owned, so -> 0
     e.key(SDL_SCANCODE_E, false, ms(1050));
-    CHECK(e.tracked_beam() == 0);
+    CHECK(e.tracked_cycle() == 0);
     e.key(SDL_SCANCODE_R, true, ms(1200));   // 0 -> 3 is not owned, so -> 2
     e.key(SDL_SCANCODE_R, false, ms(1250));
-    CHECK(e.tracked_beam() == 2);
+    CHECK(e.tracked_cycle() == 2);
 }
 
 NXTEST(context_layers_win_over_all) {
     Engine e(settings_from(kLayers));
-    e.set_context(Ctx::Gameplay, ms(1000));
+    e.set_context(Ctx::Play, ms(1000));
     e.mouse_button(1, true, ms(1100));
     CHECK(has(e.output(ms(1150)), hid::kBtnZR));   // gameplay: fire from [bindings.all]
     e.mouse_button(1, false, ms(1200));
@@ -273,7 +273,7 @@ NXTEST(context_layers_win_over_all) {
     CHECK(idle(e.output(ms(1850))));
     e.key(SDL_SCANCODE_LCTRL, false, ms(1900));
 
-    e.set_context(Ctx::Gameplay, ms(2000));
+    e.set_context(Ctx::Play, ms(2000));
     e.key(SDL_SCANCODE_LCTRL, true, ms(2100));      // back in gameplay: morph (Y)
     CHECK(has(e.output(ms(2150)), hid::kBtnY));
     e.key(SDL_SCANCODE_LCTRL, false, ms(2200));
@@ -281,7 +281,7 @@ NXTEST(context_layers_win_over_all) {
 
 NXTEST(context_switch_consumes_held_inputs) {
     Engine e(settings_from(kLayers));
-    e.set_context(Ctx::Gameplay, ms(1000));
+    e.set_context(Ctx::Play, ms(1000));
     e.mouse_button(1, true, ms(1100));
     CHECK(has(e.output(ms(1150)), hid::kBtnZR));
 
@@ -298,7 +298,7 @@ NXTEST(context_switch_consumes_held_inputs) {
 
 NXTEST(context_switch_keeps_identical_binding) {
     Engine e(settings_from(kLayers));
-    e.set_context(Ctx::Gameplay, ms(1000));
+    e.set_context(Ctx::Play, ms(1000));
     e.key(SDL_SCANCODE_W, true, ms(1100));
     CHECK(close_to(e.output(ms(1150)).ly, 1.0));
     e.set_context(Ctx::Menu, ms(1200));             // W binds move_forward in both contexts: no consumption
@@ -403,29 +403,29 @@ NXTEST(set_settings_keeps_unrelated_held_key_when_bindings_shift) {
 NXTEST(activations_count_edges) {
     Engine e(settings_from("[bindings.all]\nMouse1 = fire\nF = missile tap\n"));
     to_gameplay(e);
-    CHECK(e.activations(Act::Fire) == 0);
+    CHECK(e.activations(Act::Primary) == 0);
     e.mouse_button(1, true, ms(1100));
     e.mouse_button(1, true, ms(1150));               // repeat while held: not an edge
     e.output(ms(1200));
-    CHECK(e.activations(Act::Fire) == 1);
+    CHECK(e.activations(Act::Primary) == 1);
     e.mouse_button(1, false, ms(1300));
     e.mouse_button(1, true, ms(1400));               // a second press: a second edge
     e.output(ms(1450));
-    CHECK(e.activations(Act::Fire) == 2);
-    CHECK(e.last_activated() == Act::Fire);
+    CHECK(e.activations(Act::Primary) == 2);
+    CHECK(e.last_activated() == Act::Primary);
     e.mouse_button(1, false, ms(1500));
 
     e.key(SDL_SCANCODE_F, true, ms(1600));
     e.key(SDL_SCANCODE_F, false, ms(1650));          // the tap activates when its pulse starts
-    CHECK(e.activations(Act::Missile) == 1);
-    CHECK(e.last_activated() == Act::Missile);
+    CHECK(e.activations(Act::Secondary) == 1);
+    CHECK(e.last_activated() == Act::Secondary);
 }
 
 NXTEST(default_settings_smoke) {
     Engine e(play::default_settings());
     CHECK(e.context() == Ctx::Menu);
 
-    e.set_context(Ctx::Gameplay, ms(1000));
+    e.set_context(Ctx::Play, ms(1000));
     e.key(SDL_SCANCODE_W, true, ms(1100));
     CHECK(close_to(e.output(ms(1150)).ly, 1.0));
     e.key(SDL_SCANCODE_W, false, ms(1200));

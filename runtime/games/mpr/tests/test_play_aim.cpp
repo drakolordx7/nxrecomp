@@ -12,7 +12,7 @@
 
 #include <windows.h>
 
-#include "play/play_aim.h"
+#include "mpr/play_aim.h"
 
 NXTEST_GROUP(play_aim)
 

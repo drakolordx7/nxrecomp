@@ -13,6 +13,7 @@
 
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/hooks.h"
+#include "mpr/display_hooks.h"
 #include "play/play_display.h"
 
 NXTEST_GROUP(play_display)
@@ -409,18 +410,18 @@ NXTEST(hook_chromatic_aberration_zeroes_its_strength_when_off) {
     play::display_remove();
 }
 
-NXTEST(display_apply_sets_the_texture_filtering) {
+NXTEST(display_tuning_sets_the_texture_filtering) {
     play::DisplaySettings d;
     d.anisotropy = 8;
     d.lod_bias = -0.5;
-    play::display_apply(d);
+    play::display_tuning(d);
     CHECK_EQ(nxrt::gfx::tuning().anisotropy.load(), 8);
     CHECK(close_to(nxrt::gfx::tuning().lod_bias.load(), -0.5));
     d.lod_bias = 5.0;                                                           // clamped to the top of -2 .. 2
-    play::display_apply(d);
+    play::display_tuning(d);
     CHECK(close_to(nxrt::gfx::tuning().lod_bias.load(), 2.0));
     // put the process-wide filtering back to the defaults for the other cases
     d.anisotropy = 0;
     d.lod_bias = 0;
-    play::display_apply(d);
+    play::display_tuning(d);
 }

@@ -121,4 +121,9 @@ Snapshot Pointer::begin_frame(bool active, const Geometry& g) {
     return s;
 }
 
+Pointer& pointer() {
+    static Pointer p;
+    return p;
+}
+
 }  // namespace nxrt::play::mm

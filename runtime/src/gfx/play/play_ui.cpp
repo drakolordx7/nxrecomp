@@ -12,11 +12,11 @@
 #include <string>
 
 #include "imgui.h"
-#include "play_glow.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/extras.h"
 #include "nxrt/input_source.h"
 #include "nxrt/lowlat.h"
+#include "play_game.h"
 
 namespace nxrt::play {
 
@@ -65,7 +65,7 @@ struct Page {
     bool loaded = false;
     bool dirty = false;                    // the working copy differs from the settings in force (set by every change)
     Settings edit;
-    Ctx ctx = Ctx::Gameplay;               // the context shown in the Bindings tab
+    Ctx ctx = Ctx::Play;               // the context shown in the Bindings tab
     int rebind = -1;                       // index into edit.bindings of the row waiting for an input; -1 = none
     bool link_pitch = true;                // Mouse tab: moving the horizontal sensitivity moves the vertical one too (local, not saved)
     bool out_tab_open = false;             // the Switch layout tab was open last frame; its fields are refilled when it opens
@@ -210,6 +210,12 @@ void sensitivity_help(double rad) {
     ImGui::TextDisabled("= %.6f rad per count, %.3f degrees per count, 360 degrees in %.0f counts", rad, rad * 180.0 / kPi, 2.0 * kPi / rad);
 }
 
+// The game's own entries of the Mouse tab (play_game.h GamePlay::mouse_tab): where = 0 after the sensitivity, 1 after the invert boxes, 2 at the end.
+void game_mouse_section(int where, Page& p) {
+    const GamePlay* gp = game_play();
+    if (gp && gp->mouse_tab && gp->mouse_tab(where, p.edit)) mark(p);
+}
+
 void mouse_tab(Page& p) {
     MouseSettings& m = p.edit.mouse;
     double src = source_sens(m.yaw_rad);
@@ -227,56 +233,14 @@ void mouse_tab(Page& p) {
     }
     sensitivity_help(m.pitch_rad);
     ImGui::Checkbox("Link vertical to horizontal", &p.link_pitch);
-
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Morph ball camera (mouse orbits the camera around the ball)");
-    src = source_sens(m.morph_yaw_rad);
-    if (slider("Ball camera horizontal", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-        m.morph_yaw_rad = rad_per_count(src);
-        mark(p);
-    }
-    src = source_sens(m.morph_pitch_rad);
-    if (slider("Ball camera vertical", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-        m.morph_pitch_rad = rad_per_count(src);
-        mark(p);
-    }
+    game_mouse_section(0, p);
 
     ImGui::Spacing();
     if (ImGui::Checkbox("Invert vertical", &m.invert_y)) mark(p);
     if (ImGui::Checkbox("Invert horizontal", &m.invert_x)) mark(p);
-    if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_beams)) mark(p);
+    game_mouse_section(1, p);
     if (ImGui::Checkbox("Mouse pointer in menus (cursor, hover, click)", &m.menu_cursor)) mark(p);
-
-    ImGui::Spacing();
-    static const char* const kLockModeLabels[] = {"Classic (the view turns to the target)", "Free (you keep control of the view)"};
-    const int lock_sel = static_cast<int>(p.edit.aim.lock_mode);
-    if (ImGui::BeginCombo("Lock-on camera", kLockModeLabels[lock_sel])) {
-        for (int i = 0; i < 2; ++i) {
-            if (ImGui::Selectable(kLockModeLabels[i], i == lock_sel) && i != lock_sel) {
-                p.edit.aim.lock_mode = static_cast<LockMode>(i);
-                mark(p);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.");
-    ImGui::PopTextWrapPos();
-    ImGui::BeginDisabled(p.edit.aim.lock_mode != LockMode::Free);
-    int margin_pct = static_cast<int>(std::lround(p.edit.aim.free_lock_margin * 100.0));
-    if (ImGui::SliderInt("Free lock edge margin", &margin_pct, 0, 40, "%d %%")) {
-        p.edit.aim.free_lock_margin = margin_pct / 100.0;
-        mark(p);
-    }
-    ImGui::EndDisabled();
-    bool steady = !p.edit.camera.gun_drives_view;   // shown inverted: "Steady view" on = gun_drives_view 0
-    if (ImGui::Checkbox("Steady view (gun sway and walking bob move only the gun)", &steady)) { p.edit.camera.gun_drives_view = !steady; mark(p); }
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("On: the view follows only the mouse and the stick, and the idle drift, walking bob and landing dip move the gun on screen instead. Off (the game's own): the arm cannon is fixed to the view, so those movements move the whole view.");
-    ImGui::PopTextWrapPos();
-
-    ImGui::Spacing();
-    ImGui::TextWrapped("Raw mouse input, no acceleration. Aim only applies in the first-person view when not locked on, not in the morph ball and not in a cutscene. Holding the free look key (Alt) turns the view without turning Samus.");
+    game_mouse_section(2, p);
 }
 
 // ---- Controller ---------------------------------------------------------------------------------------------------------------------
@@ -838,7 +802,7 @@ void bindings_tab(UiHost& host, Page& p) {
         Binding b;
         b.in = InputId{};
         b.ctx = p.ctx;
-        b.act = Act::Fire;
+        b.act = Act::Primary;
         b.trig = Trig::Press;
         b.ms = 0;
         p.edit.bindings.push_back(b);
@@ -853,9 +817,12 @@ void bindings_tab(UiHost& host, Page& p) {
 // ---- Switch layout ------------------------------------------------------------------------------------------------------------------
 
 void switch_tab(Page& p) {
-    ImGui::TextWrapped("What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
-                       "and stick directions LS_UP LS_DOWN LS_LEFT LS_RIGHT RS_UP RS_DOWN RS_LEFT RS_RIGHT, joined by +. "
-                       "beam_next and beam_prev have no fixed output (they pick beam_1 to beam_4).");
+    // The cycling actions by the game's names (mpr: beam_next and beam_prev ... beam_1 to beam_4).
+    const std::string help = std::string("What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
+                                         "and stick directions LS_UP LS_DOWN LS_LEFT LS_RIGHT RS_UP RS_DOWN RS_LEFT RS_RIGHT, joined by +. ") +
+                             act_info(Act::SetANext).name + " and " + act_info(Act::SetAPrev).name + " have no fixed output (they pick " +
+                             act_info(Act::SetA1).name + " to " + act_info(Act::SetA4).name + ").";
+    ImGui::TextWrapped("%s", help.c_str());
     if (ImGui::BeginTable("switch_out", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 150.0f);
         ImGui::TableSetupColumn("Output");
@@ -976,8 +943,8 @@ void draw_settings_page(UiHost& host) {
             extras_tab(p);
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("Tweaks")) {
-            if (glow_tab(p.edit)) mark(p);
+        if (const GamePlay* gp = game_play(); gp && gp->tweaks_tab && ImGui::BeginTabItem("Tweaks")) {   // the game's optional looks (S44 glow)
+            if (gp->tweaks_tab(p.edit)) mark(p);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Bindings")) {
