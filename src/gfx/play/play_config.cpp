@@ -416,6 +416,8 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "lod_bias") return set_real(-2.0, 2.0, &s->display.lod_bias);
             if (k == "bloom") return set_bool(&s->display.bloom);
             if (k == "chromatic_aberration") return set_bool(&s->display.chromatic_aberration);
+            if (k == "fast_gpu_memory") return set_bool(&s->display.fast_gpu_memory);
+            if (k == "fewer_gpu_waits") return set_bool(&s->display.fewer_gpu_waits);
             break;
         case Sec::Hdr: {
             extras::HdrSettings& h = s->extras.hdr;
@@ -792,6 +794,8 @@ std::string format_settings(const Settings& s) {
     kv("lod_bias", num_exact(s.display.lod_bias));
     kv("bloom", flag(s.display.bloom));
     kv("chromatic_aberration", flag(s.display.chromatic_aberration));
+    kv("fast_gpu_memory", flag(s.display.fast_gpu_memory));
+    kv("fewer_gpu_waits", flag(s.display.fewer_gpu_waits));
 
     o += "\n[hdr]\n";
     kv("mode", kHdrModeWords[static_cast<int>(s.extras.hdr.mode)]);

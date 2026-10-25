@@ -16,6 +16,7 @@
 #include <sstream>
 
 #include "nxrt/log.h"
+#include "nxrt/write_watch.h"
 
 namespace stdfs = std::filesystem;
 
@@ -50,6 +51,7 @@ public:
         if (offset < 0) return rc::kOutOfRange;
         if (!(mode_ & kModeRead)) return rc::kReadNotPermitted;
         uint8_t* d = static_cast<uint8_t*>(dst);
+        const mem::ww::OsWriteScope ws(d, size);   // ReadFile fails on a page the write tracker made read-only
         while (size) {
             const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(size, 0x40000000));
             OVERLAPPED ov{};

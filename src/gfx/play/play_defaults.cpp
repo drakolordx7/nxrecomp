@@ -87,6 +87,10 @@ lod_bias = 0
 bloom = 1
 # Chromatic aberration post effect.
 chromatic_aberration = 1
+# Faster GPU memory: copies of the game's vertex and index data in video memory (up to 2 GiB of it); applies at the next start.
+fast_gpu_memory = 1
+# Fewer GPU pipeline waits between render passes; applies at the next start.
+fewer_gpu_waits = 1
 
 [prompts]
 # Button icons in the game's prompts: switch (the game's own), xbox, playstation, keyboard, or auto (follows the last device used; keyboard icons

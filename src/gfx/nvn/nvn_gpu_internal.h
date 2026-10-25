@@ -98,6 +98,9 @@ void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImag
                    uint32_t base_level, uint32_t level_count, uint32_t base_layer, uint32_t layer_count);
 // All commands before, all commands after, all memory (used after passes, dispatches, copies and fills).
 void memory_barrier(VkCommandBuffer cb);
+// [nvn] pass_barriers = tracked (S38): image_barrier derives its stage and access masks from the two layouts instead of all commands and
+// all memory. Set by the replay for each submission; any thread may record image barriers, so it is an atomic.
+void set_narrow_barriers(bool on);
 
 // ---- pools ---------------------------------------------------------------------------------------------------------------
 struct BufRef {
@@ -116,6 +119,18 @@ uint64_t pool_imports();          // statistics
 // Called from destroy_pool_gpu on the render thread.
 void pool_gpu_destroy(PoolGpu* p);
 void pool_shutdown();             // destroys every imported pool still alive and the dummy buffer (device idle)
+// Device-local copies of pool pages (S38, [nvn] pool_mirror). resolve_read is resolve_buffer for data draws only read (vertex and index
+// buffers, uniform blocks): it gives the device-local copy when every page of the range is current there, else the pool. The replay calls
+// note_gpu_write for every range a command may write in pool memory (true: a copied page there went stale, so bindings must be made again),
+// and mirror_begin_submit before anything else of a submission (it records the copies of the pages draws wanted; on = this submission may
+// read copies).
+bool mirror_enabled();
+enum ReadUse { kReadVertex = 0, kReadIndex = 1, kReadUniform = 2 };
+enum WriteUse { kWriteStorage = 0, kWriteXfb = 1, kWriteImageCopy = 2, kWriteUpdate = 3, kWriteFill = 4, kWriteCopy = 5 };
+BufRef resolve_read(uint64_t gpu_address, uint64_t size, int use);
+bool note_gpu_write(uint64_t gpu_address, uint64_t size, int use);
+void mirror_begin_submit(Frame& f, bool on);
+void mirror_destroy(PoolGpu* p);
 
 // ---- textures --------------------------------------------------------------------------------------------------------------
 // What a binding site needs to see of a texture.

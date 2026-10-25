@@ -92,6 +92,11 @@ public:
             [this](Settings& s, int i) { s.display.fps_cap = i < kCapCount ? kCaps[i] : custom_cap_; });
         f.checkbox(L"VSync", [](const Settings& s) { return s.display.vsync; }, [](Settings& s, bool v) { s.display.vsync = v; });
         f.hint(L"With VSync on, the display's refresh rate caps the frame rate. With G-Sync or FreeSync, leave it off and set a limit.", 2);
+        f.checkbox(L"Faster GPU memory (uses more video memory)", [](const Settings& s) { return s.display.fast_gpu_memory; },
+                   [](Settings& s, bool v) { s.display.fast_gpu_memory = v; });
+        f.checkbox(L"Fewer GPU pipeline waits", [](const Settings& s) { return s.display.fewer_gpu_waits; },
+                   [](Settings& s, bool v) { s.display.fewer_gpu_waits = v; });
+        f.hint(L"Both raise the frame rate in the larger areas. Faster GPU memory keeps copies of the game's vertex data in video memory (up to 2 GiB; not on cards with less than 4 GiB). Both apply at the next start.", 2);
 
         f.heading(L"Picture");
         f.slider(
