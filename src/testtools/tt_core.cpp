@@ -355,6 +355,7 @@ bool init() {
     std::lock_guard<std::recursive_mutex> lk(s.mu);
     if (s.inited) return s.on;
     s.inited = true;
+    s.frame_tid.store(0, std::memory_order_relaxed);   // set again by the first frame boundary of this run
     s.script = config_get_str("test", "script", "");
     s.record_path = config_get_str("test", "record", "");
     s.replay_path = config_get_str("test", "replay", "");
@@ -485,6 +486,7 @@ void reset_for_tests() {
     s.stop_wall = true;
     if (s.wall_thread.joinable()) s.wall_thread.join();
     s.stop_wall = false;
+    s.frame_tid.store(0, std::memory_order_relaxed);   // a recycled thread id must not move the next run's clock
     if (s.trace) { std::fclose(s.trace); s.trace = nullptr; }
     detail::svc_every.store(0);
     ExitFn keep = s.exit_fn;
