@@ -1,15 +1,16 @@
-"""Frame-time oracle of S10: title and menu at several frame caps, before and after the display stream's changes.
+"""Frame-time oracle of S10: title and menu at several frame caps, before and after the display changes.
 
   python oracle_matrix.py [--caps 60,120,144,240,0] [--seconds 70] [--repeat 2] [--hogs 0] [--out work\\prof\\matrix.json]
 
-"before" switches the work's changes off with their own config keys (process priority class normal, host page queries, no prewarm, no
+"before" switches the display changes off with their own config keys (process priority class normal, host page queries, no prewarm, no
 background pool import); "after" is the default. Runs alternate before / after per cap so a change in the machine's load hits both.
 The analysed window skips the first 12 s (boot, logos) and ends 2 s before the run does. Prints a table; the JSON has every run.
 """
 import argparse, json, os, statistics, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = r'C:\mpr'
+from project_root import project_root
+ROOT = project_root()
 VARIANTS = {
     'before': ['--env', 'NXRT_SCHED_PRIORITY_CLASS=normal', '--env', 'NXRT_MEMORY_FAST_QUERY=0', '--env', 'NXRT_NVN_PREWARM=0', '--env', 'NXRT_NVN_POOL_PREFETCH=0'],
     'after': [],

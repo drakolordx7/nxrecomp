@@ -17,6 +17,7 @@
 #include "nvn_impl.h"
 #include "nvn_texture_layout.h"
 #include "test_framework.h"
+#include "project_root.h"
 NXTEST_GROUP(gfx_nvn_texture)
 
 using namespace nxrt;
@@ -337,7 +338,7 @@ NXTEST(layout_random_sweep_matches_reference_and_tegra) {
 NXTEST(layout_survey_gpu_sizes) {
     // work/survey/textures/txtr_all.tsv: one row per texture file, with the GPU buffer size the game allocated (gpu_size).
     // All 47 3D textures are checked, plus 200 random rows; a row whose format name is not mapped here is counted and skipped.
-    const char* path = "C:/mpr/work/survey/textures/txtr_all.tsv";
+    const std::string path = nxtest::project_path("work/survey/textures/txtr_all.tsv");
     std::ifstream in(path);
     if (!in) {
         skip("survey table not found");

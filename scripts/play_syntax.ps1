@@ -1,9 +1,10 @@
 # Syntax-check (no code generation, no link) one or more sources of the runtime with the include paths of the play worktree.
 #   pwsh scripts\play_syntax.ps1 src\services\hid.cpp [more.cpp ...]
 # Exit code 0 = every file compiles. Uses the SDL / ImGui / Vulkan headers of game-build\build\play (override with -Build).
-param([Parameter(Mandatory, Position = 0, ValueFromRemainingArguments)][string[]]$Files, [string]$Build = "C:\mpr\game-build\build\play")
+param([Parameter(Mandatory, Position = 0, ValueFromRemainingArguments)][string[]]$Files, [string]$Build = "")
 $root = Split-Path -Parent $PSScriptRoot
-$recomp = "C:/mpr/recomp/include"
+. (Join-Path $PSScriptRoot "proj.ps1")
+if (-not $Build) { $Build = Join-Path $proj "game-build\build\play" }
 $inc = "/I`"$root\include`" /I`"$root\src\gfx`" /I`"$root\src\gfx\nvn`" /I`"$root\src\gfx\nvn\third_party`" /I`"$root\src\services`" /I`"$root\src\testtools`" /I`"$root\tests`" " +
        "/I`"$Build\_deps\sdl3-src\include`" /I`"$Build\_deps\imgui-src`" /I`"$Build\_deps\vulkan_headers-src\include`" /I`"$Build\_deps\volk-src`" /I`"$recomp`""
 $env_cmd = Join-Path $PSScriptRoot "env.cmd"

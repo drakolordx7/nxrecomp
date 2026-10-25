@@ -1,6 +1,6 @@
 # S4e log: NVN correctness through to gameplay
 
-S4e carries the NVN-on-Vulkan back end (S4d) from "the title screen renders and the device is lost in the loading screen" to the first frames of the game world. Developed on branch `nvn2`; the game under test is the real Metroid Prime Remastered run headless by `mpr.exe` (`boot_nvn2.sh`).
+S4e carries the NVN-on-Vulkan back end (S4d) from "the title screen renders and the device is lost in the loading screen" to the first frames of the game world. Developed on branch `nvn2`; the game under test is the real Metroid Prime Remastered run headless by `mpr.exe` (`boot_nvn2.sh` (local test script)).
 
 ## Result
 
@@ -69,7 +69,7 @@ Frame structure of a world frame, found with the trace tools: depth prepass, a 6
 
 ## Open points
 
-- Title background: the first draw of the title frame is a full-screen quad that samples an R8 1600x900 texture and an RG8 800x450 texture, both with no data in game memory. Their sizes are those of the two planes of a 4:2:0 video frame, so the background is a movie (the media stream's work), not a missing NVN path.
+- Title background: the first draw of the title frame is a full-screen quad that samples an R8 1600x900 texture and an RG8 800x450 texture, both with no data in game memory. Their sizes are those of the two planes of a 4:2:0 video frame, so the background is a movie (movie work), not a missing NVN path.
 - A rectangle of saturated colour noise covers the door panel of the hangar. It is written into the HDR target by draws of the fragment shader `8b08a5cc12e27480` (vertex shader `87c66db517720684`), in the same pass and with the same textures as neighbouring draws that are correct, so the bad value comes from data or uniforms of those draws, not from a texture. Checked and ruled out: the fog volume (now written), tone mapping and the grading volumes (correct), the sampled textures (identical in clean and bad draws). Not yet checked: the fragment uniform blocks of the bad draws against a reference. The shader loops over the lights of a tile read from the R32_UINT light grid and samples a BC6H texture array of 2888x2888x4.
 - Stream-out counters 13 and 14 are counted on the CPU in the replay: every draw adds its primitives (per mode and instance, `primitives_for` in `nvn_enums.cpp`) to 13, and a draw inside a transform feedback section also adds them to 14; `ResetCounter` zeroes the counter of its type. Indirect draws are not counted (noted once in the unsupported report).
 - RenderDoc cannot capture the game: the capture layer does not offer VK_EXT_external_memory_host, which the back end needs for the imported pools. The trace and snapshot tools above replace it.

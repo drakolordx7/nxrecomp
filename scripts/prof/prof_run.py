@@ -3,11 +3,12 @@
   python prof_run.py --exe game-build\\build\\display\\mpr.exe --cap 120 --seconds 40 --tag base120 [--vsync] [--env K=V ...] [--ini-extra "[sec]\\nkey=v"]
 
 Runs in work\\run_prof_<tag> (its own controls.ini with the requested cap), shares work\\run\\bc7_cache. Output: work\\prof\\<tag>.trace,
-<tag>.json (the numbers) and the report on stdout. Needs the game folder at C:\\mpr\\game (romfs) as boot.py does.
+<tag>.json (the numbers) and the report on stdout. Needs the game folder at <project root>\\game (romfs) as boot.py does.
 """
 import argparse, ctypes, os, re, shutil, subprocess, sys, threading, time
 
-ROOT = r'C:\mpr'
+from project_root import project_root
+ROOT = project_root()
 sys.path.insert(0, os.path.dirname(__file__))
 import ftrace_report
 

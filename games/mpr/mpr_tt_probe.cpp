@@ -411,7 +411,7 @@ void watch_stop() {
 
 
 // ---- @rays: batch of static-collision ray casts through the game's own NCollisionMP1::RayStaticIntersection (S26) -------------------------------
-// Used by the route planner (nav.py) to read the walkable geometry of the loaded areas without parsing any game file.
+// Used by the route planner (nav.py, a local test script) to read the walkable geometry of the loaded areas without parsing any game file.
 constexpr uint64_t kFnMakeIncludeExcludeFilter = 0xcb6f0c;   // CIncludeExcludeCollisionFilterMP1::CIncludeExcludeCollisionFilterMP1(this x0, CMaterialFilterMP1 const& x1)
 constexpr uint64_t kSkPassEverything = 0x20e7818;           // CMaterialFilterMP1::skPassEverything
 // A host fault inside the guest call (a bad pointer) is caught here: the ray counts as a miss and the run goes on.

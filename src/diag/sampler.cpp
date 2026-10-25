@@ -7,7 +7,7 @@
 // "prof_samples.folded" in the working folder), now and then and at shutdown:
 //   <label>;<thread>;<outermost frame>;...;<leaf frame> <count>
 // The label is the scene a script marked with `@log SCENE start NAME` (empty when none). Frames in mpr.exe are named from the linker map
-// (lifted game functions are f_<guest address>); frames in other modules show as module!+0x<offset>. `prof_report.py` turns the file
+// (lifted game functions are f_<guest address>); frames in other modules show as module!+0x<offset>. `prof_report.py` (local test script) turns the file
 // into tables. Cost: a few percent of one core per 100 Hz and 10 threads; each sampled thread is stopped for a few microseconds per sample.
 #include <windows.h>
 
@@ -88,7 +88,7 @@ void loop() {
         std::this_thread::sleep_until(next);
         next += period;
         if (next < std::chrono::steady_clock::now()) next = std::chrono::steady_clock::now() + period;   // do not catch up after a stall
-        std::vector<ThreadRecord> recs = diag_threads();
+        std::vector<ThreadRecord> recs = diag_threads_dup();   // private handles: a thread unregistering mid-sample cannot close ours
         batch.assign(recs.size(), Sample{});
         std::vector<char> ok(recs.size(), 0);
         const uint32_t label = s.label.load(std::memory_order_relaxed);
@@ -105,9 +105,15 @@ void loop() {
             }
             ResumeThread(h);
         }
-        for (size_t i = 0; i < recs.size(); i++) {
+        const std::vector<std::string> names = [&] {   // the names are copied: the records go away with the handles
+            std::vector<std::string> n;
+            for (const ThreadRecord& r : recs) n.push_back(r.name);
+            return n;
+        }();
+        diag_threads_release(recs);
+        for (size_t i = 0; i < batch.size(); i++) {
             if (!ok[i]) continue;
-            batch[i].thread = name_index(s, recs[i].name);
+            batch[i].thread = name_index(s, names[i]);
             batch[i].label = label;
             const Sample& x = batch[i];
             std::string key(reinterpret_cast<const char*>(&x), offsetof(Sample, frames) + x.n * sizeof(uint64_t));

@@ -93,8 +93,8 @@ std::string summary() {
         s += "c++ exceptions: " + std::to_string(e.raised) + " raised, " + std::to_string(e.resumed) + " resumed, " + std::to_string(e.caught) + " caught, " +
              std::to_string(e.cleanups) + " cleanup landings, " + std::to_string(e.uncaught) + " uncaught, " + std::to_string(e.frames_walked) + " frames walked\n";
     }
-    s += "lifted functions: " + std::to_string(fn_count()) + ", modules: " + std::to_string(modules().size()) + ", threads created: " +
-         std::to_string(kernel::threads().size()) + ", handles open: " + std::to_string(kernel::handle_count()) + "\n";
+    s += "lifted functions: " + std::to_string(fn_count()) + ", modules: " + std::to_string(modules().size()) + ", live threads: " +
+         std::to_string(kernel::thread_count_running()) + ", handles open: " + std::to_string(kernel::handle_count()) + "\n";
     return s;
 }
 

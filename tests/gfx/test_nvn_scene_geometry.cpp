@@ -61,7 +61,7 @@ void expect_square(const std::vector<uint8_t>& px, const char* what) {
 
 // Reference frame work/nvn_refs/<name>.png: written with NXRT_NVN_UPDATE_REFS=1, compared on later runs when it exists.
 void check_reference(const char* name, const std::vector<uint8_t>& px) {
-    const std::string path = std::string("C:/mpr/work/nvn_refs/") + name + ".png";
+    const std::string path = nxtest::project_path("work/nvn_refs/") + name + ".png";
     const char* upd = std::getenv("NXRT_NVN_UPDATE_REFS");
     if (upd && std::string(upd) == "1") {
         CHECK(nxrt::gfx::save_png_rgba(path, px.data(), kW, kH));

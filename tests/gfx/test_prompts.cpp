@@ -25,6 +25,7 @@
 #include "play/prompts.h"
 #include "tegra_tiling.h"
 #include "test_framework.h"
+#include "project_root.h"
 #include "txtr.h"
 NXTEST_GROUP(prompt_icons)
 
@@ -411,7 +412,7 @@ NXTEST(the_upload_path_asks_the_hook_and_replaces_the_pixels) {
 // ---- real data: the game's own icon (skipped without the paks) ------------------------------------------------------------------------
 NXTEST(real_icon_untiles_to_valid_blocks_with_the_console_rule) {
     const char* env = std::getenv("NXRT_FS_ROMFS");
-    const fs::path romfs = env && *env ? fs::path(env) : fs::path("C:/mpr/game/romfs");
+    const fs::path romfs = env && *env ? fs::path(env) : fs::path(nxtest::project_path("game/romfs"));
     const fs::path pak_file = romfs / "Preload/MPR1/GuiSysMP1.pak";
     if (!fs::exists(pak_file)) {
         nxtest::skip("the game's GuiSysMP1.pak is not here");
@@ -462,7 +463,7 @@ NXTEST(real_icon_untiles_to_valid_blocks_with_the_console_rule) {
 // own in PreloadFrontEndMPT.pak (red, drawn by the title screen and the menus: they were the textures the first version never recognised).
 NXTEST(real_icon_ids_exist_in_both_interfaces) {
     const char* env = std::getenv("NXRT_FS_ROMFS");
-    const fs::path romfs = env && *env ? fs::path(env) : fs::path("C:/mpr/game/romfs");
+    const fs::path romfs = env && *env ? fs::path(env) : fs::path(nxtest::project_path("game/romfs"));
     if (!fs::exists(romfs / "Preload/MPR1/GuiSysMP1.pak") || !fs::exists(romfs / "Preload/MPRT/PreloadFrontEndMPT.pak")) {
         nxtest::skip("the game's paks are not here");
         return;

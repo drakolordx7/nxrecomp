@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "test_framework.h"
+#include "project_root.h"
 
 #include "extras/hdr_tonemap_patch.h"
 
@@ -22,7 +23,7 @@ namespace {
 namespace fs = std::filesystem;
 namespace hdr = nxrt::extras;
 
-const fs::path kSpvDir = "C:/mpr/work/shader_cache/spirv";
+const fs::path kSpvDir = nxtest::project_path("work/shader_cache/spirv");
 const fs::path kTonemapPath = kSpvDir / "e728113b14f3564a.spv";
 const char* kSpirvVal = "C:\\VulkanSDK\\1.4.363.0\\Bin\\spirv-val.exe";
 

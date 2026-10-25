@@ -1,6 +1,6 @@
 # S6b: boot integration, second pass
 
-Work area S6b of the Metroid Prime Remastered recompilation. Branch `boot2` (worktree `runtime-wt/boot2`, contains `nvn`), root repo `game-build/`, `tools/boot`, ``. Debug notes 120 to 123.
+Work area S6b of the Metroid Prime Remastered recompilation. Branch `boot2` (worktree `runtime-wt/boot2`, contains `nvn`), root repo `game-build/`, `tools/boot`, local test scripts. Debug notes 120 to 123.
 
 ## Result (2026-10-22)
 
@@ -55,14 +55,14 @@ Checked: kernel_threads 3 unloaded and 12 loaded runs (2x logical cores of busy 
 | 4 | svcBreak in SfThread::run (SetThreadCoreMask -1) | kernel | fixed |
 | 5 | ASTC textures not uploaded ("astcdec-*-shared.dll not found") | mpr.exe lacked the three decoder DLLs | fixed: game-build copies them next to the exe |
 | 6 | Vulkan device lost in the loading screen | NVN back end (debug 123) | S4d |
-| 7 | About 10 nvdrv ioctls "UNHANDLED, answered with zeros" (types 0x00 nr 1/2/7/9/0xa and 0x48 nr 1: the NVDEC/VIC channel of the multimedia library) | movie playback needs the planned Media Foundation HLE of the `movie::` imports (subsdk0 uses nvhost-nvdec through the sdk's NvRm) | movie stream |
+| 7 | About 10 nvdrv ioctls "UNHANDLED, answered with zeros" (types 0x00 nr 1/2/7/9/0xa and 0x48 nr 1: the NVDEC/VIC channel of the multimedia library) | movie playback needs the planned Media Foundation HLE of the `movie::` imports (subsdk0 uses nvhost-nvdec through the sdk's NvRm) | movie work |
 | 8 | 11 NVN procs requested by name that are not in the table (logging stubs, not called so far): nvnProgramGetSubtileSize, nvnTextureBuilderGetViewOffset, nvnCommandBufferOverrideSubtileSize, nvnCommandBufferInsertCheckpointStatic/Dynamic, nvnDeviceSetAutomaticCheckpointsEnable/Mask/SamplingInterval/ByDebugGroup, nvnDeviceSetCheckpointCallStacksEnable/MaxCallStacksDepth | NVN 55 names newer than the table | S4d (add to the table; none was called) |
 | 9 | Back end unsupported operations during title, menu and loading: ClearDepthStencil with a partial stencil mask (21,806), storage image / texel buffer descriptors (7,037), occlusion/statistics counters (38), transform feedback buffers (38) | NVN back end | S4d |
 | 10 | Black background behind the menu (the front-end scene is a movie or 3D scene) | likely 7 and 9 | S4d |
 
-## Decisions not in the plan
+## Decisions
 
-- Headless back end by default: nothing pumps SDL events on the guest main thread yet; `[boot] gfx = window` creates the window for the integration to wire (the PC-feature stream owns the event loop and the frame limiter).
+- Headless back end by default: nothing pumps SDL events on the guest main thread yet; `[boot] gfx = window` creates the window for the integration to wire (the PC-feature work owns the event loop and the frame limiter).
 - `fn_register` plus `module_override_symbol` for the loader instead of an entry hook: the lifter only emits entry-hook sites listed in a site file and none exists for the MPR modules.
 - The 16-byte NVNtextureView is packed with 16-bit fields (levels and layers up to 32,767).
 - Present flip in the shader, not in the viewport (the shader derives the picture UV from the fragment position).
@@ -70,6 +70,6 @@ Checked: kernel_threads 3 unloaded and 12 loaded runs (2x logical cores of busy 
 ## Gaps
 
 - No window, vsync or frame limiter in `mpr.exe` (headless ring).
-- The input source is the scripted ManualInputSource; real input is the input stream's.
+- The input source is the scripted ManualInputSource; real input is separate work.
 - The path after the loading screen is unseen (device lost).
 - game-build depends on the nvn-merged runtime (`nxrt/nvn_backend.h`): build with `MPR_RUNTIME=<boot2>` until `nvn` is merged into main.

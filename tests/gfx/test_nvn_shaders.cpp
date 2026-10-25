@@ -14,6 +14,7 @@
 
 #include "nvn_shaders.h"
 #include "test_framework.h"
+#include "project_root.h"
 NXTEST_GROUP(gfx_nvn_shaders)
 
 using namespace nxrt::nvn::be;
@@ -21,7 +22,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const char* kCorpusDir = "C:/mpr/work/shader_cache/corpus_code";
+const std::string kCorpusDirStr = nxtest::project_path("work/shader_cache/corpus_code");
+const char* kCorpusDir = kCorpusDirStr.c_str();
 
 bool read_file(const fs::path& p, std::string& out) {
     std::ifstream f(p, std::ios::binary);

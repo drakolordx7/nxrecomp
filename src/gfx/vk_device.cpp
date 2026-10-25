@@ -241,20 +241,27 @@ uint32_t device_local_heap(VmaAllocator a) {
     return best;
 }
 
+std::mutex g_guard_mu;                 // the memguard thread reads these through gpu_bytes_for_guard; the device destructor clears them
 VmaAllocator g_guard_vma = nullptr;
-uint32_t g_guard_heap = 0;
+int g_guard_heap = -1;                 // -1: nothing to subtract
 uint64_t gpu_bytes_for_guard() {      // the device's dedicated memory in use by this process, for the memory guard (nxrt/memguard.h)
-    VmaAllocator a = g_guard_vma;
-    if (!a) return 0;
+    // Held across the query: unregister_vma_gauges takes the same lock before the allocator is destroyed.
+    std::lock_guard<std::mutex> lk(g_guard_mu);
+    if (!g_guard_vma || g_guard_heap < 0) return 0;
     VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
-    vmaGetHeapBudgets(a, b);
+    vmaGetHeapBudgets(g_guard_vma, b);
     return static_cast<uint64_t>(b[g_guard_heap].usage);
 }
 
-void register_vma_gauges(VmaAllocator a) {
+void register_vma_gauges(VmaAllocator a, VkPhysicalDeviceType type) {
     const uint32_t heap = device_local_heap(a);
-    g_guard_heap = heap;
-    g_guard_vma = a;
+    {
+        const VkPhysicalDeviceMemoryProperties* mp = nullptr;
+        vmaGetMemoryProperties(a, &mp);
+        std::lock_guard<std::mutex> lk(g_guard_mu);
+        g_guard_heap = mp ? vk_guard_discount_heap(*mp, type) : -1;
+        g_guard_vma = a;
+    }
     nxrt::memguard_set_discount(&gpu_bytes_for_guard);
     auto cache = std::make_shared<VmaStatsCache>();
     nxrt::gauge_register("vma.device_usage_mb", [a, heap] {
@@ -275,12 +282,38 @@ void register_vma_gauges(VmaAllocator a) {
 
 void unregister_vma_gauges() {
     nxrt::memguard_set_discount(nullptr);
-    g_guard_vma = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(g_guard_mu);   // waits for a guard read in flight; later reads see a null allocator
+        g_guard_vma = nullptr;
+        g_guard_heap = -1;
+    }
     const char* const names[] = {"vma.device_usage_mb", "vma.device_budget_mb", "vma.alloc_count", "vma.alloc_mb", "vma.block_count", "vma.block_mb"};
     for (const char* n : names) nxrt::gauge_unregister(n);
 }
 
 }  // namespace
+
+// The heap whose usage the memory guard subtracts from the process commit, or -1. WDDM charges the video memory a process allocates to its
+// commit, but only dedicated memory: on a discrete GPU that is the largest device-local heap. On an integrated GPU the device-local heap is
+// system RAM (host-visible); subtracting its usage would hide real host memory from the guard, so nothing is subtracted.
+int vk_guard_discount_heap(const VkPhysicalDeviceMemoryProperties& mp, VkPhysicalDeviceType type) {
+    int best = -1;
+    VkDeviceSize best_size = 0;
+    for (uint32_t i = 0; i < mp.memoryHeapCount && i < VK_MAX_MEMORY_HEAPS; ++i) {
+        if (!(mp.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)) continue;
+        bool host_visible = false;
+        for (uint32_t t = 0; t < mp.memoryTypeCount; ++t)
+            if (mp.memoryTypes[t].heapIndex == i && (mp.memoryTypes[t].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) host_visible = true;
+        if (type != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && host_visible) continue;
+        if (mp.memoryHeaps[i].size > best_size) {
+            best = static_cast<int>(i);
+            best_size = mp.memoryHeaps[i].size;
+        }
+    }
+    return best;
+}
+
+uint64_t vk_guard_gpu_bytes() { return gpu_bytes_for_guard(); }
 
 // ---- creation ---------------------------------------------------------------------------------------------------------
 std::unique_ptr<Device> Device::create(const DeviceDesc& desc, std::string* error) {
@@ -660,7 +693,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     aci.pVulkanFunctions = &vf;
     r = vmaCreateAllocator(&aci, &vma_);
     if (r != VK_SUCCESS) return fail("vmaCreateAllocator failed (" + std::to_string(r) + ")");
-    register_vma_gauges(vma_);
+    register_vma_gauges(vma_, props_.deviceType);
 
     VkCommandPoolCreateInfo cpi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     cpi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;

@@ -5,7 +5,7 @@
 // the static templates live in PerformanceManagerGeneric.h, which this header includes at the end (after the class is complete).
 // Including either header on its own is enough.
 //
-// BehaviourInfo is not ported yet (it is in Server/BehaviourInfo.cs, another work), so the two statics take it as a template
+// BehaviourInfo is not ported yet (it is in Server/BehaviourInfo.cs, separate work), so the two statics take it as a template
 // parameter TBehaviourInfo. Any type with `uint32_t GetPerformanceMetricsDataFormat() const` works; when BehaviourInfo.h lands,
 // callers pass it unchanged.
 #pragma once
