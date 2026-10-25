@@ -217,7 +217,9 @@ std::string format_launcher_config(const LauncherConfig& cfg) {
         if (v.find(';') != std::string::npos || v.find('#') != std::string::npos) quote = true;
     }
     if (quote) v = "\"" + v + "\"";
-    return std::string("; ") + nxrt::game::info().product + " launcher settings.\n[launcher]\ngame_dir = " + v + "\n";
+    const nxrt::game::Info& g = nxrt::game::info();
+    const char* name = (g.short_title && *g.short_title) ? g.short_title : g.product;
+    return std::string("; ") + name + " launcher settings.\n[launcher]\ngame_dir = " + v + "\n";
 }
 
 bool parse_launcher_config(const std::string& utf8_text, LauncherConfig* out) {

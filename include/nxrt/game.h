@@ -7,8 +7,8 @@
 // probes, neutral title facts), so a new title can start with the identity alone and add tables as its hooks are found.
 //
 // What each table is for, and where the Metroid Prime Remastered one lives:
-//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/mpr_game.cpp
-//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           games/mpr/mpr_sites.h
+//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/mpr_core.cpp
+//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           games/mpr/mpr_core.cpp, mpr_sites.h
 //   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  games/mpr/mpr_tt_probe.cpp
 //   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/mpr_defaults.cpp
 //   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/mpr_play.cpp
@@ -31,16 +31,16 @@ struct Info {
     const char* id = "";                    // short id, also the stem of the game's file names: "mpr"
     const char* title = "";                 // the game's own name: "Metroid Prime Remastered"
     const char* product = "";               // the PC port's name in window titles and dialogs: "Metroid Prime Remastered PC"
+    const char* short_title = "";           // a short name for file headers (the launcher's ini comment): "Metroid Prime" (empty: product)
     uint64_t program_id = 0;                // the Switch title id
     const char* version = "";               // the game version the hooks were found in: "1.0.0"
-    const char* build_id = "";              // build id of that version's main NSO (hex), which the setup tool checks
     uint64_t main_base = 0x7100000000ull;   // where main is mapped (the lifter's base for it): hook offsets are relative to this
 
     // ---- files and branding ----
     const char* exe_name = "";              // the game exe: "mpr.exe"
     const char* setup_exe_name = "";        // the setup tool: "mpr_setup.exe"
     const char* launcher_ini = "";          // the launcher's own settings file: "mpr_launcher.ini"
-    const char* game_ini = "";              // the settings file the setup tool writes: "mpr.ini"
+    const char* game_ini = "";              // the settings file the setup tool writes and the game exe reads: "mpr.ini"
     const char* shader_pack = "";           // the shader pack file next to the setup tool: "shader_cache.mprshc"
     const char* save_folder = "";           // save data folder under %APPDATA%: "MPRRecomp" (empty: "nxrt")
 

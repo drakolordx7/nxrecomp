@@ -16,9 +16,9 @@ const game::Info& data_info() {
         g.id = "mpr";
         g.title = "Metroid Prime Remastered";
         g.product = "Metroid Prime Remastered PC";
+        g.short_title = "Metroid Prime";
         g.program_id = 0x010012101468C000ull;
         g.version = "1.0.0";
-        g.build_id = "67C9CA1428222752F951021464A7B3597EB98FEC";     // of main (recomp/games/mpr/config.py); the setup tool checks it
         g.main_base = 0x7100000000ull;
         g.exe_name = "mpr.exe";
         g.setup_exe_name = "mpr_setup.exe";

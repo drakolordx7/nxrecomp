@@ -80,7 +80,7 @@ NXTEST(every_row_has_an_action_name) {
 }
 
 NXTEST(factory_fire_is_left_mouse_only) {
-    // The factory layer has one key for fire: Mouse1 (play_defaults.cpp, [bindings.all]).
+    // The factory layer has one key for fire: Mouse1 (the registered game's factory controls.ini: games/mpr/mpr_defaults.cpp, [bindings.all]).
     const Settings s = nxrt::play::default_settings();
     const std::vector<InputId> in = inputs_for(s, Act::Fire);
     CHECK_EQ(in.size(), 1u);

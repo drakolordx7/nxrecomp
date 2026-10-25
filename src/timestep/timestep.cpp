@@ -60,7 +60,7 @@ Config load_config() {
     c.movie_max = std::clamp(config_get_double("time", "movie_max", 0.5), 0.01, 5.0);
     c.log_every = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "log_every", 0), 0, 1000000));
     c.csv = config_get_str("time", "csv", "");
-    c.game_base = static_cast<uint64_t>(config_get_int("time", "game_base", 0x7100000000ll));
+    c.game_base = static_cast<uint64_t>(config_get_int("time", "game_base", static_cast<int64_t>(game::info().main_base)));
     return c;
 }
 

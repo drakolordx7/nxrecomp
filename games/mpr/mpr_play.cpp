@@ -6,6 +6,7 @@
 // The hook bodies are the ones play.cpp had before the game boundary (docs/GAME_BOUNDARY.md); what they took from play mode's state now comes
 // through GameHost.
 #include "mpr_game.h"
+#include "mpr_sites.h"
 
 #include <algorithm>
 #include <atomic>
@@ -32,7 +33,6 @@ namespace nxrt::play {
 namespace {
 
 constexpr const char* kTag = "play";
-constexpr uint64_t kFnUpdate = 0x3c81c8;          // CGameArchitectureSupport::Update(float*): once per rendered frame
 constexpr uint64_t kFnProcessInput = 0xc70334;    // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&)
 constexpr uint64_t kFnSetTransform = 0xc4d588;    // CActorMP1::SetTransform(CTransform4f const&): x0 = the actor, x1 = the transform
 constexpr uint64_t kFnFpCamThink = 0xd72314;      // CFirstPersonCameraMP1::Think(float, CStateManager&): x0 the camera
@@ -130,7 +130,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         p.pitch_limit_rad = host.pitch_limit_deg() * kPi / 180.0;
         // The pad is the look device while the stick or the gyro moves the pitch, and while the game's gyro camera or Pointer scheme is on: the game then sets the
         // pitch target from the pad's orientation, and the aim must not write its own angle over it.
-        p.pad_look = host.pad_look(host.settings().pad.gyro) || lockcam_gyro_freelook(c, mgr);
+        p.pad_look = host.has_input() && (host.pad_look(host.settings().pad.gyro) || lockcam_gyro_freelook(c, mgr));
     }
     XfCall xc{c};
     st.aim->set_transform_fn(&guest_set_transform, &xc);
@@ -225,7 +225,7 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
 void install_render(uint64_t base, const DisplaySettings& d, int window_w, int window_h) {
     M& st = m();
     st.base = base;
-    if (!st.aim) st.aim = std::make_unique<AimDriver>(base);
+    st.aim = std::make_unique<AimDriver>(base);     // a fresh one per play-mode start, as the old start() made
     display_install(base, d, window_w, window_h);
     extras::tonemap_hook_install(base);
 }
@@ -308,7 +308,7 @@ bool mpr_mouse_tab(int where, Settings& edit);     // mpr_ui.cpp
 const GamePlay& mpr_game_play() {
     static const GamePlay t = [] {
         GamePlay p;
-        p.frame_update = kFnUpdate;
+        p.frame_update = games::mpr::site::kUpdate;     // CGameArchitectureSupport::Update(float*): once per rendered frame
         p.install_render = &install_render;
         p.install = &install;
         p.remove = &remove;

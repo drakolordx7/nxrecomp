@@ -219,7 +219,7 @@ struct Settings {
     Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
     // [meta] defaults_rev: the factory-defaults revision the file was written with (0 when the file has no [meta]). When a file with
-    // bindings sections is read at an older revision, the newer factory bindings are added to it (play_config.cpp, kDefaultsRev).
+    // bindings sections is read at an older revision, the newer factory bindings are added to it (play_config.cpp defaults_rev(): the game's GameDefaults::rev and additions).
     int defaults_rev = 0;
     // Transient, never written to the file: set by load_settings when it upgraded an older file, so the caller can keep a .bak and save.
     bool migrated = false;

@@ -27,8 +27,9 @@ a log line). It is header-only, so the launcher can use it without linking the r
 
 | Field | Kind | What the base does with it |
 | --- | --- | --- |
-| `id`, `title`, `product`, `program_id`, `version`, `build_id`, `main_base` | identity | logs, window titles, the launcher's branding |
-| `exe_name`, `setup_exe_name`, `launcher_ini`, `game_ini`, `shader_pack`, `save_folder` | file names | the launcher finds and starts the programs; services put saves under `%APPDATA%\<save_folder>` |
+| `id`, `title`, `product`, `short_title`, `program_id`, `version` | identity | logs, window titles, the controls.ini header, the launcher's branding and ini comment, the title profile |
+| `main_base` | (a) | the default guest base of play mode, timestep and test tooling (`[play]`, `[time]`, `[test] game_base` still override) |
+| `exe_name`, `setup_exe_name`, `launcher_ini`, `game_ini`, `shader_pack`, `save_folder` | file names | the launcher finds and starts the programs; the game exe reads `game_ini`; services put saves under `%APPDATA%\<save_folder>` |
 | `title_defaults(TitleProfile&)` | (a) | the services' title profile (program id, name, version, languages, save sizes, main thread, nickname, user id) |
 | `timestep` (`timestep::Sites`) | (b) | the frame-step patch: frame update entry, mid-function sites with their load kind, render timing counter and its wrap, movie update, per-tick sampler |
 | `probes` (`tt::GameProbes`) | (c) behind a generic API | test tooling: state readout, warp, grant, item, guest calls, object dump, ray casts, watches |
@@ -52,8 +53,8 @@ The play-mode half talks to the base through two tables in `src/gfx/play/play_ga
 handling, aim feedback, pitch limit, log status). Hooks keep their registration order: the base installs the game's render hooks
 before its own frame hook and the game's input hooks after it, as before.
 
-CMake: `NXRT_BUILD_GAMES` (on) adds `games/mpr`. `NXRT_TEST_GAME` (mpr) picks the module the test programs register;
-`NXRT_LAUNCHER_GAME` (mpr) picks the launcher's branding and its `games/<id>/launcher.rc`. The setup tool has `MPRS_GAME` (mpr) and
+CMake: `NXRT_BUILD_GAMES` (on) adds every module listed in `NXRT_GAMES` (default `mpr`), so a second game needs no edit of the base. `NXRT_TEST_GAME` (mpr) picks the module the test programs register;
+Its tests run in the base test programs: `games/<id>/tests/core/*.cpp` in `nxrt_tests`, `games/<id>/tests/*.cpp` in `nxrt_gfx_tests`; without a test game they are left out. `NXRT_LAUNCHER_GAME` (mpr) picks the launcher's branding and its `games/<id>/launcher.rc`; when that module is not built, the launcher builds unbranded. The setup tool has `MPRS_GAME` (mpr) and
 the release builder reads `tools/release/games/<id>.json` (`MPR_RELEASE_GAME`, default mpr).
 
 ## The audit
@@ -64,7 +65,7 @@ the release builder reads `tools/release/games/<id>.json` (`MPR_RELEASE_GAME`, d
 | --- | --- | --- |
 | `include/nxrt/services.h` TitleProfile defaults: program id 0x010012101468C000, "Metroid Prime Remastered", "1.0.0", owner, account save 4 MiB / journal 1 MiB, nickname "Samus", user id "MPRRecom" | (a) | neutral defaults in the base (0, "", "Player", "nxrtuser"); the Metroid values in `games/mpr/mpr_core.cpp` `title_defaults` |
 | `src/services/common.cpp` default language mask (13 languages) | (a) | `title_defaults`; the base falls back to American English |
-| `src/services/common.cpp` main thread stack 0x100000, priority 44, core 0 | (a) | `title_defaults` |
+| main thread stack 0x100000, priority 44, core 0 | (a), also the SDK's defaults | `title_defaults` sets them for Metroid; the base `TitleProfile` keeps the same values as its defaults (the usual Horizon main thread), so they were not removed from `services.h` |
 | `src/services/common.cpp` save folder `%APPDATA%\MPRRecomp` | (a) | `Info::save_folder` (fallback "nxrt") |
 
 ### runtime: frame step (timestep)
@@ -137,14 +138,25 @@ The recompiler (`nxrecomp/`) has no game knowledge. `0x7100000000` there is the 
 These are still Metroid-shaped in the base. None of them blocks a second game from building; they limit what it can reuse.
 
 - **Play-mode vocabulary.** `Act` and `Ctx` in `play_types.h` (beams, visors, morph ball, scan), the `Settings` schema (aim, camera,
-  morph, ball orbit, wheel beams), the action names in `controls.ini` and the engine's beam cycling (`play_engine.cpp`). A second
-  game needs these to become a game-provided action table.
+  morph, ball orbit, wheel beams), the action names in `controls.ini`, the engine's beam cycling (`play_engine.cpp`) and `GameFrame`'s
+  `beam`/`beam_mask` hints. They were not made generic in this pass: the enums are the keys of `controls.ini`, the launcher's pages and
+  the engine's tables, so renaming them is not a mechanical change. The plan:
+  1. A game action table in `play::GameDefaults`: per action a name (the `controls.ini` key), a group (fire, cycle, select-n, menu) and
+     a default output. `Act` becomes an index into it; the base keeps only the generic groups.
+  2. `Ctx` becomes a small set of generic contexts (menu, play, map, alternate body) with the game naming them; morph ball maps to
+     "alternate body".
+  3. `GameFrame` carries a generic `cycle_index`/`cycle_mask` (today `beam`/`beam_mask`) for the engine's next/previous cycling, and
+     `Settings` moves the game-only blocks (morph, ball orbit, lock-on) into a per-game key/value section the game's F1 tab and its
+     hooks read.
+  4. The launcher's pages list the actions from the table instead of from `Act`.
+  Each step keeps the Metroid file format byte-identical, checked with the existing play_config and launcher tests.
 - **Moved code keeps namespace `nxrt::play`.** Done to keep the move mechanical; rename to `nxrt::games::mpr` later.
 - **Test tooling vocabulary.** `tt::GameState` fields (morph, beam, visor, missiles), the hash over them (`tt_core.cpp`) and the item
   names in `tt_script.cpp`.
 - **Launcher names.** Target `mpr_launcher`, library `mpr_launcher_core`, namespace `mprl`, window class `MprLauncherWindow`.
-- **Base tests register the Metroid module.** The service, timestep, tt and play tests run with `NXRT_TEST_GAME=mpr`; the moved
-  Metroid tests are in `games/mpr/tests`.
+- **Base tests register the Metroid module.** The service, tt and play tests of the base run with `NXRT_TEST_GAME=mpr`;
+  the tests that use Metroid sites or hooks directly (timestep, play aim, lock-on, look rate, display hooks, play hook, camera look) are
+  in `games/mpr/tests` and `games/mpr/tests/core`.
 - **Setup tool.** The texture and program stages read Retro's formats; the version resources and the window class name are Metroid's.
 - **Release templates** (README, HELP) and the release's licence notice name the game.
 - **Docs.** Older stream docs (S*.md) and CONFIG.md still give the old paths of the moved files.

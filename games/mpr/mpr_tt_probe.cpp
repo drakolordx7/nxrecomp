@@ -36,6 +36,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "mpr_sites.h"
 #include "tt_internal.h"
 
 // The probes live in their own namespace and reach the test tooling through tt::GameProbes (nxrt/tt.h, mpr_game_probes() below). The memory
@@ -58,7 +59,7 @@ constexpr uint64_t kFnSetDesiredArea = 0xc8275c;        // (CWorldStateMP1*, COb
 constexpr uint64_t kFnContinueWithNewInitialState = 0x40a820;   // (CGameState&, SInitialState const&)
 constexpr uint64_t kFnGameInstanceState = 0xb01cc8;     // (CStateManager*) -> CGameInstanceState*
 constexpr uint64_t kFnQuitGame = 0x410544;              // (CGameInstanceState*, int reason)
-constexpr uint64_t kFnUpdate = 0x3c81c8;                // CGameArchitectureSupport::Update(float*): the frame boundary
+constexpr uint64_t kFnUpdate = games::mpr::site::kUpdate;   // CGameArchitectureSupport::Update(float*): the frame boundary (mpr_sites.h)
 constexpr uint64_t kFnProcessInput = 0xc70334;          // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 player, x2 state manager
 constexpr int kQuitReasonWarp = 7;
 

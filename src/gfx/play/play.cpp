@@ -182,7 +182,7 @@ struct G {
     bool window = false;
 
     std::thread::id pump_thread;
-    uint64_t base = 0x7100000000ull;
+    uint64_t base = 0;                   // set by load: [play] game_base, default the game's Info::main_base
     uint32_t hook_update = 0;            // the frame boundary (the game's GamePlay::frame_update)
     bool capture_mouse = true, quit_on_close = true, log_status = false;
     bool pointer_draw = false;         // [play] pointer_draw: the menu pointer is also drawn into the frame (screenshots show it); a test aid
@@ -765,6 +765,7 @@ public:
         if (g().source_owner) g().source_owner->right_stick(x, y);
     }
     bool pad_look(bool gyro_enabled) const override { return g().source_owner && g().source_owner->pad_look(gyro_enabled); }
+    bool has_input() const override { return g().source_owner != nullptr; }
     void input_tick(double* dx, double* dy) override {
         G& st = g();
         const uint64_t now = now_ns();
@@ -976,7 +977,7 @@ bool load() {
     st.log_status = config_get_bool("play", "log_status", false);
     st.pointer_draw = config_get_bool("play", "pointer_draw", false);
     st.pitch_limit_deg = config_get_double("play", "pitch_limit_deg", 0.0);
-    st.base = static_cast<uint64_t>(config_get_int("play", "game_base", 0x7100000000ll));
+    st.base = static_cast<uint64_t>(config_get_int("play", "game_base", static_cast<int64_t>(game::info().main_base)));
     apply_frame_cap(st.settings);
     return st.load_ok;
 }

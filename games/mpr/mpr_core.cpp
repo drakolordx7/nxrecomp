@@ -20,9 +20,9 @@ namespace {
 // main.npdm and control.nacp of the 1.0.0 dump.
 void title_defaults(services::TitleProfile& p) {
     using services::Language;
-    p.program_id = 0x010012101468C000ull;
-    p.name = "Metroid Prime Remastered";
-    p.display_version = "1.0.0";
+    p.program_id = data_info().program_id;
+    p.name = data_info().title;
+    p.display_version = data_info().version;
     // control.nacp SupportedLanguage: 13 languages.
     uint32_t m = 0;
     for (Language l : {Language::AmericanEnglish, Language::BritishEnglish, Language::Japanese, Language::French, Language::German,

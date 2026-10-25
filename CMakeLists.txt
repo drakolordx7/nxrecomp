@@ -38,7 +38,11 @@ option(NXRT_BUILD_GFX "Build the graphics shell (SDL3 + Vulkan + NVN front end, 
 # Game modules (games/<id>/, docs/GAME_BOUNDARY.md): the title-specific code a game exe links. The test executables register one of them, so
 # the tests of the base run against that game's tables (title facts, sites, probes, hooks) as the game exe does.
 option(NXRT_BUILD_GAMES "Build the game modules in games/" ON)
+set(NXRT_GAMES "mpr" CACHE STRING "ids of the game modules to build (games/<id>/), a list")
 set(NXRT_TEST_GAME "mpr" CACHE STRING "id of the game module the test executables register (empty: none)")
+if(NOT NXRT_BUILD_GAMES OR NOT NXRT_TEST_GAME IN_LIST NXRT_GAMES)
+    set(NXRT_TEST_GAME "")      # the test game must be one of the modules built
+endif()
 
 file(GLOB_RECURSE NXRT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 list(FILTER NXRT_SOURCES EXCLUDE REGEX "/src/gfx/")   # the graphics shell is its own library (cmake/gfx.cmake)
@@ -52,7 +56,13 @@ target_link_libraries(nxrt PUBLIC psapi)
 if(NXRT_BUILD_TESTS)
     enable_testing()
     file(GLOB NXRT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
+    # The tests of the test game's own runtime-side code (games/<id>/tests/core) run in the same executable.
+    if(NXRT_TEST_GAME)
+        file(GLOB NXRT_GAME_CORE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/games/${NXRT_TEST_GAME}/tests/core/*.cpp")
+        list(APPEND NXRT_TEST_SOURCES ${NXRT_GAME_CORE_TEST_SOURCES})
+    endif()
     add_executable(nxrt_tests ${NXRT_TEST_SOURCES})
+    target_include_directories(nxrt_tests PRIVATE tests)
     target_link_libraries(nxrt_tests PRIVATE nxrt)
     target_compile_definitions(nxrt_tests PRIVATE NXRT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     # A linker map next to the exe: the crash handler and the watchdog name host code from it. Keep host allocations low
@@ -90,11 +100,21 @@ if(NXRT_BUILD_GFX)
 endif()
 
 if(NXRT_BUILD_GAMES)
-    add_subdirectory(games/mpr)
+    foreach(_game ${NXRT_GAMES})
+        add_subdirectory(games/${_game})
+    endforeach()
+endif()
+# The launcher's branding and factory settings: the data part of one game module and its launcher.rc (version info, manifest). Without that
+# module the launcher builds unbranded, with no resources.
+if(TARGET mpr_launcher AND TARGET nxrt_game_${NXRT_LAUNCHER_GAME}_data)
+    target_sources(mpr_launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/games/${NXRT_LAUNCHER_GAME}/launcher.rc")
+    target_link_libraries(mpr_launcher PRIVATE nxrt_game_${NXRT_LAUNCHER_GAME}_data)
+    target_compile_definitions(mpr_launcher PRIVATE NXRT_LAUNCHER_GAME_REGISTER=nxrt_register_game_${NXRT_LAUNCHER_GAME}_data)
+    target_link_options(mpr_launcher PRIVATE /MANIFEST:NO)   # launcher.rc carries the manifest
 endif()
 # Each test executable registers the most of the test game it links: the data part (launcher tests), the core part (runtime tests), the whole
 # module (graphics tests). tests/test_main.cpp calls NXRT_TEST_GAME_REGISTER before the first test.
-if(NXRT_BUILD_TESTS AND NXRT_BUILD_GAMES AND NXRT_TEST_GAME)
+if(NXRT_BUILD_TESTS AND NXRT_TEST_GAME)
     set(_g "${NXRT_TEST_GAME}")
     foreach(pair "nxrt_tests;nxrt_game_${_g}_core;nxrt_register_game_${_g}_core" "nxrt_gfx_tests;nxrt_game_${_g};nxrt_register_game_${_g}"
                  "mpr_launcher_tests;nxrt_game_${_g}_data;nxrt_register_game_${_g}_data")

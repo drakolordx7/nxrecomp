@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Test tooling core (S5): a fake game whose memory has exactly the shape the probes read (tt_probe.cpp), driven frame by frame
+// Test tooling core (S5): a fake game whose memory has exactly the shape the registered test game's probes read (games/mpr/mpr_tt_probe.cpp), driven frame by frame
 // through tt::frame_boundary. Covers scripted runs (pass, wait timeout, assert), record -> replay determinism, the virtual clock and RNG,
 // memory-region hashing, the warp sequence (host functions registered at the guest addresses of the real functions) and @shot.
 #include "test_framework.h"

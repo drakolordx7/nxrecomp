@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Mouse pointer in menus, the game side (S28). See menu_mouse.h for the design and docs/S28.md for what was found in the game.
+// Mouse pointer in menus, the game side (S28). See menu_mouse_game.h (the hooks) and src/gfx/play/menu_mouse.h (pointer and math) for the design and docs/S28.md for what was found in the game.
 #include "menu_mouse_game.h"
 
 #include <atomic>

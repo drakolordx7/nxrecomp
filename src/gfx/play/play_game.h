@@ -30,6 +30,7 @@ public:
     virtual void right_stick(float* x, float* y) const = 0;
     // A pad is looking up or down right now (the right stick's vertical axis off centre, or the gyro turning about the pad's pitch axis).
     virtual bool pad_look(bool gyro_enabled) const = 0;
+    virtual bool has_input() const = 0;               // play mode's input source is up (pad_look and the game's own look checks apply only then)
     // The game's per-tick player-input function was entered (the game is in play: the context detection and Stats count it). Returns the mouse
     // counts gathered since the last frame boundary on the first call after it (pumping the window's events once more first), zero after that.
     virtual void input_tick(double* dx, double* dy) = 0;

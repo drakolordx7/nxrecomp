@@ -732,7 +732,8 @@ std::string format_settings(const Settings& s) {
     auto kv = [&o](const char* key, const std::string& value) { o += std::string(key) + " = " + value + "\n"; };
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
 
-    o += "# Metroid Prime Remastered, play mode: controls and display.\n";
+    const char* title = game::info().title;
+    o += (title && *title) ? std::string("# ") + title + ", play mode: controls and display.\n" : std::string("# Play mode: controls and display.\n");
     o += "\n[meta]\n";
     kv("defaults_rev", std::to_string(s.defaults_rev));
     o += "\n[mouse]\n";
