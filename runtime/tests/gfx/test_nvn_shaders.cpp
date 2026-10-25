@@ -14,6 +14,7 @@
 
 #include "nvn_shaders.h"
 #include "test_framework.h"
+#include "project_root.h"
 NXTEST_GROUP(gfx_nvn_shaders)
 
 using namespace nxrt::nvn::be;
@@ -21,7 +22,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const char* kCorpusDir = "C:/mpr/work/shader_cache/corpus_code";
+const std::string kCorpusDirStr = nxtest::project_path("work/shader_cache/corpus_code");
+const char* kCorpusDir = kCorpusDirStr.c_str();
 
 bool read_file(const fs::path& p, std::string& out) {
     std::ifstream f(p, std::ios::binary);
@@ -86,6 +88,18 @@ NXTEST(sha1_standard_vectors) {
     char hex[41];
     for (int i = 0; i < 20; i++) std::snprintf(hex + 2 * i, 3, "%02x", d[i]);
     CHECK_EQ(std::string(hex), std::string("34aa973cd4c4daa4f61eeb2bdbad27316534016f"));
+}
+
+// Numbers in a harness record that do not fit an int are refused (the parser used a 32-bit long and overflowed before its range check).
+NXTEST(harness_numbers_out_of_range) {
+    std::vector<HarnessResource> r;
+    CHECK(parse_harness_resources("cb2147483647=s0b1", r));
+    CHECK_EQ(r.size(), size_t(1));
+    if (!r.empty()) CHECK_EQ(r[0].bank, 2147483647);
+    CHECK(!parse_harness_resources("cb2147483648=s0b1", r));
+    CHECK(!parse_harness_resources("cb4294967297=s0b1", r));      // wrapped to 1 with a 32-bit accumulator
+    CHECK(!parse_harness_resources("cb99999999999=s0b1", r));
+    CHECK(!parse_harness_resources("sb[c0+0x100000000]=s0b1", r));
 }
 
 NXTEST(shader_hash_is_sha1_prefix) {

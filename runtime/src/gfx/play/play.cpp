@@ -33,6 +33,9 @@
 #include "nxrt/ftrace.h"
 #include "play_camlook.h"
 #include "play_display.h"
+#include "play_glow.h"
+#include "play_scenefix.h"
+#include "mpr/mpr_fastboot.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -632,6 +635,8 @@ int update_hook(::Ctx*, uint64_t, void*) {
             extras::hdr_refresh_levels();
             apply_fps_counter(s.fps);
             lockcam_set(s);
+            fastboot_set(s);
+            glow_set(s.tweaks);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -652,6 +657,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
     }
     poll_pads(now);
     lockcam_frame();
+    glow_frame();
     if (st.engine) st.engine->frame_tick();
 
     // what the game is doing: the context, the beam, the pointer
@@ -791,6 +797,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     st.pi_calls++;
     const uint64_t player = c->x[0], mgr = c->x[2];
     st.player.store(player);
+    glow_player_tick(c, player);   // S44: the ball's inner glow colour (restores *c)
 
     double dx = 0, dy = 0;
     if (st.update_seq != st.aim_seq) {                // the first ProcessInput since the frame boundary takes the mouse counts
@@ -1121,6 +1128,10 @@ bool load() {
     // Display extras: a value set in mpr.ini or in the environment (NXRT_HDR_MODE ...) overrides the file; the file overrides the built-in defaults.
     st.settings.extras = merge_env(st.settings.extras);
     extras::set_settings(st.settings.extras);
+    // S38 GPU paths: the file's choice becomes [nvn] pool_mirror / pass_barriers unless mpr.ini or the environment set them. The replay
+    // reads both once, at its first pool and its first submission, after this.
+    if (!config_has("nvn", "pool_mirror")) config_set("nvn", "pool_mirror", st.settings.display.fast_gpu_memory ? "on" : "off");
+    if (!config_has("nvn", "pass_barriers")) config_set("nvn", "pass_barriers", st.settings.display.fewer_gpu_waits ? "tracked" : "full");
     st.capture_mouse = config_get_bool("play", "capture_mouse", true);
     st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);
@@ -1220,8 +1231,13 @@ bool start(const StartOptions& opt) {
     st.hook_fpcam = hook_add_entry(st.base + kFnFpCamThink, &cam_think_hook, nullptr);
     st.hook_ballcam = hook_add_entry(st.base + kFnBallCamThink, &cam_think_hook, &st);
     lockcam_install(st.base, st.aim.get());
+    scenefix_install(st.base);
     lockcam_set(st.settings);
+    glow_install(st.base);   // after lockcam: both hook CPlayerGunMP1::Update
+    glow_set(st.settings.tweaks);
     mm::game_install(st.base);
+    fastboot_install(st.base);
+    fastboot_set(st.settings);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
             static_cast<unsigned long long>(st.base), st.hook_update, st.hook_input);
@@ -1232,8 +1248,11 @@ void stop() {
     G& st = g();
     if (!st.started) return;
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
+    fastboot_remove();
     mm::game_remove();
+    glow_remove();
     lockcam_remove();
+    scenefix_remove();
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     if (st.hook_fpcam) hook_remove(st.hook_fpcam);

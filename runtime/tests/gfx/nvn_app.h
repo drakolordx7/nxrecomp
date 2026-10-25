@@ -22,6 +22,7 @@
 #include "nxrt/nvn_backend.h"
 #include "nvn_abi.h"
 #include "nvn_gpu.h"
+#include "project_root.h"
 #include "nvn_shaders.h"
 #include "test_framework.h"
 
@@ -53,11 +54,11 @@ struct Api {
 
 inline std::string shader_corpus_dir() {
     const char* e = std::getenv("NXRT_NVN_CORPUS");
-    return e ? e : "C:/mpr/work/shader_cache/corpus_code";
+    return e ? e : nxtest::project_path("work/shader_cache/corpus_code");
 }
 inline std::string shader_cache_dir() {
     const char* e = std::getenv("NXRT_NVN_SHADER_CACHE");
-    return e ? e : "C:/mpr/work/shader_cache/spirv";
+    return e ? e : nxtest::project_path("work/shader_cache/spirv");
 }
 inline bool real_data_available() {
     std::ifstream a(shader_corpus_dir() + "/manifest.tsv"), b(shader_cache_dir() + "/results.tsv");

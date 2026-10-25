@@ -18,7 +18,7 @@ using namespace nvnapp;
 namespace {
 
 constexpr int kW = 64, kH = 48;
-const std::string kRefDir = "C:/mpr/work/nvn_refs/";
+const std::string kRefDir = nxtest::project_path("work/nvn_refs/");
 
 struct Rgba {
     int r, g, b, a;

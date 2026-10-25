@@ -14,7 +14,8 @@ import numpy as np
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = r'C:\mpr'
+from project_root import project_root
+ROOT = project_root()
 
 
 def run(size, tag, sets):

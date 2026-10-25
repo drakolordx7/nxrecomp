@@ -13,6 +13,7 @@
 #include "nvn_impl.h"
 #include "nvn_shaders.h"
 #include "test_framework.h"
+#include "project_root.h"
 NXTEST_GROUP(gfx_nvn_program)
 
 using namespace nxrt;
@@ -30,8 +31,8 @@ const char* kNames[] = {
 // nvnProgramSetSampleShading has no typedef in the NVN header; this is the assumed signature (see api_program.cpp).
 using PFNSAMPLESHADINGASSUMED = void (*)(NVNprogram*, int);
 
-const fs::path kCorpus = "C:/mpr/work/shader_cache/corpus_code";
-const fs::path kSpirv = "C:/mpr/work/shader_cache/spirv";
+const fs::path kCorpus = nxtest::project_path("work/shader_cache/corpus_code");
+const fs::path kSpirv = nxtest::project_path("work/shader_cache/spirv");
 
 void setup() {
     install();

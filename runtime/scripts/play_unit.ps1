@@ -1,15 +1,16 @@
 # Build and run ONE play-mode unit test without CMake (several people can do this at once, each with its own output folder).
 #   pwsh scripts\play_unit.ps1 -Name config -Test tests\gfx\test_play_config.cpp -Src src\gfx\play\play_types.cpp [-Src more.cpp ...] [-Group play_config]
 # Always linked in: tests\test_main.cpp, SDL3 (static, only the scancode name tables are used), the OS layer nxrt.lib and, with -Imgui, ImGui.
-# The libraries come from the game-build\build\play tree (build it first with boot_play.sh or game-build\scripts\build.ps1); override with
+# The libraries come from the game-build\build\play tree (build it first with boot_play.sh (local test script) or game-build\scripts\build.ps1); override with
 # -Build <dir>. Output: build\unit\<Name>\unit.exe. This script never touches the main build directories.
-param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Test, [string[]]$Src = @(), [string]$Group = "", [string[]]$Lib = @(), [string[]]$Inc = @(), [string]$Build = "C:\mpr\game-build\build\play", [switch]$NoRun)
+param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Test, [string[]]$Src = @(), [string]$Group = "", [string[]]$Lib = @(), [string[]]$Inc = @(), [string]$Build = "", [switch]$NoRun)
 $ErrorActionPreference = "Stop"
 $Src = @($Src | ForEach-Object { $_ -split "," } | Where-Object { $_ })   # -File passes a comma list as one string
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "build\unit\$Name"
 New-Item -ItemType Directory -Force $out | Out-Null
-$recomp = "C:/mpr/recomp/include"
+. (Join-Path $PSScriptRoot "proj.ps1")
+if (-not $Build) { $Build = Join-Path $proj "game-build\build\play" }
 $srcs = @($Test) + $Src + @("tests\test_main.cpp") | ForEach-Object { if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $root $_ } }
 $srcList = ($srcs | ForEach-Object { '"' + $_ + '"' }) -join " "
 $libs = ($Lib | ForEach-Object { '"' + $_ + '"' }) -join " "

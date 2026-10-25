@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "nxrt/extras.h"
+#include "play_fastboot.h"
+#include "play_tweaks.h"
 
 namespace nxrt::play {
 
@@ -163,6 +165,9 @@ struct DisplaySettings {
     double lod_bias = 0;           // texture LOD bias added to every sampler (-2.0 .. 2.0; negative is sharper)
     bool bloom = true;
     bool chromatic_aberration = true;
+    // ---- S38 GPU paths, at the next start; [nvn] pool_mirror and pass_barriers in mpr.ini or the environment win over these.
+    bool fast_gpu_memory = true;   // device-local copies of the pools draws read ([nvn] pool_mirror = on); costs up to 2 GiB of video memory
+    bool fewer_gpu_waits = true;   // no full barrier after passes that only wrote their attachments ([nvn] pass_barriers = tracked)
 };
 
 // ---- button prompts ----------------------------------------------------------------------------------------------------------------
@@ -210,12 +215,14 @@ struct Settings {
     MouseSettings mouse;
     AimSettings aim;
     CameraSettings camera;
+    TweakSettings tweaks;          // [tweaks] (play_tweaks.h): optional looks, off by default
     PadSettings pad;
     TimingSettings timing;
     DisplaySettings display;
     extras::Settings extras;       // the [hdr] [upscale] [latency] sections (nxrt/extras.h): HDR output, upscaling, low latency
     PromptSettings prompts;
     FpsSettings fps;
+    FastbootSettings fastboot;     // [tweaks] skip_intro skip_boot_logos fast_menus menu_speed (play_fastboot.h, S46)
     Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
     // [meta] defaults_rev: the factory-defaults revision the file was written with (0 when the file has no [meta]). When a file with
@@ -239,13 +246,15 @@ const char* default_settings_text();
 //   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale ball_orbit
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
 //   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
-//              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration
+//              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration fast_gpu_memory fewer_gpu_waits
 //   [hdr]      mode (off auto on) format (auto hdr10 scrgb) peak_nits (0 = auto, else 200..10000) paper_white_nits (0 = auto, else
 //              80..500) highlight_boost (0..2)
 //   [upscale]  mode (off fsr1 fsr3 dlss xess; spatial = fsr1) sharpness (0..1) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
 //              frame_generation (1/0)
 //   [latency]  mode (off auto on boost) log_timings (1/0)
 //   [prompts]  style = switch|xbox|playstation|keyboard|auto   (which button icons the game's prompts show; auto, the default, follows the last used input device)
+//   [tweaks]   skip_intro skip_boot_logos fast_menus (1/0) menu_speed (1..4)   (play_fastboot.h)
+//              glow_color (off | R,G,B) suit_glow ball_glow gun_glow (auto | off | R,G,B)   (play_tweaks.h)
 //   [fps]      show (1/0) key (a keyboard key, F2) corner (top_left top_right bottom_left bottom_right) detail (0..2) in_screenshots (1/0)
 //   [padmap]   <south east west north left_shoulder right_shoulder left_trigger right_trigger start back left_stick right_stick dpad_up dpad_down
 //              dpad_left dpad_right> = default | none | <Switch buttons joined by '+', e.g. A or ZL+L>   (the pad button presses those Switch buttons)

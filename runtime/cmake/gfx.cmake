@@ -39,8 +39,10 @@ target_compile_features(nxrt_mprpak PUBLIC cxx_std_20)
 
 file(GLOB_RECURSE NXRT_GFX_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/*.cpp")
 list(FILTER NXRT_GFX_SOURCES EXCLUDE REGEX "nvn_gpu_stub[.]cpp$")   # unit-test stand-in of the GPU boundary (scripts/nvn_unit.ps1)
-add_library(nxrt_gfx STATIC ${NXRT_GFX_SOURCES})
-target_include_directories(nxrt_gfx PUBLIC include src/gfx/nvn/third_party PRIVATE src/gfx src/gfx/nvn)
+# Title-specific play-mode hooks kept apart from the shared code (games/mpr: Metroid Prime Remastered).
+file(GLOB NXRT_GAME_MPR_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/games/mpr/*.cpp")
+add_library(nxrt_gfx STATIC ${NXRT_GFX_SOURCES} ${NXRT_GAME_MPR_SOURCES})
+target_include_directories(nxrt_gfx PUBLIC include src/gfx/nvn/third_party PRIVATE src/gfx src/gfx/nvn games)
 target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling nxrt_astc2bc7 nxrt_mprpak SDL3::SDL3-static)
 target_compile_definitions(nxrt_gfx PUBLIC VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
 
@@ -52,9 +54,9 @@ foreach(dll ${NXRT_A2B_DLLS})
 endforeach()
 
 if(NXRT_BUILD_TESTS)
-    file(GLOB_RECURSE NXRT_GFX_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gfx/*.cpp")
+    file(GLOB_RECURSE NXRT_GFX_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gfx/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/games/mpr/tests/*.cpp")
     add_executable(nxrt_gfx_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp" ${NXRT_GFX_TEST_SOURCES})
-    target_include_directories(nxrt_gfx_tests PRIVATE tests src/gfx src/gfx/nvn)
+    target_include_directories(nxrt_gfx_tests PRIVATE tests src/gfx src/gfx/nvn games)
     target_link_libraries(nxrt_gfx_tests PRIVATE nxrt_gfx)
     target_compile_definitions(nxrt_gfx_tests PRIVATE NXRT_GFX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data/gfx")
     # The BC7 reference decoder of bc7enc_rdo (public domain; the same file the setup tool checks its texture cache with): the ASTC texture scene

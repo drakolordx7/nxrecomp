@@ -16,6 +16,7 @@
 #include "nvn_shaders.h"
 #include "nvn_spirv_patch.h"
 #include "test_framework.h"
+#include "project_root.h"
 NXTEST_GROUP(gfx_nvn_spirv_patch)
 
 using namespace nxrt::nvn::be;
@@ -24,7 +25,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const char* kSpvDir = "C:/mpr/work/shader_cache/spirv";
+const std::string kSpvDirStr = nxtest::project_path("work/shader_cache/spirv");
+const char* kSpvDir = kSpvDirStr.c_str();
 const char* kSpirvVal = "C:\\VulkanSDK\\1.4.363.0\\Bin\\spirv-val.exe";
 const char* kVertexHash = "a656883b0cdb8ebc";      // position only, no varyings
 const char* kConstFragHash = "062cfa5657f5388d";   // constant colour fragment shader, no Location 1 output
@@ -37,7 +39,7 @@ constexpr uint32_t kDecorationIndex = 32;
 const char* absent_input() {
     std::error_code ec;
     if (!fs::exists(fs::path(kSpvDir) / (std::string(kVertexHash) + ".spv"), ec))
-        return "shader cache absent (a656883b0cdb8ebc.spv not under C:/mpr/work/shader_cache/spirv)";
+        return "shader cache absent (a656883b0cdb8ebc.spv not under work/shader_cache/spirv)";
     if (!fs::exists(kSpirvVal, ec)) return "spirv-val not found at C:\\VulkanSDK\\1.4.363.0\\Bin";
     return nullptr;
 }

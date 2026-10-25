@@ -107,7 +107,8 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(da.render_scale == db.render_scale && da.render_width == db.render_width && da.render_height == db.render_height &&
           da.aspect == db.aspect && da.fov_offset == db.fov_offset && da.dynamic_resolution == db.dynamic_resolution &&
           da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.bloom == db.bloom &&
-          da.chromatic_aberration == db.chromatic_aberration))
+          da.chromatic_aberration == db.chromatic_aberration && da.fast_gpu_memory == db.fast_gpu_memory &&
+          da.fewer_gpu_waits == db.fewer_gpu_waits))
         return false;
     const nxrt::extras::Settings &ea = a.extras, &eb = b.extras;
     if (!(ea.hdr.mode == eb.hdr.mode && ea.hdr.format == eb.hdr.format && ea.hdr.peak_nits == eb.hdr.peak_nits &&
@@ -798,12 +799,15 @@ NXTEST(display_render_keys_defaults) {
     CHECK(d.lod_bias == 0.0);
     CHECK(d.bloom);
     CHECK(d.chromatic_aberration);
+    CHECK(d.fast_gpu_memory);
+    CHECK(d.fewer_gpu_waits);
 }
 
 NXTEST(default_settings_text_has_display_keys) {
     const std::string text = default_settings_text();
     const char* lines[] = {"render_scale = 100", "render_width = 0",  "render_height = 0", "aspect = 0",        "fov_offset = 0",
-                           "dynamic_resolution = 0", "anisotropy = 0", "lod_bias = 0",    "bloom = 1",       "chromatic_aberration = 1"};
+                           "dynamic_resolution = 0", "anisotropy = 0", "lod_bias = 0",    "bloom = 1",       "chromatic_aberration = 1",
+                           "fast_gpu_memory = 1",    "fewer_gpu_waits = 1"};
     for (const char* l : lines) CHECK_MSG(text.find(std::string("\n") + l + "\n") != std::string::npos, l);
     // The four that only apply at the next start say so next to their key.
     size_t restart_notes = 0;
@@ -817,7 +821,8 @@ NXTEST(display_render_keys_parse) {
     std::string err;
     const char* text =
         "[display]\nrender_scale = 150\nrender_width = 1600\nrender_height = 900\naspect = 1.6\nfov_offset = -12.5\n"
-        "dynamic_resolution = yes\nanisotropy = 8\nlod_bias = -0.75\nbloom = 0\nchromatic_aberration = off\n";
+        "dynamic_resolution = yes\nanisotropy = 8\nlod_bias = -0.75\nbloom = 0\nchromatic_aberration = off\n"
+        "fast_gpu_memory = 0\nfewer_gpu_waits = off\n";
     REQUIRE_MSG(parse_settings(text, &s, &err), err);
     CHECK_EQ(s.display.render_scale, 150);
     CHECK_EQ(s.display.render_width, 1600);
@@ -829,6 +834,8 @@ NXTEST(display_render_keys_parse) {
     CHECK(s.display.lod_bias == -0.75);
     CHECK(!s.display.bloom);
     CHECK(!s.display.chromatic_aberration);
+    CHECK(!s.display.fast_gpu_memory);
+    CHECK(!s.display.fewer_gpu_waits);
 }
 
 NXTEST(display_render_keys_range_errors) {
@@ -906,6 +913,8 @@ NXTEST(display_render_keys_round_trip) {
     s.display.lod_bias = -0.7;
     s.display.bloom = false;
     s.display.chromatic_aberration = false;
+    s.display.fast_gpu_memory = false;
+    s.display.fewer_gpu_waits = false;
 
     const std::string text = format_settings(s);
     Settings r;

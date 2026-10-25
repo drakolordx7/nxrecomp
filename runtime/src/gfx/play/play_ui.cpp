@@ -12,6 +12,7 @@
 #include <string>
 
 #include "imgui.h"
+#include "play_glow.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/extras.h"
 #include "nxrt/input_source.h"
@@ -585,6 +586,8 @@ void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
     if (slider("Texture LOD bias", &d.lod_bias, -2.0, 2.0, "%.2f")) mark(p);
     if (ImGui::Checkbox("Bloom", &d.bloom)) mark(p);
     if (ImGui::Checkbox("Chromatic aberration", &d.chromatic_aberration)) mark(p);
+    if (ImGui::Checkbox("Faster GPU memory (uses more video memory) (restart)", &d.fast_gpu_memory)) mark(p);
+    if (ImGui::Checkbox("Fewer GPU pipeline waits (restart)", &d.fewer_gpu_waits)) mark(p);
 
     fps_group(host, p);
 
@@ -734,6 +737,7 @@ void extras_tab(Page& p) {
     hdr_group(p);
     upscale_group(p);
     latency_group(p);
+    if (fastboot_ui(p.edit.fastboot)) mark(p);   // start-up and menu tweaks (play_ui_fastboot.cpp)
 }
 
 // ---- Bindings -----------------------------------------------------------------------------------------------------------------------
@@ -970,6 +974,10 @@ void draw_settings_page(UiHost& host) {
         }
         if (ImGui::BeginTabItem("Extras")) {
             extras_tab(p);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Tweaks")) {
+            if (glow_tab(p.edit)) mark(p);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Bindings")) {

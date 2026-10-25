@@ -19,6 +19,10 @@ void set_game_base(uint64_t b);
 // The warp sequence of the practice mod (docs/mpr/hooks.md section 8), executed with the live context. false: not possible now (no state manager yet).
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
 bool have_state_manager();
+// The game's resource loader thread (CResourceLoaderManager::IsThreadWorkDone, read from memory; S42). Unknown: the loader is not readable
+// (no game globals yet, or a test rig without them). *pending (optional) = the sum of its queue counts when readable.
+enum class LoaderState { Unknown, Busy, Idle };
+LoaderState loader_state(uint32_t* pending = nullptr);
 // @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x2c, 8 bytes per item: amount at +0, capacity at +4); item -1 = every upgrade.
 bool grant(int64_t item, int32_t amount, int32_t capacity);
 // @call: the guest function at main+offset with arguments (numbers, $gs $ps $mgr $player); false and *err when an argument is bad or the game is not ready.
@@ -70,6 +74,13 @@ private:
     float mouse_x_ = 0, mouse_y_ = 0;
     int fail_line_ = 0;
     double igt_base_ = -1;                               // @play: the play time at the first readable frame of the step
+    // @warp gate (S42): the warp's QuitGame tears the game instance down while the resource loader thread may still be building assets for it,
+    // which crashed CParticleStaticRenderState on a material token with no object. The warp is issued only after the loader has been idle for
+    // kWarpIdleFrames frames in a row ([test] warp_wait_loader, default on), or after warp_loader_max_ms of host time with a warning.
+    static constexpr int kWarpIdleFrames = 10;
+    bool warp_wait_loader_ = true, gate_open_ = false, gate_logged_ = false;
+    int idle_frames_ = 0;
+    uint64_t warp_loader_max_ms_ = 30000, gate_start_ms_ = 0;
     // live mode ([test] live = file, env NXRT_TEST_LIVE): when the script runs out of steps the runner waits for more lines appended to that
     // file (so a person or a driver can play the game step by step), writing <file>.status (JSON, one line) each time it goes idle.
     std::string live_path_;

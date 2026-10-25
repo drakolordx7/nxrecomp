@@ -630,6 +630,28 @@ NXTEST(wait_for_address_conditions) {
     end();
 }
 
+// DecrementAndWaitIfLessThan is one atomic step: a guest thread adding to the word with its own atomics at the same time loses nothing
+// (the decrement was a plain load and store, which dropped the other thread's updates in between).
+NXTEST(wait_for_address_decrement_is_atomic) {
+    begin();
+    alignas(4) uint32_t w = 0;
+    const uint64_t a = addr_of(&w);
+    constexpr int kN = 200000;
+    std::atomic<bool> go{false};
+    std::thread inc([&] {
+        while (!go.load()) {}
+        for (int i = 0; i < kN; ++i) __atomic_fetch_add(&w, 1u, __ATOMIC_SEQ_CST);
+    });
+    int decs = 0;
+    go.store(true);
+    for (int i = 0; i < kN; ++i)
+        if (ks::wait_for_address(a, 1, 0x7fffffff, 0) == ks::kTimedOut) decs++;   // always below INT_MAX: decrements, then times out at once
+    inc.join();
+    CHECK_EQ(decs, kN);
+    CHECK_EQ(w, 0u);
+    end();
+}
+
 // ---- 11: WaitForAddress timeouts and the decrement -----------------------------------------------------------------------
 
 NXTEST(wait_for_address_timeout_and_decrement) {

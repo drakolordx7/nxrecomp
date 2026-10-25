@@ -146,7 +146,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Bindings };
+enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Tweaks, Bindings };
 
 // The factory-defaults revision this build writes ([meta] defaults_rev). Bump it together with a new entry in kDefaultAdditions.
 constexpr int kDefaultsRev = 2;
@@ -180,6 +180,7 @@ const char* sec_label(Sec s) {
         case Sec::Switch: return "[switch]";
         case Sec::Aim: return "[aim]";
         case Sec::Camera: return "[camera]";
+        case Sec::Tweaks: return "[tweaks]";
         default: return "";
     }
 }
@@ -309,6 +310,12 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Camera:
             if (k == "gun_drives_view") return set_bool(&s->camera.gun_drives_view);
             break;
+        case Sec::Tweaks: {
+            bool mine = false;
+            if (!fastboot_apply(k, v, &s->fastboot, &mine, msg)) return false;
+            if (mine) return true;
+            return apply_tweaks_key(k, v, &s->tweaks, known, msg);
+        }
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
             if (k == "deadzone") return set_real(0.0, 0.5, &s->pad.stick_deadzone);
@@ -416,6 +423,8 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "lod_bias") return set_real(-2.0, 2.0, &s->display.lod_bias);
             if (k == "bloom") return set_bool(&s->display.bloom);
             if (k == "chromatic_aberration") return set_bool(&s->display.chromatic_aberration);
+            if (k == "fast_gpu_memory") return set_bool(&s->display.fast_gpu_memory);
+            if (k == "fewer_gpu_waits") return set_bool(&s->display.fewer_gpu_waits);
             break;
         case Sec::Hdr: {
             extras::HdrSettings& h = s->extras.hdr;
@@ -592,6 +601,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             else if (key == "fps") sec = Sec::Fps;
             else if (key == "aim") sec = Sec::Aim;
             else if (key == "camera") sec = Sec::Camera;
+            else if (key == "tweaks") sec = Sec::Tweaks;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -748,6 +758,9 @@ std::string format_settings(const Settings& s) {
     kv("free_lock_margin", num(s.aim.free_lock_margin));
     o += "\n[camera]\n";
     kv("gun_drives_view", flag(s.camera.gun_drives_view));
+    o += "\n[tweaks]\n";
+    fastboot_format(s.fastboot, &o);
+    o += format_tweaks(s.tweaks);
 
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));
@@ -792,6 +805,8 @@ std::string format_settings(const Settings& s) {
     kv("lod_bias", num_exact(s.display.lod_bias));
     kv("bloom", flag(s.display.bloom));
     kv("chromatic_aberration", flag(s.display.chromatic_aberration));
+    kv("fast_gpu_memory", flag(s.display.fast_gpu_memory));
+    kv("fewer_gpu_waits", flag(s.display.fewer_gpu_waits));
 
     o += "\n[hdr]\n";
     kv("mode", kHdrModeWords[static_cast<int>(s.extras.hdr.mode)]);
