@@ -14,7 +14,8 @@ target_link_libraries(mpr_launcher_core PUBLIC SDL3::SDL3-static shell32 shlwapi
 
 add_executable(mpr_launcher WIN32
     "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
-    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/page_fastboot.cpp" "${NXRT_LAUNCHER_DIR}/launcher.rc")
+    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/page_fastboot.cpp"
+    "${NXRT_LAUNCHER_DIR}/page_tweaks.cpp" "${NXRT_LAUNCHER_DIR}/launcher.rc")
 target_link_libraries(mpr_launcher PRIVATE mpr_launcher_core comctl32 uxtheme dwmapi shlwapi ole32 shell32)
 # The release version the launcher shows (set by the game build: game-build/CMakeLists.txt, -DMPR_VERSION=0.1.0).
 if(NOT DEFINED MPR_VERSION)

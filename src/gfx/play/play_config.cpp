@@ -314,7 +314,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             bool mine = false;
             if (!fastboot_apply(k, v, &s->fastboot, &mine, msg)) return false;
             if (mine) return true;
-            break;
+            return apply_tweaks_key(k, v, &s->tweaks, known, msg);
         }
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
@@ -760,6 +760,7 @@ std::string format_settings(const Settings& s) {
     kv("gun_drives_view", flag(s.camera.gun_drives_view));
     o += "\n[tweaks]\n";
     fastboot_format(s.fastboot, &o);
+    o += format_tweaks(s.tweaks);
 
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));
