@@ -329,10 +329,9 @@ void pool_gpu_destroy(PoolGpu* p) {
 struct Mirror {
     gfx::Buffer buf;
     VkBuffer src = VK_NULL_HANDLE;      // the pool's own buffer (the copies read it)
-    mem::ww::Region* ww = nullptr;      // null in static mode
+    mem::ww::Region* ww = nullptr;      // the CPU's writes to the pool's pages
     uint64_t npages = 0;
     std::vector<uint64_t> want;         // bitmap: a draw wanted the page while it was not valid
-    std::vector<uint64_t> svalid;       // static mode: the page was copied (and the GPU did not write it since)
     std::vector<uint32_t> copied_at;    // present count of the last copy (0: never)
     std::vector<uint64_t> used;         // bitmap: a draw read the page from the copy since it was copied
     std::vector<uint8_t> score;         // copies in a row that the CPU overwrote before any draw read them
@@ -345,7 +344,7 @@ struct Mirror {
 
 namespace {
 
-enum class MirrorMode { Off, On, Static };
+enum class MirrorMode { Off, On };
 constexpr uint64_t kPageBytes = 4096;
 constexpr uint64_t kMaxBindPages = (64ull << 20) / kPageBytes;      // a binding over more than 64 MiB stays in the pool
 constexpr uint64_t kCopyBudget = 64ull << 20;                        // bytes copied per submission at most (an area load can want hundreds of MiB)
@@ -368,7 +367,6 @@ MirrorMode mirror_mode() {
     static const MirrorMode m = [] {
         const std::string v = config_get_str("nvn", "pool_mirror", "off");
         if (v == "on" || v == "1" || v == "true") return MirrorMode::On;
-        if (v == "static") return MirrorMode::Static;
         return MirrorMode::Off;
     }();
     return m;
@@ -382,14 +380,9 @@ void bit_put(std::vector<uint64_t>& v, uint64_t i, bool on) {
     else v[static_cast<size_t>(i >> 6)] &= ~(uint64_t{1} << (i & 63));
 }
 
-bool page_valid(const Mirror& m, uint64_t p) { return m.ww ? mem::ww::page_valid(m.ww, p) : bit_get(m.svalid, p); }
+bool page_valid(const Mirror& m, uint64_t p) { return mem::ww::page_valid(m.ww, p); }
 
-bool range_valid(const Mirror& m, uint64_t first, uint64_t count) {
-    if (m.ww) return mem::ww::all_valid(m.ww, first, count);
-    for (uint64_t p = first; p < first + count; ++p)
-        if (!bit_get(m.svalid, p)) return false;
-    return true;
-}
+bool range_valid(const Mirror& m, uint64_t first, uint64_t count) { return mem::ww::all_valid(m.ww, first, count); }
 
 Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     if (pg->mirror || pg->mirror_tried) return pg->mirror;
@@ -397,7 +390,7 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     if (!mp || mp->is_virtual || mp->is_shader_code || mp->dead.load() || pg->failed) return nullptr;
     // Tracked copies change the protection of the CPU's view of the pages. With [nvn] pool_view = false the GPU import is that same view;
     // that combination is not tried: no copy.
-    if (mirror_mode() == MirrorMode::On && !pg->view) return nullptr;
+    if (!pg->view) return nullptr;
     static const uint64_t budget = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("nvn", "pool_mirror_mb", 2048))) << 20;
     if (g_mirror_bytes + pg->size > budget) {
         NXLOG_I(kTag, "pool %p (%llu MiB) gets no device-local copy: over [nvn] pool_mirror_mb", static_cast<void*>(pg->base),
@@ -405,13 +398,13 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
         return nullptr;
     }
     auto m = std::make_unique<Mirror>();
-    if (mirror_mode() == MirrorMode::On) {
-        m->ww = mem::ww::region_create(reinterpret_cast<uint64_t>(pg->base), pg->size);
-        if (!m->ww) {
-            NXLOG_I(kTag, "pool %p (%llu KiB) gets no device-local copy: its writes cannot be tracked (not in the heap's primary view)",
-                    static_cast<void*>(pg->base), static_cast<unsigned long long>(pg->size >> 10));
-            return nullptr;
-        }
+    // Without tracking of the CPU's writes there is no copy: a copy that misses a write serves old vertices and indices, and after an area
+    // load those can point anywhere (an untracked experiment lost the Vulkan device at the first load).
+    m->ww = mem::ww::region_create(reinterpret_cast<uint64_t>(pg->base), pg->size);
+    if (!m->ww) {
+        NXLOG_I(kTag, "pool %p (%llu KiB) gets no device-local copy: its writes cannot be tracked (not in the heap's primary view)",
+                static_cast<void*>(pg->base), static_cast<unsigned long long>(pg->size >> 10));
+        return nullptr;
     }
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
                                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
@@ -425,7 +418,6 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     m->npages = pg->size / kPageBytes;
     const size_t words = static_cast<size_t>((m->npages + 63) / 64);
     m->want.assign(words, 0);
-    if (!m->ww) m->svalid.assign(words, 0);
     m->copied_at.assign(static_cast<size_t>(m->npages), 0);
     m->used.assign(words, 0);
     m->score.assign(static_cast<size_t>(m->npages), 0);
@@ -434,7 +426,7 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
     g_mirror_bytes += pg->size;
     g_st_live_bytes.store(static_cast<int64_t>(g_mirror_bytes), std::memory_order_relaxed);
     NXLOG_I(kTag, "pool %p: device-local copy (%llu KiB, pool flags 0x%x, %s)", static_cast<void*>(pg->base), static_cast<unsigned long long>(pg->size >> 10),
-            static_cast<unsigned>(mp->flags), m->ww ? "writes tracked" : "static");
+            static_cast<unsigned>(mp->flags), "writes tracked");
     pg->mirror = m.release();
     g_mirrors.push_back(pg->mirror);
     return pg->mirror;
@@ -444,7 +436,6 @@ Mirror* mirror_for(PoolGpu* pg, MemoryPool* mp) {
 // was wasted (data the game writes for one frame, a ring buffer): after kHotHits of those in a row the page is hot and stays in the pool for
 // a hold that doubles every time it comes back.
 void absorb_writes(Mirror& m, uint32_t now) {
-    if (!m.ww) return;
     g_written_tmp.clear();
     mem::ww::take_written(m.ww, g_written_tmp);
     m.st_written += static_cast<int64_t>(g_written_tmp.size());
@@ -467,7 +458,7 @@ void absorb_writes(Mirror& m, uint32_t now) {
 }
 
 bool copyable(const Mirror& m, uint64_t i, uint32_t now) {
-    return bit_get(m.want, i) && !page_valid(m, i) && m.hot_until[static_cast<size_t>(i)] <= now && !(m.ww && mem::ww::page_banned(m.ww, i));
+    return bit_get(m.want, i) && !page_valid(m, i) && m.hot_until[static_cast<size_t>(i)] <= now && !mem::ww::page_banned(m.ww, i);
 }
 
 void log_summary(uint32_t now) {
@@ -555,8 +546,7 @@ bool note_gpu_write(uint64_t gpu_address, uint64_t size, int use) {
     g_wr_pages[use % 6] += static_cast<int64_t>(last - first + 1);
     bool stale = false;
     for (uint64_t p = first; p <= last && !stale; ++p) stale = page_valid(m, p);
-    if (m.ww) mem::ww::invalidate(m.ww, first, last - first + 1);
-    else for (uint64_t p = first; p <= last; ++p) bit_put(m.svalid, p, false);
+    mem::ww::invalidate(m.ww, first, last - first + 1);
     for (uint64_t p = first; p <= last; ++p) bit_put(m.want, p, false);
     return stale;
 }
@@ -582,13 +572,12 @@ void mirror_begin_submit(Frame& f, bool on) {
             if (budget < kPageBytes) { m.any_want = true; break; }                      // the rest waits for the next submission
             uint64_t q = p + 1;
             while (q < m.npages && copyable(m, q, now) && (q - p + 1) * kPageBytes <= budget) ++q;
-            const bool armed = m.ww ? mem::ww::arm(m.ww, p, q - p) : true;
+            const bool armed = mem::ww::arm(m.ww, p, q - p);
             for (uint64_t i = p; i < q; ++i) {
                 bit_put(m.want, i, false);
                 if (!armed) continue;
                 m.copied_at[static_cast<size_t>(i)] = now ? now : 1;
                 bit_put(m.used, i, false);
-                if (!m.ww) bit_put(m.svalid, i, true);
             }
             if (armed) {
                 g_copy_tmp.push_back(VkBufferCopy{p * kPageBytes, p * kPageBytes, (q - p) * kPageBytes});
