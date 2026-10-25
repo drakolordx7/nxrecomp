@@ -10,6 +10,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <string>
 
@@ -18,6 +20,9 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "nxrt/tex_edit.h"
+#include "mpr_texedit.h"
+#include "mpr_tint.h"
 #include "play_aim.h"
 
 namespace nxrt::play {
@@ -57,6 +62,11 @@ struct State {
     float vanilla[kTableCount][kEntries][4] = {};
     uint32_t ball_applied = 0;                           // what the tables hold: 0 = the game's values
     std::atomic<uint64_t> gun_writes{0};                 // frames the charge effect was tinted
+    // glow ramp textures (S44b), main thread only
+    bool recolor_hook = false;                           // the texture edit client is set (from the first time a ramp part is on)
+    uint32_t ramps_applied[2] = {};                      // what the gun's and the suit's ramps were last uploaded with
+    uint64_t ramps_changed_ns = 0;                       // when texture_edit_changed was last called
+    std::atomic<uint64_t> ramp_levels{0};                // texture levels recoloured (test log)
 };
 State g;
 
@@ -154,12 +164,15 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
     return 1;
 }
 
-// ---- model incandescence (the glowing stripes of the morph ball, the arm cannon's lit parts, the suit's lights) ----
-// Those glows are the models' incandescence maps (material ICAN texture times ICNC colour). CModelFlagsMPT has a colour mode for them:
-// mode 2 (CModelFlagsMPT::ColorModulateIncan) puts its colour into the model render state's incandescence modulation
-// (CModelFlagsMPT::CreateModelRenderState, render state +40). The game draws the ball, the cannon and the suit with Normal flags (mode 0,
-// colour white), so the draw calls below get a copy of their flags in mode 2 with the setting's colour. The caller is told apart by the
-// return address of the draw call (x30 at the entry of the draw function).
+// ---- model incandescence (the glowing stripes of the morph ball) ----
+// CModelFlagsMPT has a colour mode for the incandescence colour: mode 2 (CModelFlagsMPT::ColorModulateIncan) puts its colour into the model
+// render state's incandescence modulation (CModelFlagsMPT::CreateModelRenderState, render state +40), which becomes the material data ICNC
+// (CModelRenderStateMaterialInstanceData::SetFromRenderState, data id 35). The game draws the ball with Normal flags (mode 0, colour white), so
+// its draw calls get a copy of their flags in mode 2 with the setting's colour. The caller is told apart by the return address of the draw call
+// (x30 at the entry of the draw function).
+// S44b: only the ball keeps this. The arm cannon's shaders have no ICNC term (their glow is a ramp texture, see "glow ramps" below), so mode 2
+// changed nothing there. The suit's shader does multiply its glow map by ICNC, but mode 2 replaces the suit's alpha-blended and additive
+// modes (the morph, fades), so its glow map is recoloured instead, in every mode. The hook sites stay (main.sites); the callers below decide.
 constexpr uint64_t kFnModelRender = 0xfa9694;       // CModelDataMP1::Render(CGameRenderCommandState&, CStateManager const&, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*)
 constexpr uint64_t kFnModelRenderWhich = 0xfa6c0c;  // CModelDataMP1::Render(CGameRenderCommandState&, EWhichModel, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*)
 constexpr uint64_t kFnModelRenderGun = 0xfa7dd0;    // CModelDataMP1::RenderGun(CGameRenderCommandState&, EWhichModel, CTransform4f const&, SGunRenderParams const&, CModelFlagsMPT const&)
@@ -175,19 +188,9 @@ struct Caller {
 constexpr Caller kCallers[] = {
     {0xcea890, Part::Ball},   // CMorphBallMP1::Render: the ball's hull (Normal, or ColorAdd while boosting: left alone)
     {0xceade4, Part::Ball},   // CMorphBallMP1::Render: the Spider Ball's model
-    {0xca2594, Part::Gun},    // CGunWeaponMP1::Draw: RenderGun, the arm cannon
-    {0xca2a24, Part::Gun},    // CGunWeaponMP1::DrawGunWithRain: RenderGun
-    {0xca2638, Part::Gun},    // CGunWeaponMP1::Draw: CModelDataMP1::Render (the cannon's other models)
-    {0xca26d4, Part::Gun},
-    {0xc92a48, Part::Gun},    // CPlayerGunMP1::Render: CModelDataMP1::Render
-    {0xc92b68, Part::Gun},
-    {0xc72cd8, Part::Suit},   // CPlayerMP1::Render: the suit (third person: morphing, cutscenes)
-    {0xc731e4, Part::Suit},
-    {0xc7340c, Part::Suit},
-    {0xc72d9c, Part::Suit},   // CPlayerMP1::Render: CModelDataMP1::Render(EWhichModel)
-    {0xc72ff8, Part::Suit},
-    {0xc730a4, Part::Suit},
-    {0xe7b00c, Part::Suit},   // CSamusDollMP1::Draw: the pause screen's Samus
+    // S44 also passed mode 2 to the cannon (CGunWeaponMP1::Draw 0xca2594 0xca2638 0xca26d4, DrawGunWithRain 0xca2a24, CPlayerGunMP1::Render
+    // 0xc92a48 0xc92b68) and the suit (CPlayerMP1::Render 0xc72cd8 0xc731e4 0xc7340c 0xc72d9c 0xc72ff8 0xc730a4, CSamusDollMP1::Draw
+    // 0xe7b00c). S44b: they recolour through their glow textures instead (glow ramps).
 };
 
 constexpr int kCallerCount = static_cast<int>(sizeof kCallers / sizeof kCallers[0]);
@@ -240,6 +243,113 @@ int model_hook(::Ctx* c, uint64_t addr, void* user) {
     c->x[31] = sp;
     g.model_tints.fetch_add(1, std::memory_order_relaxed);
     return 1;
+}
+
+// ---- glow ramps (S44b): the colour of the arm cannon's glowing panels and of the suit's lights ----
+// Those glows are not the incandescence colour that CModelFlagsMPT mode 2 modulates. The cannon's material shader (for example fragment shader
+// 102960b5d01faefd, the barrel) computes the glow as ramp.rgb * mask * intensity: the mask is a grey texture of the model (the panels'
+// stripes), the colour comes from a small sRGB "ramp" texture (128 x 16, ASTC 8x5) looked up at a second UV set, and the intensity is a
+// scalar of the material (no colour constant anywhere). The suit's lights are its glow map (ICAN) times the material's ICNC colour, and mode 2
+// would replace the suit's alpha-blended and additive draws. So the textures themselves are recoloured as the game uploads them, through the
+// texture edit hook (nxrt/tex_edit.h, shared with the tint in mpr_texedit.h). Recolouring replaces the hue and keeps the game's brightness
+// (glow_recolor_texel), so every beam's ramp takes the setting's colour.
+struct Ramp {
+    uint32_t w, h, levels;
+    uint64_t tail;      // glow_texture_tail_hash of the game's texture, logged with NXRT_GLOW_LOG_TEXTURES=1
+    Part part;
+    const char* what;
+};
+// Found with NXRT_GLOW_LOG_TEXTURES=WxH,... (discovery ids) and NVN traces of the hangar (docs/S44.md, "Glow ramps"). All are ASTC 8x5 sRGB.
+constexpr Ramp kRamps[] = {
+    // the arm cannon's lit panels: the colour ramp of its glow shaders (102960b5d01faefd, 64223e9717113568). Every beam uses it (the beams'
+    // own effects, Wave arcs, Ice frost, Plasma heat, are other textures and particles and keep their colours)
+    {128, 16, 8, 0xe6ef56252d1ac680ull, Part::Gun, "arm cannon panel ramp"},
+    // a second, orange ramp (128 x 128) that the same cannon shader 102960b5d01faefd samples on some of its parts
+    {128, 128, 8, 0x095d5c0d4843b57full, Part::Gun, "arm cannon orange ramp"},
+    // the Power Suit's glow maps (its green lights), sampled by the suit's shaders as the ICAN texture: the body (2048 x 2048, fragment shader
+    // 3065a1ce7022c16a with vertex shader bc5522ba683434cf) and the first-person arm (2048 x 1024, shader 8f2ff87c2b6f057d). Not the 1024 x 1024
+    // glow texture that shader 3065a1ce7022c16a also samples: the hangar's signal lights share it.
+    {2048, 2048, 12, 0x8dbb31ab811c3e94ull, Part::Suit, "Power Suit glow map"},
+    {2048, 1024, 12, 0x2d9b3b57fa799f2aull, Part::Suit, "Power Suit arm glow map"},
+};
+constexpr size_t kRampCount = sizeof kRamps / sizeof kRamps[0];
+
+std::atomic<uint64_t> g_ramp_gen{1};
+
+uint32_t want_part(Part p) { return p == Part::Ball ? want_ball() : p == Part::Gun ? want_gun() : p == Part::Suit ? want_suit() : 0u; }
+
+// Discovery aid: NXRT_GLOW_LOG_TEXTURES=1 logs the tail of every sRGB ASTC texture once. NXRT_GLOW_LOG_TEXTURES=WxH,WxH,... also claims
+// every texture of those sizes under an id from kDiscoveryId on (its edit changes nothing), so the runtime's "edited by the host (id ...)"
+// line names the texture that has the logged tail; an NVN trace then says which texture a draw samples.
+constexpr uint64_t kDiscoveryId = 1000;
+
+uint64_t ramp_match(const gfx::TexEditReq& r, void*) {
+    static const std::string log_env = [] {
+        const char* e = std::getenv("NXRT_GLOW_LOG_TEXTURES");
+        return std::string(e && *e != '0' ? e : "");
+    }();
+    if (!log_env.empty() && r.srgb) {
+        static std::mutex mu;
+        static std::map<uint64_t, uint64_t> seen;   // tail -> discovery id
+        const uint64_t tail = glow_texture_tail_hash(r.tiled, r.tiled_size, r.width, r.height, r.levels);
+        char size[32];
+        std::snprintf(size, sizeof size, "%ux%u", r.width, r.height);
+        const bool claim = ("," + log_env + ",").find("," + std::string(size) + ",") != std::string::npos;
+        std::lock_guard<std::mutex> lk(mu);
+        auto it = seen.find(tail);
+        if (it == seen.end()) {
+            it = seen.emplace(tail, kDiscoveryId + seen.size()).first;
+            NXLOG_I(kTag, "texture %s %u levels ASTC %ux%u sRGB, tail %016llx%s, discovery id %llu", size, r.levels, r.block_w, r.block_h,
+                    static_cast<unsigned long long>(tail), claim ? "" : " (not claimed)", static_cast<unsigned long long>(it->second));
+        }
+        if (claim) return it->second;
+    }
+    if (!r.srgb || r.block_w != 8 || r.block_h != 5) return 0;
+    uint64_t tail = 0;
+    for (size_t i = 0; i < kRampCount; ++i) {
+        const Ramp& rp = kRamps[i];
+        if (rp.w != r.width || rp.h != r.height || rp.levels != r.levels || !(want_part(rp.part) & kOn)) continue;
+        if (!tail) tail = glow_texture_tail_hash(r.tiled, r.tiled_size, r.width, r.height, r.levels);
+        if (tail == rp.tail) return i + 1;
+    }
+    return 0;
+}
+
+uint64_t ramp_generation(void*) { return g_ramp_gen.load(std::memory_order_acquire); }
+
+void ramp_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
+    if (id == 0 || id > kRampCount) return;   // discovery ids (kDiscoveryId on) change nothing
+    const Ramp& rp = kRamps[id - 1];
+    const uint32_t want = want_part(rp.part);
+    if (!(want & kOn)) return;
+    const GlowRgb c = unpack(want);
+    const size_t n = static_cast<size_t>(w) * h;
+    for (size_t i = 0; i < n; ++i) glow_recolor_texel(rgba + 4 * i, true, c);
+    g.ramp_levels.fetch_add(1, std::memory_order_relaxed);
+    if (level == 0) NXLOG_I(kTag, "%s: recoloured", rp.what);
+}
+
+// Main thread, every frame: when the gun's or the suit's wanted colour changed, the textures are made again (at most every 100 ms while the F1
+// sliders move).
+void ramps_frame() {
+    const uint32_t gun = want_gun(), suit = want_suit();
+    if (gun == g.ramps_applied[0] && suit == g.ramps_applied[1]) return;
+    const uint64_t now = FrameLimiter::now_ns();
+    if (g.ramps_changed_ns && now - g.ramps_changed_ns < 100'000'000ull) return;
+    g.ramps_changed_ns = now;
+    g.ramps_applied[0] = gun;
+    g.ramps_applied[1] = suit;
+    g_ramp_gen.fetch_add(1, std::memory_order_acq_rel);
+    if (!g.recolor_hook) {
+        if (!((gun | suit) & kOn)) return;
+        g.recolor_hook = true;
+        gfx::TexEditHooks h;
+        h.match = &ramp_match;
+        h.generation = &ramp_generation;
+        h.edit = &ramp_edit;
+        texedit_set(TexEditClient::Glow, &h);
+    }
+    gfx::texture_edit_changed();
 }
 
 }  // namespace
@@ -309,6 +419,7 @@ void poll_test_file() {
         sites += buf;
     }
     NXLOG_I(kTag, "draw sites while on:%s", sites.empty() ? " none" : sites.c_str());
+    NXLOG_I(kTag, "ramp texture levels recoloured so far: %llu", static_cast<unsigned long long>(g.ramp_levels.load()));
     glow_set(tw);
     NXLOG_I(kTag, "test file applied: %s", format_tweaks(tw).c_str());
 }
@@ -318,6 +429,32 @@ void poll_test_file() {
 float glow_srgb_to_linear(uint8_t c) {
     const float s = c / 255.f;
     return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+}
+
+uint64_t glow_texture_tail_hash(const uint8_t* tiled, size_t size, uint32_t w, uint32_t h, uint32_t levels) {
+    // The last quarter of the storage: the smaller mip levels. The game streams level 0 in after them (the first upload of a suit glow map has
+    // an empty level 0), so a hash of the whole storage changes while the tail stays.
+    if (!tiled || !size) return 0;
+    size_t n = (size / 4) & ~static_cast<size_t>(15);
+    if (size < 4096 || !n) n = size;
+    uint64_t hsh = tint::hash(tiled + (size - n), n);
+    const uint64_t meta[4] = {size, w, h, levels};
+    for (uint64_t m : meta) hsh = (hsh ^ m) * 0x100000001B3ull;
+    return hsh;
+}
+
+uint8_t glow_linear_to_srgb(float v) {
+    v = std::clamp(v, 0.f, 1.f);
+    const float s = v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
+    return static_cast<uint8_t>(std::lround(std::clamp(s, 0.f, 1.f) * 255.f));
+}
+
+void glow_recolor_texel(uint8_t rgba[4], bool srgb, const GlowRgb& want) {
+    float in[4], out[4];
+    for (int k = 0; k < 3; ++k) in[k] = srgb ? glow_srgb_to_linear(rgba[k]) : rgba[k] / 255.f;
+    in[3] = 1.f;
+    glow_recolor(in, want, out);
+    for (int k = 0; k < 3; ++k) rgba[k] = srgb ? glow_linear_to_srgb(out[k]) : static_cast<uint8_t>(std::lround(std::clamp(out[k], 0.f, 1.f) * 255.f));
 }
 
 void glow_recolor(const float vanilla[4], const GlowRgb& want, float out[4]) {
@@ -337,6 +474,13 @@ void glow_install(uint64_t game_base) {
 }
 
 void glow_remove() {
+    if (g.recolor_hook) {
+        texedit_set(TexEditClient::Glow, nullptr);
+        g_ramp_gen.fetch_add(1, std::memory_order_acq_rel);
+        gfx::texture_edit_changed();   // the recoloured textures go back to the game's
+    }
+    g.recolor_hook = false;
+    g.ramps_applied[0] = g.ramps_applied[1] = 0;
     if (g.hook) hook_remove(g.hook);
     g.hook = 0;
     for (uint32_t& h : g.hook_models) {
@@ -373,6 +517,7 @@ void glow_preview(const TweakSettings& t) {
 void glow_frame() {
     if (!g.base) return;
     poll_test_file();
+    ramps_frame();
     const uint32_t want = want_ball();
     if (want == g.ball_applied) return;
     if (!g.tables_known) {
@@ -402,6 +547,7 @@ GlowStats glow_stats() {
     s.ball_written = (g.ball_applied & kOn) != 0;
     s.gun_writes = g.gun_writes.load(std::memory_order_relaxed);
     s.model_tints = g.model_tints.load(std::memory_order_relaxed);
+    s.ramp_levels = g.ramp_levels.load(std::memory_order_relaxed);
     return s;
 }
 

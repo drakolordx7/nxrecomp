@@ -55,7 +55,7 @@ skip_boot_logos = 0
 # 1: the title, main menu, save slots and options run menu_speed (1..4) times faster.
 fast_menus = 0
 menu_speed = 2
-# One glow colour for the morph ball (its glowing stripes, inner glow, boost glow, trail and light) and the arm cannon's charge glow: off (the game's own) or R,G,B (0..255 each).
+# One glow colour for the morph ball (its glowing stripes, inner glow, boost glow, trail and light), the arm cannon's charge glow and lit panels, and the suit's lights: off (the game's own) or R,G,B (0..255 each).
 glow_color = off
 # auto follows glow_color, off keeps the game's colour for that part, or R,G,B gives the part its own colour.
 suit_glow = auto
