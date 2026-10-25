@@ -100,6 +100,9 @@ Each line is optional; a missing key keeps its default.
 
 - controls.ini [display] window_mode: windowed (default), borderless or exclusive. vsync: 0 or 1. fps_cap: frame
   limit, 60 by default, 0 for none. The launcher's Display tab sets these.
+- controls.ini [pad] right_deadzone: dead zone of the right stick, 0.10 by default (0 to 0.5). invert_y: 1 flips
+  looking up and down in play. look_sens: right stick look speed, 1 by default (0.25 to 3). ball_orbit: how fast
+  the right stick turns the morph ball camera, 2 by default, 0 for off.
 - mpr.ini [gfx] gpu: discrete or integrated, or part of a GPU's name, if the wrong card is chosen.
 - mpr.ini [am] operation_mode: docked (default) or handheld.
 - mpr.ini [audio] volume: 0.0 to 1.0. device: default, or part of an output device's name.
