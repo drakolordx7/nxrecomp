@@ -101,3 +101,10 @@ DebugMode retry); smo 135 valid (87 not translated, 72 of them texture handles, 
 - `scripts/make_code_corpus.py <corpus> --out <dir> [--verify <results dir>]`: collapses the 67,506-block survey corpus to the 13,016 distinct code blocks, keyed by the first 16 hex digits of sha1(code). `--verify` checks that blocks sharing code gave identical SPIR-V (9,750 groups, 0 differ).
 
 `spirv-nan.patch` is carried from Wonder but not applied (Wonder's published numbers were built without it).
+
+## Cache completeness (S40)
+
+- `scripts/gap_corpus.py <romfs> --cache <spirv dir> --out <dir> [--programs programs.bin] [--all]`: scans the game files the way the
+  setup tool does (MaterialArchive.arc and every pak MTRL asset, read from the paks, not from retrotool output) and writes the blocks
+  the cache lacks as a `--batch` corpus plus `gap_report.json`. The survey corpus had missed 85 gun fragment blocks (328 programs)
+  because retrotool stopped part way through `SamusGunMP1.pak`; see `docs/S40.md`.
