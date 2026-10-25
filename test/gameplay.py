@@ -13,7 +13,20 @@ Facts the scripts rely on (all read off the running game, see runtime/docs/S13.m
 """
 import json, os, subprocess, sys, time
 
-ROOT = os.environ.get('NXRT_ROOT', 'C:/mpr')
+def _project_root():
+    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
+    import os, pathlib
+    env = os.environ.get('NXRT_ROOT')
+    if env:
+        return pathlib.Path(env).as_posix()
+    here = pathlib.Path(__file__).resolve()
+    for p in here.parents:
+        if (p / 'tools').is_dir() and (p / 'work').is_dir():
+            return p.as_posix()
+    return here.parents[2].as_posix()
+
+
+ROOT = _project_root()
 EXE_DIR = os.environ.get('NXRT_VERIFY_EXE', ROOT + '/game-build-verify/build/snap')
 RUN_DIR = ROOT + '/work/run_verify'
 TICK_HZ = 19200000
