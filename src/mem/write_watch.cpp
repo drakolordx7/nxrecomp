@@ -1,0 +1,328 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Page write tracking by page protection (include/nxrt/write_watch.h). Four bitmaps per region, one bit per 4 KiB page:
+//   prot    the page is read-only because of us (set by arm, cleared by whoever makes it writable again)
+//   valid   armed and not written since (the owner's copy of the page is current)
+//   written the CPU wrote it since the owner last asked (take_written)
+//   ban     never arm (another view of the page exists)
+// The fault handler and before_os_write may run on any thread at any time; they only use atomics and VirtualProtect. Regions are
+// published in a fixed table; a reader counts itself in g_busy while it looks at a region, and region_destroy waits for that count to
+// drop after taking the region out of the table.
+#include "nxrt/write_watch.h"
+
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <algorithm>
+#include <atomic>
+#include <memory>
+#include <mutex>
+#include <thread>
+#include <utility>
+
+#include "nxrt/gauge.h"
+#include "nxrt/log.h"
+#include "nxrt/memory.h"
+
+namespace nxrt::mem::ww {
+
+struct Region {
+    uint64_t base = 0;          // address of page 0
+    uint64_t npages = 0;
+    uint64_t nwords = 0;
+    std::unique_ptr<std::atomic<uint64_t>[]> prot, valid, written, ban;
+    int slot = -1;
+};
+
+namespace {
+
+constexpr const char* kTag = "mem.ww";
+constexpr int kSlots = 512;
+std::atomic<Region*> g_slots[kSlots];
+std::atomic<int> g_hi{0};              // slots [0, g_hi) may be in use
+std::atomic<int> g_busy{0};            // fault handlers and os-write calls looking at the table
+std::atomic<int> g_live{0};
+std::atomic<uint64_t> g_faults{0};
+std::mutex g_mu;                       // create / destroy
+PVOID g_veh = nullptr;
+
+uint64_t bit(uint64_t page) { return uint64_t{1} << (page & 63); }
+
+bool test(const std::atomic<uint64_t>* bm, uint64_t page) { return (bm[page >> 6].load(std::memory_order_acquire) & bit(page)) != 0; }
+
+// Sets or clears the bits of pages [first, first + count) word by word.
+void set_bits(std::atomic<uint64_t>* bm, uint64_t first, uint64_t count, bool on) {
+    uint64_t p = first;
+    const uint64_t end = first + count;
+    while (p < end) {
+        const uint64_t w = p >> 6;
+        const uint64_t lo = p & 63;
+        const uint64_t hi = std::min<uint64_t>(64, lo + (end - p));
+        const uint64_t mask = (hi - lo == 64) ? ~uint64_t{0} : (((uint64_t{1} << (hi - lo)) - 1) << lo);
+        if (on) bm[w].fetch_or(mask, std::memory_order_acq_rel);
+        else bm[w].fetch_and(~mask, std::memory_order_acq_rel);
+        p += hi - lo;
+    }
+}
+
+bool all_set(const std::atomic<uint64_t>* bm, uint64_t first, uint64_t count) {
+    uint64_t p = first;
+    const uint64_t end = first + count;
+    while (p < end) {
+        const uint64_t w = p >> 6;
+        const uint64_t lo = p & 63;
+        const uint64_t hi = std::min<uint64_t>(64, lo + (end - p));
+        const uint64_t mask = (hi - lo == 64) ? ~uint64_t{0} : (((uint64_t{1} << (hi - lo)) - 1) << lo);
+        if ((bm[w].load(std::memory_order_acquire) & mask) != mask) return false;
+        p += hi - lo;
+    }
+    return true;
+}
+
+bool any_set(const std::atomic<uint64_t>* bm, uint64_t first, uint64_t count) {
+    uint64_t p = first;
+    const uint64_t end = first + count;
+    while (p < end) {
+        const uint64_t w = p >> 6;
+        const uint64_t lo = p & 63;
+        const uint64_t hi = std::min<uint64_t>(64, lo + (end - p));
+        const uint64_t mask = (hi - lo == 64) ? ~uint64_t{0} : (((uint64_t{1} << (hi - lo)) - 1) << lo);
+        if (bm[w].load(std::memory_order_acquire) & mask) return true;
+        p += hi - lo;
+    }
+    return false;
+}
+
+DWORD page_protect(uint64_t addr) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<void*>(addr), &mbi, sizeof mbi) != sizeof mbi) return 0;
+    if (mbi.State != MEM_COMMIT) return 0;
+    return mbi.Protect;
+}
+
+// One page of a region becomes writable and counts as written. True when the page is ours to handle (the faulting write may retry).
+bool release_page(Region* r, uint64_t page) {
+    const uint64_t b = bit(page);
+    const uint64_t w = page >> 6;
+    const uint64_t old = r->prot[w].fetch_and(~b, std::memory_order_acq_rel);
+    r->valid[w].fetch_and(~b, std::memory_order_acq_rel);
+    r->written[w].fetch_or(b, std::memory_order_acq_rel);
+    const uint64_t addr = r->base + page * kPage;
+    if (old & b) {
+        DWORD was = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(addr), kPage, PAGE_READWRITE, &was)) return false;
+        if ((was & 0xff) != PAGE_READONLY) {           // somebody else set this protection: give it back and let the fault through
+            DWORD tmp = 0;
+            VirtualProtect(reinterpret_cast<void*>(addr), kPage, was, &tmp);
+            return false;
+        }
+        return true;
+    }
+    // Not armed (any more): another thread may be making it writable right now, or memory.cpp is changing its protection. Wait a little
+    // for it to become writable; anything else is a real fault.
+    for (int i = 0; i < 2000; ++i) {
+        const DWORD pr = page_protect(addr) & 0xff;
+        if (pr == PAGE_READWRITE || pr == PAGE_EXECUTE_READWRITE) return true;
+        if (pr != PAGE_READONLY) return false;
+        if (i > 50) Sleep(0); else YieldProcessor();
+    }
+    return false;
+}
+
+LONG CALLBACK on_fault(EXCEPTION_POINTERS* ep) {
+    if (!ep || !ep->ExceptionRecord) return EXCEPTION_CONTINUE_SEARCH;
+    const EXCEPTION_RECORD* rec = ep->ExceptionRecord;
+    if (rec->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || rec->NumberParameters < 2 || rec->ExceptionInformation[0] != 1) return EXCEPTION_CONTINUE_SEARCH;
+    if (g_live.load(std::memory_order_acquire) == 0) return EXCEPTION_CONTINUE_SEARCH;
+    const uint64_t addr = static_cast<uint64_t>(rec->ExceptionInformation[1]);
+    bool ours = false;
+    g_busy.fetch_add(1, std::memory_order_seq_cst);
+    const int hi = g_hi.load(std::memory_order_seq_cst);
+    for (int i = 0; i < hi; ++i) {
+        Region* r = g_slots[i].load(std::memory_order_seq_cst);
+        if (!r || addr < r->base || addr >= r->base + r->npages * kPage) continue;
+        ours |= release_page(r, (addr - r->base) / kPage);
+    }
+    g_busy.fetch_sub(1, std::memory_order_seq_cst);
+    if (!ours) return EXCEPTION_CONTINUE_SEARCH;
+    g_faults.fetch_add(1, std::memory_order_relaxed);
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+// Calls fn(region, first page, count) for the part of [addr, addr + size) inside every published region.
+template <class Fn>
+void for_regions(uint64_t addr, uint64_t size, Fn&& fn) {
+    if (g_live.load(std::memory_order_acquire) == 0 || size == 0) return;
+    g_busy.fetch_add(1, std::memory_order_seq_cst);
+    const int hi = g_hi.load(std::memory_order_seq_cst);
+    for (int i = 0; i < hi; ++i) {
+        Region* r = g_slots[i].load(std::memory_order_seq_cst);
+        if (!r) continue;
+        const uint64_t lo = std::max(addr, r->base), end = std::min(addr + size, r->base + r->npages * kPage);
+        if (lo >= end) continue;
+        const uint64_t first = (lo - r->base) / kPage, last = (end - 1 - r->base) / kPage;
+        fn(r, first, last - first + 1);
+    }
+    g_busy.fetch_sub(1, std::memory_order_seq_cst);
+}
+
+struct Gauges {
+    Gauges() {
+        nxrt::gauge_register("mem.ww.faults", [] { return static_cast<int64_t>(g_faults.load(std::memory_order_relaxed)); });
+        nxrt::gauge_register("mem.ww.regions", [] { return static_cast<int64_t>(g_live.load(std::memory_order_relaxed)); });
+    }
+    ~Gauges() {
+        nxrt::gauge_unregister("mem.ww.faults");
+        nxrt::gauge_unregister("mem.ww.regions");
+    }
+};
+Gauges g_gauges;
+
+}  // namespace
+
+Region* region_create(uint64_t addr, uint64_t size) {
+    if (!size || !heap_exists()) return nullptr;
+    const uint64_t start = addr & ~(kPage - 1), end = (addr + size + kPage - 1) & ~(kPage - 1);
+    if (start < kHeapBase || end > kHeapBase + heap_reserved()) return nullptr;
+    auto r = std::make_unique<Region>();
+    r->base = start;
+    r->npages = (end - start) / kPage;
+    r->nwords = (r->npages + 63) / 64;
+    for (auto* bm : {&r->prot, &r->valid, &r->written, &r->ban}) {
+        bm->reset(new std::atomic<uint64_t>[r->nwords]);
+        for (uint64_t i = 0; i < r->nwords; ++i) (*bm)[i].store(0, std::memory_order_relaxed);
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        if (!g_veh) g_veh = AddVectoredExceptionHandler(1, on_fault);
+        if (!g_veh) {
+            NXLOG_W(kTag, "AddVectoredExceptionHandler failed: no write tracking");
+            return nullptr;
+        }
+        int slot = -1;
+        for (int i = 0; i < kSlots; ++i)
+            if (!g_slots[i].load()) { slot = i; break; }
+        if (slot < 0) {
+            NXLOG_W(kTag, "region table full (%d): no write tracking for %llx", kSlots, static_cast<unsigned long long>(start));
+            return nullptr;
+        }
+        r->slot = slot;
+        g_slots[slot].store(r.get(), std::memory_order_seq_cst);
+        if (slot >= g_hi.load()) g_hi.store(slot + 1, std::memory_order_seq_cst);
+        g_live.fetch_add(1, std::memory_order_seq_cst);
+    }
+    // Pages that another view shows can never be tracked. Published first, so an alias made from now on bans them through ban_section.
+    std::vector<std::pair<uint64_t, uint64_t>> views;
+    heap_alias_ranges(views);
+    for (const auto& v : views) {
+        const uint64_t lo = std::max(start, kHeapBase + v.first), hi = std::min(end, kHeapBase + v.first + v.second);
+        if (lo < hi) set_bits(r->ban.get(), (lo - start) / kPage, (hi - lo) / kPage, true);
+    }
+    return r.release();
+}
+
+void region_destroy(Region* r) {
+    if (!r) return;
+    // Writable again first (faults on armed pages are still handled while this runs), then out of the table.
+    for (uint64_t p = 0; p < r->npages;) {
+        if (!test(r->prot.get(), p)) { ++p; continue; }
+        uint64_t q = p;
+        while (q < r->npages && test(r->prot.get(), q)) ++q;
+        set_bits(r->prot.get(), p, q - p, false);
+        DWORD was = 0;
+        VirtualProtect(reinterpret_cast<void*>(r->base + p * kPage), static_cast<SIZE_T>((q - p) * kPage), PAGE_READWRITE, &was);
+        p = q;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        g_slots[r->slot].store(nullptr, std::memory_order_seq_cst);
+        g_live.fetch_sub(1, std::memory_order_seq_cst);
+    }
+    while (g_busy.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();
+    delete r;
+}
+
+uint64_t region_base(const Region* r) { return r ? r->base : 0; }
+uint64_t region_pages(const Region* r) { return r ? r->npages : 0; }
+
+bool arm(Region* r, uint64_t first, uint64_t count) {
+    if (!r || !count || first >= r->npages || count > r->npages - first) return false;
+    if (any_set(r->ban.get(), first, count)) return false;
+    const uint64_t a = r->base + first * kPage, n = count * kPage;
+    // every page committed read-write (the guest may have changed a protection; a page it made read-only is not ours to take)
+    for (uint64_t cur = a; cur < a + n;) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi) != sizeof mbi || mbi.State != MEM_COMMIT) return false;
+        const DWORD pr = mbi.Protect & 0xff;
+        const bool already = pr == PAGE_READONLY && all_set(r->prot.get(), (cur - r->base) / kPage,
+                                                            (std::min<uint64_t>(a + n, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize) - cur) / kPage);
+        if ((pr != PAGE_READWRITE && !already) || (mbi.Protect & PAGE_GUARD)) return false;
+        cur = std::min<uint64_t>(a + n, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize);
+    }
+    // Bits first: a write that lands before the protection does not fault, and the owner's copy (made after this returns) still sees it.
+    set_bits(r->prot.get(), first, count, true);
+    set_bits(r->valid.get(), first, count, true);
+    DWORD was = 0;
+    if (!VirtualProtect(reinterpret_cast<void*>(a), static_cast<SIZE_T>(n), PAGE_READONLY, &was)) {
+        set_bits(r->valid.get(), first, count, false);
+        set_bits(r->prot.get(), first, count, false);
+        return false;
+    }
+    return true;
+}
+
+bool all_valid(const Region* r, uint64_t first, uint64_t count) {
+    if (!r || !count || first >= r->npages || count > r->npages - first) return false;
+    return all_set(r->valid.get(), first, count);
+}
+
+bool page_valid(const Region* r, uint64_t page) { return r && page < r->npages && test(r->valid.get(), page); }
+bool page_banned(const Region* r, uint64_t page) { return !r || page >= r->npages || test(r->ban.get(), page); }
+
+void invalidate(Region* r, uint64_t first, uint64_t count) {
+    if (!r || first >= r->npages) return;
+    count = std::min(count, r->npages - first);
+    if (count) set_bits(r->valid.get(), first, count, false);
+}
+
+void take_written(Region* r, std::vector<uint64_t>& out) {
+    if (!r) return;
+    for (uint64_t w = 0; w < r->nwords; ++w) {
+        if (!r->written[w].load(std::memory_order_relaxed)) continue;
+        uint64_t v = r->written[w].exchange(0, std::memory_order_acq_rel);
+        while (v) {
+            const unsigned long b = static_cast<unsigned long>(__builtin_ctzll(v));
+            v &= v - 1;
+            const uint64_t page = w * 64 + b;
+            if (page < r->npages) out.push_back(page);
+        }
+    }
+}
+
+void before_os_write(const void* p, uint64_t n) {
+    for_regions(reinterpret_cast<uint64_t>(p), n, [](Region* r, uint64_t first, uint64_t count) {
+        for (uint64_t q = first; q < first + count; ++q)
+            if (test(r->prot.get(), q)) release_page(r, q);
+    });
+}
+
+void forget(uint64_t addr, uint64_t size, bool ban) {
+    for_regions(addr, size, [ban](Region* r, uint64_t first, uint64_t count) {
+        if (ban) set_bits(r->ban.get(), first, count, true);
+        if (!any_set(r->prot.get(), first, count) && !any_set(r->valid.get(), first, count)) return;
+        for (uint64_t q = first; q < first + count; ++q)           // armed pages go back to read-write (the caller may then set its own)
+            if (test(r->prot.get(), q)) release_page(r, q);
+        set_bits(r->valid.get(), first, count, false);
+        set_bits(r->written.get(), first, count, true);
+    });
+}
+
+void ban_section(uint64_t offset, uint64_t size) { forget(kHeapBase + offset, size, true); }
+
+uint64_t faults() { return g_faults.load(std::memory_order_relaxed); }
+
+}  // namespace nxrt::mem::ww

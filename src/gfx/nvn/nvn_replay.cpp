@@ -106,6 +106,15 @@ struct Pass {
 };
 
 Pass P;
+// [nvn] pass_barriers = tracked (S38). A pass whose draws can only have written its attachments (no storage buffers or images, no stream-out)
+// does not end with a barrier: its written attachments are remembered here, and the next command that could depend on them gets one. A
+// layout change of such an image is that barrier for the image (narrow masks, set_narrow_barriers); a later pass that renders to it again in
+// the same layout, and every command other than a pass or a layout change, get a full barrier first (end_pass).
+struct PendingWrite { Ref<Texture> tex; VkImageLayout layout; };
+std::vector<PendingWrite> g_pending;
+bool g_tracked = false;         // this submission uses tracked barriers
+bool g_pass_unsafe = false;     // a draw of the open pass may write memory other than its attachments
+bool g_prog_writes = false;     // the bound program has storage buffer or storage image bindings
 uint32_t g_pass_draws = 0;      // draws recorded in the open pass (GPU pass profiler)
 uint64_t g_pass_verts = 0;      // vertices (indices for indexed draws) times instances of those draws
 Frame* F = nullptr;
@@ -286,8 +295,20 @@ void xfb_end_in_pass() {
     g_xfb_have_counter = true;
 }
 
-void end_pass() {
-    if (!P.open) return;
+// Two texture objects over one image (as shares_image further down, which this code cannot see yet).
+bool same_image(Texture* a, Texture* b) { return a == b || (a && b && a->gpu && a->gpu == b->gpu); }
+
+// to_pass: the caller only starts another pass or changes image layouts next (ensure_pass, prepare_textures); with tracked barriers the pass
+// then ends without a barrier when it only wrote its attachments. Any other caller gets a full barrier, also for passes ended earlier
+// without one.
+void end_pass(bool to_pass = false) {
+    if (!P.open) {
+        if (!to_pass && !g_pending.empty()) {
+            memory_barrier(F->cb);
+            g_pending.clear();
+        }
+        return;
+    }
     xfb_end_in_pass();
     vkCmdEndRendering(F->cb);
     P.open = false;
@@ -300,9 +321,30 @@ void end_pass() {
         std::snprintf(vb, sizeof vb, "gv:%s", b);
         ft::mark(vb, static_cast<uint32_t>(std::min<uint64_t>(g_pass_verts, 0xffffffffull)));
     }
-    memory_barrier(F->cb);
+    if (to_pass && g_tracked && !g_pass_unsafe) {
+        auto remember = [](Texture* t, VkImageLayout l) {
+            if (!t || !tex_gpu(t)) return;
+            for (const PendingWrite& w : g_pending) if (w.tex.get() == t) return;
+            g_pending.push_back({Ref<Texture>::share(t), l});
+        };
+        for (uint32_t i = 0; i < P.ncolor; ++i) remember(P.color[i].tex, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        if (!P.depth_ro) remember(P.depth.tex, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    } else {
+        memory_barrier(F->cb);
+        g_pending.clear();
+    }
+    g_pass_unsafe = false;
     g_bound_pipeline = VK_NULL_HANDLE;
     g_dirty = kAllDirty;
+}
+
+// A pass is about to use `t` as an attachment in `layout`. An earlier pass that ended without a barrier wrote it, and no layout change
+// (which would carry the dependency) happens in between: the two passes need a barrier.
+bool pending_conflict(Texture* t, VkImageLayout layout) {
+    if (!t || g_pending.empty()) return false;
+    for (const PendingWrite& w : g_pending)
+        if (same_image(w.tex.get(), t) && tex_layout(t) == w.layout && layout == w.layout) return true;
+    return false;
 }
 
 Target make_target(Texture* t, const TextureViewInfo& v, bool has_view) {
@@ -337,7 +379,17 @@ bool targets_match() {
 // Starts a pass on the current render targets if none is open for them. False when there is nothing to render to.
 bool ensure_pass(bool depth_ro = false) {
     if (P.open && targets_match() && P.depth_ro == depth_ro) return true;
-    end_pass();
+    end_pass(true);
+    if (!g_pending.empty()) {
+        bool conflict = false;
+        for (uint32_t i = 0; i < S.ncolor && !conflict; ++i) conflict = pending_conflict(S.color_tex[i].get(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        if (!conflict && S.depth_tex)
+            conflict = pending_conflict(S.depth_tex.get(), depth_ro ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        if (conflict) {
+            memory_barrier(F->cb);
+            g_pending.clear();
+        }
+    }
     if (gpass_on()) gpass_stamp(*F, "gap", 0);      // copies, dispatches, barriers and layout changes since the previous pass
     g_pass_draws = 0;
     g_pass_verts = 0;
@@ -687,7 +739,7 @@ void prepare_textures(const ProgLayout& pl) {
         }
     }
     if (need.empty() && need_storage.empty()) return;
-    end_pass();
+    end_pass(true);     // layout changes and uploads follow: each carries the dependency for its own image
     counters().pass_breaks.fetch_add(1, std::memory_order_relaxed);
     for (Texture* t : need) {
         tex_ensure_current(t, *F);
@@ -804,7 +856,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                     const int idx = b.nvn.index;
                     if (idx >= 0 && idx < 16 && S.ubo[d.nvn_stage][idx].addr) {
                         const GState::Bind& bind = S.ubo[d.nvn_stage][idx];
-                        BufRef br = resolve_buffer(bind.addr, bind.size);
+                        BufRef br = resolve_read(bind.addr, std::min<uint64_t>(bind.size, 65536));
                         const VkDeviceSize align = device().properties().limits.minUniformBufferOffsetAlignment;
                         if (br.ok && (br.offset % align) == 0) {
                             bi = {br.buffer, br.offset, std::min<VkDeviceSize>({bind.size ? bind.size : 65536, br.avail, 65536})};
@@ -826,6 +878,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                         const GState::Bind& bind = S.ssbo[d.nvn_stage][slot];
                         BufRef br = resolve_buffer(bind.addr, bind.size);
                         bi = {br.buffer, br.offset, std::min<VkDeviceSize>(bind.size ? bind.size : br.avail, br.avail)};
+                        if (br.ok) note_gpu_write(bind.addr, bi.range);      // a storage buffer may be written by the shader
                     }
                     break;
                 }
@@ -1152,6 +1205,8 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     const ProgLayout* pl = g_pl;
     if (!pl) return false;
     if (g_dirty & (kDesc | kPipe)) {
+        g_prog_writes = false;
+        for (const BindingDesc& d : pl->bindings) g_prog_writes |= d.type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER || d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         g_want_depth_ro = samples_depth_target(*pl);
         prepare_textures(*pl);
         if (g_trace) {   // [nvn] trace_dump_tex: also the block-compressed level 0 as the GPU holds it, to compare with the prepared data
@@ -1172,6 +1227,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     }
     if (g_fb_seen || (g_dirty & (kDesc | kPipe))) feedback_prepare(*pl);
     if (!ensure_pass(g_want_depth_ro)) { log_once("draw-no-target", "draw without a usable render target skipped"); return false; }
+    if (g_prog_writes || g_xfb_active) g_pass_unsafe = true;
     const VkPrimitiveTopology topo = vk_topology(mode);
     if ((g_dirty & kPipe) || topo != g_pipe_topo || !g_pipe) {
         GraphicsKey key;
@@ -1263,6 +1319,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_xfb_active && g_pipe_xfb && !g_xfb_began && device().features().transform_feedback && S.xfb[0].addr) {
         BufRef xb = resolve_buffer(S.xfb[0].addr, S.xfb[0].size);
         if (xb.ok) {
+            note_gpu_write(S.xfb[0].addr, S.xfb[0].size ? S.xfb[0].size : xb.avail);
             if (!g_xfb_counter) {
                 if (device().create_buffer(256, VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Upload,
                                            &g_xfb_counter, "nvn xfb counter") != VK_SUCCESS)
@@ -1295,7 +1352,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
                 continue;
             }
             const GState::Bind& vb = S.vtx[binding];
-            BufRef br = vb.addr ? resolve_buffer(vb.addr, vb.size) : BufRef{dummy_buffer(), 0, 65536, false};
+            BufRef br = vb.addr ? resolve_read(vb.addr, vb.size) : BufRef{dummy_buffer(), 0, 65536, false};
             VkDeviceSize size = vb.size ? std::min<VkDeviceSize>(vb.size, br.avail) : br.avail;
             VkDeviceSize stride = static_cast<VkDeviceSize>(S.stream[binding].stride);
             vkCmdBindVertexBuffers2(F->cb, binding, 1, &br.buffer, &br.offset, &size, &stride);
@@ -1508,7 +1565,7 @@ void do_draw_elements(const P_DrawElements& p) {
         vkCmdBindIndexBuffer(F->cb, u.buffer, u.offset, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(F->cb, static_cast<uint32_t>(idx.size()), std::max<uint32_t>(1, p.instance_count), 0, p.base_vertex, p.base_instance);
     } else {
-        BufRef br = resolve_buffer(p.index_address, static_cast<uint64_t>(p.count) * isz);
+        BufRef br = resolve_read(p.index_address, static_cast<uint64_t>(p.count) * isz);
         vkCmdBindIndexBuffer(F->cb, br.buffer, br.offset, vk_index_type(static_cast<int>(p.type)));
         vkCmdDrawIndexed(F->cb, p.count, std::max<uint32_t>(1, p.instance_count), 0, p.base_vertex, p.base_instance);
     }
@@ -1721,6 +1778,7 @@ void do_copy_buffer_texture(const P_CopyBufTex& p, bool to_texture) {
         tex_ensure_current(t, *F);
         tex_transition(t, *F, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         vkCmdCopyImageToBuffer(F->cb, tex_image(t), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, br.buffer, 1, &c);
+        note_gpu_write(p.address, stride * ((rh + bh - 1) / bh) * rd);
     }
     memory_barrier(F->cb);
     counters().copies.fetch_add(1, std::memory_order_relaxed);
@@ -1793,6 +1851,7 @@ void do_write_memory(uint64_t gpu_addr, const void* data, uint32_t size) {
     memory_barrier(F->cb);
     BufRef b = resolve_buffer(gpu_addr, size);
     if (!b.ok) return;
+    note_gpu_write(gpu_addr, size);
     vkCmdUpdateBuffer(F->cb, b.buffer, b.offset, size, data);
     memory_barrier(F->cb);
 }
@@ -1960,6 +2019,7 @@ void run_list(const CmdList& list, int depth) {
                 end_pass();
                 BufRef b = resolve_buffer(p.address, p.size);
                 if (b.ok) vkCmdFillBuffer(F->cb, b.buffer, b.offset, p.size & ~3ull, p.value);
+                if (b.ok) note_gpu_write(p.address, p.size);
                 memory_barrier(F->cb);
                 counters().clears.fetch_add(1);
                 break;
@@ -1971,6 +2031,7 @@ void run_list(const CmdList& list, int depth) {
                 if (s.ok && d.ok) {
                     VkBufferCopy c = {s.offset, d.offset, p.size};
                     vkCmdCopyBuffer(F->cb, s.buffer, d.buffer, 1, &c);
+                    note_gpu_write(p.dst, p.size);
                 }
                 memory_barrier(F->cb);
                 counters().copies.fetch_add(1);
@@ -2149,6 +2210,23 @@ void replay_begin_submit(Frame& f) {
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     for (int64_t e : g_trace_extra) g_trace |= static_cast<int64_t>(counters().presents.load()) == e;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }
+    {   // S38: device-local pool copies and tracked barriers. [nvn] gpuperf_ab = N: both are off in even windows of N presents and on in odd
+        // ones (the paired-window measurement of S29); without it they follow their own settings.
+        static const int64_t ab = config_get_int("nvn", "gpuperf_ab", 0);
+        static const bool tracked = config_get_str("nvn", "pass_barriers", "full") == "tracked";
+        static int last_on = -1;
+        bool on = true;
+        if (ab > 0) on = ((counters().presents.load() / static_cast<uint64_t>(ab)) & 1) != 0;
+        if (static_cast<int>(on) != last_on) {
+            last_on = on ? 1 : 0;
+            if (ab > 0) ft::mark(on ? "gpuperf.on" : "gpuperf.off", static_cast<uint32_t>(counters().presents.load()));
+        }
+        g_tracked = on && tracked;
+        set_narrow_barriers(g_tracked);
+        g_pending.clear();
+        g_pass_unsafe = false;
+        mirror_begin_submit(f, on);
+    }
     S.window_origin = window_origin_mode();
     S.depth_mode = depth_mode();
     g_draw_idx = 0;
@@ -2238,6 +2316,7 @@ void replay_shutdown() {
     pipeline_shutdown();
     S = GState();
     P = Pass();
+    g_pending.clear();
     g_set_cache.clear();
     g_fb_use.clear();
     g_fb_clone.clear();
