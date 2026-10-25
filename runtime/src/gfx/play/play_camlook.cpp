@@ -15,6 +15,13 @@ void LookOffsets::add(double dx, double dy, const LookParams& p) {
     if (std::fabs(yaw_) > kTwoPi) yaw_ = std::remainder(yaw_, kTwoPi);
 }
 
+void LookOffsets::add_angles(double dyaw, double dpitch, const LookParams& p) {
+    yaw_ += dyaw;
+    pitch_ = std::max(-p.pitch_limit_rad, std::min(p.pitch_limit_rad, pitch_ + dpitch));
+    const double kTwoPi = 6.28318530717958647692;
+    if (std::fabs(yaw_) > kTwoPi) yaw_ = std::remainder(yaw_, kTwoPi);
+}
+
 namespace {
 // Rodrigues: rotation matrix (row-major 3x3) about the unit axis a by angle t.
 void axis_angle(const double a[3], double t, double r[9]) {

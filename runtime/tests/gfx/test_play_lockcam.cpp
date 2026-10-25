@@ -4,6 +4,7 @@
 // pointers, and every offset is set through AimLayout.
 #include "test_framework.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -11,6 +12,7 @@
 
 #include "play/play_aim.h"
 #include "play/play_lockcam.h"
+#include "play/play_lookrate.h"
 
 NXTEST_GROUP(play_lockcam)
 
@@ -475,4 +477,139 @@ NXTEST(turn_ramp_ignores_bad_dt_and_nan_target) {
     CHECK(omega == 1.5);
     play::turn_ramp_step(&omega, std::nan(""), 1.0 / 60.0, tau_up, tau_down);
     CHECK(omega == 1.5);
+}
+
+namespace {
+
+// One step of the freelook hook as it runs the carry (play_lockcam.cpp), against a float on the host heap that stands for the game's pitch target. game(t)
+// is what the game's own call does to the target. Returns the number in the target after the step.
+struct CarryRig {
+    alignas(16) float target = 0.f;
+    play::LookCarry carry;
+    uint64_t at() const { return A(&target); }
+    template <class F>
+    float step(F game, double phase, double limit = 1.5184) {
+        if (!carry.begin(1, at())) return target;
+        carry.restore(at());
+        target = game(target);
+        carry.after_call(at());
+        carry.finish(at(), phase, limit);
+        return target;
+    }
+};
+
+}  // namespace
+
+NXTEST(carry_accumulating_target_is_carried_on_and_restored) {
+    CarryRig r;
+    auto up = [](float t) { return t + 0.02f; };
+    r.step(up, 0.5);      // history is still flat: nothing carried
+    CHECK_NEAR(r.target, 0.02, 1e-6);
+    r.step(up, 0.5);      // two equal speeds in a row: carried half a call on
+    CHECK_NEAR(r.carry.cur(), 0.04, 1e-6);
+    CHECK_NEAR(r.target, 0.04 + 0.01, 1e-6);
+    r.step(up, 0.5);      // the game gets its own 0.04 back and adds 0.02
+    CHECK_NEAR(r.carry.cur(), 0.06, 1e-6);
+    CHECK_NEAR(r.target, 0.06 + 0.01, 1e-6);
+    r.step(up, 0.0);      // 60 steps per second: no carry at all
+    CHECK_NEAR(r.target, 0.08, 1e-6);
+}
+
+NXTEST(carry_target_set_outright_is_not_extrapolated) {
+    // Classic with ZR held, Pointer: the game sets the target from the input, it does not accumulate
+    CarryRig r;
+    auto hold0 = [](float) { return 0.f; };
+    auto set5 = [](float) { return 0.5f; };
+    r.step(hold0, 1.0);
+    r.step(hold0, 1.0);
+    r.step(set5, 1.0);      // a jump from rest
+    CHECK_NEAR(r.target, 0.5, 1e-6);      // it used to be 1.0 here (0.5 + 0.5 * phase)
+    r.step(set5, 1.0);
+    CHECK_NEAR(r.target, 0.5, 1e-6);
+    r.step(hold0, 1.0);      // back to level
+    CHECK_NEAR(r.target, 0.0, 1e-6);
+}
+
+NXTEST(carry_stops_at_once_when_the_stick_is_let_go) {
+    CarryRig r;
+    auto up = [](float t) { return t + 0.02f; };
+    auto rest = [](float t) { return t; };
+    for (int i = 0; i < 4; ++i) r.step(up, 0.75);
+    r.step(rest, 0.75);
+    CHECK_NEAR(r.target, 0.08, 1e-6);      // the game's own target, no lead left
+    r.step(rest, 0.75);
+    CHECK_NEAR(r.target, 0.08, 1e-6);
+}
+
+NXTEST(carry_is_held_inside_the_pitch_limits) {
+    CarryRig r;
+    r.target = 1.46f;
+    auto up = [](float t) { return std::min(t + 0.02f, 1.50f); };      // the game's own limit is a little inside the aim's
+    for (int i = 0; i < 8; ++i) {
+        r.step(up, 1.0, 1.5184);
+        CHECK_MSG(r.target <= 1.5184f + 1e-6f, "step " + std::to_string(i) + ": " + std::to_string(r.target));
+    }
+    CarryRig d;
+    d.target = -1.46f;
+    auto down = [](float t) { return std::max(t - 0.02f, -1.50f); };
+    for (int i = 0; i < 8; ++i) {
+        d.step(down, 1.0, 1.5184);
+        CHECK_MSG(d.target >= -1.5184f - 1e-6f, "step " + std::to_string(i) + ": " + std::to_string(d.target));
+    }
+}
+
+NXTEST(carry_release_puts_the_games_target_back) {
+    // the gyro button is pressed (the clock goes off): the carried offset must not stay in the game's target
+    CarryRig r;
+    auto up = [](float t) { return t + 0.02f; };
+    for (int i = 0; i < 4; ++i) r.step(up, 0.5);
+    CHECK_NEAR(r.target, 0.08 + 0.01, 1e-6);
+    CHECK_NEAR(r.carry.cur(), 0.08, 1e-6);
+    r.carry.release(1, r.at());
+    CHECK_NEAR(r.target, 0.08, 1e-6);
+    CHECK(!r.carry.have());
+    // nothing to release now: the memory is left alone, whatever it holds
+    r.target = 0.3f;
+    r.carry.release(1, r.at());
+    CHECK(r.target == 0.3f);
+    // and the next timed step starts from what the game has
+    r.step(up, 0.5);
+    CHECK_NEAR(r.target, 0.32, 1e-6);
+}
+
+NXTEST(carry_release_keeps_what_else_moved_the_target) {
+    CarryRig r;
+    auto up = [](float t) { return t + 0.02f; };
+    for (int i = 0; i < 4; ++i) r.step(up, 0.5);
+    r.target += 0.1f;      // the mouse moved the target by 0.1 after the hook left it
+    r.carry.release(1, r.at());
+    CHECK_NEAR(r.target, 0.18, 1e-6);
+}
+
+NXTEST(carry_release_for_another_player_or_an_unreadable_target_does_nothing) {
+    auto up = [](float t) { return t + 0.02f; };
+    CarryRig r;
+    for (int i = 0; i < 4; ++i) r.step(up, 0.5);
+    const float before = r.target;
+    r.carry.release(2, r.at());      // another player object
+    CHECK(r.target == before);
+    CHECK(!r.carry.have());
+
+    CarryRig n;
+    for (int i = 0; i < 4; ++i) n.step(up, 0.5);
+    n.target = std::nanf("");
+    n.carry.release(1, n.at());
+    CHECK(std::isnan(n.target));
+    CHECK(!n.carry.have());
+}
+
+NXTEST(carry_begin_fails_on_a_bad_target_and_drops_the_carry) {
+    CarryRig r;
+    auto up = [](float t) { return t + 0.02f; };
+    for (int i = 0; i < 3; ++i) r.step(up, 0.5);
+    CHECK(r.carry.have());
+    r.target = std::nanf("");
+    CHECK(!r.carry.begin(1, r.at()));
+    CHECK(!r.carry.have());
+    CHECK(!r.carry.begin(1, 0));      // an address that cannot be read
 }

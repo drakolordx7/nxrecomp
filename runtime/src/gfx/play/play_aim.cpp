@@ -33,6 +33,26 @@ bool guest_write(uint64_t addr, const void* in, size_t n) {
     }
 }
 
+bool shift_look_filter(uint64_t filter, float d) {
+    if (filter < 0x10000 || !std::isfinite(d)) return false;
+    static const uint32_t kCount[3] = {8, 76, 120}, kFirst[3] = {12, 80, 124};
+    static const int32_t kCap[3] = {16, 10, 10};      // floats each array holds: +12 to +76 has room for 16, +80 to +120 for 10, and the same for the third
+    int32_t n[3];
+    for (int i = 0; i < 3; ++i)
+        if (!guest_read(filter + kCount[i], &n[i], sizeof n[i]) || n[i] < 1 || n[i] > kCap[i]) return false;
+    float v[3][16];
+    for (int i = 0; i < 3; ++i) {
+        if (!guest_read(filter + kFirst[i], v[i], sizeof(float) * n[i])) return false;
+        for (int k = 0; k < n[i]; ++k)
+            if (!std::isfinite(v[i][k])) return false;
+    }
+    for (int i = 0; i < 3; ++i) {      // nothing is written unless all three arrays were fine
+        for (int k = 0; k < n[i]; ++k) v[i][k] += d;
+        if (!guest_write(filter + kFirst[i], v[i], sizeof(float) * n[i])) return false;
+    }
+    return true;
+}
+
 namespace {
 template <class T>
 bool rd(uint64_t a, T* v) { return guest_read(a, v, sizeof(T)); }
@@ -271,8 +291,22 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
         else guest_write(xfp, nx, sizeof nx);
     }
     const float pre = static_cast<float>(pitch_);
-    guest_write(player + l_.free_look_pitch, &pre, sizeof pre);       // what the mouse made of it, before the game reads the stick
-    guest_write(player + l_.free_look_target, &pre, sizeof pre);
+    if (p.pad_look) {
+        // The pad is looking: the game's pitch and its target (which the stick moves, through the smoothing filter) are its own. The mouse (or the free lock's margin)
+        // only moves them both by what it added this call; writing the target outright would cut the stick's lead every frame.
+        const float moved = pre - cur_pitch;
+        float target = 0;
+        if (std::isfinite(cur_pitch) && moved != 0.f && rd(player + l_.free_look_target, &target) && std::isfinite(target)) {
+            const float t2 = static_cast<float>(std::max(-limit_, std::min(limit_, static_cast<double>(target) + moved)));
+            guest_write(player + l_.free_look_pitch, &pre, sizeof pre);
+            guest_write(player + l_.free_look_target, &t2, sizeof t2);
+            // the smoothing filter of the target remembers where the target was: move its memory with it, or it pulls the target back
+            if (l_.look_filter) shift_look_filter(rd64(player + l_.look_filter), t2 - target);
+        }
+    } else {
+        guest_write(player + l_.free_look_pitch, &pre, sizeof pre);       // what the mouse made of it, before the game reads the stick
+        guest_write(player + l_.free_look_target, &pre, sizeof pre);
+    }
     if (original) original();
     if (!p.pad_look) {
         const float out = static_cast<float>(pitch_);

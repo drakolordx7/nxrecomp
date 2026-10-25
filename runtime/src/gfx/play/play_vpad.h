@@ -10,6 +10,9 @@ namespace nxrt::play {
 // for a value out of range, and for a set command while no pad is attached.
 bool vpad_command(const char* args);
 
+// Detaches the virtual pad if one is attached (play mode's stop calls it); does nothing when there is none.
+void vpad_shutdown();
+
 // What the game has asked the virtual pad to rumble, as SDL's Rumble callback reported it.
 // low and high are SDL's 16-bit motor values; calls counts every callback since the last attach.
 struct VpadRumble {
