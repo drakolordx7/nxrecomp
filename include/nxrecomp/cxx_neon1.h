@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Helpers for tier-2 code of one instruction family (see nxrecomp/lift/tier2/x_*.py). Included at the end of cxx.h.
-// Stream neon1: AdvSIMD integer narrowing, saturating and shift forms (x_neon1.py).
+// Family neon1: AdvSIMD integer narrowing, saturating and shift forms (x_neon1.py).
 //
 // Lane values travel as zero-extended uint64_t holding the element's bit pattern; E is the element width in bits
 // (8, 16, 32 or 64) unless a helper says otherwise. Intermediate arithmetic is done in __int128 where a 64-bit lane
