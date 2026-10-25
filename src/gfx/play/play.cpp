@@ -34,6 +34,7 @@
 #include "play_camlook.h"
 #include "play_display.h"
 #include "play_scenefix.h"
+#include "mpr/mpr_fastboot.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -633,6 +634,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             extras::hdr_refresh_levels();
             apply_fps_counter(s.fps);
             lockcam_set(s);
+            fastboot_set(s);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -1228,6 +1230,8 @@ bool start(const StartOptions& opt) {
     scenefix_install(st.base);
     lockcam_set(st.settings);
     mm::game_install(st.base);
+    fastboot_install(st.base);
+    fastboot_set(st.settings);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
             static_cast<unsigned long long>(st.base), st.hook_update, st.hook_input);
@@ -1238,6 +1242,7 @@ void stop() {
     G& st = g();
     if (!st.started) return;
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
+    fastboot_remove();
     mm::game_remove();
     lockcam_remove();
     scenefix_remove();

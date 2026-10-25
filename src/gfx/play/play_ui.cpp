@@ -736,6 +736,7 @@ void extras_tab(Page& p) {
     hdr_group(p);
     upscale_group(p);
     latency_group(p);
+    if (fastboot_ui(p.edit.fastboot)) mark(p);   // start-up and menu tweaks (play_ui_fastboot.cpp)
 }
 
 // ---- Bindings -----------------------------------------------------------------------------------------------------------------------
