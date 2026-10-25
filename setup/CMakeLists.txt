@@ -41,7 +41,12 @@ function(mprs_lib name)
     endif()
 endfunction()
 
-mprs_lib(mprs_base util.cpp storage.cpp log.cpp)
+# The game this setup is built for (src/game.h): its title id, build id, version and file names, from src/games/<MPRS_GAME>.cpp.
+set(MPRS_GAME "mpr" CACHE STRING "id of the game the setup tool is built for (src/games/<id>.cpp)")
+if(NOT EXISTS ${S}/games/${MPRS_GAME}.cpp)
+    message(FATAL_ERROR "MPRS_GAME=${MPRS_GAME}: src/games/${MPRS_GAME}.cpp not found")
+endif()
+mprs_lib(mprs_base util.cpp storage.cpp log.cpp games/${MPRS_GAME}.cpp)
 mprs_lib(mprs_crypto crypto.cpp fileio.cpp)
 if(TARGET mprs_crypto)
     target_link_libraries(mprs_crypto PUBLIC mprs_base bcrypt)

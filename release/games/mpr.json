@@ -1,0 +1,11 @@
+{
+  "_comment": "Names of the Metroid Prime Remastered release (make_release.py GAME; runtime/docs/GAME_BOUNDARY.md). The exe, setup and launcher names must match the runtime's game module (runtime/games/mpr/mpr_data.cpp) and the setup tool (tools/setup/src/games/mpr.cpp).",
+  "release_prefix": "mpr",
+  "exe": "mpr.exe",
+  "setup_exes": ["mpr_setup.exe", "mpr_setup_cli.exe"],
+  "setup_glob": "mpr_setup*.exe",
+  "launcher": "mpr_launcher.exe",
+  "game_ini": "mpr.ini",
+  "shader_pack": "shader_cache.mprshc",
+  "shader_pack_magic": "MPRSHC01"
+}
