@@ -17,6 +17,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nvn_decoded.h"
 #include "nvn_enums.h"
@@ -105,6 +106,8 @@ struct Pass {
 };
 
 Pass P;
+uint32_t g_pass_draws = 0;      // draws recorded in the open pass (GPU pass profiler)
+uint64_t g_pass_verts = 0;      // vertices (indices for indexed draws) times instances of those draws
 Frame* F = nullptr;
 std::unordered_map<uint64_t, VkDescriptorSet> g_set_cache;
 VkPipeline g_bound_pipeline = VK_NULL_HANDLE;
@@ -159,6 +162,7 @@ gfx::Buffer g_xfb_counter;
 // Primitive counters (NVN_COUNTER_TYPE_PRIMITIVES_GENERATED = 13, TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN = 14): counted on the CPU by every
 // draw (count_primitives), process-wide like the console's, zeroed by ResetCounter of their type, dropped at shutdown.
 uint64_t g_prims_generated = 0, g_prims_xfb = 0;
+nxrt::GaugeCounter g_gauge_pipeline_binds("nvn.cnt.pipeline_binds");   // graphics pipeline binds (cumulative)
 VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
 bool g_trace = false;
 struct TraceSnap { int index; int draw; std::string name; std::string desc; };
@@ -287,6 +291,15 @@ void end_pass() {
     xfb_end_in_pass();
     vkCmdEndRendering(F->cb);
     P.open = false;
+    if (gpass_on()) {
+        char b[112];
+        std::snprintf(b, sizeof b, "pass %ux%u c%u:%d d%d%s", P.extent.width, P.extent.height, P.ncolor, static_cast<int>(P.color_fmt[0]), static_cast<int>(P.depth_fmt),
+                      P.depth_ro ? " ro" : "");
+        gpass_stamp(*F, b, g_pass_draws);
+        char vb[128];
+        std::snprintf(vb, sizeof vb, "gv:%s", b);
+        ft::mark(vb, static_cast<uint32_t>(std::min<uint64_t>(g_pass_verts, 0xffffffffull)));
+    }
     memory_barrier(F->cb);
     g_bound_pipeline = VK_NULL_HANDLE;
     g_dirty = kAllDirty;
@@ -325,6 +338,9 @@ bool targets_match() {
 bool ensure_pass(bool depth_ro = false) {
     if (P.open && targets_match() && P.depth_ro == depth_ro) return true;
     end_pass();
+    if (gpass_on()) gpass_stamp(*F, "gap", 0);      // copies, dispatches, barriers and layout changes since the previous pass
+    g_pass_draws = 0;
+    g_pass_verts = 0;
     P = Pass();
     P.depth_ro = depth_ro;
     VkRenderingAttachmentInfo colors[8] = {};
@@ -582,12 +598,20 @@ bool is_color_feedback(Texture* t) {
 // A draw that samples its own colour attachment (the bloom composite of some frames reads the tone-mapped picture while it writes it back, one
 // pixel at a time): the console allows that, Vulkan has no such loop. The draw samples a copy of the image made just before it, which holds the
 // same values a pointwise read sees on the hardware (and the right ones when the shader reads another mip level of the attachment).
-std::unordered_map<Texture*, Ref<Texture>> g_fb_clone;     // attachment -> its copy (same shape, no storage in game memory)
+struct FbClone {
+    Ref<Texture> tex;
+    uint64_t last = 0;                                     // serial of the last submission that used the copy
+};
+std::unordered_map<Texture*, FbClone> g_fb_clone;          // attachment -> its copy (same shape, no storage in game memory)
 std::unordered_map<Texture*, Texture*> g_fb_use;           // attachment -> the copy the current draw samples
 bool g_fb_seen = false;                                    // the last check found a feedback binding: check every draw until it goes away
+std::atomic<int64_t> g_fb_clone_n{0};                      // g_fb_clone's size, mirrored for the gauge (the map itself is render thread only)
 
 Texture* feedback_clone(Texture* t) {
-    Ref<Texture>& c = g_fb_clone[t];
+    FbClone& fe = g_fb_clone[t];
+    fe.last = F ? F->serial : 0;
+    Ref<Texture>& c = fe.tex;
+    g_fb_clone_n.store(static_cast<int64_t>(g_fb_clone.size()), std::memory_order_relaxed);
     if (c && (c->b.width != t->b.width || c->b.height != t->b.height || c->b.depth != t->b.depth || c->fmt != t->fmt || c->levels != t->levels || c->layers != t->layers))
         c = Ref<Texture>();                                 // the game made another texture at this address
     if (!c) {
@@ -1233,6 +1257,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (g_pipe != g_bound_pipeline) {
         xfb_end_in_pass();     // the pipeline cannot change while feedback is active; the byte counter carries the position over
         vkCmdBindPipeline(F->cb, VK_PIPELINE_BIND_POINT_GRAPHICS, g_pipe);
+        g_gauge_pipeline_binds.add(1);
         g_bound_pipeline = g_pipe;
     }
     if (g_xfb_active && g_pipe_xfb && !g_xfb_began && device().features().transform_feedback && S.xfb[0].addr) {
@@ -1382,6 +1407,8 @@ void do_draw_arrays(const P_DrawArrays& p) {
         vkCmdDrawIndexed(F->cb, static_cast<uint32_t>(idx.size()), std::max<uint32_t>(1, p.instance_count), 0, 0, p.base_instance);
     }
     counters().draws.fetch_add(1, std::memory_order_relaxed);
+    g_pass_draws++;
+    g_pass_verts += static_cast<uint64_t>(p.count) * std::max<uint32_t>(1, p.instance_count);
     trace_snap_after_draw();
 }
 
@@ -1486,6 +1513,8 @@ void do_draw_elements(const P_DrawElements& p) {
         vkCmdDrawIndexed(F->cb, p.count, std::max<uint32_t>(1, p.instance_count), 0, p.base_vertex, p.base_instance);
     }
     counters().draws.fetch_add(1, std::memory_order_relaxed);
+    g_pass_draws++;
+    g_pass_verts += static_cast<uint64_t>(p.count) * std::max<uint32_t>(1, p.instance_count);
     trace_snap_after_draw();
 }
 
@@ -1514,6 +1543,7 @@ void do_draw_indirect(const P_DrawIndirect& p) {
         vkCmdDrawIndirect(F->cb, ib.buffer, ib.offset, 1, 16);
     }
     counters().draws.fetch_add(1, std::memory_order_relaxed);
+    g_pass_draws++;
     trace_snap_after_draw();
 }
 
@@ -2170,9 +2200,23 @@ void trace_dump_targets() {
     }
 }
 
+// The copies of feedback attachments are keyed by the attachment's address. A texture the game finalizes (every area load makes new render
+// targets) leaves its copy behind, a full-size image each (S34 soak: 500 an hour, about 3 GB an hour of GPU memory). A copy that no submission
+// has used for kFbIdleSubmits is released; one that is still in use stays (and one released too early is made again on its next use).
+constexpr uint64_t kFbIdleSubmits = 600;
+void fb_sweep(uint64_t serial) {
+    g_fb_use.clear();       // raw pointers into the copies: none is in use between two submissions
+    for (auto it = g_fb_clone.begin(); it != g_fb_clone.end();) {
+        if (serial > it->second.last + kFbIdleSubmits) it = g_fb_clone.erase(it);
+        else ++it;
+    }
+    g_fb_clone_n.store(static_cast<int64_t>(g_fb_clone.size()), std::memory_order_relaxed);
+}
+
 void replay_end_submit(Frame& f) {
     F = &f;
     end_pass();
+    if ((f.serial & 127) == 0 && !g_fb_clone.empty()) fb_sweep(f.serial);
     if (g_occ_active >= 0) {   // a query cannot outlive its command buffer: the count of an unreported counter is dropped
         vkCmdEndQuery(f.cb, g_occ_pool, static_cast<uint32_t>(g_occ_active));
         g_occ_active = -1;
@@ -2197,6 +2241,18 @@ void replay_shutdown() {
     g_set_cache.clear();
     g_fb_use.clear();
     g_fb_clone.clear();
+    g_fb_clone_n.store(0, std::memory_order_relaxed);
 }
+
+// Gauge (nxrt/gauge.h): reads the atomic mirror above, never the map. Removed before the globals are destroyed.
+namespace {
+struct ReplayGauges {
+    ReplayGauges() {
+        nxrt::gauge_register("nvn.replay.fb_clones", [] { return g_fb_clone_n.load(std::memory_order_relaxed); });
+    }
+    ~ReplayGauges() { nxrt::gauge_unregister("nvn.replay.fb_clones"); }
+};
+ReplayGauges g_replay_gauges;
+}  // namespace
 
 }  // namespace nxrt::nvn::be::gpu

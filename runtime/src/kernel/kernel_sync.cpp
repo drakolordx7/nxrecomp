@@ -9,12 +9,14 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <string>
 #include <atomic>
 #include <vector>
 
 #include "kernel_internal.h"
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 
@@ -340,5 +342,28 @@ void notify_waitable_changed() {
     Guard g;
     for (KThread* t : g_sync_waiters) WakeConditionVariable(thread_cv(*t));
 }
+
+// ---- gauges (include/nxrt/gauge.h): wait-queue lengths ----
+namespace {
+// Removes its gauge when the file's statics are torn down (declared after the wait queues, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+
+// Length of one wait queue under the kernel lock. The sampler never waits for the kernel lock: -1 while a thread holds it.
+int64_t queue_len(const std::vector<KThread*>& v) {
+    if (!TryAcquireSRWLockExclusive(&g_k)) return -1;
+    const int64_t n = static_cast<int64_t>(v.size());
+    ReleaseSRWLockExclusive(&g_k);
+    return n;
+}
+
+GaugeHook gauge_wait_sync("kernel.waiters_sync", [] { return queue_len(g_sync_waiters); });
+GaugeHook gauge_wait_mutex("kernel.waiters_mutex", [] { return queue_len(g_mutex_waiters); });
+GaugeHook gauge_wait_cv("kernel.waiters_cv", [] { return queue_len(g_cv_waiters); });
+GaugeHook gauge_wait_addr("kernel.waiters_addr", [] { return queue_len(g_addr_waiters); });
+}  // namespace
 
 }  // namespace nxrt::kernel

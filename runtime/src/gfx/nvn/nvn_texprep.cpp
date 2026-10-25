@@ -17,6 +17,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 
@@ -68,6 +69,7 @@ struct State {
 State* g_state = nullptr;
 std::once_flag g_once;
 std::atomic<int> g_enabled{-1};
+nxrt::GaugeCounter g_staged_bytes_total("nvn.texprep.staged_bytes_total");   // bytes of prepared results copied into upload buffers, ever
 
 State& S() { return *g_state; }
 
@@ -235,6 +237,7 @@ void worker_main() {
                     std::memcpy(stage.mapped, res->data.data(), res->data.size());
                     gpu::device().flush_buffer(stage);
                     staged_size = res->data.size();
+                    g_staged_bytes_total.add(static_cast<int64_t>(staged_size));
                     std::vector<uint8_t>().swap(res->data);
                 } else if (stage) {
                     gpu::device().destroy_buffer(stage);
@@ -295,6 +298,23 @@ void init_once() {
     std::call_once(g_once, [] {
         g_state = new State();   // never destroyed: the workers run until the process ends
         State& s = S();
+        // Gauges (nxrt/gauge.h). State is never destroyed, so the callbacks stay valid for the life of the process.
+        nxrt::gauge_register("nvn.texprep.entries", [] {
+            std::lock_guard<std::mutex> lk(S().mu);
+            return static_cast<int64_t>(S().map.size());
+        });
+        nxrt::gauge_register("nvn.texprep.bytes", [] {
+            std::lock_guard<std::mutex> lk(S().mu);
+            return static_cast<int64_t>(S().held_bytes);
+        });
+        nxrt::gauge_register("nvn.texprep.queue", [] {
+            std::lock_guard<std::mutex> lk(S().mu);
+            return static_cast<int64_t>(S().q.size());
+        });
+        nxrt::gauge_register("nvn.texprep.waiting", [] {
+            std::lock_guard<std::mutex> lk(S().mu);
+            return static_cast<int64_t>(S().waiting.size());
+        });
         const bool on = config_get_bool("nvn", "tex_prep", true);
         if (!on) {
             g_enabled.store(0);

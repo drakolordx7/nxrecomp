@@ -10,6 +10,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/eh.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/hooks.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
@@ -61,6 +62,8 @@ bool init(const InitOptions& opt) {
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
+    soak_start();               // gauge sampler ([diag] soak_csv); a no-op when unset
+    prof_sampler_start();       // sampling profiler ([prof] sample_hz); a no-op when unset
     ft::start_from_config();    // frame trace ([prof] trace); a no-op when unset
     tt::init();                 // test tooling (deterministic mode, scripted runs, traces); a no-op unless a [test] key asks for it
     timestep::init();           // real-time frame step for the game ([time] section; the hooks do nothing until the lifted game calls them)
@@ -90,8 +93,8 @@ std::string summary() {
         s += "c++ exceptions: " + std::to_string(e.raised) + " raised, " + std::to_string(e.resumed) + " resumed, " + std::to_string(e.caught) + " caught, " +
              std::to_string(e.cleanups) + " cleanup landings, " + std::to_string(e.uncaught) + " uncaught, " + std::to_string(e.frames_walked) + " frames walked\n";
     }
-    s += "lifted functions: " + std::to_string(fn_count()) + ", modules: " + std::to_string(modules().size()) + ", threads created: " +
-         std::to_string(kernel::threads().size()) + ", handles open: " + std::to_string(kernel::handle_count()) + "\n";
+    s += "lifted functions: " + std::to_string(fn_count()) + ", modules: " + std::to_string(modules().size()) + ", live threads: " +
+         std::to_string(kernel::thread_count_running()) + ", handles open: " + std::to_string(kernel::handle_count()) + "\n";
     return s;
 }
 
@@ -101,6 +104,8 @@ void shutdown() {
     NXLOG_I("runtime", "end-of-run summary:\n%s", summary().c_str());
     timestep::shutdown();
     tt::shutdown();
+    prof_sampler_stop();
+    soak_stop();
     watchdog_stop();
     kernel::starvation_guard_stop();
     memguard_stop();

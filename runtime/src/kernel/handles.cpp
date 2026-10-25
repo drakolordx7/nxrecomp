@@ -2,8 +2,10 @@
 // Kernel handle table (include/nxrt/kernel.h). Pattern from SuperMarioWonderRecomp runtime/src/kernel.cpp handle_add/get/close (MIT).
 #include <windows.h>
 
+#include <functional>
 #include <unordered_map>
 
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 
 namespace nxrt::kernel {
@@ -63,5 +65,34 @@ void handles_reset() {
     g_next = 0x10000;
     ReleaseSRWLockExclusive(&g_lock);
 }
+
+// ---- gauges (include/nxrt/gauge.h): live handles per object type ----
+namespace {
+// Removes its gauge when the file's statics are torn down (the hooks are declared after g_handles, so they go first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+
+// Handle-table entries of one object type: a walk of at most 0x3000 entries under the table lock (shared).
+size_t count_type(ObjType t) {
+    AcquireSRWLockShared(&g_lock);
+    size_t n = 0;
+    for (const auto& kv : g_handles)
+        if (kv.second->type() == t) n++;
+    ReleaseSRWLockShared(&g_lock);
+    return n;
+}
+
+GaugeHook gauge_handles("kernel.handles", [] { return static_cast<int64_t>(handle_count()); });
+GaugeHook gauge_obj_thread("kernel.obj_thread", [] { return static_cast<int64_t>(count_type(ObjType::Thread)); });
+GaugeHook gauge_obj_event("kernel.obj_event", [] { return static_cast<int64_t>(count_type(ObjType::Event)); });
+GaugeHook gauge_obj_session("kernel.obj_session", [] { return static_cast<int64_t>(count_type(ObjType::Session)); });
+GaugeHook gauge_obj_shared_mem("kernel.obj_shared_mem", [] { return static_cast<int64_t>(count_type(ObjType::SharedMemory)); });
+GaugeHook gauge_obj_transfer_mem("kernel.obj_transfer_mem", [] { return static_cast<int64_t>(count_type(ObjType::TransferMemory)); });
+GaugeHook gauge_obj_process("kernel.obj_process", [] { return static_cast<int64_t>(count_type(ObjType::Process)); });
+GaugeHook gauge_obj_port("kernel.obj_port", [] { return static_cast<int64_t>(count_type(ObjType::Port)); });
+}  // namespace
 
 }  // namespace nxrt::kernel

@@ -19,6 +19,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
+#include "nxrt/gauge.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
@@ -63,14 +64,19 @@ void appendf(std::string& out, const char* fmt, ...) {
 // Phase one. The registry snapshot and every allocation happen before the first thread is suspended. While a thread is
 // suspended nothing allocates and nothing logs, because the suspended thread may hold the heap or the log lock.
 void collect_threads(std::vector<ThreadDump>& out) {
-    std::vector<ThreadRecord> recs = diag_threads();
+    // Private handle duplicates (made under the registry lock): a thread unregistering mid-dump cannot close or recycle ours.
+    std::vector<ThreadRecord> recs = diag_threads_dup();
+    struct Release {
+        std::vector<ThreadRecord>& v;
+        ~Release() { diag_threads_release(v); }   // runs on every path; CloseHandle does not allocate, and all threads are resumed by then
+    } release{recs};
     const DWORD self = GetCurrentThreadId();
     out.clear();
     out.reserve(recs.size());
     for (ThreadRecord& r : recs) {
         if (r.host_tid == self) continue;  // the calling thread is not dumped
         out.emplace_back();
-        out.back().rec = std::move(r);
+        out.back().rec = r;                // copy: recs keeps the handle so the release above closes it
     }
     for (ThreadDump& d : out) {
         HANDLE h = static_cast<HANDLE>(d.rec.host_handle);
@@ -113,6 +119,7 @@ void collect_threads(std::vector<ThreadDump>& out) {
         d.guest_sp = gsp;
         d.guest_fp = gfp;
     }
+    for (ThreadDump& d : out) d.rec.host_handle = nullptr;   // the copies are about to dangle; phase two never needs them
 }
 
 // Phase two: text for the collected threads. Runs with every thread resumed.
@@ -378,6 +385,7 @@ void diag_progress() { g_progress.fetch_add(1, std::memory_order_relaxed); }
 void diag_frame_tick_nolisten() { g_frames.fetch_add(1, std::memory_order_relaxed); }
 void diag_frame_tick() {
     g_frames.fetch_add(1, std::memory_order_relaxed);
+    soak_note_frame();
     if (auto fn = g_frame_listener.load(std::memory_order_acquire)) fn();
 }
 

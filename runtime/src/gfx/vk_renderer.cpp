@@ -20,6 +20,7 @@
 #include "extras/hdr_capture.h"
 #include "extras/hdr_math.h"
 #include "extras/win_display.h"
+#include "vk_gauges.h"
 
 namespace nxrt::gfx {
 namespace {
@@ -206,6 +207,7 @@ struct Renderer::Impl {
         tci.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
         VkSemaphoreCreateInfo ci = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &tci};
         if (vkCreateSemaphore(vk(), &ci, nullptr, &probe_sem) != VK_SUCCESS) { probe_sem = VK_NULL_HANDLE; return; }
+        vk_gauge_semaphores().add(1);
         probe_th = std::thread([this] {
             log_set_thread_name("lat-watch");
             static const uint16_t z = ft::zone_id("lat.gpudone");
@@ -225,7 +227,7 @@ struct Renderer::Impl {
     }
     void probe_stop_join() {
         if (probe_th.joinable()) { probe_stop.store(true); probe_th.join(); }
-        if (probe_sem) { vkDestroySemaphore(vk(), probe_sem, nullptr); probe_sem = VK_NULL_HANDLE; }
+        if (probe_sem) { vkDestroySemaphore(vk(), probe_sem, nullptr); vk_gauge_semaphores().sub(1); probe_sem = VK_NULL_HANDLE; }
     }
 
     VkDevice vk() const { return dev->device(); }
@@ -305,11 +307,12 @@ struct Renderer::Impl {
 
     void destroy_targets() {
         for (auto& t : targets) {
-            if (t.render_done) vkDestroySemaphore(vk(), t.render_done, nullptr);
+            if (t.render_done) { vkDestroySemaphore(vk(), t.render_done, nullptr); vk_gauge_semaphores().sub(1); }
             if (headless) {
                 dev->destroy_image(t.owned);
             } else if (t.view) {
                 vkDestroyImageView(vk(), t.view, nullptr);
+                vk_gauge_image_views().sub(1);
             }
         }
         targets.clear();
@@ -317,7 +320,9 @@ struct Renderer::Impl {
 
     bool create_semaphore(VkSemaphore* s) {
         VkSemaphoreCreateInfo si = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        return vkCreateSemaphore(vk(), &si, nullptr, s) == VK_SUCCESS;
+        const bool ok = vkCreateSemaphore(vk(), &si, nullptr, s) == VK_SUCCESS;
+        if (ok) vk_gauge_semaphores().add(1);
+        return ok;
     }
 
     bool recreate(uint32_t want_w, uint32_t want_h) {
@@ -435,10 +440,12 @@ struct Renderer::Impl {
         if (latency) latency->prepare_swapchain(&ci);
         VkSwapchainKHR fresh = VK_NULL_HANDLE;
         VkResult r = vkCreateSwapchainKHR(vk(), &ci, nullptr, &fresh);
+        if (r == VK_SUCCESS) vk_gauge_swapchains().add(1);
         destroy_targets();
         if (old) {
             if (latency) latency->swapchain_destroyed(old);
             vkDestroySwapchainKHR(vk(), old, nullptr);
+            vk_gauge_swapchains().sub(1);
         }
         swapchain = VK_NULL_HANDLE;
         if (r != VK_SUCCESS) {
@@ -474,7 +481,9 @@ struct Renderer::Impl {
             vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
             vi.format = format;
             vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            if (vkCreateImageView(vk(), &vi, nullptr, &t.view) != VK_SUCCESS || !create_semaphore(&t.render_done)) return false;
+            if (vkCreateImageView(vk(), &vi, nullptr, &t.view) != VK_SUCCESS) return false;
+            vk_gauge_image_views().add(1);
+            if (!create_semaphore(&t.render_done)) return false;
             targets.push_back(t);
         }
         dirty = false;
@@ -503,20 +512,24 @@ struct Renderer::Impl {
             VkCommandPoolCreateInfo pi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
             pi.queueFamilyIndex = dev->queue_family();
             if (vkCreateCommandPool(vk(), &pi, nullptr, &s.pool) != VK_SUCCESS) return false;
+            vk_gauge_command_pools().add(1);
             VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
             ai.commandPool = s.pool;
             ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
             ai.commandBufferCount = 1;
             if (vkAllocateCommandBuffers(vk(), &ai, &s.cmd) != VK_SUCCESS) return false;
+            vk_gauge_command_buffers().add(1);
             VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
             fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
             if (vkCreateFence(vk(), &fi, nullptr, &s.fence) != VK_SUCCESS) return false;
+            vk_gauge_fences().add(1);
             if (!create_semaphore(&s.acquire)) return false;
             if (dev->timestamps_supported()) {
                 VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
                 qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
                 qi.queryCount = 2;
                 if (vkCreateQueryPool(vk(), &qi, nullptr, &s.queries) != VK_SUCCESS) return false;
+                vk_gauge_query_pools().add(1);
             }
             slots.push_back(s);
         }
@@ -527,14 +540,18 @@ struct Renderer::Impl {
         dev->wait_idle();
         probe_stop_join();
         for (auto& s : slots) {
-            if (s.queries) vkDestroyQueryPool(vk(), s.queries, nullptr);
-            if (s.acquire) vkDestroySemaphore(vk(), s.acquire, nullptr);
-            if (s.fence) vkDestroyFence(vk(), s.fence, nullptr);
-            if (s.pool) vkDestroyCommandPool(vk(), s.pool, nullptr);   // frees its command buffer
+            if (s.queries) { vkDestroyQueryPool(vk(), s.queries, nullptr); vk_gauge_query_pools().sub(1); }
+            if (s.acquire) { vkDestroySemaphore(vk(), s.acquire, nullptr); vk_gauge_semaphores().sub(1); }
+            if (s.fence) { vkDestroyFence(vk(), s.fence, nullptr); vk_gauge_fences().sub(1); }
+            if (s.pool) {   // frees its command buffer
+                vkDestroyCommandPool(vk(), s.pool, nullptr);
+                vk_gauge_command_pools().sub(1);
+                if (s.cmd) vk_gauge_command_buffers().sub(1);
+            }
         }
         slots.clear();
         destroy_targets();
-        if (swapchain) vkDestroySwapchainKHR(vk(), swapchain, nullptr);
+        if (swapchain) { vkDestroySwapchainKHR(vk(), swapchain, nullptr); vk_gauge_swapchains().sub(1); }
         swapchain = VK_NULL_HANDLE;
     }
 };

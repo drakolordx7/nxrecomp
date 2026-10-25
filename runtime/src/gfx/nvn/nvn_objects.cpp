@@ -4,6 +4,7 @@
 #include <map>
 #include <shared_mutex>
 
+#include "nxrt/gauge.h"
 #include "nvn_core.h"
 
 namespace nxrt::nvn::be {
@@ -29,6 +30,18 @@ void unbind_guest(void* guest) {
 namespace {
 std::shared_mutex g_pool_mu;
 std::map<uint64_t, MemoryPool*> g_pools;   // gpu_base -> pool
+
+// Gauge (nxrt/gauge.h). The callback takes g_pool_mu; it is removed before the map is destroyed.
+struct PoolGauges {
+    PoolGauges() {
+        nxrt::gauge_register("nvn.pool_registry", [] {
+            std::shared_lock<std::shared_mutex> lk(g_pool_mu);
+            return static_cast<int64_t>(g_pools.size());
+        });
+    }
+    ~PoolGauges() { nxrt::gauge_unregister("nvn.pool_registry"); }
+};
+PoolGauges g_pool_gauges;
 }  // namespace
 
 void pool_register(MemoryPool* p) {

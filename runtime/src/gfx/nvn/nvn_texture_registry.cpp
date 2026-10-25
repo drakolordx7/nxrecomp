@@ -8,6 +8,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nvn_texdata.h"
 #include "nxrt/log.h"
 #include "nvn_format.h"
@@ -237,5 +238,23 @@ size_t texture_registry_size() {
     std::lock_guard<std::mutex> lk(g_mu);
     return g_by_start.size();
 }
+
+namespace {
+// Gauges (nxrt/gauge.h). The callbacks take g_mu; they are removed before the maps they read are destroyed.
+struct RegistryGauges {
+    RegistryGauges() {
+        nxrt::gauge_register("nvn.texture_registry", [] { return static_cast<int64_t>(texture_registry_size()); });
+        nxrt::gauge_register("nvn.texture_registry.virtual", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_virtual.size());
+        });
+    }
+    ~RegistryGauges() {
+        nxrt::gauge_unregister("nvn.texture_registry");
+        nxrt::gauge_unregister("nvn.texture_registry.virtual");
+    }
+};
+RegistryGauges g_registry_gauges;
+}  // namespace
 
 }  // namespace nxrt::nvn::be

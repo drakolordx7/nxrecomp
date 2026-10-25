@@ -29,6 +29,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_pipeline.h"
@@ -337,5 +338,38 @@ void prewarm_program_shaders(const ShaderInfo* const stages[6]) {
 }
 
 void flush_caches() { pipeline_cache_flush(); }
+
+// Gauges (nxrt/gauge.h). The callbacks take g_mu; they are removed before the containers they read are destroyed.
+namespace {
+struct PrewarmGauges {
+    PrewarmGauges() {
+        nxrt::gauge_register("nvn.prewarm.records", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_recs.size());
+        });
+        nxrt::gauge_register("nvn.prewarm.records.bytes", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_recs.size() * sizeof(Rec));
+        });
+        nxrt::gauge_register("nvn.prewarm.digests", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_digests.size());
+        });
+        nxrt::gauge_register("nvn.prewarm.queue", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_queue.size());
+        });
+        nxrt::gauge_register("nvn.prewarm.jobs", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_jobs.size());
+        });
+    }
+    ~PrewarmGauges() {
+        for (const char* n : {"nvn.prewarm.records", "nvn.prewarm.records.bytes", "nvn.prewarm.digests", "nvn.prewarm.queue", "nvn.prewarm.jobs"})
+            nxrt::gauge_unregister(n);
+    }
+};
+PrewarmGauges g_prewarm_gauges;
+}  // namespace
 
 }  // namespace nxrt::nvn::be::gpu

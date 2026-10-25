@@ -99,7 +99,8 @@ struct KThread : KObject {
     uint64_t core_mask = 1;             // console cores the thread may run on (bit n = core n)
     void* host_handle = nullptr;        // Win32 thread handle (owned by the thread object)
     uint32_t host_tid = 0;
-    bool started = false, exited = false, cancel_sync = false;
+    bool started = false, cancel_sync = false;
+    std::atomic<bool> exited{false};    // written under the kernel lock (thread_mark_exited), read under the thread-list lock and elsewhere
     std::atomic<bool> aged{false};      // starvation guard (starvation_guard.cpp): the host leaves this thread ready, so its yields keep the processor
     // wait state, protected by the kernel lock (kernel_sync.cpp)
     bool wake = false;

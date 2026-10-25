@@ -18,8 +18,10 @@
 #include "nxrt/diag.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/lowlat.h"
+#include "vk_gauges.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
 #include "nvn_pipeline.h"
@@ -31,7 +33,14 @@ namespace {
 
 constexpr const char* kTag = "nvn.gpu";
 constexpr uint32_t kSlots = 4;
+constexpr uint32_t kGpMax = 1024;      // GPU pass profiler: timestamps per submission
 constexpr VkDeviceSize kUploadBytes = 32ull << 20;
+
+// Live-count gauges of this file (leak monitor, nxrt/gauge.h).
+nxrt::GaugeCounter g_gauge_deferred("nvn.deferred_destroy");     // closures waiting for their submission to finish (defer_destroy, Frame::defer)
+nxrt::GaugeCounter g_gauge_render_queue("nvn.render_queue");     // jobs queued for the render thread
+nxrt::GaugeCounter g_gauge_barriers_mem("nvn.cnt.barriers_mem");   // full memory barriers recorded (cumulative; per frame = delta / frames)
+nxrt::GaugeCounter g_gauge_barriers_img("nvn.cnt.barriers_img");   // image layout barriers recorded (cumulative)
 
 struct Slot {
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -44,6 +53,9 @@ struct Slot {
     uint64_t serial = 0;                  // last submission that used the slot
     bool timed = false;                   // frame trace: the submission wrote GPU timestamps (query pair index = slot index * 2)
     uint64_t cpu_t0 = 0;
+    uint64_t sets_live = 0;               // descriptor sets allocated from this slot's pools since the last reset (vk.descriptor_sets)
+    uint32_t gp_n = 0;                    // GPU pass profiler: timestamps written by the submission
+    std::vector<std::pair<std::string, uint32_t>> gp_labels;   // label and argument of each interval (stamp i closes interval i)
 };
 
 struct Deferred {
@@ -64,6 +76,7 @@ struct Gpu {
     std::atomic<uint64_t> last_submitted{0};
     Slot slots[kSlots];
     VkQueryPool qpool = VK_NULL_HANDLE;   // frame trace: two timestamps per slot
+    VkQueryPool gpool = VK_NULL_HANDLE;   // GPU pass profiler ([prof] gpu_passes): kGpMax timestamps per slot
     uint32_t next_slot = 0;
     Counters ctr;
 
@@ -114,6 +127,7 @@ void retire() {
     while (!g->deferred.empty() && g->deferred.front().serial <= done) {
         auto fn = std::move(g->deferred.front().fn);
         g->deferred.pop_front();
+        g_gauge_deferred.sub(1);
         fn();
     }
 }
@@ -130,6 +144,7 @@ void render_loop() {
             if (g->queue.empty()) return;   // stop requested and drained
             job = std::move(g->queue.front());
             g->queue.pop_front();
+            g_gauge_render_queue.sub(1);
         }
         try {
             job();
@@ -145,11 +160,13 @@ bool create_slot(Slot& s) {
     ci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
     ci.queueFamilyIndex = d.queue_family();
     if (vkCreateCommandPool(d.device(), &ci, nullptr, &s.pool) != VK_SUCCESS) return false;
+    vk_gauge_command_pools().add(1);
     VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     ai.commandPool = s.pool;
     ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     ai.commandBufferCount = 1;
     if (vkAllocateCommandBuffers(d.device(), &ai, &s.cb) != VK_SUCCESS) return false;
+    vk_gauge_command_buffers().add(1);
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                      VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     if (d.create_buffer(kUploadBytes, usage, gfx::MemoryUse::Upload, &s.upload, "nvn upload") != VK_SUCCESS) return false;
@@ -171,6 +188,7 @@ VkDescriptorPool new_dpool() {
     ci.pPoolSizes = sizes;
     VkDescriptorPool p = VK_NULL_HANDLE;
     if (vkCreateDescriptorPool(g->dev->device(), &ci, nullptr, &p) != VK_SUCCESS) return VK_NULL_HANDLE;
+    vk_gauge_descriptor_pools().add(1);
     return p;
 }
 
@@ -201,9 +219,30 @@ Slot& acquire_slot() {
             ft::event(z, s.cpu_t0, s.cpu_t0 + static_cast<uint64_t>(ns), static_cast<uint32_t>(s.serial));
         }
     }
+    if (s.gp_n >= 2 && g->gpool) {      // GPU pass profiler: one event per interval between two timestamps, named gp:<label>, arg = draws
+        uint64_t ts[kGpMax];
+        const uint32_t n = std::min(s.gp_n, kGpMax);
+        const uint32_t base = static_cast<uint32_t>(&s - g->slots) * kGpMax;
+        if (vkGetQueryPoolResults(g->dev->device(), g->gpool, base, n, sizeof(uint64_t) * n, ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            static std::map<std::string, uint16_t> zones;
+            const double period = g->dev->properties().limits.timestampPeriod;
+            uint64_t t = s.cpu_t0;
+            for (uint32_t i = 1; i < n && i < s.gp_labels.size(); i++) {
+                const uint64_t d = ts[i] >= ts[i - 1] ? static_cast<uint64_t>(static_cast<double>(ts[i] - ts[i - 1]) * period) : 0;
+                auto it = zones.find(s.gp_labels[i].first);
+                if (it == zones.end()) it = zones.emplace(s.gp_labels[i].first, ft::zone_id(("gp:" + s.gp_labels[i].first).c_str())).first;
+                ft::event(it->second, t, t + d, s.gp_labels[i].second);
+                t += d;
+            }
+        }
+    }
+    s.gp_n = 0;
+    s.gp_labels.clear();
     retire();
     vkResetCommandPool(g->dev->device(), s.pool, 0);
     for (VkDescriptorPool p : s.dpools) vkResetDescriptorPool(g->dev->device(), p, 0);
+    vk_gauge_descriptor_sets().sub(static_cast<int64_t>(s.sets_live));   // the reset freed them
+    s.sets_live = 0;
     s.dpool_cur = 0;
     s.upload_off = 0;
     for (auto& b : s.extra) g->dev->destroy_buffer(b);
@@ -259,7 +298,10 @@ UploadAlloc Frame::adopt_staging(gfx::Buffer b) {
     return a;
 }
 
-void Frame::defer(std::function<void()> fn) { g->deferred.push_back({serial, std::move(fn)}); }
+void Frame::defer(std::function<void()> fn) {
+    g->deferred.push_back({serial, std::move(fn)});
+    g_gauge_deferred.add(1);
+}
 
 VkDescriptorSet Frame::alloc_set(VkDescriptorSetLayout layout) {
     Slot& s = *static_cast<Slot*>(slot);
@@ -277,6 +319,8 @@ VkDescriptorSet Frame::alloc_set(VkDescriptorSetLayout layout) {
         const VkResult r = vkAllocateDescriptorSets(g->dev->device(), &ai, &set);
         if (r == VK_SUCCESS) {
             g->ctr.descriptor_sets.fetch_add(1, std::memory_order_relaxed);
+            s.sets_live++;
+            vk_gauge_descriptor_sets().add(1);
             return set;
         }
         ++s.dpool_cur;   // exhausted or fragmented: move on to the next pool (created on demand)
@@ -308,6 +352,7 @@ void defer_destroy(std::function<void()> fn) {
     }
     std::lock_guard<std::mutex> lk(g->dmu);
     g->pending_destroy.push_back(std::move(fn));
+    g_gauge_deferred.add(1);
 }
 
 void run_on_render_thread(const std::function<void()>& fn) {
@@ -327,14 +372,27 @@ void run_on_render_thread(const std::function<void()>& fn) {
             done = true;
             cv.notify_all();
         });
+        g_gauge_render_queue.add(1);
     }
     g->qcv.notify_one();
     std::unique_lock<std::mutex> lk(m);
     cv.wait(lk, [&] { return done; });
 }
 
+bool gpass_on() { return g && g->gpool != VK_NULL_HANDLE; }
+
+void gpass_stamp(Frame& f, const char* label, uint32_t arg) {
+    if (!g || !g->gpool || !f.slot) return;
+    Slot& s = *static_cast<Slot*>(f.slot);
+    if (s.gp_n >= kGpMax) return;
+    vkCmdWriteTimestamp2(f.cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, g->gpool, static_cast<uint32_t>(&s - g->slots) * kGpMax + s.gp_n);
+    s.gp_labels.emplace_back(label, arg);
+    s.gp_n++;
+}
+
 void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImageLayout to, VkImageAspectFlags aspect, uint32_t base_level,
                    uint32_t level_count, uint32_t base_layer, uint32_t layer_count) {
+    g_gauge_barriers_img.add(1);
     VkImageMemoryBarrier2 b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
     b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
@@ -352,6 +410,7 @@ void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImag
 }
 
 void memory_barrier(VkCommandBuffer cb) {
+    g_gauge_barriers_mem.add(1);
     VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
@@ -380,6 +439,12 @@ uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record) {
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(s.cb, &bi);
     const uint32_t qi = static_cast<uint32_t>(&s - g->slots) * 2;
+    if (g->gpool) {
+        vkCmdResetQueryPool(s.cb, g->gpool, static_cast<uint32_t>(&s - g->slots) * kGpMax, kGpMax);
+        s.gp_n = 0;
+        s.gp_labels.clear();
+        gpass_stamp(f, "(start)", 0);
+    }
     if (g->qpool) {
         vkCmdResetQueryPool(s.cb, g->qpool, qi, 2);
         vkCmdWriteTimestamp(s.cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, g->qpool, qi);
@@ -387,6 +452,7 @@ uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record) {
         s.cpu_t0 = ft::now_ns();
     }
     record(f);
+    if (g->gpool) gpass_stamp(f, "tail", 0);
     if (g->qpool) vkCmdWriteTimestamp(s.cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, g->qpool, qi + 1);
     vkEndCommandBuffer(s.cb);
     VkCommandBufferSubmitInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
@@ -558,6 +624,8 @@ std::string unsupported_report() {
 // ---- lifecycle -----------------------------------------------------------------------------------------------------------
 namespace {
 
+void register_counter_gauges();
+
 bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool keep_aspect) {
     std::lock_guard<std::mutex> lk(g_install_mu);
     if (g) return g->dev == &dev;
@@ -581,6 +649,7 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
         delete gp;
         return false;
     }
+    vk_gauge_semaphores().add(1);
     for (Slot& s : gp->slots)
         if (!create_slot(s)) {
             NXLOG_E(kTag, "creating a submission slot failed");
@@ -593,6 +662,14 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
         qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
         qi.queryCount = kSlots * 2;
         if (vkCreateQueryPool(dev.device(), &qi, nullptr, &gp->qpool) != VK_SUCCESS) gp->qpool = VK_NULL_HANDLE;
+        else vk_gauge_query_pools().add(1);
+    }
+    if (ft::on() && config_get_bool("prof", "gpu_passes", false)) {
+        VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qi.queryCount = kSlots * kGpMax;
+        if (vkCreateQueryPool(dev.device(), &qi, nullptr, &gp->gpool) != VK_SUCCESS) gp->gpool = VK_NULL_HANDLE;
+        else vk_gauge_query_pools().add(1);
     }
     if (ft::on()) extras::lowlat_set_backlog_fn([]() -> uint64_t {      // latency probe: submissions the GPU has not finished
         if (!g || !g->timeline) return 0;
@@ -603,6 +680,7 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
     });
     static const bool report_registered = (diag_add_report(gpu_report), true);   // the freeze dump shows the GPU state
     (void)report_registered;
+    register_counter_gauges();
     gp->th = std::thread(render_loop);
     // wait for the thread id to be published
     for (int i = 0; i < 1000 && gp->tid == std::thread::id(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -617,9 +695,27 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
     return true;
 }
 
+const char* const kCounterGauges[] = {"nvn.cnt.draws", "nvn.cnt.passes", "nvn.cnt.pass_breaks", "nvn.cnt.dispatches", "nvn.cnt.clears", "nvn.cnt.copies",
+                                      "nvn.cnt.submits", "nvn.cnt.descriptor_sets"};
+
+void register_counter_gauges() {
+    auto reg = [](const char* name, std::atomic<uint64_t> Counters::*m) {
+        nxrt::gauge_register(name, [m]() -> int64_t { Gpu* gp = g; return gp ? static_cast<int64_t>((gp->ctr.*m).load(std::memory_order_relaxed)) : 0; });
+    };
+    reg("nvn.cnt.draws", &Counters::draws);
+    reg("nvn.cnt.passes", &Counters::passes);
+    reg("nvn.cnt.pass_breaks", &Counters::pass_breaks);
+    reg("nvn.cnt.dispatches", &Counters::dispatches);
+    reg("nvn.cnt.clears", &Counters::clears);
+    reg("nvn.cnt.copies", &Counters::copies);
+    reg("nvn.cnt.submits", &Counters::submits);
+    reg("nvn.cnt.descriptor_sets", &Counters::descriptor_sets);
+}
+
 void tear_down() {
     std::lock_guard<std::mutex> lk(g_install_mu);
     if (!g) return;
+    for (const char* n : kCounterGauges) nxrt::gauge_unregister(n);
     Gpu* gp = g;
     run_on_render_thread([&] {
         wait_serial_blocking(gp->submitted);
@@ -630,10 +726,11 @@ void tear_down() {
         while (!gp->deferred.empty()) {
             auto fn = std::move(gp->deferred.front().fn);
             gp->deferred.pop_front();
+            g_gauge_deferred.sub(1);
             fn();
         }
         drain_pending_destroy();
-        for (auto& d : gp->deferred) d.fn();
+        for (auto& d : gp->deferred) { d.fn(); g_gauge_deferred.sub(1); }
         gp->deferred.clear();
         gp->present.shutdown();
         gp->output.shutdown();
@@ -648,12 +745,22 @@ void tear_down() {
     vkDeviceWaitIdle(d.device());
     for (Slot& s : gp->slots) {
         for (auto& b : s.extra) d.destroy_buffer(b);
-        for (VkDescriptorPool p : s.dpools) vkDestroyDescriptorPool(d.device(), p, nullptr);
+        vk_gauge_descriptor_sets().sub(static_cast<int64_t>(s.sets_live));
+        s.sets_live = 0;
+        for (VkDescriptorPool p : s.dpools) {
+            vkDestroyDescriptorPool(d.device(), p, nullptr);
+            vk_gauge_descriptor_pools().sub(1);
+        }
         d.destroy_buffer(s.upload);
-        if (s.pool) vkDestroyCommandPool(d.device(), s.pool, nullptr);
+        if (s.pool) {
+            vkDestroyCommandPool(d.device(), s.pool, nullptr);
+            vk_gauge_command_pools().sub(1);
+            if (s.cb) vk_gauge_command_buffers().sub(1);
+        }
     }
-    if (gp->qpool) vkDestroyQueryPool(d.device(), gp->qpool, nullptr);
-    if (gp->timeline) vkDestroySemaphore(d.device(), gp->timeline, nullptr);
+    if (gp->qpool) { vkDestroyQueryPool(d.device(), gp->qpool, nullptr); vk_gauge_query_pools().sub(1); }
+    if (gp->gpool) { vkDestroyQueryPool(d.device(), gp->gpool, nullptr); vk_gauge_query_pools().sub(1); }
+    if (gp->timeline) { vkDestroySemaphore(d.device(), gp->timeline, nullptr); vk_gauge_semaphores().sub(1); }
     g = nullptr;
     delete gp;
 }

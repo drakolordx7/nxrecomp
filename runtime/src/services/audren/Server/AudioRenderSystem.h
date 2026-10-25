@@ -61,6 +61,17 @@
 
 namespace nxrt::audren {
 
+// Gauges (audio.cpp registers them): totals over every open renderer. Each renderer adds its change at each update (gauge_set) and gives
+// its share back when it is destroyed. Read from the sampler thread: relaxed atomics only.
+inline std::atomic<int64_t> g_gauge_voices_in_use{0};
+inline std::atomic<int64_t> g_gauge_wavebuffers_queued{0};
+inline std::atomic<int64_t> g_gauge_memory_pools{0};
+inline std::atomic<uint64_t> g_gauge_frames_rendered{0};
+inline void gauge_set(std::atomic<int64_t>& total, int64_t& mine, int64_t now) {
+    total.fetch_add(now - mine, std::memory_order_relaxed);
+    mine = now;
+}
+
 class AudioRendererManager;
 
 class AudioRenderSystem {
@@ -93,6 +104,8 @@ class AudioRenderSystem {
     uint32_t _memoryPoolCount = 0;
     uint32_t _processHandle = 0;
     uint64_t _appletResourceId = 0;
+    // What this renderer last added to the gauges above.
+    int64_t _gaugeVoices = 0, _gaugeWaves = 0, _gaugePools = 0;
 
     // The work buffer backing store, owned by the renderer (C# Memory<byte> workBufferMemory, pinned).
     std::vector<uint8_t> _workBufferMemory;
@@ -243,6 +256,19 @@ class AudioRenderSystem {
 
         _renderingStartTick = GetSystemTicks();
         _elapsedFrameCount++;
+        {   // gauges: voices in use and their queued wave buffers, and the frame count (relaxed atomics, read by the sampler)
+            int64_t voices = 0, waves = 0;
+            for (uint32_t i = 0; i < _voiceContext.GetCount(); i++) {
+                const VoiceInfo& v = _voiceContext.GetState(static_cast<int32_t>(i));
+                if (v.InUse) {
+                    voices++;
+                    waves += static_cast<int64_t>(v.WaveBuffersCount);
+                }
+            }
+            gauge_set(g_gauge_voices_in_use, _gaugeVoices, voices);
+            gauge_set(g_gauge_wavebuffers_queued, _gaugeWaves, waves);
+            g_gauge_frames_rendered.fetch_add(1, std::memory_order_relaxed);
+        }
 
         return commandList;
     }
@@ -302,6 +328,7 @@ class AudioRenderSystem {
         _upsamplerCount = parameter.sink_count + parameter.sub_mix_buffer_count;
         _appletResourceId = appletResourceId;
         _memoryPoolCount = parameter.effect_count + parameter.voice_count * static_cast<uint32_t>(Constants::VoiceWaveBufferCount);
+        gauge_set(g_gauge_memory_pools, _gaugePools, static_cast<int64_t>(_memoryPoolCount));
         _renderingDevice = parameter.rendering_device;
         _executionMode = parameter.execution_mode;
         _sessionId = sessionId;

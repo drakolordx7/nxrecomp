@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "nxrt/log.h"
+#include "vk_gauges.h"
 
 namespace nxrt::extras {
 namespace {
@@ -39,7 +40,9 @@ VkShaderModule make_module(VkDevice d, const uint32_t* code, size_t bytes) {
     mi.codeSize = bytes;
     mi.pCode = code;
     VkShaderModule m = VK_NULL_HANDLE;
-    return vkCreateShaderModule(d, &mi, nullptr, &m) == VK_SUCCESS ? m : VK_NULL_HANDLE;
+    if (vkCreateShaderModule(d, &mi, nullptr, &m) != VK_SUCCESS) return VK_NULL_HANDLE;
+    vk_gauge_shader_modules().add(1);
+    return m;
 }
 
 }  // namespace
@@ -60,12 +63,14 @@ bool OverlayComposite::init(gfx::Device& dev) {
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = 0.0f;
     if (vkCreateSampler(d, &sci, nullptr, &linear_) != VK_SUCCESS) return fail("overlay sampler");
+    vk_gauge_samplers().add(1);
 
     VkDescriptorSetLayoutBinding binding = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     li.bindingCount = 1;
     li.pBindings = &binding;
     if (vkCreateDescriptorSetLayout(d, &li, nullptr, &set_layout_) != VK_SUCCESS) return fail("overlay set layout");
+    vk_gauge_descriptor_set_layouts().add(1);
 
     VkPushConstantRange pcr = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(CompositePush)};
     VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -74,6 +79,7 @@ bool OverlayComposite::init(gfx::Device& dev) {
     pli.pushConstantRangeCount = 1;
     pli.pPushConstantRanges = &pcr;
     if (vkCreatePipelineLayout(d, &pli, nullptr, &layout_) != VK_SUCCESS) return fail("overlay pipeline layout");
+    vk_gauge_pipeline_layouts().add(1);
 
     const VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kSetRing};
     VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -81,6 +87,7 @@ bool OverlayComposite::init(gfx::Device& dev) {
     dpi.poolSizeCount = 1;
     dpi.pPoolSizes = &ps;
     if (vkCreateDescriptorPool(d, &dpi, nullptr, &pool_) != VK_SUCCESS) return fail("overlay descriptor pool");
+    vk_gauge_descriptor_pools().add(1);
     VkDescriptorSetLayout ls[kSetRing];
     for (auto& x : ls) x = set_layout_;
     VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -88,6 +95,7 @@ bool OverlayComposite::init(gfx::Device& dev) {
     ai.descriptorSetCount = kSetRing;
     ai.pSetLayouts = ls;
     if (vkAllocateDescriptorSets(d, &ai, sets_) != VK_SUCCESS) return fail("overlay descriptor sets");
+    vk_gauge_descriptor_sets().add(kSetRing);   // shutdown subtracts them only while sets_[0] is set
 
     vs_ = make_module(d, kOutVert, sizeof kOutVert);
     fs_ = make_module(d, kOverlayCompositeFrag, sizeof kOverlayCompositeFrag);
@@ -101,14 +109,16 @@ void OverlayComposite::shutdown() {
     dev_->wait_idle();
     if (target_) dev_->destroy_image(target_);
     target_ = gfx::Image();
-    for (auto& [f, p] : pipes_) vkDestroyPipeline(d, p, nullptr);
+    for (auto& [f, p] : pipes_)
+        if (p) { vkDestroyPipeline(d, p, nullptr); vk_gauge_pipelines().sub(1); }
     pipes_.clear();
-    if (layout_) vkDestroyPipelineLayout(d, layout_, nullptr);
-    if (pool_) vkDestroyDescriptorPool(d, pool_, nullptr);
-    if (set_layout_) vkDestroyDescriptorSetLayout(d, set_layout_, nullptr);
-    if (vs_) vkDestroyShaderModule(d, vs_, nullptr);
-    if (fs_) vkDestroyShaderModule(d, fs_, nullptr);
-    if (linear_) vkDestroySampler(d, linear_, nullptr);
+    if (layout_) { vkDestroyPipelineLayout(d, layout_, nullptr); vk_gauge_pipeline_layouts().sub(1); }
+    if (pool_) { vkDestroyDescriptorPool(d, pool_, nullptr); vk_gauge_descriptor_pools().sub(1); }
+    if (sets_[0]) vk_gauge_descriptor_sets().sub(kSetRing);
+    if (set_layout_) { vkDestroyDescriptorSetLayout(d, set_layout_, nullptr); vk_gauge_descriptor_set_layouts().sub(1); }
+    if (vs_) { vkDestroyShaderModule(d, vs_, nullptr); vk_gauge_shader_modules().sub(1); }
+    if (fs_) { vkDestroyShaderModule(d, fs_, nullptr); vk_gauge_shader_modules().sub(1); }
+    if (linear_) { vkDestroySampler(d, linear_, nullptr); vk_gauge_samplers().sub(1); }
     linear_ = VK_NULL_HANDLE;
     layout_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;
@@ -204,6 +214,7 @@ VkPipeline OverlayComposite::pipeline(VkFormat fmt) {
         NXLOG_E(kTag, "overlay composite pipeline for format %d failed", static_cast<int>(fmt));
         p = VK_NULL_HANDLE;
     }
+    if (p) vk_gauge_pipelines().add(1);
     pipes_[fmt] = p;
     return p;
 }
