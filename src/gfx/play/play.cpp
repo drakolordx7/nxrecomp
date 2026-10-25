@@ -33,6 +33,7 @@
 #include "nxrt/ftrace.h"
 #include "play_camlook.h"
 #include "play_display.h"
+#include "play_scenefix.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -1220,6 +1221,7 @@ bool start(const StartOptions& opt) {
     st.hook_fpcam = hook_add_entry(st.base + kFnFpCamThink, &cam_think_hook, nullptr);
     st.hook_ballcam = hook_add_entry(st.base + kFnBallCamThink, &cam_think_hook, &st);
     lockcam_install(st.base, st.aim.get());
+    scenefix_install(st.base);
     lockcam_set(st.settings);
     mm::game_install(st.base);
     st.started = true;
@@ -1234,6 +1236,7 @@ void stop() {
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
     mm::game_remove();
     lockcam_remove();
+    scenefix_remove();
     if (st.hook_update) hook_remove(st.hook_update);
     if (st.hook_input) hook_remove(st.hook_input);
     if (st.hook_fpcam) hook_remove(st.hook_fpcam);
