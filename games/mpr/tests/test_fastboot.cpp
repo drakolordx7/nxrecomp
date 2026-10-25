@@ -262,3 +262,51 @@ NXTEST(fast_menus_cuts_transition_movies) {
     nx_hook_entry(&c, kBase + kMovieThink);
     CHECK_EQ(g_f.skip_calls, before + 1);
 }
+
+NXTEST(fast_menus_times_each_movie_object_on_its_own) {
+    // Two transition movies thinking in the same frames (and a handle number used again by another object) are each cut after their own time.
+    play::FastbootSettings f;
+    f.fast_menus = true;
+    f.menu_speed = 4;
+    setup(f);
+    std::vector<uint8_t> a(0x100), b(0x100);
+    uint8_t ia[16], ib[16];
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("21be26c3-9e4d-4054-a5db-5291e25644c4", ia));   // 3.6 s: 0.9 s at 4x
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("c9175984-e39a-4e2c-a39f-08d7caff041a", ib));   // into Extras, 4.033 s: 1.01 s at 4x
+    CHECK(std::fabs(play::fastboot_menu_transition_length(ib) - 4.033) < 1e-9);
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("a7aa0bf1-be04-4338-9f44-a405a1296e45", ib));   // out of Extras
+    CHECK(std::fabs(play::fastboot_menu_transition_length(ib) - 3.683) < 1e-9);
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("c9175984-e39a-4e2c-a39f-08d7caff041a", ib));
+    const uint32_t state = 0, ha = 21, hb = 22;
+    std::memcpy(a.data() + 128, ia, 16);
+    std::memcpy(b.data() + 128, ib, 16);
+    std::memcpy(a.data() + 160, &ha, 4);
+    std::memcpy(b.data() + 160, &hb, 4);
+    std::memcpy(a.data() + 144, &state, 4);
+    std::memcpy(b.data() + 144, &state, 4);
+    ::Ctx ca = ctx(), cb = ctx();
+    ca.x[0] = addr(a);
+    cb.x[0] = addr(b);
+    const int before = g_f.skip_calls;
+    for (int i = 0; i < 4; ++i) {
+        nx_hook_entry(&ca, kBase + kMovieThink);
+        nx_hook_entry(&cb, kBase + kMovieThink);
+        Sleep(100);
+    }
+    CHECK_EQ(g_f.skip_calls, before);
+    Sleep(800);
+    nx_hook_entry(&ca, kBase + kMovieThink);
+    nx_hook_entry(&cb, kBase + kMovieThink);
+    CHECK_EQ(g_f.skip_calls, before + 2);                // both cut, although they thought in turn every frame
+    nx_hook_entry(&ca, kBase + kMovieThink);
+    CHECK_EQ(g_f.skip_calls, before + 2);                // once each
+
+    std::memcpy(b.data() + 160, &ha, 4);                 // the next movie on b gets the handle number a had: timed again and cut
+    nx_hook_entry(&cb, kBase + kMovieThink);
+    Sleep(1100);
+    nx_hook_entry(&cb, kBase + kMovieThink);
+    CHECK_EQ(g_f.skip_calls, before + 3);
+
+    f.fast_menus = false;
+    setup(f);
+}
