@@ -144,12 +144,15 @@ struct CpuSnap {
 
 CpuSnap take_snap() {
     CpuSnap s;
-    s.th = diag_threads();
-    for (const ThreadRecord& r : s.th) {
+    std::vector<ThreadRecord> recs = diag_threads_dup();   // private handles: an unregistering thread cannot close ours mid-query
+    for (const ThreadRecord& r : recs) {
         ULONG64 c = 0;
         if (r.host_handle) QueryThreadCycleTime(static_cast<HANDLE>(r.host_handle), &c);
         s.cyc.push_back(c);
     }
+    s.th = recs;
+    for (ThreadRecord& r : s.th) r.host_handle = nullptr;   // the snapshot keeps tid/name only
+    diag_threads_release(recs);
     return s;
 }
 

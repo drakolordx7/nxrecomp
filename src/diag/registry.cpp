@@ -70,8 +70,11 @@ void diag_set_thread_ctx(::Ctx* ctx) {
 std::vector<ThreadRecord> diag_threads() {
     std::lock_guard<std::mutex> lk(g_lock);
     std::vector<ThreadRecord> out;
-    for (auto& t : g_threads)
-        if (t.host_tid) out.push_back(t);
+    for (auto& t : g_threads) {
+        if (!t.host_tid) continue;
+        out.push_back(t);
+        out.back().host_handle = nullptr;   // the registry's handle can be closed by the owning thread at any time: never hand it out
+    }
     return out;
 }
 
