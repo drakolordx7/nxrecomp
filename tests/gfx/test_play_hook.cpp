@@ -29,7 +29,7 @@ namespace play = nxrt::play;
 namespace input = nxrt::input;
 
 constexpr uint64_t kBase = 0x5A00000000ull;
-constexpr uint64_t kUpdate = 0x3c81c8, kProcessInput = 0xc70334, kSetTransform = 0xc4d588;
+constexpr uint64_t kUpdate = 0x3c81c8, kProcessInput = 0xc70334, kSetTransform = 0xc4d588, kGyroFreelook = 0xc3af10;
 constexpr double kYaw = 0.000767945;     // the factory sensitivity, radians per count
 
 struct World {
@@ -41,6 +41,7 @@ struct World {
     double yaw_seen_by_original = 0;
     float pitch_seen_by_original = 0;
     bool ready = false;
+    bool gyro_freelook = false;      // what the game's GetGyroFreelookControl says: the gyro camera or the Pointer scheme is on
 };
 World g_w;
 
@@ -63,6 +64,9 @@ void fake_set_transform(::Ctx* c) {
     g_w.set_transform_calls++;
     std::memcpy(g_w.xf, reinterpret_cast<const void*>(c->x[1]), sizeof g_w.xf);
 }
+
+// the stand-in for NSharedPlayerControls::GetGyroFreelookControl(CStateManager const&)
+void fake_gyro_freelook(::Ctx* c) { c->x[0] = g_w.gyro_freelook ? 1 : 0; }
 
 void commit(uint64_t a, size_t n) { VirtualAlloc(reinterpret_cast<void*>(a), n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
 
@@ -90,6 +94,7 @@ void setup() {
     nxrt::config_set("play", "game_base", "0x5A00000000");
     nxrt::fn_register(kBase + kProcessInput, &fake_process_input);
     nxrt::fn_register(kBase + kSetTransform, &fake_set_transform);
+    nxrt::fn_register(kBase + kGyroFreelook, &fake_gyro_freelook);
     play::load();
     play::StartOptions o;
     o.overlay = false;
@@ -98,6 +103,7 @@ void setup() {
 
 void reset_world() {
     setup();
+    g_w.gyro_freelook = false;
     const float id[12] = {1, 0, 0, 10, 0, 1, 0, 20, 0, 0, 1, 30};
     std::memcpy(g_w.xf, id, sizeof id);
     put<uint32_t>(g_w.player, 0x4d0, 0);
@@ -158,6 +164,18 @@ NXTEST(hook_pitch_survives_the_games_own_free_look_code) {
     CHECK(std::fabs(pitch() - 100 * kYaw) < 1e-5);
     frame(0, 40);                             // down 40
     CHECK(std::fabs(pitch() - 60 * kYaw) < 1e-5);
+}
+
+NXTEST(hook_gyro_camera_leaves_the_games_pitch_alone) {
+    // the game's gyro camera (or its Pointer scheme) sets the pitch from the pad: the mouse aim must not write its own angle over it afterwards
+    reset_world();
+    g_w.gyro_freelook = true;
+    frame(0, -100);
+    CHECK(g_w.original_calls == 1);
+    CHECK(std::fabs(pitch()) < 1e-9);             // the stand-in game levelled it to 0 and that stays (the mouse-only case above puts the mouse pitch back)
+    g_w.gyro_freelook = false;
+    frame(0, -100);
+    CHECK(std::fabs(pitch() - 100 * kYaw) < 1e-4);      // the gyro camera is off again: the aim writes its angle once more
 }
 
 NXTEST(hook_pitch_is_clamped_to_the_tweak_limit) {

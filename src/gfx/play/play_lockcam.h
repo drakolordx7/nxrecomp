@@ -40,6 +40,10 @@ bool lockcam_gun_decoupled();
 void lockcam_set_gun_delta(const float vanilla[12], const float steady[12]);
 void lockcam_clear_gun_delta();
 
+// Is the game's gyro camera on, or its Pointer scheme (NSharedPlayerControls::GetGyroFreelookControl on the state manager mgr)? Called from inside a hooked
+// game function; the registers of c are kept. False when the hooks are not installed.
+bool lockcam_gyro_freelook(::Ctx* c, uint64_t mgr);
+
 // The transform maths behind it, public for the tests: out = a * b for 3x4 affine transforms (row major, translation in column 3), and out = a * inverse(b).
 void xf_mul(const float a[12], const float b[12], float out[12]);
 void xf_rel(const float a[12], const float b[12], float out[12]);      // a * b^-1 (b a rigid transform)
@@ -49,6 +53,32 @@ void xf_rel(const float a[12], const float b[12], float out[12]);      // a * b^
 // does the same on a plain number. omega is the turn speed (radians per second, + = turn left like the yaw), target the speed the stick asks for.
 // Speeding up (the target is further out than omega, same direction) approaches with time constant tau_up seconds, slowing down or reversing with tau_down.
 double turn_ramp_step(double* omega, double target, double dt, double tau_up, double tau_down);
+
+// The pitch target carried between two calls of the game's pitch code (the hook on ComputeFreeLook, see play_lookrate.h). It keeps the game's own target (cur), the
+// two before it, and what the hook left in the game's memory (written). Public for the tests, which run it against a float on the host heap.
+class LookCarry {
+public:
+    // Before the calls of a step. Reads the target at target_at; whatever moved it since finish() (the mouse, a reset) is kept as a difference. False when it
+    // cannot be read: nothing is carried then.
+    bool begin(uint64_t player, uint64_t target_at);
+    // Puts the game's own target back in memory (for the game's call).
+    void restore(uint64_t target_at);
+    // After each call of the game's code: reads the target it made.
+    void after_call(uint64_t target_at);
+    // After the step: writes the target carried on by phase (0..1) of the next call, kept within +-limit radians (look_carry_target).
+    void finish(uint64_t target_at, double phase, double limit);
+    // The carry stops (the clock is off this step: the gyro camera, a cutscene): the game's own target goes back in memory, without the carried offset.
+    void release(uint64_t player, uint64_t target_at);
+    void drop() { have_ = false; }
+    bool have() const { return have_; }
+    double cur() const { return cur_; }
+
+private:
+    bool have_ = false;
+    uint64_t player_ = 0;
+    float written_ = 0.f;      // the target as the hook left it
+    double pprev_ = 0.0, prev_ = 0.0, cur_ = 0.0;      // the game's target after the third last, second last and last call
+};
 
 struct LockCamStats {
     uint64_t orientation_skipped = 0, freelook_calls = 0, turn_calls = 0, cursor_calls = 0, view_clamped = 0, gun_moved = 0;

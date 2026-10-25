@@ -56,8 +56,9 @@ struct AimParams {
     double yaw_rad = 0.000767945, pitch_rad = 0.000767945;   // radians per count
     bool invert_x = false, invert_y = false;
     double pitch_limit_rad = 0;              // > 0 overrides the tweak's limit
-    // A pad is looking up or down this frame (the right stick's vertical axis, or the gyro): the game's own pitch code owns the pitch (it eases it toward
-    // the stick, or follows the gyro), and this aim adopts what the game made of it instead of writing its own angle over it. The mouse still adds to it.
+    // A pad is looking up or down this frame (the right stick's vertical axis, the gyro turning, or the game's gyro camera / Pointer scheme engaged): the game's
+    // own pitch code owns the pitch (it eases it toward the stick, or follows the gyro or the pad's orientation), and this aim adopts what the game made of it
+    // instead of writing its own angle over it. The mouse still adds to it.
     bool pad_look = false;
 };
 
@@ -151,7 +152,8 @@ void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Ry
 // Guest memory access used by the driver and the probes (ReadProcessMemory on this process: a bad pointer gives false, never a fault).
 // Adds d to every sample of the game's CIIRFilter (the three history arrays: counts at +8, +76 and +120, samples from +12, +80 and +124). A filter with a
 // DC gain of 1 (this one has) then carries on exactly as if its whole past had been d higher: moving the pitch target by d from outside (the mouse) does
-// not get pulled back by the filter's memory. False when the memory does not look like that filter (counts out of range, a bad address).
+// not get pulled back by the filter's memory. False when the memory does not look like that filter (a count over what its array holds: 16, 10 and 10 floats,
+// a bad address).
 bool shift_look_filter(uint64_t filter, float d);
 bool guest_read(uint64_t addr, void* out, size_t n);
 bool guest_write(uint64_t addr, const void* in, size_t n);
