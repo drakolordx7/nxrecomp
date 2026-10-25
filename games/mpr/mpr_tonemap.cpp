@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "extras/tonemap_hook.h"
+#include "mpr_tonemap.h"
 
 #include <atomic>
 #include <cstring>

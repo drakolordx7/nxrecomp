@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "game_info.h"
 
+#include "nxrt/game.h"
+
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -46,6 +48,13 @@ bool utf8_to_wide(const std::string& in, std::wstring* out) {
         return false;
     }
     return true;
+}
+
+// A name from the registered game (UTF-8) as a wide string; empty when there is none.
+std::wstring brand(const char* utf8) {
+    std::wstring w;
+    if (utf8 && *utf8) utf8_to_wide(utf8, &w);
+    return w;
 }
 
 std::string wide_to_utf8(const std::wstring& in) {
@@ -192,7 +201,11 @@ std::wstring default_game_dir() { return launcher_exe_dir(); }
 
 std::wstring controls_path(const std::wstring& game_dir) { return (fs::path(game_dir) / L"controls.ini").wstring(); }
 
-std::wstring launcher_config_path() { return (fs::path(launcher_exe_dir()) / L"mpr_launcher.ini").wstring(); }
+std::wstring product_name() { return brand(nxrt::game::info().product); }
+std::wstring game_exe_name() { return brand(nxrt::game::info().exe_name); }
+std::wstring setup_exe_name() { return brand(nxrt::game::info().setup_exe_name); }
+std::wstring shader_pack_name() { return brand(nxrt::game::info().shader_pack); }
+std::wstring launcher_config_path() { return (fs::path(launcher_exe_dir()) / brand(nxrt::game::info().launcher_ini)).wstring(); }
 
 std::string format_launcher_config(const LauncherConfig& cfg) {
     std::string v = wide_to_utf8(cfg.game_dir);
@@ -204,7 +217,7 @@ std::string format_launcher_config(const LauncherConfig& cfg) {
         if (v.find(';') != std::string::npos || v.find('#') != std::string::npos) quote = true;
     }
     if (quote) v = "\"" + v + "\"";
-    return "; Metroid Prime launcher settings.\n[launcher]\ngame_dir = " + v + "\n";
+    return std::string("; ") + nxrt::game::info().product + " launcher settings.\n[launcher]\ngame_dir = " + v + "\n";
 }
 
 bool parse_launcher_config(const std::string& utf8_text, LauncherConfig* out) {
@@ -311,7 +324,7 @@ std::wstring quote_arg(const std::wstring& s) {
 bool start_game(const std::wstring& game_dir, std::wstring* err, const std::wstring& extra_args) {
     std::wstring args = L"--game " + quote_arg(game_dir);
     if (!extra_args.empty()) args += L" " + extra_args;
-    return launch_in_exe_dir(L"mpr.exe", args, nullptr, err);
+    return launch_in_exe_dir(game_exe_name(), args, nullptr, err);
 }
 
 bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* err, const std::wstring& extra_args) {
@@ -323,10 +336,10 @@ bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* er
                             extra_args.find(L"--no-shaders") != std::wstring::npos;
     if (!has_choice) {
         std::error_code ec;
-        const fs::path pack = fs::path(launcher_exe_dir()) / L"shader_cache.mprshc";
+        const fs::path pack = fs::path(launcher_exe_dir()) / shader_pack_name();
         if (fs::exists(pack, ec)) args += L" --shader-pack " + quote_arg(pack.wstring());
     }
-    return launch_in_exe_dir(L"mpr_setup.exe", args, process, err);
+    return launch_in_exe_dir(setup_exe_name(), args, process, err);
 }
 
 // ---- Shader preparation ----------------------------------------------------------------------------------------------
@@ -441,14 +454,14 @@ bool PrepareRun::start(const std::wstring& game_dir, bool if_needed, HWND notify
         return false;
     }
     const std::wstring dir = launcher_exe_dir();
-    const std::wstring exe = (fs::path(dir) / L"mpr.exe").wstring();
+    const std::wstring exe = (fs::path(dir) / game_exe_name()).wstring();
     std::error_code ec;
     if (game_dir.empty()) {
         set_err(err, L"No game folder is set.");
         return false;
     }
     if (!fs::exists(exe, ec)) {
-        set_err(err, L"mpr.exe was not found next to the launcher.");
+        set_err(err, game_exe_name() + L" was not found next to the launcher.");
         return false;
     }
 

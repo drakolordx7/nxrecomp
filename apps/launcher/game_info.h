@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Launcher helpers: what is in the game folder, the launcher's own settings file, command-line quoting, and starting mpr.exe
+// Launcher helpers: what is in the game folder, the launcher's own settings file, command-line quoting, and starting the game exe
 // or the setup tool. The pure parts (check_game_dir, summary, parse/format, quote_arg) do not touch the registry or the
-// launcher's own folder.
+// launcher's own folder. The names of the game's programs and files are the registered game's (nxrt/game.h; the launcher registers
+// the data part of its game module at start, cmake/launcher.cmake NXRT_LAUNCHER_GAME).
 #pragma once
 #include <windows.h>
 
@@ -11,6 +12,12 @@
 #include <thread>
 
 namespace mprl {
+
+// ---- Branding: the registered game's names (nxrt/game.h Info) ---------------------------------------------------------------------
+std::wstring product_name();      // the window title and the dialogs: "Metroid Prime Remastered PC"
+std::wstring game_exe_name();     // "mpr.exe"
+std::wstring setup_exe_name();    // "mpr_setup.exe"
+std::wstring shader_pack_name();  // the shader pack next to the launcher: "shader_cache.mprshc"
 
 struct GameStatus {
     bool exefs = false;           // exefs\main exists
@@ -29,7 +36,7 @@ GameStatus check_game_dir(const std::wstring& dir);
 std::wstring launcher_exe_dir();
 std::wstring default_game_dir();
 std::wstring controls_path(const std::wstring& game_dir);  // <dir>\controls.ini
-std::wstring launcher_config_path();                       // <exe dir>\mpr_launcher.ini
+std::wstring launcher_config_path();                       // <exe dir>\<the game's launcher ini> (mpr_launcher.ini)
 
 // The launcher's own settings file: UTF-8 text with a [launcher] section.
 //   [launcher]
@@ -49,11 +56,11 @@ bool save_launcher_config(const std::wstring& path, const LauncherConfig& cfg, s
 // One command-line argument, quoted by the CommandLineToArgvW rules. Plain words stay as they are.
 std::wstring quote_arg(const std::wstring& s);
 
-// Starts <launcher exe dir>\mpr.exe --game <game_dir> [extra_args] with the launcher folder as working directory.
+// Starts <launcher exe dir>\<game exe> --game <game_dir> [extra_args] with the launcher folder as working directory.
 // Does not wait. extra_args is added as typed (for test runs).
 bool start_game(const std::wstring& game_dir, std::wstring* err, const std::wstring& extra_args = L"");
 
-// Starts <launcher exe dir>\mpr_setup.exe --out <game_dir> [extra_args]. The process handle goes to *process;
+// Starts <launcher exe dir>\<setup exe> --out <game_dir> [extra_args]. The process handle goes to *process;
 // the caller waits for it and closes it. *process is null when false is returned.
 bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* err, const std::wstring& extra_args = L"");
 

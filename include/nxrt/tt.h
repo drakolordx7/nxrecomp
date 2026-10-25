@@ -28,7 +28,8 @@
 //   freeze_exit=1          a watchdog freeze ends the run with exit code 5 (default on with a script)
 //   shot_dir=<dir>         default <out>/shots; require_shots=1 turns a missing screenshot provider into a failure
 //   game_base=<addr>       base of the game's main module (default 0x7100000000)
-// Probe layout overrides ([probe] section): state_manager=<addr> (a CStateManager the hooks did not see), see tt_probe.cpp.
+// Probe layout overrides ([probe] section): state_manager=<addr> (a CStateManager the hooks did not see), see the game's probes
+// (GameProbes below; Metroid Prime Remastered: games/mpr/mpr_tt_probe.cpp).
 #pragma once
 #include <atomic>
 #include <cstddef>
@@ -90,7 +91,7 @@ const std::string& out_dir();
 void frame_boundary(::Ctx* c = nullptr);
 // Unit tests: run with frame_source=manual and call this; `now` hooks are not registered. Resets everything (counters, files closed).
 void reset_for_tests();
-// Called by the game hooks (tt_probe.cpp). Registers the entry hooks of the configured frame source and of the state-pointer capture.
+// Registers the game's entry hooks of the frame source and of the state-pointer capture (GameProbes::install_hooks).
 void install_game_hooks();
 // The state-pointer capture, called from the ProcessInput hook (x0 = CPlayerMP1*, x2 = CStateManager&); tests call it directly.
 void set_player_pointers(uint64_t player, uint64_t state_manager);
@@ -150,6 +151,28 @@ namespace detail {
 extern std::atomic<uint32_t> svc_every;
 void on_svc(::Ctx* c);
 }  // namespace detail
+
+// ---- the game's probes (nxrt/game.h Info::probes) -----------------------------------------------------------------------------------
+// What the test tooling knows of one game: its frame boundary and player-input hooks, how to read the state, and the script steps that need
+// the game's own functions (@warp @give @grant @call @objs @probe @rays @watch). The entry points above and in tt_internal.h forward here.
+struct GameProbes {
+    void (*install_hooks)() = nullptr;
+    bool (*read_state)(GameState* out) = nullptr;
+    void (*set_probe_layout)(const ProbeLayout& l) = nullptr;
+    void (*set_player_pointers)(uint64_t player, uint64_t state_manager) = nullptr;
+    void (*set_call_context)(::Ctx* c) = nullptr;
+    bool (*have_state_manager)() = nullptr;
+    bool (*warp)(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) = nullptr;
+    bool (*grant)(int64_t item, int32_t amount, int32_t capacity) = nullptr;
+    bool (*give_item)(int item, int amount) = nullptr;
+    bool (*call_guest)(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err) = nullptr;
+    bool (*dump_objects)(const std::string& classes, const std::string& out_path, std::string* err) = nullptr;
+    bool (*probe_positions)(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) = nullptr;
+    bool (*cast_rays)(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) = nullptr;
+    bool (*watch_start)(::Ctx* c, int what) = nullptr;
+    void (*watch_stop)() = nullptr;
+    void (*watch_flush)(uint64_t frame) = nullptr;
+};
 
 }  // namespace nxrt::tt
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The factory bindings of play mode, as the text of a settings file (play_types.h describes the format). default_settings() in
-// play_config.cpp parses this text on top of the built-in tables, so there is one source for the defaults.
+// Metroid Prime Remastered's factory settings for play mode (play_types.h GameDefaults): the text of a settings file (play_types.h describes
+// the format) and the bindings later revisions added. default_settings() in play_config.cpp parses this text on top of the built-in tables,
+// so there is one source for the defaults. Pure data: the launcher links it too.
 //
 // How the layers work: a binding in [bindings.<context>] beats a binding for the same input in [bindings.all]. `none` as the action
 // switches an input off in that context. The Switch side (what "fire" or "beam_2" press on the pad) is the [switch] table; the defaults
@@ -10,7 +11,9 @@
 
 namespace nxrt::play {
 
-const char* default_settings_text() {
+namespace {
+
+const char* settings_text() {
     return R"INI(# Metroid Prime Remastered, play mode: controls and display.
 # F1 in game opens the settings page, which writes this file.
 
@@ -223,6 +226,19 @@ Left Alt = none
 8 = none
 Mouse2 = none
 )INI";
+}
+
+// Factory bindings that an older controls.ini does not have (append new ones with the next revision and bump kDefaultsRev).
+constexpr int kDefaultsRev = 2;
+const GameDefaultAddition kAdditions[] = {
+    {2, Ctx::Map, "X", Act::BtnX},   // the map's Key / Legend button (its footer shows X)
+};
+
+}  // namespace
+
+const GameDefaults& mpr_game_defaults() {
+    static const GameDefaults d{settings_text(), kDefaultsRev, kAdditions, static_cast<unsigned>(sizeof kAdditions / sizeof kAdditions[0])};
+    return d;
 }
 
 }  // namespace nxrt::play

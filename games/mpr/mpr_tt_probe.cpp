@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Game-state probes (S5): read the player transform, world/area ids, health and play time out of guest memory, install the two
+// Game-state probes of Metroid Prime Remastered (S5; tt::GameProbes, nxrt/tt.h): read the player transform, world/area ids, health and play time out of guest memory, install the two
 // entry hooks the tooling needs, and run the practice mod's warp sequence. Guest pointers are host pointers (memory.h), so a probe is a
 // chain of reads; every read goes through ReadProcessMemory on this process so that a stale pointer gives "not available", not a fault.
 //
@@ -38,30 +38,13 @@
 #include "nxrt/log.h"
 #include "tt_internal.h"
 
-namespace nxrt::tt {
+// The probes live in their own namespace and reach the test tooling through tt::GameProbes (nxrt/tt.h, mpr_game_probes() below). The memory
+// helpers they use are the base's (src/testtools/tt_game.cpp).
+namespace nxrt::tt::mpr {
 namespace detail {
-namespace {
-std::atomic<uint64_t> g_base{kDefaultGameBase};
-}
-uint64_t game_base() { return g_base.load(); }
-void set_game_base(uint64_t b) { g_base.store(b); }
-
-bool read_mem(uint64_t addr, void* out, size_t n) {
-    if (addr < 0x10000) return false;
-    SIZE_T got = 0;
-    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(addr), out, n, &got) && got == n;
-}
-bool write_mem(uint64_t addr, const void* in, size_t n) {
-    if (addr < 0x10000) return false;
-    uint8_t probe[64];
-    if (n > sizeof probe || !read_mem(addr, probe, n)) return false;
-    __try {          // a direct store: WriteProcessMemory costs tens of milliseconds for an address in the guest heap (see play_aim.cpp)
-        std::memcpy(reinterpret_cast<void*>(addr), in, n);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
+using nxrt::tt::detail::game_base;
+using nxrt::tt::detail::read_mem;
+using nxrt::tt::detail::write_mem;
 }  // namespace detail
 
 namespace {
@@ -371,6 +354,8 @@ void set_debug_regs(bool on) {
 }
 }  // namespace
 
+void watch_stop();   // below; tt_internal.h used to declare it
+
 bool watch_start(::Ctx* c, int what) {
     uint64_t player = g_layout.player ? g_layout.player : g_player.load();
     const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
@@ -472,84 +457,6 @@ bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path
     std::fclose(in);
     std::fclose(out);
     NXLOG_I("tt", "rays: %zu cast, %zu hit, %zu faulted (%s -> %s)", n, nhit, nfault, in_path.c_str(), out_path.c_str());
-    return true;
-}
-
-
-// ---- @peek: read guest memory (S26) --------------------------------------------------------------------------------------------------------------
-// in: lines `addr len [off1 off2 ...]` (hex or decimal): follow the 64-bit pointers p = *(p + off) for each off, then read len bytes at p.
-// out: one line per request: the bytes as hex, or `-` when a read failed. Lets the route code poll the positions of objects it found with @objs
-// without scanning memory again.
-bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err) {
-    std::ifstream in(in_path);
-    if (!in) { *err = "cannot read " + in_path; return false; }
-    FILE* out = std::fopen(out_path.c_str(), "wb");
-    if (!out) { *err = "cannot write " + out_path; return false; }
-    std::string line;
-    size_t n = 0;
-    while (std::getline(in, line)) {
-        std::istringstream ss(line);
-        uint64_t addr = 0, len = 0;
-        if (!(ss >> std::hex >> addr >> std::dec >> len) || len == 0 || len > 4096) { std::fputs("-\n", out); continue; }
-        std::string tok;
-        bool ok = true;
-        uint64_t p = addr;
-        while (ss >> tok) {
-            const uint64_t off = std::strtoull(tok.c_str(), nullptr, 0);
-            uint64_t q = 0;
-            if (!rd(p + off, &q) || q == 0) { ok = false; break; }
-            p = q;
-        }
-        std::vector<uint8_t> buf(len);
-        if (ok && detail::read_mem(p, buf.data(), len)) {
-            for (uint8_t b : buf) std::fprintf(out, "%02x", b);
-            std::fputc('\n', out);
-        } else {
-            std::fputs("-\n", out);
-        }
-        n++;
-    }
-    std::fclose(out);
-    return true;
-}
-
-
-// ---- @poke: write guest memory (S26, development aid: restoring health after a death while a room is being worked out) ------------------------------
-// in: lines `addr [off ...] : hexbytes`. The pointers are followed like @peek; the bytes are stored with a read-back check of the page first.
-static void guarded_copy(uint64_t dst, const void* src, size_t n) {
-    __try { std::memcpy(reinterpret_cast<void*>(dst), src, n); } __except (EXCEPTION_EXECUTE_HANDLER) { }
-}
-
-bool poke_memory(const std::string& in_path, std::string* err) {
-    std::ifstream in(in_path);
-    if (!in) { *err = "cannot read " + in_path; return false; }
-    std::string line;
-    while (std::getline(in, line)) {
-        const size_t colon = line.find(':');
-        if (colon == std::string::npos) continue;
-        std::istringstream ss(line.substr(0, colon));
-        uint64_t addr = 0;
-        if (!(ss >> std::hex >> addr)) continue;
-        std::string tok;
-        uint64_t p = addr;
-        bool ok = true;
-        while (ss >> tok) {
-            if (tok[0] == '+') { p += std::strtoull(tok.c_str() + 1, nullptr, 0); continue; }      // `+N`: add N without following a pointer
-            uint64_t q = 0;
-            if (!rd(p + std::strtoull(tok.c_str(), nullptr, 0), &q) || q == 0) { ok = false; break; }
-            p = q;
-        }
-        std::string hex = line.substr(colon + 1);
-        std::vector<uint8_t> bytes;
-        for (size_t i = 0; i + 1 < hex.size(); ) {
-            if (!std::isxdigit(static_cast<unsigned char>(hex[i]))) { i++; continue; }
-            bytes.push_back(static_cast<uint8_t>(std::strtoul(hex.substr(i, 2).c_str(), nullptr, 16)));
-            i += 2;
-        }
-        uint8_t probe[8];
-        if (!ok || bytes.empty() || !detail::read_mem(p, probe, 1)) continue;
-        guarded_copy(p, bytes.data(), bytes.size());
-    }
     return true;
 }
 
@@ -705,4 +612,29 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
     return true;
 }
 }  // namespace detail
-}  // namespace nxrt::tt
+
+const GameProbes& mpr_game_probes() {
+    static const GameProbes p = [] {
+        GameProbes t;
+        t.install_hooks = &install_game_hooks;
+        t.read_state = &read_state;
+        t.set_probe_layout = &set_probe_layout;
+        t.set_player_pointers = &set_player_pointers;
+        t.set_call_context = &set_call_context;
+        t.have_state_manager = &detail::have_state_manager;
+        t.warp = &detail::warp;
+        t.grant = &detail::grant;
+        t.give_item = &detail::give_item;
+        t.call_guest = &detail::call_guest;
+        t.dump_objects = &detail::dump_objects;
+        t.probe_positions = &detail::probe_positions;
+        t.cast_rays = &detail::cast_rays;
+        t.watch_start = &detail::watch_start;
+        t.watch_stop = &detail::watch_stop;
+        t.watch_flush = &detail::watch_flush;
+        return t;
+    }();
+    return p;
+}
+
+}  // namespace nxrt::tt::mpr

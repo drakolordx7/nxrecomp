@@ -38,7 +38,6 @@ constexpr wchar_t kClassName[] = L"MprLauncherWindow";
 #ifndef MPR_VERSION
 #define MPR_VERSION "dev"
 #endif
-constexpr wchar_t kTitle[] = L"Metroid Prime Remastered PC";
 constexpr int kLogicalW = 680;
 constexpr int kLogicalH = 650;
 constexpr UINT_PTR kTimerSetup = 1;
@@ -236,7 +235,7 @@ void App::on_create() {
     auto mk = [&](const wchar_t* cls, const wchar_t* text, DWORD style, int id, DWORD ex = 0) {
         return CreateWindowExW(ex, cls, text, style | WS_CHILD | WS_VISIBLE, 0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), env_.inst, nullptr);
     };
-    title_ = mk(L"STATIC", kTitle, SS_LEFT | SS_NOPREFIX, IDC_TITLE);
+    title_ = mk(L"STATIC", product_name().c_str(), SS_LEFT | SS_NOPREFIX, IDC_TITLE);
     version_ = mk(L"STATIC", version_text().c_str(), SS_RIGHT | SS_NOPREFIX, IDC_VERSION);
     status_ = mk(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, IDC_STATUS);
     folder_label_ = mk(L"STATIC", L"Game folder", SS_LEFT | SS_NOPREFIX, IDC_FOLDER_LABEL);
@@ -744,7 +743,7 @@ int App::run() {
     if (!RegisterClassExW(&wc)) return 1;
 
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    const std::wstring caption = std::wstring(kTitle) + L"  " + version_text();
+    const std::wstring caption = product_name() + L"  " + version_text();
     CreateWindowExW(0, kClassName, caption.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, env_.inst, this);
     if (!hwnd_) return 1;
     // The DPI at WM_CREATE can still be the placeholder; it settles once the window is placed. Rebuild the fonts if it differs.
@@ -796,7 +795,14 @@ int App::run() {
 }  // namespace
 }  // namespace mprl
 
+#ifdef NXRT_LAUNCHER_GAME_REGISTER
+void NXRT_LAUNCHER_GAME_REGISTER();     // the data part of the game module the launcher is built for (cmake/launcher.cmake)
+#endif
+
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
+#ifdef NXRT_LAUNCHER_GAME_REGISTER
+    NXRT_LAUNCHER_GAME_REGISTER();
+#endif
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     mprl::App app(inst, mprl::parse_cmdline());
     const int rc = app.run();

@@ -226,10 +226,27 @@ struct Settings {
     std::string migration_added;   // transient: the bindings the upgrade added, for the log line
 };
 
-// The factory settings: the table above and the default bindings (default_settings_text() in play_defaults.cpp, which is the same text
-// the settings file would contain).
+// The factory settings: the table above and the default bindings (default_settings_text(), which is the same text the settings file would
+// contain). The text, its revision and the bindings later revisions add are the registered game's (nxrt/game.h Info::play_defaults;
+// Metroid Prime Remastered: games/mpr/mpr_defaults.cpp); without one the text is empty and the revision 0.
 Settings default_settings();
 const char* default_settings_text();
+
+// A factory binding that a later revision of the defaults added: a controls.ini that has [bindings.*] sections and a defaults_rev below
+// `rev` gets it (only where the input is still unbound in that context, so the user's own choice wins).
+struct GameDefaultAddition {
+    int rev;
+    Ctx ctx;
+    const char* input;
+    Act act;
+};
+struct GameDefaults {
+    const char* settings_text = "";                  // the factory settings file
+    int defaults_rev = 0;                            // the [meta] defaults_rev this build writes; bump it together with a new addition
+    const GameDefaultAddition* additions = nullptr;
+    unsigned addition_count = 0;
+};
+const GameDefaults* game_defaults();                 // the registered game's, or nullptr
 
 // ---- the settings file ---------------------------------------------------------------------------------------------------------
 // Plain ini, '#' or ';' starts a comment. Sections and keys are case-insensitive, whitespace around names and values is ignored.

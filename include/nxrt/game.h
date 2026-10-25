@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The game boundary (docs/GAME_BOUNDARY.md): everything one title supplies to the game-independent base.
+//
+// The runtime, the launcher and the test tooling know no game. A game module (runtime/games/<id>/, a static library the game exe links)
+// fills one Info and registers it with set_current() before anything reads it: before nxrt::init() in the game exe, at the top of the
+// launcher's WinMain and of the test mains. Every part is optional. A null table or an empty string turns off what needs it (no hooks, no
+// probes, neutral title facts), so a new title can start with the identity alone and add tables as its hooks are found.
+//
+// What each table is for, and where the Metroid Prime Remastered one lives:
+//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/mpr_game.cpp
+//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           games/mpr/mpr_sites.h
+//   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  games/mpr/mpr_tt_probe.cpp
+//   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/mpr_defaults.cpp
+//   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/mpr_play.cpp
+//   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      games/mpr/mpr_prompts.cpp
+// The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
+#pragma once
+#include <cstdint>
+
+namespace nxrt {
+namespace services { struct TitleProfile; }
+namespace timestep { struct Sites; }
+namespace tt { struct GameProbes; }
+namespace play { struct GamePlay; struct GameDefaults; struct PromptGame; }
+}  // namespace nxrt
+
+namespace nxrt::game {
+
+struct Info {
+    // ---- identity ----
+    const char* id = "";                    // short id, also the stem of the game's file names: "mpr"
+    const char* title = "";                 // the game's own name: "Metroid Prime Remastered"
+    const char* product = "";               // the PC port's name in window titles and dialogs: "Metroid Prime Remastered PC"
+    uint64_t program_id = 0;                // the Switch title id
+    const char* version = "";               // the game version the hooks were found in: "1.0.0"
+    const char* build_id = "";              // build id of that version's main NSO (hex), which the setup tool checks
+    uint64_t main_base = 0x7100000000ull;   // where main is mapped (the lifter's base for it): hook offsets are relative to this
+
+    // ---- files and branding ----
+    const char* exe_name = "";              // the game exe: "mpr.exe"
+    const char* setup_exe_name = "";        // the setup tool: "mpr_setup.exe"
+    const char* launcher_ini = "";          // the launcher's own settings file: "mpr_launcher.ini"
+    const char* game_ini = "";              // the settings file the setup tool writes: "mpr.ini"
+    const char* shader_pack = "";           // the shader pack file next to the setup tool: "shader_cache.mprshc"
+    const char* save_folder = "";           // save data folder under %APPDATA%: "MPRRecomp" (empty: "nxrt")
+
+    // ---- tables (null = the feature is off) ----
+    void (*title_defaults)(services::TitleProfile& p) = nullptr;
+    const timestep::Sites* timestep = nullptr;
+    const tt::GameProbes* probes = nullptr;
+    const play::GameDefaults* play_defaults = nullptr;
+    const play::GamePlay* play = nullptr;
+    const play::PromptGame* prompts = nullptr;
+};
+
+// The registered game, or nullptr. One slot per program (the function-local static is shared by every translation unit that inlines it).
+inline const Info*& current_slot() {
+    static const Info* slot = nullptr;
+    return slot;
+}
+inline void set_current(const Info* g) { current_slot() = g; }
+inline const Info* current() { return current_slot(); }
+// The registered game, or an empty Info (every table null) when none is.
+inline const Info& info() {
+    static const Info none;
+    const Info* g = current();
+    return g ? *g : none;
+}
+
+}  // namespace nxrt::game

@@ -35,6 +35,10 @@ endif()
 add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0A00)
 
 option(NXRT_BUILD_GFX "Build the graphics shell (SDL3 + Vulkan + NVN front end, src/gfx, cmake/gfx.cmake)" ON)
+# Game modules (games/<id>/, docs/GAME_BOUNDARY.md): the title-specific code a game exe links. The test executables register one of them, so
+# the tests of the base run against that game's tables (title facts, sites, probes, hooks) as the game exe does.
+option(NXRT_BUILD_GAMES "Build the game modules in games/" ON)
+set(NXRT_TEST_GAME "mpr" CACHE STRING "id of the game module the test executables register (empty: none)")
 
 file(GLOB_RECURSE NXRT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 list(FILTER NXRT_SOURCES EXCLUDE REGEX "/src/gfx/")   # the graphics shell is its own library (cmake/gfx.cmake)
@@ -83,4 +87,23 @@ endif()
 
 if(NXRT_BUILD_GFX)
     include(cmake/gfx.cmake)
+endif()
+
+if(NXRT_BUILD_GAMES)
+    add_subdirectory(games/mpr)
+endif()
+# Each test executable registers the most of the test game it links: the data part (launcher tests), the core part (runtime tests), the whole
+# module (graphics tests). tests/test_main.cpp calls NXRT_TEST_GAME_REGISTER before the first test.
+if(NXRT_BUILD_TESTS AND NXRT_BUILD_GAMES AND NXRT_TEST_GAME)
+    set(_g "${NXRT_TEST_GAME}")
+    foreach(pair "nxrt_tests;nxrt_game_${_g}_core;nxrt_register_game_${_g}_core" "nxrt_gfx_tests;nxrt_game_${_g};nxrt_register_game_${_g}"
+                 "mpr_launcher_tests;nxrt_game_${_g}_data;nxrt_register_game_${_g}_data")
+        list(GET pair 0 exe)
+        list(GET pair 1 lib)
+        list(GET pair 2 fn)
+        if(TARGET ${exe} AND TARGET ${lib})
+            target_link_libraries(${exe} PRIVATE ${lib})
+            target_compile_definitions(${exe} PRIVATE NXRT_TEST_GAME_REGISTER=${fn})
+        endif()
+    endforeach()
 endif()

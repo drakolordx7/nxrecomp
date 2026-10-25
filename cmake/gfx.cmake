@@ -27,21 +27,11 @@ target_include_directories(nxrt_astc2bc7 INTERFACE "${NXRT_TOOLS_DIR}/textures/i
 target_link_libraries(nxrt_astc2bc7 INTERFACE "${NXRT_A2B_DIR}/astc2bc7.lib" "${NXRT_A2B_DIR}/bc7e_ispc.lib")
 file(GLOB NXRT_A2B_DLLS "${NXRT_A2B_DIR}/astcdec-*-shared.dll")
 
-# The setup tool's pak and TXTR readers (tools/setup/src, MIT-derived format knowledge, same repository): the button prompts read the game's icon
-# textures from the player's own paks to recognise them (src/gfx/play/prompts.cpp).
-set(NXRT_SETUP_SRC "${NXRT_TOOLS_DIR}/setup/src")
-if(NOT EXISTS "${NXRT_SETUP_SRC}/pak.cpp")
-    message(FATAL_ERROR "tools/setup/src/pak.cpp not found in ${NXRT_TOOLS_DIR}")
-endif()
-add_library(nxrt_mprpak STATIC "${NXRT_SETUP_SRC}/pak.cpp" "${NXRT_SETUP_SRC}/txtr.cpp" "${NXRT_SETUP_SRC}/storage.cpp" "${NXRT_SETUP_SRC}/util.cpp")
-target_include_directories(nxrt_mprpak PUBLIC "${NXRT_SETUP_SRC}")
-target_compile_features(nxrt_mprpak PUBLIC cxx_std_20)
-
 file(GLOB_RECURSE NXRT_GFX_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/*.cpp")
 list(FILTER NXRT_GFX_SOURCES EXCLUDE REGEX "nvn_gpu_stub[.]cpp$")   # unit-test stand-in of the GPU boundary (scripts/nvn_unit.ps1)
 add_library(nxrt_gfx STATIC ${NXRT_GFX_SOURCES})
 target_include_directories(nxrt_gfx PUBLIC include src/gfx/nvn/third_party PRIVATE src/gfx src/gfx/nvn)
-target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling nxrt_astc2bc7 nxrt_mprpak SDL3::SDL3-static)
+target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling nxrt_astc2bc7 SDL3::SDL3-static)
 target_compile_definitions(nxrt_gfx PUBLIC VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
 
 add_executable(nxrt_gfx_demo apps/gfx_demo.cpp)
@@ -53,6 +43,11 @@ endforeach()
 
 if(NXRT_BUILD_TESTS)
     file(GLOB_RECURSE NXRT_GFX_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gfx/*.cpp")
+    # The tests of the registered test game's own code (games/<id>/tests) run in the same executable (docs/GAME_BOUNDARY.md).
+    if(NXRT_BUILD_GAMES AND NXRT_TEST_GAME)
+        file(GLOB NXRT_GAME_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/games/${NXRT_TEST_GAME}/tests/*.cpp")
+        list(APPEND NXRT_GFX_TEST_SOURCES ${NXRT_GAME_TEST_SOURCES})
+    endif()
     add_executable(nxrt_gfx_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_main.cpp" ${NXRT_GFX_TEST_SOURCES})
     target_include_directories(nxrt_gfx_tests PRIVATE tests src/gfx src/gfx/nvn)
     target_link_libraries(nxrt_gfx_tests PRIVATE nxrt_gfx)

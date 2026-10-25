@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <utility>
 
+#include "game_info.h"
 #include "keymap_win.h"
 #include "pad_capture.h"
 
@@ -335,7 +336,7 @@ bool xinput_pad_connected() {
 }
 
 int message(HWND owner, const std::wstring& text, UINT type) {
-    return MessageBoxW(owner, text.c_str(), L"Metroid Prime Remastered PC", type);
+    return MessageBoxW(owner, text.c_str(), product_name().c_str(), type);
 }
 
 std::wstring input_label(const nxrt::play::InputId& id) {

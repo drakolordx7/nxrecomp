@@ -16,6 +16,7 @@
 #include "nxrt/extras.h"
 #include "nxrt/input_source.h"
 #include "nxrt/lowlat.h"
+#include "play_game.h"
 
 namespace nxrt::play {
 
@@ -209,6 +210,12 @@ void sensitivity_help(double rad) {
     ImGui::TextDisabled("= %.6f rad per count, %.3f degrees per count, 360 degrees in %.0f counts", rad, rad * 180.0 / kPi, 2.0 * kPi / rad);
 }
 
+// The game's own entries of the Mouse tab (play_game.h GamePlay::mouse_tab): where = 0 after the sensitivity, 1 after the invert boxes, 2 at the end.
+void game_mouse_section(int where, Page& p) {
+    const GamePlay* gp = game_play();
+    if (gp && gp->mouse_tab && gp->mouse_tab(where, p.edit)) mark(p);
+}
+
 void mouse_tab(Page& p) {
     MouseSettings& m = p.edit.mouse;
     double src = source_sens(m.yaw_rad);
@@ -226,55 +233,14 @@ void mouse_tab(Page& p) {
     }
     sensitivity_help(m.pitch_rad);
     ImGui::Checkbox("Link vertical to horizontal", &p.link_pitch);
-
-    ImGui::Spacing();
-    ImGui::TextUnformatted("Morph ball camera (mouse orbits the camera around the ball)");
-    src = source_sens(m.morph_yaw_rad);
-    if (slider("Ball camera horizontal", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-        m.morph_yaw_rad = rad_per_count(src);
-        mark(p);
-    }
-    src = source_sens(m.morph_pitch_rad);
-    if (slider("Ball camera vertical", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-        m.morph_pitch_rad = rad_per_count(src);
-        mark(p);
-    }
+    game_mouse_section(0, p);
 
     ImGui::Spacing();
     if (ImGui::Checkbox("Invert vertical", &m.invert_y)) mark(p);
     if (ImGui::Checkbox("Invert horizontal", &m.invert_x)) mark(p);
-    if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_beams)) mark(p);
+    game_mouse_section(1, p);
     if (ImGui::Checkbox("Mouse pointer in menus (cursor, hover, click)", &m.menu_cursor)) mark(p);
-
-    ImGui::Spacing();
-    static const char* const kLockModeLabels[] = {"Classic (the view turns to the target)", "Free (you keep control of the view)"};
-    const int lock_sel = static_cast<int>(p.edit.aim.lock_mode);
-    if (ImGui::BeginCombo("Lock-on camera", kLockModeLabels[lock_sel])) {
-        for (int i = 0; i < 2; ++i) {
-            if (ImGui::Selectable(kLockModeLabels[i], i == lock_sel) && i != lock_sel) {
-                p.edit.aim.lock_mode = static_cast<LockMode>(i);
-                mark(p);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.");
-    ImGui::PopTextWrapPos();
-    ImGui::BeginDisabled(p.edit.aim.lock_mode != LockMode::Free);
-    int margin_pct = static_cast<int>(std::lround(p.edit.aim.free_lock_margin * 100.0));
-    if (ImGui::SliderInt("Free lock edge margin", &margin_pct, 0, 40, "%d %%")) {
-        p.edit.aim.free_lock_margin = margin_pct / 100.0;
-        mark(p);
-    }
-    ImGui::EndDisabled();
-    if (ImGui::Checkbox("Gun drives the view (the game's own: idle sway, walking bob and landing move the view)", &p.edit.camera.gun_drives_view)) mark(p);
-    ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("On: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the whole view. Off: the view follows only the mouse and the stick, and those movements move the gun on screen instead.");
-    ImGui::PopTextWrapPos();
-
-    ImGui::Spacing();
-    ImGui::TextWrapped("Raw mouse input, no acceleration. Aim only applies in the first-person view when not locked on, not in the morph ball and not in a cutscene. Holding the free look key (Alt) turns the view without turning Samus.");
+    game_mouse_section(2, p);
 }
 
 // ---- Controller ---------------------------------------------------------------------------------------------------------------------
