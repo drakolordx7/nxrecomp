@@ -58,6 +58,9 @@ glow_color = off
 suit_glow = auto
 ball_glow = auto
 gun_glow = auto
+# Paint of the suit (the morph ball follows it) and of the arm cannon's shell: off (the game's own) or R,G,B (0..255 each), black to white.
+suit_color = off
+gun_color = off
 
 [pad]
 label_abxy = 1

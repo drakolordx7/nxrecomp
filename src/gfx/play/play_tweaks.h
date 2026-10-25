@@ -8,6 +8,9 @@
 //   suit_glow  = auto | off | R,G,B        auto follows glow_color; off keeps the game's colour even when glow_color is set
 //   ball_glow  = auto | off | R,G,B
 //   gun_glow   = auto | off | R,G,B
+//   suit_color = off | R,G,B               the suit's paint, the morph ball and the spider ball with it (S45; texture recolour that keeps the
+//                                           detail and shading of every texel; Metroid Prime Remastered: games/mpr/mpr_tint.h)
+//   gun_color  = off | R,G,B               the arm cannon's shell (first person, every suit and beam)
 //
 // R, G and B are 0..255 (sRGB, as a colour picker shows them). (#RRGGBB is accepted by parse_glow_rgb, but the settings file reads a '#' after
 // a space as a comment, so the file uses R,G,B.)
@@ -40,6 +43,10 @@ struct TweakSettings {
     GlowPart suit;          // [tweaks] suit_glow
     GlowPart ball;          // [tweaks] ball_glow
     GlowPart gun;           // [tweaks] gun_glow
+    bool suit_color_on = false;   // [tweaks] suit_color: false = off (the game's paint)
+    GlowRgb suit_color{40, 90, 255};
+    bool gun_color_on = false;    // [tweaks] gun_color
+    GlowRgb gun_color{40, 90, 255};
 };
 
 // The colour a part is drawn with: true and *out set when it is recoloured, false for the game's own colour.
@@ -158,6 +165,22 @@ inline bool apply_tweaks_key(const std::string& key, const std::string& value, T
         p->rgb = c;
         return true;
     }
+    if (k == "suit_color" || k == "gun_color") {
+        bool* on = k == "suit_color" ? &t->suit_color_on : &t->gun_color_on;
+        GlowRgb* c = k == "suit_color" ? &t->suit_color : &t->gun_color;
+        if (v == "off" || v == "none" || v.empty()) {
+            *on = false;
+            return true;
+        }
+        GlowRgb rgb;
+        if (!parse_glow_rgb(v, &rgb)) {
+            *msg = k + " must be off or R,G,B (0..255 each), got '" + value + "'";
+            return false;
+        }
+        *on = true;
+        *c = rgb;
+        return true;
+    }
     *known = false;
     return true;
 }
@@ -169,6 +192,8 @@ inline std::string format_tweaks(const TweakSettings& t) {
     o += "suit_glow = " + glow_part_text(t.suit) + "\n";
     o += "ball_glow = " + glow_part_text(t.ball) + "\n";
     o += "gun_glow = " + glow_part_text(t.gun) + "\n";
+    o += "suit_color = " + (t.suit_color_on ? glow_rgb_text(t.suit_color) : std::string("off")) + "\n";
+    o += "gun_color = " + (t.gun_color_on ? glow_rgb_text(t.gun_color) : std::string("off")) + "\n";
     return o;
 }
 

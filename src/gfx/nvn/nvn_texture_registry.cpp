@@ -208,6 +208,18 @@ void textures_mark_override_candidates_dirty() {
     }
 }
 
+std::vector<Ref<Texture>> texture_registry_collect(bool (*pred)(const Texture& t, void* user), void* user) {
+    std::vector<Ref<Texture>> hit;
+    std::lock_guard<std::mutex> lk(g_mu);
+    for (auto& kv : g_by_start) {
+        Texture* t = kv.second;
+        if (t->destroyed.load() || !pred(*t, user)) continue;
+        t->ref();
+        hit.emplace_back(t);
+    }
+    return hit;
+}
+
 std::atomic<uint64_t> g_tex_scan_epoch{1};
 std::atomic<bool> g_tex_prep_on{false};
 

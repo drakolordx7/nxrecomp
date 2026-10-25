@@ -36,6 +36,7 @@
 #include "play_glow.h"
 #include "play_scenefix.h"
 #include "mpr/mpr_fastboot.h"
+#include "mpr/mpr_tint.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -637,6 +638,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             lockcam_set(s);
             fastboot_set(s);
             glow_set(s.tweaks);
+            tint_set(s.tweaks);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -658,6 +660,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
     poll_pads(now);
     lockcam_frame();
     glow_frame();
+    tint_frame();
     if (st.engine) st.engine->frame_tick();
 
     // what the game is doing: the context, the beam, the pointer
@@ -1238,6 +1241,8 @@ bool start(const StartOptions& opt) {
     mm::game_install(st.base);
     fastboot_install(st.base);
     fastboot_set(st.settings);
+    tint_install();
+    tint_set(st.settings.tweaks);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
             static_cast<unsigned long long>(st.base), st.hook_update, st.hook_input);
@@ -1248,6 +1253,7 @@ void stop() {
     G& st = g();
     if (!st.started) return;
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
+    tint_remove();
     fastboot_remove();
     mm::game_remove();
     glow_remove();
