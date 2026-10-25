@@ -92,7 +92,21 @@ KEY_TEXT = [
     (rb'-----BEGIN', '-----BEGIN'),
 ]
 LEAK_FILES = (EXE_NAME, LAUNCHER_NAME) + SETUP_EXES
-LEAK_PATTERNS = []   # matched case-insensitively, as ASCII and as UTF-16LE
+def _leak_patterns():
+    # This machine's own paths and user name must never end up in a release: the checkout's parent folders, the
+    # Windows user name and anything listed in MPR_LEAK_PATTERNS (comma separated).
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    parts = root.replace('\\', '/').split('/')
+    pats = {root, '/'.join(parts[:2]), os.environ.get('USERNAME', ''), *os.environ.get('MPR_LEAK_PATTERNS', '').split(',')}
+    out = set()
+    for p in pats:
+        p = p.strip()
+        if len(p) >= 4:
+            out |= {p.encode(), p.replace('\\', '/').encode(), p.replace('/', '\\').encode()}
+    return sorted(out)
+
+
+LEAK_PATTERNS = _leak_patterns()   # matched case-insensitively, as ASCII and as UTF-16LE
 
 
 PE_EXT = ('.exe', '.dll')                       # files whose import tables the audit reads
