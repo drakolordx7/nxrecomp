@@ -118,7 +118,7 @@ std::string guid_text(const uint8_t b[16]) {
     return s;
 }
 
-// The world and the current area, read the way the test probes read them (mpr_tt_probe.cpp read_state).
+// The world and the current area, read the way the test probes read them (src/testtools/tt_probe.cpp read_state).
 bool read_world_area(uint8_t world[16], uint8_t area[16]) {
     uint64_t gs = 0, arr = 0;
     int32_t n = 0;
