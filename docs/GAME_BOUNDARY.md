@@ -6,16 +6,16 @@ Switch title can reuse the base unchanged and bring its own module.
 
 Three kinds of game knowledge:
 
-- **(a) A generic thing with a Metroid value baked in.** The code works for any game; only a number or a name was the game's.
+- (a) A generic thing with a Metroid value baked in. The code works for any game; only a number or a name was the game's.
   The value now comes from the game (a field of `nxrt::game::Info`, or a per-game data file in the tools).
-- **(b) A reusable mechanism with Metroid data.** The code is a general technique (patching the frame step at a list of sites,
+- (b) A reusable mechanism with Metroid data. The code is a general technique (patching the frame step at a list of sites,
   matching button icons in the game's textures, factory settings with revisions); the table it works from was the game's. The
   mechanism stays in the base and the table moved to the game module.
-- **(c) Purely game-specific.** Hooks on Metroid functions, Metroid camera and aim behaviour, its menus. Moved whole into the game
+- (c) Purely game-specific. Hooks on Metroid functions, Metroid camera and aim behaviour, its menus. Moved whole into the game
   module.
 
 Scope: `runtime/` (base and launcher), `tools/` (setup tool, release builder) and `recomp/` outside `recomp/games/mpr`, which was
-already the recompiler's game folder. The game exe (`game-build/`, root repository) is the game's own program and stays there.
+already the recompiler's game folder. The game exe (`game-build/`) is the game's own program and stays there.
 
 ## The interface
 
@@ -53,7 +53,7 @@ The play-mode half talks to the base through two tables in `src/gfx/play/play_ga
 handling, aim feedback, pitch limit, log status). Hooks keep their registration order: the base installs the game's render hooks
 before its own frame hook and the game's input hooks after it, as before.
 
-CMake: `NXRT_BUILD_GAMES` (on) adds every module listed in `NXRT_GAMES` (default `mpr`), so a second game needs no edit of the base. `NXRT_TEST_GAME` (mpr) picks the module the test programs register;
+CMake: `NXRT_BUILD_GAMES` (on) adds every module listed in `NXRT_GAMES` (default `mpr`), so a second game needs no edit of the base. `NXRT_TEST_GAME` (mpr) picks the module the test programs register.
 Its tests run in the base test programs: `games/<id>/tests/core/*.cpp` in `nxrt_tests`, `games/<id>/tests/*.cpp` in `nxrt_gfx_tests`; without a test game they are left out. `NXRT_LAUNCHER_GAME` (mpr) picks the launcher's branding and its `games/<id>/launcher.rc`; when that module is not built, the launcher builds unbranded. The setup tool has `MPRS_GAME` (mpr) and
 the release builder reads `tools/release/games/<id>.json` (`MPR_RELEASE_GAME`, default mpr).
 
@@ -81,11 +81,11 @@ the release builder reads `tools/release/games/<id>.json` (`MPR_RELEASE_GAME`, d
 | Where (before) | Kind | Now |
 | --- | --- | --- |
 | `src/gfx/play/play.cpp` ProcessInput, SetTransform, first-person and ball camera think hooks, player pointer, free look, ball look, beam hints | (c) | `games/mpr/mpr_play.cpp` behind `GamePlay`; the mouse sampling logic that was inside the input hook stays in the base as `GameHost::input_tick` |
-| `src/gfx/play/play_aim.*`, `play_lockcam.*`, `play_lookrate.*` (Samus's aim, lock-on camera, look rate) | (c) | `games/mpr/` (git mv) |
-| `src/gfx/play/play_scenefix.*` (S42: the guard on CModConSceneNode render queries, `[game] modcon_query_guard`) and its test | (c) | `games/mpr/` (git mv); installed and removed by `games/mpr/mpr_play.cpp` next to the lock-on camera |
-| `src/gfx/play/play_glow.*`, `play_glow_ui.cpp` (S44: the glow colour on the morph ball tables, particle generators and incandescence draws) and its test | (c) | `games/mpr/` (git mv while merging main); installed, set, ticked and removed by `games/mpr/mpr_play.cpp` in main's order (after the lock-on camera; the ball's inner glow from the ProcessInput hook); the F1 Tweaks tab through `GamePlay::tweaks_tab` |
-| `games/mpr/mpr_fastboot.*` (S46: skip the opening cutscene, the title's intro movie, faster front end) | (c) | was already in `games/mpr` on main, but compiled into nxrt_gfx and called from play.cpp; now in the `nxrt_game_mpr` library and called from `mpr_play.cpp` |
-| `games/mpr/mpr_tint.*` (S45: suit and arm cannon paint, recolouring the game's textures) and its test | (c) | was in `games/mpr` on main, called from play.cpp; now in `nxrt_game_mpr`, installed, set, ticked and removed by `games/mpr/mpr_play.cpp` in main's order. The texture edit mechanism it uses (`include/nxrt/tex_edit.h`, `src/gfx/nvn/nvn_tex_edit.cpp`) is the base's (b) |
+| `src/gfx/play/play_aim.*`, `play_lockcam.*`, `play_lookrate.*` (Samus's aim, lock-on camera, look rate) | (c) | `games/mpr/` |
+| `src/gfx/play/play_scenefix.*` (S42: the guard on CModConSceneNode render queries, `[game] modcon_query_guard`) and its test | (c) | `games/mpr/`; installed and removed by `games/mpr/mpr_play.cpp` next to the lock-on camera |
+| `src/gfx/play/play_glow.*`, `play_glow_ui.cpp` (S44: the glow colour on the morph ball tables, particle generators and incandescence draws) and its test | (c) | `games/mpr/`; installed, set, ticked and removed by `games/mpr/mpr_play.cpp` (after the lock-on camera; the ball's inner glow from the ProcessInput hook); the F1 Tweaks tab through `GamePlay::tweaks_tab` |
+| `games/mpr/mpr_fastboot.*` (S46: skip the opening cutscene, the title's intro movie, faster front end) | (c) | was already in `games/mpr`, but compiled into nxrt_gfx and called from play.cpp; now in the `nxrt_game_mpr` library and called from `mpr_play.cpp` |
+| `games/mpr/mpr_tint.*` (S45: suit and arm cannon paint, recolouring the game's textures) and its test | (c) | was in `games/mpr`, called from play.cpp; now in `nxrt_game_mpr`, installed, set, ticked and removed by `games/mpr/mpr_play.cpp`. The texture edit mechanism it uses (`include/nxrt/tex_edit.h`, `src/gfx/nvn/nvn_tex_edit.cpp`) is the base's (b) |
 | `src/gfx/play/play_fastboot.*`, `play_ui_fastboot.cpp`, `play_tweaks.h`, launcher `page_fastboot.cpp` and `page_tweaks.cpp` (the `[tweaks]` keys, their F1 rows and launcher pages) | (b) | stay in the base: they are the settings file's format and its editors, like `[aim]` and `[camera]`; the keys name Metroid's features (gap below) |
 | `src/gfx/play/play_display.cpp` the hooks on the game's resolution, FOV and HUD code | (c) | `games/mpr/display_hooks.cpp`; the display math and the texture filtering settings (`display_tuning`) stay in the base |
 | `src/gfx/play/menu_mouse.cpp` the game's menu hooks | (c) | `games/mpr/menu_mouse_game.cpp`; the pointer state and the math stay in the base (`menu_mouse_math.cpp`) |
@@ -108,9 +108,9 @@ the release builder reads `tools/release/games/<id>.json` (`MPR_RELEASE_GAME`, d
 | --- | --- | --- |
 | "Metroid Prime Remastered PC" window title and dialog captions | (a) | `Info::product` |
 | `mpr.exe`, `mpr_setup.exe`, `mpr_launcher.ini`, `shader_cache.mprshc` | (a) | `Info` file names |
-| `apps/launcher/launcher.rc`, `launcher.manifest` (version info, icon, manifest) | (c) | `games/mpr/` (git mv), picked by `NXRT_LAUNCHER_GAME` |
+| `apps/launcher/launcher.rc`, `launcher.manifest` (version info, icon, manifest) | (c) | `games/mpr/`, picked by `NXRT_LAUNCHER_GAME` |
 
-### game exe (root repository)
+### game exe
 
 `game-build/src/mpr_main.cpp` is the game's own main. It now calls `nxrt_register_game_mpr()` first and takes its window and
 message box titles from `info().title`. Its own names (`mpr.log`, `mpr.ini`, `--version` text) stay: they belong to the game exe.
@@ -143,7 +143,7 @@ The recompiler (`nxrecomp/`) has no game knowledge. `0x7100000000` there is the 
 
 These are still Metroid-shaped in the base. None of them blocks a second game from building; they limit what it can reuse.
 
-- **Play-mode vocabulary (done in part).** The base's action and context slots are generic: `Ctx` is All, Play, Alt (the alternate body),
+- Play-mode vocabulary (done in part). The base's action and context slots are generic: `Ctx` is All, Play, Alt (the alternate body),
   Map, Menu, Inspect; the game actions are Primary, Target, Secondary, Jump, AltForm, LookHold, Map, Pause, Confirm, Back, the selects
   SetA1..4 / SetB1..4 and the cycle SetANext / SetAPrev; `GameFrame` carries `cycle_index` / `cycle_mask`; the engine cycles set A; the
   settings fields are `alt_yaw_rad`, `alt_pitch_rad`, `wheel_cycles`, `alt_orbit`. The game names them through
@@ -153,34 +153,33 @@ These are still Metroid-shaped in the base. None of them blocks a second game fr
   generic names and the game actions have no factory output. What is still fixed in the base: the number and kinds of slots (four-member
   sets A and B, one alternate body, one inspect context), the `[aim]` (lock-on) and `[camera]` sections, and one launcher sentence on the
   Keyboard page that lists Metroid's contexts.
-- **`[tweaks]` names Metroid's features.** `skip_intro`, `skip_boot_logos`, `fast_menus`, `glow_color` and the per-part glow keys are base
+- `[tweaks]` names Metroid's features. `skip_intro`, `skip_boot_logos`, `fast_menus`, `glow_color` and the per-part glow keys are base
   settings code (`play_fastboot.h`, `play_tweaks.h`) and launcher pages; a second game would want its own tweak list from `GameDefaults`.
-- **Moved code keeps namespace `nxrt::play`.** Done to keep the move mechanical; rename to `nxrt::games::mpr` later.
-- **Test tooling vocabulary.** `tt::GameState` fields (morph, beam, visor, missiles), the hash over them (`tt_core.cpp`) and the item
+- Moved code keeps namespace `nxrt::play`. Done to keep the move mechanical; rename to `nxrt::games::mpr` later.
+- Test tooling vocabulary. `tt::GameState` fields (morph, beam, visor, missiles), the hash over them (`tt_core.cpp`) and the item
   names in `tt_script.cpp`.
-- **Launcher names.** Target `mpr_launcher`, library `mpr_launcher_core`, namespace `mprl`, window class `MprLauncherWindow`.
-- **Base tests register the Metroid module.** The service, tt and play tests of the base run with `NXRT_TEST_GAME=mpr`;
+- Launcher names. Target `mpr_launcher`, library `mpr_launcher_core`, namespace `mprl`, window class `MprLauncherWindow`.
+- Base tests register the Metroid module. The service, tt and play tests of the base run with `NXRT_TEST_GAME=mpr`;
   the tests that use Metroid sites or hooks directly (timestep, play aim, lock-on, look rate, display hooks, play hook, camera look) are
   in `games/mpr/tests` and `games/mpr/tests/core`.
-- **Setup tool.** The texture and program stages read Retro's formats; the version resources and the window class name are Metroid's.
-- **Release templates** (README, HELP) and the release's licence notice name the game.
-- **Docs.** Older stream docs (S*.md) and CONFIG.md still give the old paths of the moved files.
-- **Shader program list magic** `MPRPRG01` (`nvn_gpl.cpp`, setup `programs.cpp`) is a file format name shared by the base and the
+- Setup tool. The texture and program stages read Retro's formats; the version resources and the window class name are Metroid's.
+- Release templates (README, HELP) and the release's licence notice name the game.
+- Docs. Older docs (S*.md) and CONFIG.md still give the old paths of the moved files.
+- Shader program list magic `MPRPRG01` (`nvn_gpl.cpp`, setup `programs.cpp`) is a file format name shared by the base and the
   setup tool; harmless, but named after the game.
 
 ## Deterministic mode and the New Game stall
 
-The boundary build looked broken: a deterministic test boot sat on the planet loading screen after New Game for as long as it ran
-(25+ minutes), while a main build had reached the hangar with the same script. The game boundary was not the cause. Main stalls the same
-way with the same input frames (a frame-pinned script, 16,700 frames at about 50 fps: still loading), and the boundary build loads and reaches
-the hangar when deterministic mode is off.
+A deterministic test boot sat on the planet loading screen after New Game for as long as it ran (25+ minutes). The game boundary was not
+the cause: a build from before the boundary work stalls the same way with the same input frames (a frame-pinned script, 16,700 frames at
+about 50 fps: still loading), and the boundary build loads and reaches the hangar when deterministic mode is off.
 
 The cause was the test tooling's virtual clock. In deterministic mode `kernel::system_tick` reads a virtual clock that should move 1/60 s per
 frame. But every sleep of every guest thread also moved it forward by the sleep's length, and a sleep only yields, so a thread that sleeps
 in a loop spun at host speed and pushed the shared clock forward: 150 to 2,000 virtual seconds for every 60 frames. (The profile of a stalled
 run points at the game's pad vibration thread, `CNXJoyCon_NPad::StaticVibrationThread`, busy in sleeps and hid requests; which thread
-contributed most was not measured.) Under that clock the New Game load never finished. The main run that had passed
-was on a busy machine (12 fps): the vibration thread got less CPU, the clock ran at 20 to 50 seconds per 60 frames early on, and the load got
+contributed most was not measured.) Under that clock the New Game load never finished. The one earlier run that had
+passed was on a busy machine (12 fps): the vibration thread got less CPU, the clock ran at 20 to 50 seconds per 60 frames early on, and the load got
 through. The trace (`out/trace.jsonl`, field `t`) shows the rate in every run.
 
 The fix (`src/testtools/tt_core.cpp`, `virtual_sleep`): only the thread that runs the frame boundary moves the clock with its sleeps. Any other
