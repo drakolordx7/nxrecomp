@@ -287,7 +287,8 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
             t_fn_epoch = ep;
         }
         FnCacheEntry& e = t_fn_cache[((addr >> 2) ^ (addr >> 12)) & (kFnCache - 1)];
-        if (e.addr == addr) {
+        // An empty entry is {0, nullptr}: without the fn test a guest call to address 0 would "hit" it and jump to host address 0.
+        if (e.fn && e.addr == addr) {
             e.fn(c);
             return;
         }
