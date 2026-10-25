@@ -228,9 +228,13 @@ uint32_t wait_for_address(uint64_t addr, uint32_t type, int32_t value, int64_t t
         case 0:  // WaitIfLessThan
             if (!(cur < value)) return kInvalidState;
             break;
-        case 1:  // DecrementAndWaitIfLessThan
-            if (!(cur < value)) return kInvalidState;
-            store32(addr, static_cast<uint32_t>(cur - 1));
+        case 1:  // DecrementAndWaitIfLessThan: one atomic step, as the kernel's exclusive load/store loop (guest threads change the word
+                 // with their own atomics without the kernel lock; a plain load and store lost their updates)
+            for (;;) {
+                if (!(cur < value)) return kInvalidState;
+                if (cas32(addr, static_cast<uint32_t>(cur), static_cast<uint32_t>(cur) - 1u)) break;
+                cur = static_cast<int32_t>(load32(addr));
+            }
             break;
         case 2:  // WaitIfEqual
             if (cur != value) return kInvalidState;
