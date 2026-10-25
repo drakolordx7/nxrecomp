@@ -52,6 +52,7 @@ gyro = 1
 gyro_scale = 1.0
 rumble = 1
 rumble_scale = 1.0
+ball_orbit = 2.0
 
 [timing]
 tap_ms = 200

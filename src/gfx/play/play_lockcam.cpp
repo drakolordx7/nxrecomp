@@ -13,6 +13,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "play_display.h"
+#include "play_lookrate.h"
 
 namespace nxrt::play {
 
@@ -32,6 +33,7 @@ constexpr uint64_t kFnSetAimTargetId = 0xc687d4;           // CPlayerMP1::SetAim
 constexpr uint64_t kFnGetCombatMode = 0xc73564;            // CPlayerMP1::GetCombatMode() const: x0 the player; true while the combat visor's weapons are in use
 
 constexpr uint64_t kFnCursorUpdate = 0xcb6250;             // CAimingCursorMP1::Update(CFinalInput const&, float, CStateManager&): x0 the cursor, x1 the input, x2 the manager
+constexpr uint64_t kFnGyroFreelook = 0xc3af10;             // NSharedPlayerControls::GetGyroFreelookControl(CStateManager const&): x0 the manager; true while the gyro camera is on (command 101 held)
 constexpr uint64_t kFnGetCommandValue = 0x45a690;          // NControlCommands::GetDataEnumValueForCommand(ECommand): w0 the command
 constexpr uint64_t kFnDigitalHeld = 0x4d7540;              // CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: x0 the frame, x1 the value, x2 the input
 constexpr const char* kTag = "lockcam";
@@ -54,8 +56,9 @@ thread_local bool t_in_cursor = false, t_in_aimtarget = false, t_in_freelook = f
 
 // the gun's share of the camera bob: vanilla camera * steady camera^-1, applied to the gun's world transform after the game made it
 uint64_t g_cmd75_value = 0;      // the game's CDataEnumValue for command 75 (a stable object)
-uint64_t g_cmd73_value = 0;      // the same for command 73 (see held_input_hook)
-std::atomic<bool> g_pitch_accumulates{false};
+// The clock of the pitch code (play_lookrate.h): seconds of game time not yet given to ComputeFreeLook. Main thread (the hook runs inside ProcessInput).
+double g_look_clock = 0.0;
+std::atomic<bool> g_look_rate{true};      // false (env NXRT_LOOKRATE=0): the game's pitch code runs once per step as it comes, for comparisons
 float g_delta[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
 std::atomic<bool> g_delta_on{false};
 double g_turn_omega = 0.0;      // the free lock's turn speed (rad/s), main thread
@@ -136,16 +139,98 @@ int orientation_hook(::Ctx* c, uint64_t, void*) {
     return 1;      // the body keeps the heading the mouse gave it; x0 (the player) is the return value, untouched
 }
 
+// ComputeFreeLook is the game's pitch code and it has no time step (see play_lookrate.h). It runs here once per 1/60 s of game time: with the frame time it
+// reads set to 1/60 for each call, none at all in a step that is too short to hold one. Only in plain first-person play (no cutscene, no morph ball, no normal
+// lock-on: those paths set the pitch outright or reset it, and run every step as they did) and not while the gyro camera is on (the gyro's rate is scaled
+// instead, in play.cpp, so that the view moves smoothly on every frame).
+//
+// The pitch target the game keeps (free_look_target) only changes on the calls, so above 60 steps per second the view would pitch in 60 Hz jumps. Between calls
+// the target is carried on at the speed of the last call (what the target will be at the next call, if the stick stays where it is): the game's own value is put
+// back before every call, so the filter and the accumulation see exactly what they would on the console, and at 60 steps per second nothing is added at all. Whatever
+// else moved the target meanwhile (the mouse, a reset) is carried over as it is: only the difference to what was written is kept.
+struct LookCarry {
+    bool have = false;
+    uint64_t player = 0;
+    float written = 0.f;      // the target as the hook left it
+    double prev = 0.0, cur = 0.0;      // the game's target after the call before the last, and after the last
+};
+LookCarry g_carry;
+
 int freelook_hook(::Ctx* c, uint64_t addr, void*) {
     if (t_in_freelook || !g_h.aim) return 0;
-    lockcam_prime(c);      // the first call finds the game's command values (needs the real game: this hook only runs inside it)
-    const uint64_t player = c->x[0];
+    const uint64_t player = c->x[0], input = c->x[1], mgr = c->x[2];
     g_h.player.store(player, std::memory_order_relaxed);
-    if (!g_h.aim->free_lock_active(player)) return 0;
+    const bool free_lock = g_h.aim->free_lock_active(player);
+    const uint64_t target_at = player + g_h.aim->layout().free_look_target;
+    int calls = 1;
+    bool timed = false;
+    float dt = 0.f;
+    if (g_look_rate.load(std::memory_order_relaxed) && g_h.aim->gate(player, mgr) == AimBlock::None && guest_read(input, &dt, sizeof dt) && dt > 1e-4f && dt < 0.5f) {
+        const ::Ctx saved = *c;
+        c->x[0] = mgr;
+        dispatch_call(c, g_h.base + kFnGyroFreelook);
+        const bool gyro = (c->x[0] & 1) != 0;
+        *c = saved;
+        if (!gyro) {
+            calls = look_steps(&g_look_clock, dt);
+            timed = true;
+        }
+    }
+    if (!timed) {
+        g_look_clock = 0.0;
+        g_carry.have = false;
+        if (!free_lock) return 0;      // the game's own call, as it comes
+    }
     g_h.freelook_calls++;
+    const ::Ctx saved = *c;
+    float seen = 0.f;
+    const bool seen_ok = timed && guest_read(target_at, &seen, sizeof seen) && std::isfinite(seen);
+    if (timed && !seen_ok) {      // cannot read the target: no carrying
+        g_carry.have = false;
+    } else if (timed) {
+        if (g_carry.have && g_carry.player == player) {
+            const double moved = static_cast<double>(seen) - static_cast<double>(g_carry.written);
+            g_carry.prev += moved;
+            g_carry.cur += moved;
+        } else {
+            g_carry.prev = g_carry.cur = seen;
+        }
+        g_carry.player = player;
+    }
+    const float step = static_cast<float>(kLookStep);
+    const bool set_dt = timed && calls > 0 && guest_write(input, &step, sizeof step);
+    if (timed && calls > 0 && !set_dt) calls = 1;      // cannot tell the game the step: one call per step as before
+    if (seen_ok && calls > 0) {      // the game's own target back, for its call
+        const float true_target = static_cast<float>(g_carry.cur);
+        if (true_target != seen) guest_write(target_at, &true_target, sizeof true_target);
+    }
     t_in_freelook = true;
-    run_as_unlocked(c, addr, player);
+    for (int i = 0; i < calls; ++i) {
+        *c = saved;
+        if (free_lock) run_as_unlocked(c, addr, player);
+        else dispatch_call(c, addr);
+        if (seen_ok && i + 1 < calls) {      // the target after every call but the last: the speed of the last one comes from it
+            float t = 0.f;
+            if (guest_read(target_at, &t, sizeof t)) g_carry.cur = t;
+        }
+    }
     t_in_freelook = false;
+    if (set_dt) guest_write(input, &dt, sizeof dt);
+    if (calls == 0) *c = saved;
+    if (seen_ok) {
+        if (calls > 0) {
+            float t = 0.f;
+            if (guest_read(target_at, &t, sizeof t) && std::isfinite(t)) {
+                g_carry.prev = g_carry.cur;
+                g_carry.cur = t;
+            }
+        }
+        const double phase = std::max(0.0, std::min(1.0, g_look_clock / kLookStep));
+        const float out = static_cast<float>(g_carry.cur + (g_carry.cur - g_carry.prev) * phase);
+        if (std::isfinite(out)) guest_write(target_at, &out, sizeof out);
+        g_carry.written = out;
+        g_carry.have = true;
+    }
     return 1;
 }
 
@@ -236,17 +321,7 @@ int cursor_update_hook(::Ctx* c, uint64_t addr, void*) {
     return 1;
 }
 
-thread_local bool t_in_held = false;
 int held_input_hook(::Ctx* c, uint64_t addr, void*) {
-    if (g_cmd73_value && c->x[1] == g_cmd73_value && !t_in_held) {
-        // command 73 is the game's switch for the stick's pitch scheme: held = the stick adds to the pitch target every frame (dual stick), not held = the
-        // stick sets the target angle. Watched here, so play.cpp knows whether the stick's pitch needs the frame time put in (the right stick is scaled by it).
-        t_in_held = true;
-        dispatch_call(c, addr);
-        t_in_held = false;
-        g_pitch_accumulates.store((c->x[0] & 1) != 0, std::memory_order_relaxed);
-        return 1;
-    }
     if (!t_in_cursor || !g_cmd75_value || c->x[1] != g_cmd75_value) return 0;
     c->x[0] = 1;
     return 1;
@@ -299,6 +374,11 @@ void xf_rel(const float a[12], const float b[12], float out[12]) {
 
 void lockcam_install(uint64_t game_base, AimDriver* aim) {
     lockcam_remove();
+    {
+        const char* e = std::getenv("NXRT_LOOKRATE");
+        g_look_rate.store(!(e && e[0] == '0'), std::memory_order_relaxed);
+        g_look_clock = 0.0;
+    }
     g_h.base = game_base;
     g_h.aim = aim;
     g_h.ids[g_h.count++] = hook_add_entry(game_base + kFnUpdateOrbitOrientation, &orientation_hook);
@@ -344,17 +424,6 @@ void lockcam_frame() {
     const double aspect = dl.aspect > 0 ? dl.aspect : static_cast<double>(dl.render_w) / std::max(1, dl.render_h);
     g_h.aim->set_free_lock_view(g_h.margin.load(std::memory_order_relaxed), aspect, dl.fov_offset);
 }
-
-void lockcam_prime(::Ctx* c) {
-    if (g_cmd73_value || !g_h.base) return;
-    const ::Ctx saved = *c;
-    c->x[0] = 73;
-    dispatch_call(c, g_h.base + kFnGetCommandValue);
-    g_cmd73_value = c->x[0];
-    *c = saved;
-}
-
-bool lockcam_pitch_accumulates() { return g_pitch_accumulates.load(std::memory_order_relaxed); }
 
 bool lockcam_gun_decoupled() { return !g_h.gun_drives_view.load(std::memory_order_relaxed); }
 

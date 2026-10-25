@@ -10,6 +10,7 @@
 //                            stick turns Samus), CFirstPersonCameraMP1::UpdateTransform (the camera turns its own view to the target while locked),
 //                            ValidateCurrentOrbitTargetId (its "view turned too far" break becomes "still locked"), UpdateAimTarget (the locked object is the aim
 //                            target too) and the aiming cursor's update (told that command 75 is held, so the cursor and the arm cannon go to the target).
+//                            ComputeFreeLook is also where the game's pitch code gets its step rate (play_lookrate.h): it runs once per 1/60 s of game time.
 //                            Walking and strafing in the lock are the game's own dash code, which circles the target by position and does not read the body's heading,
 //                            so they need no hook.
 //   [camera] gun_drives_view = 0
@@ -18,7 +19,7 @@
 //                            and the hook on CPlayerGunMP1::Update moves the gun by that difference: the view stays still and the gun sways on screen.
 //
 // The hook sites must be in recomp games/mpr/main.sites (entryhook 0x7100c77854 0x7100c71638 0x7100cefa54 0x7100c765d0 0x7100d710ac 0x7100c93950 0x7100c7ad8c 0x7100cb6250 0x71004d7540);
-// without them the options do nothing and everything else works.
+// without them the options do nothing and everything else works. (The pitch step rate also calls NSharedPlayerControls::GetGyroFreelookControl, 0xc3af10, directly.)
 #pragma once
 #include <cstdint>
 
@@ -32,11 +33,6 @@ void lockcam_install(uint64_t game_base, AimDriver* aim);
 void lockcam_remove();
 void lockcam_set(const Settings& s);        // any thread; takes effect at the next call of the hooked functions
 void lockcam_frame();                       // once per frame boundary: hands the live picture aspect and field of view offset to the lock-on view limit
-
-// The game's pitch scheme for the stick (play.cpp scales the right stick's vertical axis by the frame time while it is on). lockcam_prime (main thread, inside a hook: it calls into the game) learns the game's
-// command value once; lockcam_pitch_accumulates() is what the game answered the last time it asked whether command 73 is held.
-void lockcam_prime(::Ctx* c);
-bool lockcam_pitch_accumulates();      // command 73 held: the dual stick scheme, the stick adds to the pitch target every call
 
 // The camera bob decoupling (play.cpp's camera Think hook calls these). gun_drives_view = 0 makes lockcam_gun_decoupled() true.
 bool lockcam_gun_decoupled();

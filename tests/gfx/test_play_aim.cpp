@@ -567,6 +567,7 @@ NXTEST(pad_look_keeps_game_pitch_and_adopts_next_call) {
     World w;
     w.init();
     put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    put<float>(w.pl() + w.layout.free_look_target, 0.2f);
     AimDriver d(0, w.layout);
     AimParams p;
     p.pad_look = true;
@@ -610,6 +611,7 @@ NXTEST(pad_look_released_adopts_once_then_overwrites) {
     World w;
     w.init();
     put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    put<float>(w.pl() + w.layout.free_look_target, 0.2f);
     AimDriver d(0, w.layout);
     AimParams p;
     p.pad_look = true;
@@ -659,4 +661,171 @@ NXTEST(pad_look_adopted_pitch_is_clamped) {
     CHECK(dd.apply(dn.pl(), dn.mgr(), 0, 0, p, {}));
     CHECK_NEAR(dd.pitch(), -lim, 1e-5);
     CHECK_NEAR(get<float>(dn.pl() + dn.layout.free_look_pitch), -lim, 1e-5);
+}
+
+NXTEST(pad_look_leaves_target_alone) {
+    // the stick has led the pitch (target 0.5 ahead of pitch 0.2); a call with no mouse movement must not touch the target
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    put<float>(w.pl() + w.layout.free_look_target, 0.5f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    CHECK(d.apply(w.pl(), w.mgr(), 0, 0, p, {}));
+    CHECK(get<float>(w.pl() + w.layout.free_look_target) == 0.5f);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.2, 1e-5);
+    CHECK_NEAR(d.pitch(), 0.2, 1e-5);
+}
+
+NXTEST(pad_look_mouse_moves_pitch_and_target_together) {
+    // mouse up with the pad looking: the pitch and the target both move by what the mouse added, so the stick's lead is kept
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    put<float>(w.pl() + w.layout.free_look_target, 0.5f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    CHECK(d.apply(w.pl(), w.mgr(), 0, -100, p, {}));
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.2 + 100 * kYawRad, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_target), 0.5 + 100 * kYawRad, 1e-5);
+}
+
+NXTEST(pad_look_mouse_delta_target_clamped) {
+    // limit is 50 degrees (World::init). Target 0.8 plus the mouse's 0.3 goes past it, so the target is clamped; the pitch (0.5) is not
+    const double lim = 50.0 * kPi / 180.0;
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, 0.2f);
+    put<float>(w.pl() + w.layout.free_look_target, 0.8f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    CHECK(d.apply(w.pl(), w.mgr(), 0, -0.3 / kYawRad, p, {}));
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_pitch), 0.5, 1e-5);
+    CHECK_NEAR(get<float>(w.pl() + w.layout.free_look_target), lim, 1e-4);
+}
+
+namespace {
+
+// Lays out a look filter in host memory: counts at +8, +76, +120, ten samples in each array. Array 0 holds 1 + k, array 1 holds 10 + k,
+// array 2 holds 20 + k (k = sample index). The arrays are bytes 12..51, 80..119 and 124..163.
+void fill_look_filter(uint64_t f, int32_t n0, int32_t n1, int32_t n2) {
+    put<int32_t>(f + 8, n0);
+    put<int32_t>(f + 76, n1);
+    put<int32_t>(f + 120, n2);
+    for (int k = 0; k < 10; ++k) {
+        put<float>(f + 12 + 4 * k, 1.0f + k);
+        put<float>(f + 80 + 4 * k, 10.0f + k);
+        put<float>(f + 124 + 4 * k, 20.0f + k);
+    }
+}
+
+// The filter's own recurrence, with a float history of the last two inputs and the last two outputs.
+struct LookIir {
+    float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    float step(float x) {
+        const float y = 0.1f * x + 0.4f * y2 + 0.5f * y1;
+        x2 = x1;
+        x1 = x;
+        y2 = y1;
+        y1 = y;
+        return y;
+    }
+};
+
+}  // namespace
+
+NXTEST(shift_look_filter_moves_every_sample) {
+    std::vector<uint8_t> buf(256, 0);
+    const uint64_t f = A(buf.data());
+    fill_look_filter(f, 10, 10, 10);
+    const std::vector<uint8_t> before = buf;
+
+    CHECK(play::shift_look_filter(f, 0.5f));
+
+    // every sample is its old value plus 0.5
+    for (int k = 0; k < 10; ++k) {
+        CHECK_EQ(get<float>(f + 12 + 4 * k), (1.0f + k) + 0.5f);
+        CHECK_EQ(get<float>(f + 80 + 4 * k), (10.0f + k) + 0.5f);
+        CHECK_EQ(get<float>(f + 124 + 4 * k), (20.0f + k) + 0.5f);
+    }
+    // counts unchanged
+    CHECK_EQ(get<int32_t>(f + 8), 10);
+    CHECK_EQ(get<int32_t>(f + 76), 10);
+    CHECK_EQ(get<int32_t>(f + 120), 10);
+    // every byte outside the three sample arrays is untouched
+    for (size_t i = 0; i < buf.size(); ++i) {
+        const bool in_sample = (i >= 12 && i < 52) || (i >= 80 && i < 120) || (i >= 124 && i < 164);
+        if (!in_sample) CHECK_MSG(buf[i] == before[i], "byte " + std::to_string(i) + " changed");
+    }
+}
+
+NXTEST(shift_look_filter_rejects_bad_memory) {
+    // (a) addresses below 0x10000 are refused without a read
+    CHECK(!play::shift_look_filter(0, 0.5f));
+    CHECK(!play::shift_look_filter(0x8000, 0.5f));
+
+    // (b) a count outside 1..16 is refused before any sample is written: nothing changes
+    const int32_t counts[3][3] = {{0, 10, 10}, {10, 17, 10}, {10, 10, -1}};
+    for (int c = 0; c < 3; ++c) {
+        std::vector<uint8_t> buf(256, 0);
+        const uint64_t f = A(buf.data());
+        fill_look_filter(f, counts[c][0], counts[c][1], counts[c][2]);
+        const std::vector<uint8_t> before = buf;
+        CHECK_MSG(!play::shift_look_filter(f, 0.5f), "bad count case " + std::to_string(c));
+        CHECK_MSG(buf == before, "bad count case " + std::to_string(c) + " wrote memory");
+    }
+
+    // (c) a NaN sample in the third array is refused. Only the third array is checked: the function writes array 0 and array 1
+    // before it reaches array 2, so those two can already be shifted when it returns false.
+    {
+        std::vector<uint8_t> buf(256, 0);
+        const uint64_t f = A(buf.data());
+        fill_look_filter(f, 10, 10, 10);
+        put<float>(f + 124 + 4 * 3, std::nanf(""));
+        const std::vector<uint8_t> before = buf;
+        CHECK(!play::shift_look_filter(f, 0.5f));
+        CHECK(std::memcmp(buf.data() + 124, before.data() + 124, 40) == 0);
+    }
+
+    // (d) a non-finite d is refused before any memory is touched
+    {
+        std::vector<uint8_t> buf(256, 0);
+        const uint64_t f = A(buf.data());
+        fill_look_filter(f, 10, 10, 10);
+        const std::vector<uint8_t> before = buf;
+        CHECK(!play::shift_look_filter(f, std::nanf("")));
+        CHECK(buf == before);
+        CHECK(!play::shift_look_filter(f, HUGE_VALF));
+        CHECK(buf == before);
+    }
+}
+
+NXTEST(shift_look_filter_is_exact_for_an_iir) {
+    // The filter is linear with DC gain 0.1 / (1 - 0.5 - 0.4) = 1, so adding d to every stored input and output and to the next input
+    // adds exactly d to every later output. Ramp input for 40 steps, then compare a shifted copy against the original.
+    LookIir a;
+    for (int n = 0; n < 40; ++n) a.step(0.01f * n + 0.2f);
+
+    LookIir b = a;
+    const float d = 0.3f;
+    b.x1 += d;
+    b.x2 += d;
+    b.y1 += d;
+    b.y2 += d;
+
+    const float xn = 0.01f * 40 + 0.2f;
+    const float ya = a.step(xn);
+    const float yb = b.step(xn + d);
+    CHECK_NEAR(yb, ya + 0.3, 1e-5);
+
+    // 30 more steps, the shifted copy's input raised by 0.3 each time: the difference stays 0.3
+    for (int n = 41; n < 71; ++n) {
+        const float x = 0.01f * n + 0.2f;
+        const float oa = a.step(x);
+        const float ob = b.step(x + d);
+        CHECK_NEAR(ob - oa, 0.3, 1e-5);
+    }
 }

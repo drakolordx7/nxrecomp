@@ -114,3 +114,41 @@ NXTEST(free_look_about_the_eye_keeps_the_position) {
     forward(out, f);
     CHECK_NEAR(std::sqrt(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]), 1.0, 1e-5);
 }
+
+NXTEST(add_angles_signed_and_linear) {
+    play::LookParams p;
+    play::LookOffsets o;
+    o.add_angles(0.3, 0, p);
+    o.add_angles(-0.1, 0, p);
+    CHECK_NEAR(o.yaw(), 0.2, 1e-12);
+    o.reset();
+    o.add_angles(0, 0.2, p);
+    CHECK_NEAR(o.pitch(), 0.2, 1e-12);
+    CHECK_NEAR(o.yaw(), 0.0, 1e-12);
+}
+
+NXTEST(add_angles_pitch_clamped) {
+    play::LookParams p;
+    play::LookOffsets up;
+    up.add_angles(0, 5.0, p);
+    CHECK_EQ(up.pitch(), p.pitch_limit_rad);
+    play::LookOffsets down;
+    down.add_angles(0, -10.0, p);
+    CHECK_EQ(down.pitch(), -p.pitch_limit_rad);
+}
+
+NXTEST(add_angles_yaw_wraps) {
+    play::LookParams p;
+    play::LookOffsets o;
+    o.add_angles(7.0, 0, p);   // 7 - 2 pi = 0.71681...
+    CHECK(std::fabs(o.yaw()) <= 2 * kPi);
+    CHECK_NEAR(o.yaw(), std::remainder(7.0, 2 * kPi), 1e-12);
+}
+
+NXTEST(add_angles_mixes_with_mouse) {
+    play::LookParams p;
+    play::LookOffsets o;
+    o.add(100, 0, p);
+    o.add_angles(0.5, 0, p);
+    CHECK_NEAR(o.yaw(), -100 * p.yaw_rad + 0.5, 1e-12);
+}

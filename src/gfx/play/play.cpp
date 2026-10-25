@@ -47,6 +47,7 @@
 #include "nxrt/tt.h"
 #include "play_aim.h"
 #include "play_lockcam.h"
+#include "play_lookrate.h"
 #include "menu_mouse.h"
 #include "play_engine.h"
 #include "play_selftest.h"
@@ -111,8 +112,10 @@ public:
             std::memcpy(n.six_axis.angle, orient_.angle, sizeof orient_.angle);
         }
         right_y_.store(n.right.y, std::memory_order_relaxed);
-        n.right.y = static_cast<int32_t>(std::lround(static_cast<double>(n.right.y) * look_scale_.load(std::memory_order_relaxed)));
+        right_x_f_.store(static_cast<float>(n.right.x) / 32767.f, std::memory_order_relaxed);
+        right_y_f_.store(static_cast<float>(n.right.y) / 32767.f, std::memory_order_relaxed);
         gyro_pitch_.store(std::fabs(pf.six.gyro[0]), std::memory_order_relaxed);
+        n.six_axis.gyro[0] *= look_scale_.load(std::memory_order_relaxed);      // the game integrates the pitch rate per call: see play_lookrate.h
         out.touch.count = 0;
         if (t.down) {
             out.touch.count = 1;
@@ -132,7 +135,12 @@ public:
     bool pad_look(bool gyro_enabled) const {
         return std::abs(right_y_.load(std::memory_order_relaxed)) > 650 || (gyro_enabled && gyro_pitch_.load(std::memory_order_relaxed) > 0.02f);
     }
-    void set_look_scale(float k) { look_scale_.store(k, std::memory_order_relaxed); }      // the right stick's vertical axis times k, for the game's per-call pitch
+    // The right stick as the game gets it (dead zone, invert and sensitivity applied), -1..1, + = right and up: the morph ball camera orbits with it.
+    void right_stick(float* x, float* y) const {
+        *x = right_x_f_.load(std::memory_order_relaxed);
+        *y = right_y_f_.load(std::memory_order_relaxed);
+    }
+    void set_look_scale(float k) { look_scale_.store(k, std::memory_order_relaxed); }      // the gyro's pitch rate times k (step * 60), for the game's per-call pitch
     void set_touch(const Touch& t) {
         std::lock_guard<std::mutex> lk(mu_);
         touch_ = t;
@@ -152,6 +160,7 @@ private:
     PadOrient orient_;
     uint64_t last_orient_ns_ = 0;
     std::atomic<int32_t> right_y_{0};
+    std::atomic<float> right_x_f_{0.f}, right_y_f_{0.f};
     std::atomic<float> look_scale_{1.f};
     std::atomic<float> gyro_pitch_{0.f};
     std::mutex mu_;
@@ -655,7 +664,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
     // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
     // can take 100 ms or more per frame under load) must not read as a menu.
     const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
-    if (!in_game && st.source_owner) st.source_owner->set_look_scale(1.f);      // menus and the map get the stick as it is
+    if (!in_game && st.source_owner) st.source_owner->set_look_scale(1.f);      // menus and the map get the gyro as it is
     st.hints = st.aim->hints(st.player.load());
     if (st.hints.valid) {
         static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma
@@ -808,6 +817,15 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
             lp.invert_y = m.invert_y;
             if (dx != 0 || dy != 0) st.ball_look.add(dx, dy, lp);
             dx = dy = 0;
+            // the right stick orbits the camera too, at a speed in radians per second (the game gives the stick no job in the ball, so nothing else moves with it)
+            float sx = 0, sy = 0, dt_in = 0;
+            if (st.source_owner && st.settings.pad.ball_orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
+                st.source_owner->right_stick(&sx, &sy);
+                if (sx != 0 || sy != 0) {
+                    const double rate = st.settings.pad.ball_orbit * static_cast<double>(dt_in);
+                    st.ball_look.add_angles(-static_cast<double>(sx) * rate, static_cast<double>(sy) * rate, lp);
+                }
+            }
         } else {
             st.ball_look.reset();
         }
@@ -832,14 +850,11 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         p.invert_y = m.invert_y;
         p.pitch_limit_rad = st.pitch_limit_deg * kPi / 180.0;
         p.pad_look = st.source_owner && st.source_owner->pad_look(st.settings.pad.gyro);
-        // The game adds the stick's pitch to its target once per ProcessInput call (dual stick scheme), with no time step: at 120 steps per second the view would pitch twice as
-        // fast as at 60. What it adds goes up with the stick's deflection to the power of about 2.2 (measured at 60 steps per second: 20, 50 and 90 percent of a deflection give
-        // 0.5, 20 and 80 percent of the full step), so the right stick's vertical axis is scaled by (step * 60) ^ (1 / 2.2) while that scheme is on: the view pitches at the
-        // console's speed at any frame rate above 60. Below 60 the stick is already at its full range, so it cannot be scaled up.
+        // The gyro's rate is added to the pitch target once per call, with no time step (play_lookrate.h): the game gets the rate times (step * 60), so a step of
+        // 1/120 s adds half as much, twice as often. The stick needs no such thing: its pitch code runs once per 1/60 s (the hook on ComputeFreeLook).
         float dt = 0;
         double scale = 1.0;
-        if (guest_read(c->x[1], &dt, sizeof dt) && dt > 1e-4f && dt < 0.5f && lockcam_pitch_accumulates())
-            scale = std::pow(std::max(0.05, std::min(1.0, static_cast<double>(dt) * 60.0)), 1.0 / 2.2);
+        if (guest_read(c->x[1], &dt, sizeof dt) && dt > 1e-4f && dt < 0.5f) scale = look_rate_scale(dt);
         if (st.source_owner) st.source_owner->set_look_scale(static_cast<float>(scale));
     }
     XfCall xc{c};

@@ -96,7 +96,7 @@ bool same_settings(const Settings& a, const Settings& b) {
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
           pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale &&
-          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens))
+          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens && pa.ball_orbit == pb.ball_orbit))
         return false;
     const TimingSettings &ta = a.timing, &tb = b.timing;
     if (!(ta.tap_ms == tb.tap_ms && ta.hold_ms == tb.hold_ms && ta.double_ms == tb.double_ms && ta.pulse_ms == tb.pulse_ms)) return false;
@@ -1480,6 +1480,7 @@ NXTEST(pad_stick_keys_defaults) {
     CHECK(near(d.right_deadzone, 0.10));
     CHECK(!d.invert_y);
     CHECK(d.look_sens == 1.0);
+    CHECK(d.ball_orbit == 2.0);
 }
 
 NXTEST(pad_stick_keys_round_trip) {
@@ -1488,6 +1489,7 @@ NXTEST(pad_stick_keys_round_trip) {
     s.pad.right_deadzone = 0.25;
     s.pad.invert_y = true;
     s.pad.look_sens = 1.5;
+    s.pad.ball_orbit = 3.5;
     const std::string text = format_settings(s);
     CHECK(text.find("\ndeadzone = 0.2\nright_deadzone = 0.25\ninvert_y = 1\nlook_sens = 1.5\ntrigger_threshold = ") != std::string::npos);
     Settings r;
@@ -1497,6 +1499,7 @@ NXTEST(pad_stick_keys_round_trip) {
     CHECK(near(r.pad.right_deadzone, 0.25));
     CHECK(r.pad.invert_y);
     CHECK(r.pad.look_sens == 1.5);
+    CHECK(r.pad.ball_orbit == 3.5);
     CHECK(same_settings(s, r));
     CHECK_EQ(format_settings(r), text);
 }
@@ -1527,6 +1530,8 @@ NXTEST(pad_stick_keys_range_errors) {
         {"[pad]\nlook_sens = 3.5\n", "line 2: look_sens must be 0.25..3, got 3.5"},
         {"[pad]\nlook_sens = fast\n", "line 2: look_sens must be a number"},
         {"[pad]\ninvert_y = maybe\n", "line 2: invert_y must be 1/0"},
+        {"[pad]\nball_orbit = -1\n", "line 2: ball_orbit must be 0..6, got -1"},
+        {"[pad]\nball_orbit = 7\n", "line 2: ball_orbit must be 0..6, got 7"},
     };
     for (const auto& c : cases) {
         Settings s;

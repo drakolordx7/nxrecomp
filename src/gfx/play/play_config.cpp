@@ -320,6 +320,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "gyro_scale") return set_num(&s->pad.gyro_scale);
             if (k == "rumble") return set_bool(&s->pad.rumble);
             if (k == "rumble_scale") return set_num(&s->pad.rumble_scale);
+            if (k == "ball_orbit") return set_real(0.0, 6.0, &s->pad.ball_orbit);
             break;
         case Sec::Timing:
             if (k == "tap_ms") return set_int(1, 5000, &s->timing.tap_ms);
@@ -759,6 +760,7 @@ std::string format_settings(const Settings& s) {
     kv("gyro_scale", num(s.pad.gyro_scale));
     kv("rumble", flag(s.pad.rumble));
     kv("rumble_scale", num(s.pad.rumble_scale));
+    kv("ball_orbit", num(s.pad.ball_orbit));
 
     o += "\n[padmap]\n";
     for (int i = 0; i < kPadSrcCount; ++i) {
