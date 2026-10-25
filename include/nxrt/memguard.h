@@ -16,6 +16,11 @@ struct MemGuardOptions {
 };
 
 uint64_t memguard_footprint();       // bytes of private commit of this process (0 if the query fails)
+// Private commit includes the video memory a process has allocated (WDDM keeps a commit charge for it). The guard is about host memory, so it
+// subtracts what this function returns (the GPU's dedicated usage of this process; the Vulkan device sets it). Null: no subtraction.
+// Without it a game at 4K, with 5 GB of textures and render targets in video memory, ran into the 8 GB limit with only 3 GB of host memory.
+void memguard_set_discount(uint64_t (*gpu_bytes)());
+uint64_t memguard_footprint_host();  // memguard_footprint() minus the discount (what the guard compares with the limit)
 double memguard_limit_gb(const char* env_text);   // positive number or 8.0
 void memguard_start(const MemGuardOptions& opt = {});
 void memguard_stop();                // joins the guard thread

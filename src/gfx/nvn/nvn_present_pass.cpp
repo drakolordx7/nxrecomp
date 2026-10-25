@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "nxrt/log.h"
+#include "vk_gauges.h"
 
 namespace nxrt::nvn::be {
 namespace {
@@ -40,14 +41,17 @@ bool PresentPass::init(gfx::Device& dev, VkFormat color_format) {
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = 0.0f;
     if (vkCreateSampler(d, &sci, nullptr, &linear_) != VK_SUCCESS) return fail("linear sampler");
+    vk_gauge_samplers().add(1);
     sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
     if (vkCreateSampler(d, &sci, nullptr, &nearest_) != VK_SUCCESS) return fail("nearest sampler");
+    vk_gauge_samplers().add(1);
 
     VkDescriptorSetLayoutBinding bind = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo dli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dli.bindingCount = 1;
     dli.pBindings = &bind;
     if (vkCreateDescriptorSetLayout(d, &dli, nullptr, &set_layout_) != VK_SUCCESS) return fail("descriptor set layout");
+    vk_gauge_descriptor_set_layouts().add(1);
 
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kSetRing};
     VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -55,6 +59,7 @@ bool PresentPass::init(gfx::Device& dev, VkFormat color_format) {
     dpi.poolSizeCount = 1;
     dpi.pPoolSizes = &ps;
     if (vkCreateDescriptorPool(d, &dpi, nullptr, &pool_) != VK_SUCCESS) return fail("descriptor pool");
+    vk_gauge_descriptor_pools().add(1);
     VkDescriptorSetLayout layouts[kSetRing];
     for (auto& l : layouts) l = set_layout_;
     VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -62,6 +67,7 @@ bool PresentPass::init(gfx::Device& dev, VkFormat color_format) {
     dai.descriptorSetCount = kSetRing;
     dai.pSetLayouts = layouts;
     if (vkAllocateDescriptorSets(d, &dai, sets_) != VK_SUCCESS) return fail("descriptor sets");
+    vk_gauge_descriptor_sets().add(kSetRing);   // shutdown subtracts them only while sets_[0] is set
 
     VkPushConstantRange pcr = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants)};
     VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
@@ -70,18 +76,21 @@ bool PresentPass::init(gfx::Device& dev, VkFormat color_format) {
     pli.pushConstantRangeCount = 1;
     pli.pPushConstantRanges = &pcr;
     if (vkCreatePipelineLayout(d, &pli, nullptr, &layout_) != VK_SUCCESS) return fail("pipeline layout");
+    vk_gauge_pipeline_layouts().add(1);
 
     auto make_module = [&](const uint32_t* code, size_t bytes, VkShaderModule* out) {
         VkShaderModuleCreateInfo mi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         mi.codeSize = bytes;
         mi.pCode = code;
-        return vkCreateShaderModule(d, &mi, nullptr, out) == VK_SUCCESS;
+        const bool ok = vkCreateShaderModule(d, &mi, nullptr, out) == VK_SUCCESS;
+        if (ok) vk_gauge_shader_modules().add(1);
+        return ok;
     };
     VkShaderModule vs = VK_NULL_HANDLE, fs = VK_NULL_HANDLE;
     const bool modules = make_module(kPresentVert, sizeof kPresentVert, &vs) && make_module(kPresentFrag, sizeof kPresentFrag, &fs);
     if (!modules) {
-        if (vs) vkDestroyShaderModule(d, vs, nullptr);
-        if (fs) vkDestroyShaderModule(d, fs, nullptr);
+        if (vs) { vkDestroyShaderModule(d, vs, nullptr); vk_gauge_shader_modules().sub(1); }
+        if (fs) { vkDestroyShaderModule(d, fs, nullptr); vk_gauge_shader_modules().sub(1); }
         return fail("shader module");
     }
     VkPipelineShaderStageCreateInfo stages[2] = {{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO}};
@@ -127,8 +136,11 @@ bool PresentPass::init(gfx::Device& dev, VkFormat color_format) {
     gpi.pDynamicState = &ds;
     gpi.layout = layout_;
     const VkResult pr = vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &gpi, nullptr, &pipeline_);
+    if (pr == VK_SUCCESS) vk_gauge_pipelines().add(1);
     vkDestroyShaderModule(d, vs, nullptr);
+    vk_gauge_shader_modules().sub(1);
     vkDestroyShaderModule(d, fs, nullptr);
+    vk_gauge_shader_modules().sub(1);
     if (pr != VK_SUCCESS) return fail("graphics pipeline");
     return true;
 }
@@ -137,12 +149,14 @@ void PresentPass::shutdown() {
     if (!dev_) return;
     VkDevice d = dev_->device();
     dev_->wait_idle();
-    if (pipeline_) vkDestroyPipeline(d, pipeline_, nullptr);
-    if (layout_) vkDestroyPipelineLayout(d, layout_, nullptr);
-    if (pool_) vkDestroyDescriptorPool(d, pool_, nullptr);   // frees the sets
-    if (set_layout_) vkDestroyDescriptorSetLayout(d, set_layout_, nullptr);
-    if (linear_) vkDestroySampler(d, linear_, nullptr);
-    if (nearest_) vkDestroySampler(d, nearest_, nullptr);
+    if (pipeline_) { vkDestroyPipeline(d, pipeline_, nullptr); vk_gauge_pipelines().sub(1); }
+    if (layout_) { vkDestroyPipelineLayout(d, layout_, nullptr); vk_gauge_pipeline_layouts().sub(1); }
+    if (pool_) { vkDestroyDescriptorPool(d, pool_, nullptr); vk_gauge_descriptor_pools().sub(1); }   // frees the sets
+    if (sets_[0]) vk_gauge_descriptor_sets().sub(kSetRing);
+    for (auto& s : sets_) s = VK_NULL_HANDLE;
+    if (set_layout_) { vkDestroyDescriptorSetLayout(d, set_layout_, nullptr); vk_gauge_descriptor_set_layouts().sub(1); }
+    if (linear_) { vkDestroySampler(d, linear_, nullptr); vk_gauge_samplers().sub(1); }
+    if (nearest_) { vkDestroySampler(d, nearest_, nullptr); vk_gauge_samplers().sub(1); }
     pipeline_ = VK_NULL_HANDLE;
     layout_ = VK_NULL_HANDLE;
     pool_ = VK_NULL_HANDLE;

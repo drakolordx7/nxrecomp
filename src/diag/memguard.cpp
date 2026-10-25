@@ -37,6 +37,7 @@ bool g_stop = false;          // guarded by g_mu
 std::thread g_thread;         // guarded by g_ctl
 std::atomic<uint64_t> g_peak{0};
 std::atomic<bool> g_tripped{false};
+std::atomic<uint64_t (*)()> g_discount{nullptr};
 
 constexpr double kBytesPerGb = 1073741824.0;
 
@@ -61,7 +62,7 @@ void guard_loop(Settings s) {
         if (g_cv.wait_for(lk, std::chrono::milliseconds(s.poll_ms), [] { return g_stop; })) return;
         lk.unlock();
 
-        const uint64_t f = memguard_footprint();
+        const uint64_t f = memguard_footprint_host();
         raise_peak(f);
         const double gb = static_cast<double>(f) / kBytesPerGb;
 
@@ -95,6 +96,15 @@ uint64_t memguard_footprint() {
     if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc))
         return 0;
     return static_cast<uint64_t>(pmc.PrivateUsage);
+}
+
+void memguard_set_discount(uint64_t (*gpu_bytes)()) { g_discount.store(gpu_bytes); }
+
+uint64_t memguard_footprint_host() {
+    const uint64_t f = memguard_footprint();
+    auto fn = g_discount.load();
+    const uint64_t d = fn ? fn() : 0;
+    return d < f ? f - d : 0;
 }
 
 double memguard_limit_gb(const char* env_text) {

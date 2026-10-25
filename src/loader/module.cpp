@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -17,6 +18,7 @@
 
 #include "elf.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/nxmodule.h"
@@ -31,6 +33,26 @@ std::unordered_map<std::string, uint64_t> g_data;
 std::set<std::string> g_overrides;
 uint64_t g_next_base = 0;
 TlsInfo g_tls;
+
+// ---- gauges (include/nxrt/gauge.h); each callback takes g_lock, the lock of the data it counts ----
+// Removes its gauge when this file's statics are torn down (declared after them, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_modules("loader.modules", [] {
+    std::lock_guard<std::recursive_mutex> lk(g_lock);
+    return static_cast<int64_t>(g_modules.size());
+});
+GaugeHook gauge_data_symbols("loader.data_symbols", [] {   // data symbols the host has published (g_data only grows until reset)
+    std::lock_guard<std::recursive_mutex> lk(g_lock);
+    return static_cast<int64_t>(g_data.size());
+});
+GaugeHook gauge_overrides("loader.overrides", [] {
+    std::lock_guard<std::recursive_mutex> lk(g_lock);
+    return static_cast<int64_t>(g_overrides.size());
+});
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 uint64_t align_down(uint64_t v, uint64_t a) { return v & ~(a - 1); }

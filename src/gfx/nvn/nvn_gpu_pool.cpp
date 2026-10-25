@@ -15,7 +15,9 @@
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "nxrt/gauge.h"
 #include "nxrt/memory.h"
+#include "vk_gauges.h"
 #include "nvn_gpu_internal.h"
 
 namespace nxrt::nvn::be {
@@ -47,6 +49,7 @@ std::mutex g_log_mu;
 std::unordered_set<uint64_t> g_logged;
 std::mutex g_live_mu;
 std::unordered_set<PoolGpu*> g_live;
+nxrt::GaugeCounter g_gauge_pools_live("nvn.pools_live");   // pools imported and not yet destroyed (g_live)
 
 PoolGpu* import_pool(MemoryPool* p) {
     ft::Scope zs(ft::zone_id("pool.import"), 0, static_cast<uint32_t>(p->flags) << 16 | static_cast<uint32_t>(std::min<uint64_t>(p->size >> 20, 0xffff)));
@@ -106,6 +109,8 @@ PoolGpu* import_pool(MemoryPool* p) {
         g->failed = true;
         return g;
     }
+    vk_gauge_memory_allocs().add(1);
+    vk_gauge_memory_bytes().add(static_cast<int64_t>(size));
     VkExternalMemoryBufferCreateInfo ebi = {VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
     ebi.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
     VkBufferCreateInfo bci = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &ebi};
@@ -116,6 +121,7 @@ PoolGpu* import_pool(MemoryPool* p) {
                 (device().features().transform_feedback ? VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT : 0u);
     bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     r = vkCreateBuffer(dev.device(), &bci, nullptr, &g->buffer);
+    if (r == VK_SUCCESS) vk_gauge_buffers().add(1);
     if (r == VK_SUCCESS) r = vkBindBufferMemory(dev.device(), g->buffer, g->mem, 0);
     if (r != VK_SUCCESS) {
         NXLOG_E(kTag, "buffer over pool %p failed (%d)", static_cast<void*>(g->base), static_cast<int>(r));
@@ -124,6 +130,7 @@ PoolGpu* import_pool(MemoryPool* p) {
     }
     counters().pools_imported.fetch_add(1);
     { std::lock_guard<std::mutex> lk(g_live_mu); g_live.insert(g); }
+    g_gauge_pools_live.add(1);
     NXLOG_D(kTag, "pool %p imported: 0x%llx bytes, memory type %u", static_cast<void*>(g->base), static_cast<unsigned long long>(size), ty);
     return g;
 }
@@ -270,13 +277,20 @@ uint64_t pool_imports() { return counters().pools_imported.load(); }
 
 void pool_gpu_destroy(PoolGpu* p) {
     if (!p) return;
+    bool was_live = false;
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
-        if (!g_live.erase(p) && !p->failed) return;   // already destroyed by pool_shutdown
+        was_live = g_live.erase(p) != 0;
+        if (!was_live && !p->failed) return;   // already destroyed by pool_shutdown
     }
+    if (was_live) g_gauge_pools_live.sub(1);
     gfx::Device& dev = device();
-    if (p->buffer) vkDestroyBuffer(dev.device(), p->buffer, nullptr);
-    if (p->mem) vkFreeMemory(dev.device(), p->mem, nullptr);
+    if (p->buffer) { vkDestroyBuffer(dev.device(), p->buffer, nullptr); vk_gauge_buffers().sub(1); }
+    if (p->mem) {
+        vkFreeMemory(dev.device(), p->mem, nullptr);
+        vk_gauge_memory_allocs().sub(1);
+        vk_gauge_memory_bytes().sub(static_cast<int64_t>(p->size));   // p->size is the size the allocation was made with
+    }
     if (p->view) mem::heap_private_view_unmap(p->view);
     delete p;
 }

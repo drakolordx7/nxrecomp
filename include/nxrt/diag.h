@@ -64,6 +64,13 @@ std::string crash_build_report(void* exception_pointers /* EXCEPTION_POINTERS* *
 // Number of exceptions the installed handler has turned into reports (tests).
 uint32_t crash_exceptions_reported();
 
+// ---- sampling profiler (S34) -----------------------------------------------------------------------------------------
+// `[prof] sample_hz` > 0 starts a thread that samples every registered thread's host stack, weighted by the CPU cycles the thread used; the
+// folded stacks are written at shutdown to `[prof] sample_out`. The label (a scene name set by the test script) is the first field of each stack.
+void prof_sampler_start();
+void prof_sampler_stop();
+void prof_sampler_label(const char* label);
+
 // ---- freeze watchdog ------------------------------------------------------------------------------------------------------
 // A thread checks every poll_ms whether diag_frame_tick() advanced; after `seconds` without a tick it dumps every registered
 // thread's host stack (SuspendThread, capture RIP/stack through RtlVirtualUnwind into a fixed buffer, ResumeThread: no

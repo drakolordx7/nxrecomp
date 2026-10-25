@@ -3,10 +3,12 @@
 // stats line that each sink logs when it closes.
 #include <atomic>
 #include <cstdio>
+#include <functional>
 #include <mutex>
 
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 
 namespace nxrt::audio {
@@ -28,6 +30,31 @@ void load_volume_config() {
         g_volume.store(clamp01(static_cast<float>(v)));
     });
 }
+
+// The current sink's counters (a copy of the pointer keeps the sink alive while they are read), or zeros with no sink.
+SinkStats current_stats() {
+    std::shared_ptr<AudioSink> s;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        s = g_sink;
+    }
+    return s ? s->stats() : SinkStats{};
+}
+
+// ---- gauges (include/nxrt/gauge.h): the sink's own counters, same numbers as stats_report() ----
+// Removes its gauge when this file's statics are torn down (declared after g_sink, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_frames_written("audio.sink_frames_written", [] { return static_cast<int64_t>(current_stats().frames_written); });
+GaugeHook gauge_frames_accepted("audio.sink_frames_accepted", [] { return static_cast<int64_t>(current_stats().frames_accepted); });
+GaugeHook gauge_frames_dropped("audio.sink_frames_dropped", [] { return static_cast<int64_t>(current_stats().frames_dropped); });   // overruns: device queue full
+GaugeHook gauge_underruns("audio.underruns", [] { return static_cast<int64_t>(current_stats().underruns); });
+GaugeHook gauge_queued_buffers_peak("audio.queued_buffers_peak", [] { return static_cast<int64_t>(current_stats().queued_peak); });
+GaugeHook gauge_queued_frames_peak("audio.queued_frames_peak", [] { return static_cast<int64_t>(current_stats().queued_peak_frames); });
+GaugeHook gauge_queued_frames_low("audio.queued_frames_low", [] { return static_cast<int64_t>(current_stats().queued_low_frames); });
 }  // namespace
 
 void NullSink::close() { NXLOG_I("audio", "%s", format_stats(name(), stats()).c_str()); }

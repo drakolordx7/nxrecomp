@@ -8,18 +8,49 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <tuple>
 
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
+#include "nxrt/memguard.h"
 #include "nxrt/gfx.h"
 #include "nxrt/log.h"
 #include "nxrt/platform.h"
+#include "vk_gauges.h"
 
 #include <vk_mem_alloc.h>
 
+namespace nxrt {
+
+// ---- live-object gauges (declared in vk_gauges.h) -------------------------------------------------------------------------------
+nxrt::GaugeCounter& vk_gauge_images() { static nxrt::GaugeCounter g("vk.images"); return g; }
+nxrt::GaugeCounter& vk_gauge_image_views() { static nxrt::GaugeCounter g("vk.image_views"); return g; }
+nxrt::GaugeCounter& vk_gauge_buffers() { static nxrt::GaugeCounter g("vk.buffers"); return g; }
+nxrt::GaugeCounter& vk_gauge_samplers() { static nxrt::GaugeCounter g("vk.samplers"); return g; }
+nxrt::GaugeCounter& vk_gauge_shader_modules() { static nxrt::GaugeCounter g("vk.shader_modules"); return g; }
+nxrt::GaugeCounter& vk_gauge_pipelines() { static nxrt::GaugeCounter g("vk.pipelines"); return g; }
+nxrt::GaugeCounter& vk_gauge_pipeline_layouts() { static nxrt::GaugeCounter g("vk.pipeline_layouts"); return g; }
+nxrt::GaugeCounter& vk_gauge_descriptor_set_layouts() { static nxrt::GaugeCounter g("vk.descriptor_set_layouts"); return g; }
+nxrt::GaugeCounter& vk_gauge_descriptor_pools() { static nxrt::GaugeCounter g("vk.descriptor_pools"); return g; }
+nxrt::GaugeCounter& vk_gauge_descriptor_sets() { static nxrt::GaugeCounter g("vk.descriptor_sets"); return g; }
+nxrt::GaugeCounter& vk_gauge_command_pools() { static nxrt::GaugeCounter g("vk.command_pools"); return g; }
+nxrt::GaugeCounter& vk_gauge_command_buffers() { static nxrt::GaugeCounter g("vk.command_buffers"); return g; }
+nxrt::GaugeCounter& vk_gauge_fences() { static nxrt::GaugeCounter g("vk.fences"); return g; }
+nxrt::GaugeCounter& vk_gauge_semaphores() { static nxrt::GaugeCounter g("vk.semaphores"); return g; }
+nxrt::GaugeCounter& vk_gauge_query_pools() { static nxrt::GaugeCounter g("vk.query_pools"); return g; }
+nxrt::GaugeCounter& vk_gauge_swapchains() { static nxrt::GaugeCounter g("vk.swapchains"); return g; }
+nxrt::GaugeCounter& vk_gauge_memory_allocs() { static nxrt::GaugeCounter g("vk.memory_allocs"); return g; }
+nxrt::GaugeCounter& vk_gauge_memory_bytes() { static nxrt::GaugeCounter g("vk.memory_bytes"); return g; }
+
+}  // namespace nxrt
+
 namespace nxrt::gfx {
+
 namespace {
 
 constexpr const char* kTag = "gfx";
@@ -173,6 +204,82 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
     }
     return VK_FALSE;
 }
+
+// ---- VMA gauges (vma.*): read on the sampler thread every 10 s. Registered after vmaCreateAllocator, unregistered in ~Device before
+// the allocator is destroyed. vmaCalculateStatistics walks the whole allocator, so one result is shared for 1 s (the four
+// statistics gauges are read back to back in one sampler pass).
+struct VmaStatsCache {
+    std::mutex m;
+    std::chrono::steady_clock::time_point at{};
+    bool valid = false;
+    VmaTotalStatistics st{};
+};
+
+VmaTotalStatistics vma_totals(VmaAllocator a, VmaStatsCache& c) {
+    std::lock_guard<std::mutex> lk(c.m);
+    const auto now = std::chrono::steady_clock::now();
+    if (!c.valid || now - c.at > std::chrono::seconds(1)) {
+        vmaCalculateStatistics(a, &c.st);
+        c.at = now;
+        c.valid = true;
+    }
+    return c.st;
+}
+
+// The device-local heap with the most memory (the one the budget gauges describe).
+uint32_t device_local_heap(VmaAllocator a) {
+    const VkPhysicalDeviceMemoryProperties* mp = nullptr;
+    vmaGetMemoryProperties(a, &mp);
+    uint32_t best = 0;
+    VkDeviceSize best_size = 0;
+    for (uint32_t i = 0; mp && i < mp->memoryHeapCount; ++i) {
+        if ((mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && mp->memoryHeaps[i].size > best_size) {
+            best = i;
+            best_size = mp->memoryHeaps[i].size;
+        }
+    }
+    return best;
+}
+
+VmaAllocator g_guard_vma = nullptr;
+uint32_t g_guard_heap = 0;
+uint64_t gpu_bytes_for_guard() {      // the device's dedicated memory in use by this process, for the memory guard (nxrt/memguard.h)
+    VmaAllocator a = g_guard_vma;
+    if (!a) return 0;
+    VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(a, b);
+    return static_cast<uint64_t>(b[g_guard_heap].usage);
+}
+
+void register_vma_gauges(VmaAllocator a) {
+    const uint32_t heap = device_local_heap(a);
+    g_guard_heap = heap;
+    g_guard_vma = a;
+    nxrt::memguard_set_discount(&gpu_bytes_for_guard);
+    auto cache = std::make_shared<VmaStatsCache>();
+    nxrt::gauge_register("vma.device_usage_mb", [a, heap] {
+        VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+        vmaGetHeapBudgets(a, b);
+        return static_cast<int64_t>(b[heap].usage >> 20);
+    });
+    nxrt::gauge_register("vma.device_budget_mb", [a, heap] {
+        VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+        vmaGetHeapBudgets(a, b);
+        return static_cast<int64_t>(b[heap].budget >> 20);
+    });
+    nxrt::gauge_register("vma.alloc_count", [a, cache] { return static_cast<int64_t>(vma_totals(a, *cache).total.statistics.allocationCount); });
+    nxrt::gauge_register("vma.alloc_mb", [a, cache] { return static_cast<int64_t>(vma_totals(a, *cache).total.statistics.allocationBytes >> 20); });
+    nxrt::gauge_register("vma.block_count", [a, cache] { return static_cast<int64_t>(vma_totals(a, *cache).total.statistics.blockCount); });
+    nxrt::gauge_register("vma.block_mb", [a, cache] { return static_cast<int64_t>(vma_totals(a, *cache).total.statistics.blockBytes >> 20); });
+}
+
+void unregister_vma_gauges() {
+    nxrt::memguard_set_discount(nullptr);
+    g_guard_vma = nullptr;
+    const char* const names[] = {"vma.device_usage_mb", "vma.device_budget_mb", "vma.alloc_count", "vma.alloc_mb", "vma.block_count", "vma.block_mb"};
+    for (const char* n : names) nxrt::gauge_unregister(n);
+}
+
 }  // namespace
 
 // ---- creation ---------------------------------------------------------------------------------------------------------
@@ -553,13 +660,14 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     aci.pVulkanFunctions = &vf;
     r = vmaCreateAllocator(&aci, &vma_);
     if (r != VK_SUCCESS) return fail("vmaCreateAllocator failed (" + std::to_string(r) + ")");
+    register_vma_gauges(vma_);
 
     VkCommandPoolCreateInfo cpi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     cpi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     cpi.queueFamilyIndex = queue_family_;
-    vkCreateCommandPool(device_, &cpi, nullptr, &impl_->once_pool);
+    if (vkCreateCommandPool(device_, &cpi, nullptr, &impl_->once_pool) == VK_SUCCESS) vk_gauge_command_pools().add(1);
     VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    vkCreateFence(device_, &fci, nullptr, &impl_->once_fence);
+    if (vkCreateFence(device_, &fci, nullptr, &impl_->once_fence) == VK_SUCCESS) vk_gauge_fences().add(1);
 
     NXLOG_I(kTag, "device ready: %s, queue family %u, validation %s, %s", props_.deviceName, queue_family_, validation_ ? "on" : "off",
             headless ? "headless" : "window surface");
@@ -569,9 +677,10 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
 Device::~Device() {
     if (device_) vkDeviceWaitIdle(device_);
     if (impl_) {
-        if (impl_->once_fence) vkDestroyFence(device_, impl_->once_fence, nullptr);
-        if (impl_->once_pool) vkDestroyCommandPool(device_, impl_->once_pool, nullptr);
+        if (impl_->once_fence) { vkDestroyFence(device_, impl_->once_fence, nullptr); vk_gauge_fences().sub(1); }
+        if (impl_->once_pool) { vkDestroyCommandPool(device_, impl_->once_pool, nullptr); vk_gauge_command_pools().sub(1); }
     }
+    unregister_vma_gauges();   // before the allocator goes: the gauges read it (the registry lock makes this wait for a running read)
     if (vma_) vmaDestroyAllocator(vma_);
     if (device_) vkDestroyDevice(device_, nullptr);
     if (surface_ && owns_platform_surface_) platform::destroy_vulkan_surface(instance_, reinterpret_cast<uint64_t>(surface_));
@@ -688,6 +797,7 @@ VkResult Device::create_image(const ImageDesc& d, Image* out, std::string* why) 
         if (why) *why = "vmaCreateImage failed (" + std::to_string(r) + ")";
         return r;
     }
+    vk_gauge_images().add(1);
     img.image = handle;
     img.allocation = alloc;
     img.format = d.format;
@@ -706,9 +816,11 @@ VkResult Device::create_image(const ImageDesc& d, Image* out, std::string* why) 
         r = vkCreateImageView(device_, &vi, nullptr, &img.view);
         if (r != VK_SUCCESS) {
             vmaDestroyImage(vma_, handle, alloc);
+            vk_gauge_images().sub(1);
             if (why) *why = "vkCreateImageView failed (" + std::to_string(r) + ")";
             return r;
         }
+        vk_gauge_image_views().add(1);
     }
     set_name(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(handle), d.name);
     *out = img;
@@ -716,8 +828,8 @@ VkResult Device::create_image(const ImageDesc& d, Image* out, std::string* why) 
 }
 
 void Device::destroy_image(Image& img) {
-    if (img.view) vkDestroyImageView(device_, img.view, nullptr);
-    if (img.image) vmaDestroyImage(vma_, img.image, img.allocation);
+    if (img.view) { vkDestroyImageView(device_, img.view, nullptr); vk_gauge_image_views().sub(1); }
+    if (img.image) { vmaDestroyImage(vma_, img.image, img.allocation); vk_gauge_images().sub(1); }
     img = Image{};
 }
 
@@ -735,6 +847,22 @@ VkResult Device::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Memo
     Buffer b;
     VkResult r = vmaCreateBuffer(vma_, &bi, &ai, &b.buffer, &b.allocation, &info);
     if (r != VK_SUCCESS) return r;
+    vk_gauge_buffers().add(1);
+    if (use == MemoryUse::Upload || use == MemoryUse::Readback) {      // S34: where host-visible buffers live (device-local host-visible = resizable BAR, else system memory)
+        static std::atomic<int> logged{0};
+        VkMemoryPropertyFlags mp = 0;
+        vmaGetAllocationMemoryProperties(vma_, b.allocation, &mp);
+        const bool dl = (mp & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+        static std::atomic<uint64_t> n_dl{0}, n_sys{0}, b_dl{0}, b_sys{0};
+        (dl ? n_dl : n_sys).fetch_add(1);
+        (dl ? b_dl : b_sys).fetch_add(size);
+        if (logged.load() < 6 || (size >= (8u << 20) && logged.load() < 40)) {
+            logged.fetch_add(1);
+            NXLOG_D("vk", "host-visible buffer %s: %llu KiB in %s memory (flags 0x%x); so far %llu in device-local (%llu MiB), %llu in system memory (%llu MiB)", name ? name : "?",
+                    static_cast<unsigned long long>(size >> 10), dl ? "device-local" : "system", static_cast<unsigned>(mp), static_cast<unsigned long long>(n_dl.load()),
+                    static_cast<unsigned long long>(b_dl.load() >> 20), static_cast<unsigned long long>(n_sys.load()), static_cast<unsigned long long>(b_sys.load() >> 20));
+        }
+    }
     b.size = size;
     b.mapped = info.pMappedData;
     set_name(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(b.buffer), name);
@@ -743,7 +871,7 @@ VkResult Device::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Memo
 }
 
 void Device::destroy_buffer(Buffer& b) {
-    if (b.buffer) vmaDestroyBuffer(vma_, b.buffer, b.allocation);
+    if (b.buffer) { vmaDestroyBuffer(vma_, b.buffer, b.allocation); vk_gauge_buffers().sub(1); }
     b = Buffer{};
 }
 
@@ -764,6 +892,7 @@ bool Device::submit_once(const std::function<void(VkCommandBuffer)>& fn) {
     ai.commandBufferCount = 1;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     if (vkAllocateCommandBuffers(device_, &ai, &cmd) != VK_SUCCESS) return false;
+    vk_gauge_command_buffers().add(1);
     VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
@@ -780,6 +909,7 @@ bool Device::submit_once(const std::function<void(VkCommandBuffer)>& fn) {
     if (ok) ok = vkWaitForFences(device_, 1, &impl_->once_fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
     vkResetFences(device_, 1, &impl_->once_fence);
     vkFreeCommandBuffers(device_, impl_->once_pool, 1, &cmd);
+    vk_gauge_command_buffers().sub(1);
     return ok;
 }
 

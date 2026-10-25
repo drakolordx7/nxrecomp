@@ -22,6 +22,7 @@
 #include "fs_volume.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/services_api.h"
 #include "services_internal.h"
@@ -209,9 +210,22 @@ bool get_path(const Request& req, size_t n, std::string* out, uint32_t* err) {
         if (!get_path(req, n, &var, &perr)) return perr; \
     }
 
+// Gauges (include/nxrt/gauge.h). An open file or directory counts while its service object lives: the command handlers hold OpenCount.
+GaugeCounter g_open_files("fs.open_files");
+GaugeCounter g_open_dirs("fs.open_dirs");
+GaugeCounter g_bytes_read("fs.bytes_read");   // bytes returned by IFile::Read so far
+struct OpenCount {
+    explicit OpenCount(GaugeCounter& g) : c(g) { c.add(1); }
+    ~OpenCount() { c.sub(1); }
+    OpenCount(const OpenCount&) = delete;
+    OpenCount& operator=(const OpenCount&) = delete;
+    GaugeCounter& c;
+};
+
 std::shared_ptr<Service> make_file(std::shared_ptr<fs::VFile> f, const std::string& path) {
-    return make_iface("nn::fssrv::sf::IFile", [f, path](Service& s) {
-        s.add_cmd(0, "Read", [f](Request& req, Response& rsp) -> uint32_t {
+    auto open = std::make_shared<OpenCount>(g_open_files);
+    return make_iface("nn::fssrv::sf::IFile", [f, path, open](Service& s) {
+        s.add_cmd(0, "Read", [f, open](Request& req, Response& rsp) -> uint32_t {
             const int64_t off = req.arg<int64_t>(8);
             const uint64_t size = req.arg<uint64_t>(16);
             const ipc::Buffer out = req.out_buf(0);
@@ -219,6 +233,7 @@ std::shared_ptr<Service> make_file(std::shared_ptr<fs::VFile> f, const std::stri
             uint64_t got = 0;
             const uint32_t r = f->read(off, reinterpret_cast<void*>(static_cast<uintptr_t>(out.addr)), std::min(size, out.size), &got);
             if (r) return r;
+            g_bytes_read.add(static_cast<int64_t>(got));
             rsp.push<uint64_t>(got);
             return 0;
         });
@@ -252,8 +267,9 @@ std::shared_ptr<Service> make_file(std::shared_ptr<fs::VFile> f, const std::stri
 std::shared_ptr<Service> make_dir(std::vector<fs::DirItem> items) {
     auto list = std::make_shared<std::vector<fs::DirItem>>(std::move(items));
     auto pos = std::make_shared<size_t>(0);
-    return make_iface("nn::fssrv::sf::IDirectory", [list, pos](Service& s) {
-        s.add_cmd(0, "Read", [list, pos](Request& req, Response& rsp) -> uint32_t {
+    auto open = std::make_shared<OpenCount>(g_open_dirs);
+    return make_iface("nn::fssrv::sf::IDirectory", [list, pos, open](Service& s) {
+        s.add_cmd(0, "Read", [list, pos, open](Request& req, Response& rsp) -> uint32_t {
             const ipc::Buffer out = req.out_buf(0);
             const size_t cap = static_cast<size_t>(out.size / 0x310);
             size_t n = 0;

@@ -11,6 +11,7 @@
 
 #include "nvn_cmd.h"
 #include "nvn_impl.h"
+#include "nxrt/gauge.h"
 
 namespace nxrt::nvn {
 using namespace be;
@@ -21,10 +22,24 @@ constexpr uint64_t kCmdBytesPerRecord = 16, kCtlBytesPerRecord = 4, kReserve = 6
 CommandBuffer* cb_of(NVNcommandBuffer* c) { return host_of<CommandBuffer>(c); }
 const CommandBuffer* cb_of(const NVNcommandBuffer* c) { return host_of<CommandBuffer>(c); }
 
+// Live counts (nxrt/gauge.h). A command buffer counts from its Initialize to its Finalize. Command memory counts the bytes the game handed over
+// and that are still in the buffer's block list: AddCommandMemory adds a block, the oldest one is dropped past 8 blocks, and leaving the
+// buffer (Finalize, or Initialize over it) drops the rest.
+nxrt::GaugeCounter g_command_buffers("nvn.command_buffers");
+nxrt::GaugeCounter g_command_memory("nvn.command_memory.bytes");
+
+// Caller holds the buffer's lock (or has exclusive use of it).
+void command_buffer_gone(const CommandBuffer* cb) {
+    g_command_buffers.sub(1);
+    for (const CommandBuffer::Block& b : cb->command_blocks) g_command_memory.sub(static_cast<int64_t>(b.size));
+}
+
 NVNboolean nvnCommandBufferInitialize(NVNcommandBuffer* c, NVNdevice* device) {
+    if (CommandBuffer* old = cb_of(c)) command_buffer_gone(old);   // initialised over a live one: the old one is replaced
     auto* cb = new CommandBuffer();
     cb->device = host_of<Device>(device);
     bind_guest(c, cb);
+    g_command_buffers.add(1);
     return 1;
 }
 
@@ -35,6 +50,7 @@ void nvnCommandBufferFinalize(NVNcommandBuffer* c) {
         std::lock_guard<std::mutex> lk(cb->lock);
         for (uint64_t h : cb->handles) handle_release(h);
         cb->handles.clear();
+        command_buffer_gone(cb);
     }
     unbind_guest(c);
 }
@@ -65,7 +81,11 @@ void nvnCommandBufferAddCommandMemory(NVNcommandBuffer* c, const NVNmemoryPool* 
     std::lock_guard<std::mutex> lk(cb->lock);
     const uint64_t addr = mp ? mp->gpu_base + static_cast<uint64_t>(offset) : static_cast<uint64_t>(offset);
     cb->command_blocks.push_back({addr, static_cast<uint64_t>(offset), size});
-    if (cb->command_blocks.size() > 8) cb->command_blocks.erase(cb->command_blocks.begin());
+    g_command_memory.add(static_cast<int64_t>(size));
+    if (cb->command_blocks.size() > 8) {
+        g_command_memory.sub(static_cast<int64_t>(cb->command_blocks.front().size));
+        cb->command_blocks.erase(cb->command_blocks.begin());
+    }
     cb->command_total = size;            // the block the next recording uses
     cb->command_used = 0;                // memory handed over again: its usage is given back
     cb->base_used = 0;

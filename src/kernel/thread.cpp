@@ -4,13 +4,16 @@
 // smo-recomp runtime/os/os_threads.c (thread start with console core model).
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <functional>
 
 #include "kernel_internal.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
@@ -24,6 +27,20 @@ std::vector<std::shared_ptr<KThread>> g_all;
 std::atomic<uint64_t> g_next_id{0x50};
 thread_local KThread* t_self = nullptr;
 thread_local std::shared_ptr<KThread> t_keepalive;   // released explicitly before ExitThread (which skips destructors)
+
+// Removes its gauge when the file's statics are torn down (declared after g_all, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+// Every thread object ever created and not yet dropped by kernel_reset(): exited threads stay in the list, so this only grows.
+GaugeHook gauge_threads("kernel.threads", [] {
+    AcquireSRWLockShared(&g_list_lock);
+    const int64_t n = static_cast<int64_t>(g_all.size());
+    ReleaseSRWLockShared(&g_list_lock);
+    return n;
+});
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 
@@ -98,6 +115,9 @@ uint32_t thread_create(const ThreadParams& p) {
         return 0;
     }
     AcquireSRWLockExclusive(&g_list_lock);
+    // Thread objects of threads that have exited and that nothing else refers to (the game closed the handle, the host thread dropped its
+    // own reference) leave the list. Without this the list grew by every thread the game ever made (S34 soak: 60 an hour).
+    g_all.erase(std::remove_if(g_all.begin(), g_all.end(), [](const std::shared_ptr<KThread>& o) { return o->exited && o.use_count() == 1; }), g_all.end());
     g_all.push_back(t);
     ReleaseSRWLockExclusive(&g_list_lock);
     return t->handle;

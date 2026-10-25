@@ -8,6 +8,7 @@
 // Adapted from Ryujinx src/Ryujinx.Horizon/Sdk/Audio/Detail/{AudioRendererManager,AudioRenderer,AudioDevice}.cs (MIT).
 // The renderer DSP runs on its own thread paced by the host clock (5 ms frames) and writes PCM to nxrt::audio::sink().
 #include <array>
+#include <functional>
 #include <memory>
 #include <mutex>
 
@@ -19,6 +20,7 @@
 #include "audren/Server/BehaviourInfo.h"
 #include "audren/audren_types.h"
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "services_internal.h"
@@ -96,12 +98,26 @@ audren::AudioRendererConfiguration read_config(const Request& req) {
     return c;
 }
 
+// ---- gauges (include/nxrt/gauge.h): audren.* (the renderer totals are kept by AudioRenderSystem, see audren/Server/AudioRenderSystem.h)
+GaugeCounter g_audren_renderers("audren.renderers");   // open IAudioRenderer objects
+// Removes its gauge when this file's statics are torn down.
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_voices("audren.voices_in_use", [] { return audren::g_gauge_voices_in_use.load(std::memory_order_relaxed); });
+GaugeHook gauge_waves("audren.wavebuffers_queued", [] { return audren::g_gauge_wavebuffers_queued.load(std::memory_order_relaxed); });
+GaugeHook gauge_pools("audren.memory_pools", [] { return audren::g_gauge_memory_pools.load(std::memory_order_relaxed); });
+GaugeHook gauge_frames("audren.frames_rendered", [] { return static_cast<int64_t>(audren::g_gauge_frames_rendered.load(std::memory_order_relaxed)); });
+
 // ---- IAudioRenderer -----------------------------------------------------------------------------------------------------------------
 
 class AudioRendererObj : public Service {
 public:
     AudioRendererObj(std::unique_ptr<audren::AudioRenderSystem> sys, std::shared_ptr<audren::AudioRendererManager> mgr)
         : Service("nn::audio::detail::IAudioRenderer"), mgr_(std::move(mgr)), sys_(std::move(sys)) {
+        g_audren_renderers.add(1);
         audren::AudioRenderSystem* s = sys_.get();
         add_cmd(0, "GetSampleRate", [s](Request&, Response& rsp) -> uint32_t {
             rsp.push<int32_t>(static_cast<int32_t>(s->GetSampleRate()));
@@ -167,6 +183,8 @@ public:
             return 0;
         });
     }
+    ~AudioRendererObj() override { g_audren_renderers.sub(1); }
+
     void on_close() override {
         // The renderer leaves the manager (its destructor unregisters the session and joins the DSP thread when it was the last one).
         std::lock_guard<std::mutex> lk(st().mu);

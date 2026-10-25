@@ -9,6 +9,7 @@
 #include "nxrt/log.h"
 #include "nxrt/scene.h"
 #include "tegra_tiling.h"
+#include "vk_gauges.h"
 
 namespace nxrt::gfx {
 namespace {
@@ -91,11 +92,15 @@ struct TestScene::Impl {
     ~Impl() {
         VkDevice d = dev->device();
         dev->wait_idle();
-        if (pipeline) vkDestroyPipeline(d, pipeline, nullptr);
-        if (layout) vkDestroyPipelineLayout(d, layout, nullptr);
-        if (pool) vkDestroyDescriptorPool(d, pool, nullptr);
-        if (set_layout) vkDestroyDescriptorSetLayout(d, set_layout, nullptr);
-        if (sampler) vkDestroySampler(d, sampler, nullptr);
+        if (pipeline) { vkDestroyPipeline(d, pipeline, nullptr); vk_gauge_pipelines().sub(1); }
+        if (layout) { vkDestroyPipelineLayout(d, layout, nullptr); vk_gauge_pipeline_layouts().sub(1); }
+        if (pool) {   // frees the set
+            vkDestroyDescriptorPool(d, pool, nullptr);
+            vk_gauge_descriptor_pools().sub(1);
+            if (set) vk_gauge_descriptor_sets().sub(1);
+        }
+        if (set_layout) { vkDestroyDescriptorSetLayout(d, set_layout, nullptr); vk_gauge_descriptor_set_layouts().sub(1); }
+        if (sampler) { vkDestroySampler(d, sampler, nullptr); vk_gauge_samplers().sub(1); }
         dev->destroy_buffer(staging);
         dev->destroy_image(texture);
     }
@@ -196,22 +201,26 @@ std::unique_ptr<TestScene> TestScene::create(Device& dev, VkFormat color_format,
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = static_cast<float>(levels);
     if (vkCreateSampler(d, &sci, nullptr, &s.sampler) != VK_SUCCESS) return fail("sampler");
+    vk_gauge_samplers().add(1);
     VkDescriptorSetLayoutBinding bind = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
     VkDescriptorSetLayoutCreateInfo dli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     dli.bindingCount = 1;
     dli.pBindings = &bind;
     if (vkCreateDescriptorSetLayout(d, &dli, nullptr, &s.set_layout) != VK_SUCCESS) return fail("descriptor set layout");
+    vk_gauge_descriptor_set_layouts().add(1);
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1};
     VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpi.maxSets = 1;
     dpi.poolSizeCount = 1;
     dpi.pPoolSizes = &ps;
     if (vkCreateDescriptorPool(d, &dpi, nullptr, &s.pool) != VK_SUCCESS) return fail("descriptor pool");
+    vk_gauge_descriptor_pools().add(1);
     VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
     dai.descriptorPool = s.pool;
     dai.descriptorSetCount = 1;
     dai.pSetLayouts = &s.set_layout;
     if (vkAllocateDescriptorSets(d, &dai, &s.set) != VK_SUCCESS) return fail("descriptor set");
+    vk_gauge_descriptor_sets().add(1);
     VkDescriptorImageInfo dii = {s.sampler, s.texture.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     w.dstSet = s.set;
@@ -227,12 +236,15 @@ std::unique_ptr<TestScene> TestScene::create(Device& dev, VkFormat color_format,
     pli.pushConstantRangeCount = 1;
     pli.pPushConstantRanges = &pcr;
     if (vkCreatePipelineLayout(d, &pli, nullptr, &s.layout) != VK_SUCCESS) return fail("pipeline layout");
+    vk_gauge_pipeline_layouts().add(1);
 
     auto make_module = [&](const uint32_t* code, size_t bytes, VkShaderModule* out) {
         VkShaderModuleCreateInfo mi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         mi.codeSize = bytes;
         mi.pCode = code;
-        return vkCreateShaderModule(d, &mi, nullptr, out) == VK_SUCCESS;
+        const bool ok = vkCreateShaderModule(d, &mi, nullptr, out) == VK_SUCCESS;
+        if (ok) vk_gauge_shader_modules().add(1);
+        return ok;
     };
     VkShaderModule vs = VK_NULL_HANDLE, fs = VK_NULL_HANDLE;
     if (!make_module(kSceneVert, sizeof kSceneVert, &vs) || !make_module(kSceneFrag, sizeof kSceneFrag, &fs)) return fail("shader module");
@@ -279,8 +291,11 @@ std::unique_ptr<TestScene> TestScene::create(Device& dev, VkFormat color_format,
     gpi.pDynamicState = &ds;
     gpi.layout = s.layout;
     const VkResult pr = vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &gpi, nullptr, &s.pipeline);
+    if (pr == VK_SUCCESS) vk_gauge_pipelines().add(1);
     vkDestroyShaderModule(d, vs, nullptr);
+    vk_gauge_shader_modules().sub(1);
     vkDestroyShaderModule(d, fs, nullptr);
+    vk_gauge_shader_modules().sub(1);
     if (pr != VK_SUCCESS) return fail("graphics pipeline");
     return sc;
 }

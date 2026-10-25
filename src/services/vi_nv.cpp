@@ -11,6 +11,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
@@ -18,6 +19,7 @@
 #include <thread>
 #include <vector>
 
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/services_api.h"
 #include "services_internal.h"
@@ -680,6 +682,24 @@ NvState& nv() {
     static NvState s;
     return s;
 }
+
+// ---- gauges (include/nxrt/gauge.h): the nvdrv tables, counted under the state lock ----
+// Removes its gauge when this file's statics are torn down.
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_nv_files("nv.files", [] {   // open nvdrv device files (nvmap, gpu channels, as-gpu, ...)
+    NvState& s = nv();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return static_cast<int64_t>(s.files.size());
+});
+GaugeHook gauge_nv_maps("nv.nvmap_objects", [] {   // nvmap allocations alive (removed when the last reference is freed)
+    NvState& s = nv();
+    std::lock_guard<std::mutex> lk(s.mu);
+    return static_cast<int64_t>(s.maps.size());
+});
 
 struct DevEntry {
     const char* path;

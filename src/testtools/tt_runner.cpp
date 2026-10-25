@@ -14,6 +14,8 @@
 #include <thread>
 
 #include "nxrt/config.h"
+#include "nxrt/diag.h"
+#include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "tt_internal.h"
 
@@ -413,7 +415,13 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 continue;
             }
             case StepKind::Hash: add_checkpoint(st.text.empty() ? "hash" + std::to_string(idx_) : st.text); advance(); continue;
-            case StepKind::Log: NXLOG_I("script", "%s", st.text.c_str()); advance(); continue;
+            case StepKind::Log:
+                NXLOG_I("script", "%s", st.text.c_str());
+                if (ft::on() && st.text.compare(0, 6, "SCENE ") == 0) ft::mark(st.text.c_str());   // S34: scene windows in the frame trace
+                if (st.text.compare(0, 12, "SCENE start ") == 0) prof_sampler_label(st.text.c_str() + 12);   // and in the sampling profiler
+                else if (st.text.compare(0, 10, "SCENE end ") == 0) prof_sampler_label("");
+                advance();
+                continue;
             case StepKind::Assert: {
                 std::string d;
                 if (!eval_assert(st, s, valid, &d)) { fail(st, "assertion failed: " + d); return; }

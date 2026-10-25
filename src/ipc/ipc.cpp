@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/gauge.h"
 #include "nxrt/hipc.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
@@ -32,6 +33,10 @@ constexpr uint32_t kInvalidCombination = kernel::make_result(1, 116);   // 0xE80
 constexpr uint64_t kMaxMsgBytes = 0x1000;
 constexpr size_t kHeaderBytes = 16;                                      // CmifIn/OutHeader, CmifDomain*Header, SFCI payload start
 constexpr size_t kConnectNameMax = 12;                                   // ConnectToNamedPort reads at most 12 bytes
+
+// Gauges (include/nxrt/gauge.h). Domain objects: +1 when an object enters a domain's table, -1 when it leaves it (erased, or the domain dies).
+GaugeCounter g_domain_objects("ipc.domain_objects");
+GaugeCounter g_requests_pending("ipc.requests_pending");   // svcSendSyncRequest calls in flight
 
 enum class Wire { Cmif, Domain, Tipc };                                  // how a reply is laid out
 
@@ -157,6 +162,7 @@ void write_reply(uint32_t* words, size_t cap, Wire wire, uint32_t result, Respon
                 std::lock_guard<std::recursive_mutex> lk(mu());
                 ids.push_back(dom->next_object++);
                 dom->objects[ids.back()] = o;
+                g_domain_objects.add(1);
             } else if (const uint32_t h = create_session_handle(o)) {
                 made.push_back(h);
             } else {
@@ -199,7 +205,8 @@ void write_reply(uint32_t* words, size_t cap, Wire wire, uint32_t result, Respon
         for (uint32_t h : rsp->out_move) kernel::handle_close(h);   // dropped: never reached the client
     if (!ids.empty()) {
         std::lock_guard<std::recursive_mutex> lk(mu());
-        for (uint32_t id : ids) dom->objects.erase(id);
+        for (uint32_t id : ids)
+            if (dom->objects.erase(id)) g_domain_objects.sub(1);
     }
     hipc::Message f;
     f.type = wire == Wire::Tipc ? hipc::kTipcBase : hipc::kInvalid;
@@ -230,6 +237,7 @@ uint32_t control(const std::shared_ptr<KSession>& s, const hipc::Message& m, Res
             if (!s->domain) {
                 s->dom = std::make_shared<DomainState>();
                 s->dom->objects[1] = s->svc;
+                g_domain_objects.add(1);
                 s->dom->next_object = 2;
                 s->domain = true;
             }
@@ -359,6 +367,7 @@ KSession::~KSession() {
     // The domain dies with this session when nothing else holds it; its objects then die too unless another holder keeps them.
     const bool dom_dies = dom && dom.use_count() == 1;
     if (dom_dies) {
+        g_domain_objects.sub(static_cast<int64_t>(dom->objects.size()));
         for (const auto& kv : dom->objects)
             if (kv.second != svc && kv.second.use_count() == 1) kv.second->on_close();
     }
@@ -390,6 +399,10 @@ uint32_t connect_named_port(const char* name, uint32_t* out_handle) {
 }
 
 uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr, uint64_t msg_size) {
+    struct Pending {   // counts this request while it is in flight, whatever way it returns
+        Pending() { g_requests_pending.add(1); }
+        ~Pending() { g_requests_pending.sub(1); }
+    } pending;
     auto s = kernel::handle_as<KSession>(session_handle);
     if (!s) return kernel::kInvalidHandle;
     if (!msg_addr) return kernel::kInvalidAddress;
@@ -473,6 +486,7 @@ uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr,
                 if (it != dom->objects.end()) {
                     dying = it->second;
                     dom->objects.erase(it);
+                    g_domain_objects.sub(1);
                 }
             }
             if (dying && dying.use_count() == 1) dying->on_close();

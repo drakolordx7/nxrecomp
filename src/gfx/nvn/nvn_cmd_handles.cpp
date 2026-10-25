@@ -10,6 +10,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "nxrt/gauge.h"
 #include "nvn_cmd.h"
 
 namespace nxrt::nvn::be {
@@ -35,6 +36,25 @@ void drop_locked(uint64_t handle) {
     }
     g_handles.erase(it);   // the list lives on if a replay or another list still holds it
 }
+
+// Gauges (nxrt/gauge.h). The callbacks take g_mu; they are removed before g_mu and the tables are destroyed.
+struct HandleGauges {
+    HandleGauges() {
+        nxrt::gauge_register("nvn.handles", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_handles.size());
+        });
+        nxrt::gauge_register("nvn.handle_regions", [] {
+            std::lock_guard<std::mutex> lk(g_mu);
+            return static_cast<int64_t>(g_regions.size());
+        });
+    }
+    ~HandleGauges() {
+        nxrt::gauge_unregister("nvn.handles");
+        nxrt::gauge_unregister("nvn.handle_regions");
+    }
+};
+HandleGauges g_handle_gauges;
 
 }  // namespace
 

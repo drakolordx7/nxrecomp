@@ -34,9 +34,11 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -44,6 +46,7 @@
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/gauge.h"
 #include "nxrt/log.h"
 #include "nxrt/module.h"
 #include "nxrt/movie.h"
@@ -86,6 +89,7 @@ bool g_log = false;
 bool g_lookahead = true, g_preroll = true, g_async_close = true;   // S21: [media] movie_lookahead, movie_preroll, movie_async_close
 std::atomic<uint64_t> s_extractors_created{0}, s_extractors_destroyed{0}, s_decoders_created{0}, s_decoders_destroyed{0}, s_frames{0},
     s_audio_blocks{0}, s_audio_bytes{0}, s_samples{0}, s_read_errors{0};
+GaugeCounter g_media_workers("media.worker_threads");   // movie-read threads alive (one per started extractor)
 
 // ---- guest memory --------------------------------------------------------------------------------------------------------------
 inline uint64_t rd64(uint64_t a) { uint64_t v; std::memcpy(&v, reinterpret_cast<const void*>(a), 8); return v; }
@@ -282,7 +286,16 @@ struct Track {
     size_t limit() const { return kind == 0 ? kVideoQueueMax : kind == 1 ? kAudioQueueMax : kOtherQueueMax; }
 };
 
+struct Ext;
+// Every live extractor and decoder, for the gauges near the end of this file. Lock order there: the registry first, then the object's m.
+std::mutex g_exts_mu;
+std::set<Ext*> g_exts;
+
 struct Ext {
+    Ext() { std::lock_guard<std::mutex> lk(g_exts_mu); g_exts.insert(this); }
+    ~Ext() { std::lock_guard<std::mutex> lk(g_exts_mu); g_exts.erase(this); }
+    Ext(const Ext&) = delete;
+    Ext& operator=(const Ext&) = delete;
     int container = 1;
     std::string name;
     ComPtr<IMFSourceReader> rd;
@@ -422,7 +435,10 @@ bool ext_open(Ext* e, unsigned char* data, size_t size) {
         }
         for (const Track& t : mf_tracks) if (t.kind == 2) ordered.push_back(t);
     }
-    e->tr = ordered.size() == mf_tracks.size() ? ordered : mf_tracks;
+    {   // under e->m: the gauges read the track queues from the sampler thread
+        std::lock_guard<std::mutex> lk(e->m);
+        e->tr = ordered.size() == mf_tracks.size() ? ordered : mf_tracks;
+    }
     std::string desc;
     for (size_t i = 0; i < e->tr.size(); i++) {
         const Track& t = e->tr[i];
@@ -501,6 +517,10 @@ int ext_select_locked(Ext* e, int i, bool on) {
 }
 
 void worker_main(Ext* e) {
+    struct Alive {   // counts this thread while it runs, whatever way it leaves
+        Alive() { g_media_workers.add(1); }
+        ~Alive() { g_media_workers.sub(1); }
+    } alive;
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     log_set_thread_name("movie-read");
     std::unique_lock<std::mutex> lk(e->m);
@@ -994,7 +1014,15 @@ struct DecItem {
     uint32_t flags = 0;
     int in_idx = 0;
 };
+struct Dec;
+std::mutex g_decs_mu;                    // registry of live decoders (see g_exts_mu)
+std::set<Dec*> g_decs;
+
 struct Dec {
+    Dec() { std::lock_guard<std::mutex> lk(g_decs_mu); g_decs.insert(this); }
+    ~Dec() { std::lock_guard<std::mutex> lk(g_decs_mu); g_decs.erase(this); }
+    Dec(const Dec&) = delete;
+    Dec& operator=(const Dec&) = delete;
     std::mutex m;
     int type = 0, fmt = 0, mode = 0;
     bool is_video = false;
@@ -1012,6 +1040,48 @@ struct Dec {
     bool warned_small = false, warned_token = false;
 };
 Dec* dec_of(uint64_t guest) { return guest && rd64(guest) == kObjMarker ? reinterpret_cast<Dec*>(rd64(guest + 8)) : nullptr; }
+
+// ---- gauges (include/nxrt/gauge.h) ----
+// Queued samples over every live extractor (kind 0 video, 1 audio): the registry lock first, then each extractor's m.
+int64_t queued_samples(int kind) {
+    std::lock_guard<std::mutex> lk(g_exts_mu);
+    int64_t n = 0;
+    for (Ext* e : g_exts) {
+        std::lock_guard<std::mutex> el(e->m);
+        for (const Track& t : e->tr)
+            if (t.kind == kind) n += static_cast<int64_t>(t.q.size());
+    }
+    return n;
+}
+// Input items the decoders hold for the transforms, over every live decoder.
+int64_t decoder_queue() {
+    std::lock_guard<std::mutex> lk(g_decs_mu);
+    int64_t n = 0;
+    for (Dec* d : g_decs) {
+        std::lock_guard<std::mutex> dl(d->m);
+        n += static_cast<int64_t>(d->dec_q.size());
+    }
+    return n;
+}
+// Removes its gauge when this file's statics are torn down (declared after the registries, so it goes first).
+struct GaugeHook {
+    const char* name;
+    GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
+    ~GaugeHook() { nxrt::gauge_unregister(name); }
+};
+GaugeHook gauge_queued_video("media.queued_video", [] { return queued_samples(0); });
+GaugeHook gauge_queued_audio("media.queued_audio", [] { return queued_samples(1); });
+GaugeHook gauge_decoder_queue("media.decoder_queue", [] { return decoder_queue(); });
+GaugeHook gauge_extractors("media.extractors_open", [] {
+    return static_cast<int64_t>(s_extractors_created.load()) - static_cast<int64_t>(s_extractors_destroyed.load());
+});
+GaugeHook gauge_decoders("media.decoders_open", [] {
+    return static_cast<int64_t>(s_decoders_created.load()) - static_cast<int64_t>(s_decoders_destroyed.load());
+});
+GaugeHook gauge_video_frames("media.video_frames", [] { return static_cast<int64_t>(s_frames.load()); });   // frames handed to the game
+GaugeHook gauge_audio_blocks("media.audio_blocks", [] { return static_cast<int64_t>(s_audio_blocks.load()); });
+GaugeHook gauge_samples_read("media.samples_read", [] { return static_cast<int64_t>(s_samples.load()); });   // samples read from the source
+GaugeHook gauge_read_errors("media.read_errors", [] { return static_cast<int64_t>(s_read_errors.load()); });
 
 void dec_release_all(Dec* d) {
     for (int i = 0; i < d->nout; i++) d->out[i] = OutBuf();

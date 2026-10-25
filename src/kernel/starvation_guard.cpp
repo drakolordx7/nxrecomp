@@ -20,6 +20,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -27,6 +28,7 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 
@@ -176,5 +178,13 @@ void starvation_guard_stop() {
 }
 
 uint64_t starvation_boosts() { return guard().boosts.load(); }
+
+namespace {
+// Gauge (include/nxrt/gauge.h). The guard object is never destroyed (see guard()), so the callback stays valid through exit.
+const bool g_gauge_boosts_registered = [] {
+    nxrt::gauge_register("kernel.starvation_boosts", [] { return static_cast<int64_t>(starvation_boosts()); });
+    return true;
+}();
+}  // namespace
 
 }  // namespace nxrt::kernel

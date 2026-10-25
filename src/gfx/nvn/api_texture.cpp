@@ -17,6 +17,7 @@
 #include "nvn_gpu.h"
 #include "nvn_impl.h"
 #include "nvn_texture_layout.h"
+#include "nxrt/gauge.h"
 
 namespace nxrt::nvn {
 namespace {
@@ -27,6 +28,10 @@ using be::TexLayout;
 namespace gpu = be::gpu;
 
 std::atomic<uint32_t> g_texture_id{1};   // texture ids when the builder names no device
+
+// Texture counts (nxrt/gauge.h). A texture is live from its Initialize to its Finalize; created counts every texture object ever made.
+nxrt::GaugeCounter g_textures("nvn.textures");
+nxrt::GaugeCounter g_textures_created("nvn.textures_created");
 
 Texture* tex_of(const void* guest) { return be::host_of<Texture>(guest); }
 
@@ -214,6 +219,8 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
     t->levels = L.levels;
     t->layers = L.layers;
     t->id = next_texture_id(info.device);
+    g_textures_created.add(1);
+    const bool was_live = tex_of(texture) != nullptr;        // initialized over a live texture: replaced, not added
 
     if (Texture* old = tex_of(texture)) {                    // initialized twice: the old one goes
         be::texture_registry_remove(old);
@@ -221,6 +228,7 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
         old->destroyed.store(true);
     }
     be::bind_guest(texture, t);                              // the guest object takes the one reference of t
+    if (!was_live) g_textures.add(1);
     be::texture_registry_add(t);
     be::texture_registry_add_virtual(t);
     be::tev(t, "init", static_cast<uint64_t>(info.offset), t->storage_size);
@@ -236,6 +244,7 @@ void nvnTextureFinalize(NVNtexture* texture) {
     t->destroyed.store(true);
     be::texture_registry_remove(t);
     be::texture_registry_remove_virtual(t);
+    g_textures.sub(1);
     be::unbind_guest(texture);
 }
 
