@@ -7,7 +7,7 @@ yaw change is wrapped to (-pi, pi] and compared with -counts * yaw_rad (yaw_rad 
 0.000767945). Vertical bursts (dy only) are judged on pitch: expected pitch change = -dy * pitch_rad (dy < 0 is up, + pitch
 is up); their yaw is expected to stay put.
 
-  cd C:\\mpr
+  cd <project folder>
   tools\\.venv\\Scripts\\python tools\\test\\mouse_linearity.py
 
 Output: work/verify/mouse/run/ (the run) and work/verify/mouse/table.txt.

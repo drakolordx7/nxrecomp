@@ -1,7 +1,7 @@
 """S11 timing oracle: does the game's clock follow wall-clock time at 60, 120 and 240 steps per second?
 
 Runs the lifted game headless (the title screen and front end: movies, menu animation, render timings) once per case through
-hifps_wt.sh-style boot.py, with the [time] keys of the runtime's timestep module, and reads the per-frame CSV it writes
+hifps_wt.sh-style (local test script) boot.py, with the [time] keys of the runtime's timestep module, and reads the per-frame CSV it writes
 (frame, host_s, elapsed_s, step_s, sim_s, movie_frames). Per case it reports, over the steady part of the run:
 
   fps        frames per wall second

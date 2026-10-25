@@ -1,6 +1,6 @@
 """Unit tests for eden_config.set_values / apply / HARNESS_SETTINGS and the edeninput key table and _lparam.
 
-Run from C:\\mpr\\tools\\test:
+Run from the tools test folder:
   ..\\.venv\\Scripts\\python.exe -I -m unittest discover -s tests -p "test_eden_tools.py" -v
 
 Only pure functions and module-level data are used. No window is found and no message is posted.

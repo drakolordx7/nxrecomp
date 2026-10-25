@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "check.h"
+#include "project_root.h"
 #include "common.h"
 #include "crypto.h"
 #include "keys.h"
@@ -19,8 +20,10 @@ using namespace mprs;
 
 namespace {
 
-const char* kRealProd = "C:\\mpr\\game\\keys\\prod.keys";
-const char* kRealTitle = "C:\\mpr\\game\\keys\\title.keys";
+const std::string kRealProdStr = mprs_test::project_path("game/keys/prod.keys");
+const std::string kRealTitleStr = mprs_test::project_path("game/keys/title.keys");
+const char* kRealProd = kRealProdStr.c_str();
+const char* kRealTitle = kRealTitleStr.c_str();
 
 std::string temp_path(const std::string& name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / ("mprs_test_keys_" + name);

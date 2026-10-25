@@ -44,7 +44,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import metrics  # noqa: E402  (oracle/metrics.py, not modified)
 
-ROOT = Path("C:/mpr")
+ROOT = Path(__file__).resolve().parents[3]   # the project root (tools/textures/oracle -> root)
 CLI = ROOT / "tools/textures/build/release/astc2bc7.exe"
 BC7DEC = ROOT / "tools/textures/build/oracle/bc7dec.exe"
 CORPUS = ROOT / "work/corpus/textures_astc"

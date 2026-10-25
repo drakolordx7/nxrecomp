@@ -31,7 +31,7 @@ sys.path.insert(0, HERE)
 import edengdb  # noqa: E402
 import edeninput  # noqa: E402
 
-DEFAULT_NSP = r"C:/path/to/your/dump.nsp"
+DEFAULT_NSP = os.environ.get("MPR_DUMP", "")   # your own .nsp; or pass --nsp
 VK_SDK = r"C:\VulkanSDK\1.4.363.0\Bin"
 
 

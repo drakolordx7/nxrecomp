@@ -8,7 +8,20 @@ import numpy as np
 
 import csmp_ref as cr
 
-REAL_DIR = "C:/mpr/work/survey/paks/Preload/DuplicateData"
+def _project_root():
+    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
+    import os, pathlib
+    env = os.environ.get('NXRT_ROOT')
+    if env:
+        return pathlib.Path(env).as_posix()
+    here = pathlib.Path(__file__).resolve()
+    for p in here.parents:
+        if (p / 'tools').is_dir() and (p / 'work').is_dir():
+            return p.as_posix()
+    return here.parents[2].as_posix()
+
+
+REAL_DIR = _project_root() + "/work/survey/paks/Preload/DuplicateData"
 
 # Synthetic stream: 3 frames (42 samples).
 # coef pair 0 = (0, 0); pair 1 = (2048, 0); pair 2 = (0, 2048); rest 0.

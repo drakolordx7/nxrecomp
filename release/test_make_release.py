@@ -22,6 +22,7 @@ EXPECTED = sorted([
 ])
 TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None), 'launcher': (0, None)}
 EXE_REL = 'game-build/build/relpkg/mpr.exe'
+LOCAL_PATH = b'D:' + b'/AI/x'   # a developer-machine path as the audit sees it (spelled in two pieces so the source holds no such path)
 
 
 def write(path, data):
@@ -231,14 +232,14 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_local_path_in_exe_is_refused_by_default(self):
-        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:/dev/x' + b'\x00' * 8)
+        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
         self.assertIn('paths: mpr.exe contains', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_local_path_in_exe_only_warns_with_allow_local_paths(self):
-        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:/dev/x' + b'\x00' * 8)
+        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build(['--allow-local-paths'])
         self.assertEqual(code, 0, log)
         self.assertIn('mpr.exe contains', log)
@@ -247,7 +248,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn('RELEASE OK', log)
 
     def test_strict_paths_alias_is_accepted_and_is_the_default(self):
-        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at C:/dev/x' + b'\x00' * 8)
+        write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build(['--strict-paths'])
         self.assertEqual(code, 3, log)
         self.assertIn('paths: mpr.exe contains', log)
@@ -255,7 +256,7 @@ class BuildTests(unittest.TestCase):
 
     def test_local_path_in_launcher_is_refused_by_default(self):
         write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'),
-              b'MZ' + b'launcher built at C:/dev/x' + b'\x00' * 8)
+              b'MZ' + b'launcher built at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
         self.assertIn('paths: mpr_launcher.exe contains', log)

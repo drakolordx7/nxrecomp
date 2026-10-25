@@ -1,5 +1,5 @@
 # Builds mf_decode_test.exe (Media Foundation decode test) with clang-cl into work\survey\fmv\.
-# Run:  pwsh -File C:\mpr\tools\survey\build_mf_test.ps1
+# Run:  pwsh -File tools\survey\build_mf_test.ps1
 $ErrorActionPreference = 'Stop'
 $here  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $out   = [System.IO.Path]::GetFullPath((Join-Path $here '..\..\work\survey\fmv'))

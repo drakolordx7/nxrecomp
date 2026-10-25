@@ -1,7 +1,7 @@
 """Extract every FMV0 movie from the RomFS paks and write <out>\\<asset-id>.mp4 plus <out>\\manifest.json.
 
 Run:
-  C:\\mpr\\tools\\.venv\\Scripts\\python C:\\mpr\\tools\\media\\fmv_manifest.py --romfs C:\\mpr\\game\\romfs --out <dir>
+  tools\\.venv\\Scripts\\python tools\\media\\fmv_manifest.py --romfs game\\romfs --out <dir>
 
 Steps: read each pak's ADIR (directory only) to find FMV0 assets; extract just the paks that hold a
 movie still missing or stale, with retrotool pak extract, into <out>\\_paks; pull each movie out with
