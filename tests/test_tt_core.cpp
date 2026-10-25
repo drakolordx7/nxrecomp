@@ -48,6 +48,11 @@ struct Rig {
     double igt = 0;
     int warp_calls = 0;
     uint64_t warp_world[2] = {}, warp_area[2] = {}, quit_reason = 0;
+    // S42 warp gate: the game globals -> CResourceFactory -> CResourceLoaderManager chain, with the queue counts IsThreadWorkDone reads
+    bool with_loader = false;
+    uint64_t globals = 0;
+    alignas(16) uint8_t factory[0x20] = {};
+    alignas(16) uint8_t loader[0x200] = {};
     uint8_t pending_area[16] = {};
     bool pending = false;
     int pending_in = 0;
@@ -77,8 +82,11 @@ struct Rig {
         put(player + 8, pa);
         put(pa + 0x20, pb);
         put(pb + 0x40, xf);
+        put(factory + 0x10, loader);
+        globals = reinterpret_cast<uint64_t>(factory);
         set_igt(0);
     }
+    void set_loader_queue(int32_t n) { std::memcpy(loader + 0xe8, &n, 4); }      // the load list count
     ~Rig() {
         VirtualFree(mgr, 0, MEM_RELEASE);
         VirtualFree(cgs, 0, MEM_RELEASE);
@@ -90,6 +98,7 @@ struct Rig {
         ProbeLayout l;
         l.game_state_global = reinterpret_cast<uint64_t>(&gp);
         l.state_manager = reinterpret_cast<uint64_t>(mgr);
+        if (with_loader) l.game_globals = reinterpret_cast<uint64_t>(&globals);
         set_probe_layout(l);
     }
     // one frame of the toy game, using the pad of the frame that just began
@@ -390,6 +399,60 @@ NXTEST(warp_runs_the_practice_mod_sequence) {
     CHECK(std::memcmp(r.warp_area, a, 16) == 0);
     CHECK_EQ(r.quit_reason, 7u);
     shutdown();
+}
+
+namespace {
+void register_warp_fakes() {
+    nxrt::fn_register(kBase + 0xc838e4, fake_set_world);
+    nxrt::fn_register(kBase + 0xc84478, fake_current_ws);
+    nxrt::fn_register(kBase + 0xc8275c, fake_set_desired);
+    nxrt::fn_register(kBase + 0x40a820, fake_continue);
+    nxrt::fn_register(kBase + 0xb01cc8, fake_gis);
+    nxrt::fn_register(kBase + 0x410544, fake_quit);
+    spit("tt_test_out\\regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
+}
+const char* kWarpScript = "2\n@warp frig frig_b\n@assert area == frig_b\n@pass\n";
+}  // namespace
+
+// S42: @warp waits while the game's resource loader has work queued, and warps once it has been idle for 10 frames in a row.
+NXTEST(warp_waits_for_the_idle_resource_loader) {
+    Rig r("warpgate");
+    r.with_loader = true;
+    r.set_loader_queue(3);
+    register_warp_fakes();
+    const std::string s = scriptfile("warpgate.nxs", kWarpScript);
+    begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}});
+    run_frames(r, 60);
+    CHECK_EQ(r.warp_calls, 0);                              // still busy: no warp
+    CHECK(!finished());
+    r.set_loader_queue(0);
+    run_frames(r, 9);
+    CHECK_EQ(r.warp_calls, 0);                              // idle, but not yet for 10 frames in a row
+    r.set_loader_queue(1);
+    run_frames(r, 5);                                       // busy again: the count starts over
+    r.set_loader_queue(0);
+    run_frames(r, 9);
+    CHECK_EQ(r.warp_calls, 0);
+    run_frames(r, 100);
+    CHECK_EQ(r.warp_calls, 1);
+    CHECK_EQ(r.exit_code_seen, 0);
+    shutdown();
+}
+
+NXTEST(warp_gate_can_be_turned_off_and_gives_up_after_its_limit) {
+    for (int mode = 0; mode < 2; mode++) {
+        Rig r(mode ? "warpgate_max" : "warpgate_off");
+        r.with_loader = true;
+        r.set_loader_queue(5);                              // busy for the whole run
+        register_warp_fakes();
+        const std::string s = scriptfile("warpgate2.nxs", kWarpScript);
+        if (mode == 0) begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}, {"warp_wait_loader", "0"}});
+        else begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}, {"warp_loader_max_ms", "0"}});
+        run_frames(r, 100);
+        CHECK_EQ(r.warp_calls, 1);
+        CHECK_EQ(r.exit_code_seen, 0);
+        shutdown();
+    }
 }
 
 namespace {

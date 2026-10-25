@@ -82,6 +82,7 @@ the release builder reads `tools/release/games/<id>.json` (`MPR_RELEASE_GAME`, d
 | --- | --- | --- |
 | `src/gfx/play/play.cpp` ProcessInput, SetTransform, first-person and ball camera think hooks, player pointer, free look, ball look, beam hints | (c) | `games/mpr/mpr_play.cpp` behind `GamePlay`; the mouse sampling logic that was inside the input hook stays in the base as `GameHost::input_tick` |
 | `src/gfx/play/play_aim.*`, `play_lockcam.*`, `play_lookrate.*` (Samus's aim, lock-on camera, look rate) | (c) | `games/mpr/` (git mv) |
+| `src/gfx/play/play_scenefix.*` (S42: the guard on CModConSceneNode render queries, `[game] modcon_query_guard`) and its test | (c) | `games/mpr/` (git mv); installed and removed by `games/mpr/mpr_play.cpp` next to the lock-on camera |
 | `src/gfx/play/play_display.cpp` the hooks on the game's resolution, FOV and HUD code | (c) | `games/mpr/display_hooks.cpp`; the display math and the texture filtering settings (`display_tuning`) stay in the base |
 | `src/gfx/play/menu_mouse.cpp` the game's menu hooks | (c) | `games/mpr/menu_mouse_game.cpp`; the pointer state and the math stay in the base (`menu_mouse_math.cpp`) |
 | `src/gfx/extras/tonemap_hook.*` | (c) | `games/mpr/mpr_tonemap.*` |
