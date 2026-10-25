@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
@@ -336,6 +337,13 @@ NXTEST(virtual_clock_steps_per_frame) {
     uint64_t t3 = 0;
     virtual_tick(&t3);
     CHECK(t3 >= before + 19200);
+    // A sleep on another thread does not move the clock: it waits for the frames (here: none come) for at most its length of host time.
+    uint64_t t4 = 0, t5 = 0;
+    virtual_tick(&t4);
+    std::thread other([] { for (int i = 0; i < 20; i++) virtual_sleep(1000000); });
+    other.join();
+    virtual_tick(&t5);
+    CHECK(t5 < t4 + 19200);                                // 20 sleeps of 1 ms on the other thread: less than 1 ms of virtual time
     shutdown();
     CHECK(!virtual_tick(&t3));                             // off after shutdown / when not enabled
 }
