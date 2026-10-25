@@ -4,6 +4,7 @@
 // smo-recomp runtime/os/os_threads.c (thread start with console core model).
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <functional>
@@ -114,6 +115,9 @@ uint32_t thread_create(const ThreadParams& p) {
         return 0;
     }
     AcquireSRWLockExclusive(&g_list_lock);
+    // Thread objects of threads that have exited and that nothing else refers to (the game closed the handle, the host thread dropped its
+    // own reference) leave the list. Without this the list grew by every thread the game ever made (S34 soak: 60 an hour).
+    g_all.erase(std::remove_if(g_all.begin(), g_all.end(), [](const std::shared_ptr<KThread>& o) { return o->exited && o.use_count() == 1; }), g_all.end());
     g_all.push_back(t);
     ReleaseSRWLockExclusive(&g_list_lock);
     return t->handle;

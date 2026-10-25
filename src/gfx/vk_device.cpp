@@ -17,6 +17,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/gauge.h"
+#include "nxrt/memguard.h"
 #include "nxrt/gfx.h"
 #include "nxrt/log.h"
 #include "nxrt/platform.h"
@@ -240,8 +241,21 @@ uint32_t device_local_heap(VmaAllocator a) {
     return best;
 }
 
+VmaAllocator g_guard_vma = nullptr;
+uint32_t g_guard_heap = 0;
+uint64_t gpu_bytes_for_guard() {      // the device's dedicated memory in use by this process, for the memory guard (nxrt/memguard.h)
+    VmaAllocator a = g_guard_vma;
+    if (!a) return 0;
+    VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
+    vmaGetHeapBudgets(a, b);
+    return static_cast<uint64_t>(b[g_guard_heap].usage);
+}
+
 void register_vma_gauges(VmaAllocator a) {
     const uint32_t heap = device_local_heap(a);
+    g_guard_heap = heap;
+    g_guard_vma = a;
+    nxrt::memguard_set_discount(&gpu_bytes_for_guard);
     auto cache = std::make_shared<VmaStatsCache>();
     nxrt::gauge_register("vma.device_usage_mb", [a, heap] {
         VmaBudget b[VK_MAX_MEMORY_HEAPS] = {};
@@ -260,6 +274,8 @@ void register_vma_gauges(VmaAllocator a) {
 }
 
 void unregister_vma_gauges() {
+    nxrt::memguard_set_discount(nullptr);
+    g_guard_vma = nullptr;
     const char* const names[] = {"vma.device_usage_mb", "vma.device_budget_mb", "vma.alloc_count", "vma.alloc_mb", "vma.block_count", "vma.block_mb"};
     for (const char* n : names) nxrt::gauge_unregister(n);
 }
@@ -832,6 +848,21 @@ VkResult Device::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, Memo
     VkResult r = vmaCreateBuffer(vma_, &bi, &ai, &b.buffer, &b.allocation, &info);
     if (r != VK_SUCCESS) return r;
     vk_gauge_buffers().add(1);
+    if (use == MemoryUse::Upload || use == MemoryUse::Readback) {      // S34: where host-visible buffers live (device-local host-visible = resizable BAR, else system memory)
+        static std::atomic<int> logged{0};
+        VkMemoryPropertyFlags mp = 0;
+        vmaGetAllocationMemoryProperties(vma_, b.allocation, &mp);
+        const bool dl = (mp & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0;
+        static std::atomic<uint64_t> n_dl{0}, n_sys{0}, b_dl{0}, b_sys{0};
+        (dl ? n_dl : n_sys).fetch_add(1);
+        (dl ? b_dl : b_sys).fetch_add(size);
+        if (logged.load() < 6 || (size >= (8u << 20) && logged.load() < 40)) {
+            logged.fetch_add(1);
+            NXLOG_D("vk", "host-visible buffer %s: %llu KiB in %s memory (flags 0x%x); so far %llu in device-local (%llu MiB), %llu in system memory (%llu MiB)", name ? name : "?",
+                    static_cast<unsigned long long>(size >> 10), dl ? "device-local" : "system", static_cast<unsigned>(mp), static_cast<unsigned long long>(n_dl.load()),
+                    static_cast<unsigned long long>(b_dl.load() >> 20), static_cast<unsigned long long>(n_sys.load()), static_cast<unsigned long long>(b_sys.load() >> 20));
+        }
+    }
     b.size = size;
     b.mapped = info.pMappedData;
     set_name(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(b.buffer), name);

@@ -70,12 +70,10 @@ uint32_t name_index(State& s, const std::string& n) {
 
 // True when the two bytes before `ip` are a `syscall` instruction (0F 05): the thread is inside a system call. No C++ objects here (SEH).
 bool after_syscall(uint64_t ip) {
-    __try {
-        const uint8_t* p = reinterpret_cast<const uint8_t*>(ip);
-        return p[-2] == 0x0F && p[-1] == 0x05;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    uint8_t b[2] = {0, 0};
+    SIZE_T got = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(ip - 2), b, 2, &got) || got != 2) return false;   // no fault if the page is not mapped
+    return b[0] == 0x0F && b[1] == 0x05;
 }
 
 void flush_samples(State& s);

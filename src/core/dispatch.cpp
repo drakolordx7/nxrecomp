@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -37,6 +38,19 @@ struct Table {
 
 std::mutex g_write;
 std::atomic<Table*> g_table{nullptr};
+
+// Per-thread direct-mapped cache in front of the function hash (S34). Indirect calls (virtual calls, function pointers) are the most
+// frequent thing the guest does, and the hash table of 138,000 functions is 4 MiB: a lookup is a cache miss. The same few hundred
+// targets repeat, so a 1,024-entry table per thread (16 KiB) answers most of them. A cache holds only functions that were found; a
+// registration that replaces a function, and fn_clear, bump the epoch and every thread drops its cache before the next lookup.
+std::atomic<uint32_t> g_fn_epoch{0};
+struct FnCacheEntry {
+    uint64_t addr;
+    GuestFn fn;
+};
+constexpr size_t kFnCache = 1024;
+thread_local FnCacheEntry t_fn_cache[kFnCache];
+thread_local uint32_t t_fn_epoch = 0;
 std::vector<std::unique_ptr<Table>> g_all_tables;   // owns current + retired tables
 std::atomic<size_t> g_fn_count{0};
 
@@ -118,6 +132,7 @@ void fn_register(uint64_t guest_addr, GuestFn fn) {
         uint64_t a = t->slots[h].addr.load(std::memory_order_relaxed);
         if (a == guest_addr) {
             t->slots[h].fn.store(fn, std::memory_order_release);
+            g_fn_epoch.fetch_add(1, std::memory_order_release);      // a replaced function: the per-thread caches may hold the old one
             return;
         }
         if (!a) break;
@@ -146,6 +161,7 @@ size_t fn_count() { return g_fn_count.load(std::memory_order_relaxed); }
 void fn_clear() {
     std::lock_guard<std::mutex> lk(g_write);
     g_table.store(nullptr);
+    g_fn_epoch.fetch_add(1, std::memory_order_release);
     g_all_tables.clear();
     g_fn_count = 0;
     std::lock_guard<std::mutex> l2(g_byhost_lock);
@@ -262,9 +278,25 @@ void trap(const char* what, uint64_t addr) {
 }
 
 void dispatch_call(::Ctx* c, uint64_t addr) {
-    if (GuestFn fn = fn_lookup(addr)) {
-        fn(c);
-        return;
+    // HLE thunks live in their own address range, away from every lifted function: no hash lookup for them
+    const bool in_hle_range = addr - mem::kHleBase < mem::kHleSize;
+    if (!in_hle_range) {
+        const uint32_t ep = g_fn_epoch.load(std::memory_order_acquire);
+        if (t_fn_epoch != ep) {
+            std::memset(t_fn_cache, 0, sizeof t_fn_cache);
+            t_fn_epoch = ep;
+        }
+        FnCacheEntry& e = t_fn_cache[((addr >> 2) ^ (addr >> 12)) & (kFnCache - 1)];
+        if (e.addr == addr) {
+            e.fn(c);
+            return;
+        }
+        if (GuestFn fn = fn_lookup(addr)) {
+            e.addr = addr;
+            e.fn = fn;
+            fn(c);
+            return;
+        }
     }
     if (hle_is_thunk(addr)) {
         Thunk& t = *g_thunks[thunk_index(addr)];

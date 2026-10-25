@@ -87,6 +87,12 @@ uint64_t completed_serial();      // cached timeline value; call poll_completed(
 uint64_t poll_completed();
 uint64_t current_serial();        // the serial of the submission being recorded (or the last one)
 
+// ---- GPU pass profiler ([prof] gpu_passes = true, needs the frame trace) --------------------------------------------------------------
+// Writes a GPU timestamp after everything recorded so far; the time since the previous stamp of the submission becomes a trace event
+// `gp:<label>` (arg = draws or 0). No-ops when the profiler is off.
+bool gpass_on();
+void gpass_stamp(Frame& f, const char* label, uint32_t arg = 0);
+
 // ---- barriers ---------------------------------------------------------------------------------------------------------------
 void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImageLayout to, VkImageAspectFlags aspect,
                    uint32_t base_level, uint32_t level_count, uint32_t base_layer, uint32_t layer_count);
