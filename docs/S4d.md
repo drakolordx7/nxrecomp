@@ -68,7 +68,7 @@ Lowering: MY_INDEX reads `gl_SampleID` (BuiltIn SampleId, capability SampleRateS
 
 ## Oracles
 
-All run from `runtime\` after `pwsh scripts\build.ps1` (clang-cl, Ninja); environment `NXRT_GFX_HIDDEN=1` keeps windows hidden. Data paths default to `C:\mpr\work\...` and are overridden by `NXRT_NVN_SHADER_CACHE`, `NXRT_NVN_CORPUS`. A group skips when the survey data is absent.
+All run from `runtime\` after `pwsh scripts\build.ps1` (clang-cl, Ninja); environment `NXRT_GFX_HIDDEN=1` keeps windows hidden. Data paths default to `work\...` below the project folder (`NXRT_ROOT`, or the nearest parent of the working directory that holds `runtime` and `work`) and are overridden by `NXRT_NVN_SHADER_CACHE`, `NXRT_NVN_CORPUS`. A group skips when the survey data is absent.
 
 | Group | What it proves |
 |---|---|

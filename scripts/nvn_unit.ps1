@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "build\unit\$Name"
 New-Item -ItemType Directory -Force $out | Out-Null
-$recomp = "C:/mpr/work/recomp_abi2/include"
+. (Join-Path $PSScriptRoot "proj.ps1")
 $srcs = @($Test) + $Src + @("src\gfx\nvn\nvn_loader.cpp", "src\gfx\nvn\nvn_abi.cpp", "tests\test_main.cpp") | ForEach-Object { if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $root $_ } }
 $srcList = ($srcs | ForEach-Object { '"' + $_ + '"' }) -join " "
 $lib = Join-Path $root "build\release\nxrt.lib"

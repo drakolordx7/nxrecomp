@@ -13,7 +13,7 @@ Branch `nvn3` (worktrees under `runtime-wt/`). The game is run headless-to-windo
 | Passthrough geometry shader | A console passthrough geometry shader (80271a63) only sets position and layer; its translation wrote no Location output and the fragment shader read undefined values. | `spirv_gs_passthrough` copies the input attributes (triangle in, three vertices out). |
 | Stream-out counters 13 and 14 | Reported 1. | Counted on the CPU per draw (`primitives_for`), 14 only inside a stream-out section; reset by `ResetCounter`. Indirect draws are not counted. |
 | Missing shader block f8e9efd694abe636 | Not in the cache. | Translated, validated, added to `work/shader_cache/spirv` (13,019 entries). |
-| Dev path in the shader cache search | `C:/dev/.../shader_cache/spirv` was a default. | Removed; defaults are `./shader_cache/spirv` and `<exe folder>/shader_cache/spirv`. |
+| Dev path in the shader cache search | A fixed path of the author's project folder was a default for the shader cache search. | Removed; defaults are `./shader_cache/spirv` and `<exe folder>/shader_cache/spirv`. |
 
 ## Texture cache entries (for the setup tool)
 
@@ -27,7 +27,7 @@ The runtime reads the header first (`cache_entry_format`), makes the Vulkan imag
 
 ## Tools
 
-`[nvn]` keys, all environment-overridable: `shot_frames` (numbered PNGs of chosen presents), `trace_frame` (one or several frames), `trace_dump_tex` (prepared and GPU data of sampled textures), `trace_tex_events`. The trace shows sampler, view, memory address, viewport, render target memory and the first indexed vertices. `INDEX.md` lists the scripts (`bnrun.sh`, `align_frames.py`, `bc6view.py`).
+`[nvn]` keys, all environment-overridable: `shot_frames` (numbered PNGs of chosen presents), `trace_frame` (one or several frames), `trace_dump_tex` (prepared and GPU data of sampled textures), `trace_tex_events`. The trace shows sampler, view, memory address, viewport, render target memory and the first indexed vertices. The local script index lists the scripts (`bnrun.sh`, `align_frames.py`, `bc6view.py`).
 
 ## Tests
 

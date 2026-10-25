@@ -6,7 +6,7 @@ Outputs (relative to the repo root that contains this scripts/ folder):
   src/gfx/nvn/nvn_sizes.inc   one NVN_STRUCT(name, size, mask) line per struct with a known size
 
 Run:
-  python -I scripts/gen_nvn_table.py --refs C:\\mpr\\refs
+  python -I scripts/gen_nvn_table.py --refs <path of the refs folder>
 
 Standard library only. Output is deterministic: no timestamps, fixed orders, LF endings.
 """

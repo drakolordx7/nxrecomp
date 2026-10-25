@@ -31,8 +31,10 @@ using namespace nvnapp;
 namespace {
 
 constexpr uint32_t kW = 64, kH = 48;
-const char* kRefDir = "C:/mpr/work/nvn_refs";
-const char* kSamples = "C:/mpr/work/survey/textures/samples/";
+const std::string kRefDirStr = nxtest::project_path("work/nvn_refs");
+const std::string kSamplesStr = nxtest::project_path("work/survey/textures/samples/");
+const char* kRefDir = kRefDirStr.c_str();
+const char* kSamples = kSamplesStr.c_str();
 
 // A new, empty BC7 cache folder for one test (the [nvn] bc7_cache environment variable points at it for the test's lifetime): the back end then
 // transcodes with this build's encoder instead of picking up an entry another encoder revision left in the working directory.
