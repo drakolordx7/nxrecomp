@@ -6,7 +6,7 @@
 #include <limits>
 #include <string>
 
-#include "play/play_lookrate.h"
+#include "mpr/play_lookrate.h"
 
 NXTEST_GROUP(play_lookrate)
 

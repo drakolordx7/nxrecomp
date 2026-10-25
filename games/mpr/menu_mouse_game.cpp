@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Mouse pointer in menus, the game side (S28). See menu_mouse.h for the design and docs/S28.md for what was found in the game.
-#include "menu_mouse.h"
+// Mouse pointer in menus, the game side (S28). See menu_mouse_game.h (the hooks) and src/gfx/play/menu_mouse.h (pointer and math) for the design and docs/S28.md for what was found in the game.
+#include "menu_mouse_game.h"
 
 #include <atomic>
 #include <cstdio>
@@ -81,7 +81,6 @@ constexpr uint64_t kPropKindOk = 77;
 struct State {
     uint64_t base = 0x7100000000ull;
     uint32_t hook_widget = 0, hook_pos = 0;
-    Pointer pointer;
     Snapshot snap;
     std::atomic<uint64_t> hovers{0}, clicks{0}, widget_calls{0};
     bool dump = false;                        // NXRT_MENUMOUSE_DUMP: log every GUI frame's widgets once
@@ -372,7 +371,7 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
             s.chosen = 0;
             s.hover_w = row.w;
             s.over_value_goc = true;
-            if (s.snap.click && over) { s.drag_goc = sl.goc; s.pointer.click_used(); s.clicks++; dragging = &sl; }
+            if (s.snap.click && over) { s.drag_goc = sl.goc; pointer().click_used(); s.clicks++; dragging = &sl; }
             if (dragging == &sl && (s.snap.click || s.snap.held)) {
                 const float f = std::min(1.f, std::max(0.f, (pt[0] - kSliderX0) / (kSliderX1 - kSliderX0)));
                 const float tick = std::floor(f * sl.ticks + 0.5f);
@@ -432,7 +431,7 @@ uint64_t pointer_widget(::Ctx* c, uint64_t w, uint64_t sm) {
             NXLOG_I(kTag, "click on %08x: props+36=%u touch mode=%u state %u -> %u, game routine returned %llu", wi.id, ty, wi.touch_mode, wi.state, st2, static_cast<unsigned long long>(r));
         }
         if (r) {
-            s.pointer.click_used();
+            pointer().click_used();
             s.clicks++;
             return r;
         }
@@ -685,7 +684,7 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
         if (s.snap.click) {
             // accept is the pad's A (some screens read it themselves, like the Quit Game row of the options, and not through the table's callback)
             s.pending_act = Act::Confirm;
-            s.pointer.click_used();
+            pointer().click_used();
             s.clicks++;
             return;
         }
@@ -700,7 +699,7 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
             s.pending_act = cx > active_cx ? Act::Confirm : Act::Back;
             s.focus_cooldown = 20;
             s.rehover = 25;
-            if (s.snap.click) { s.pointer.click_used(); s.clicks++; } else { s.hovers++; }
+            if (s.snap.click) { pointer().click_used(); s.clicks++; } else { s.hovers++; }
             if (s.log) NXLOG_I(kTag, "gui table %llx (row %d) is not active: %s", static_cast<unsigned long long>(t.w), hit, cx > active_cx ? "A (into the right list)" : "B (back to the left list)");
             return;
         }
@@ -728,7 +727,7 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
         const bool near_track = s.snap.gx >= x0 - 0.04f && s.snap.gx <= x1 + 0.04f && std::fabs(s.snap.gy - se[1]) <= 0.07f;
         if (near_track) s.over_value = true;
         if ((s.snap.click && near_track) || (s.snap.held && s.drag_slider == w)) {
-            if (s.snap.click) { s.drag_slider = w; s.pointer.click_used(); s.clicks++; }
+            if (s.snap.click) { s.drag_slider = w; pointer().click_used(); s.clicks++; }
             const float f = std::min(1.f, std::max(0.f, (s.snap.gx - se[0]) / (ee[0] - se[0])));
             const float target = v[0] + f * (v[1] - v[0]);
             play::guest_write(w + 280, &target, 4);
@@ -747,7 +746,7 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
             if (s.log) NXLOG_I(kTag, "pause label +%llu rect (%.3f %.3f)-(%.3f %.3f) pointer (%.3f %.3f)", static_cast<unsigned long long>(l.off), r.x0, r.y0, r.x1, r.y1, s.snap.gx, s.snap.gy);
             if (s.snap.gx >= r.x0 - l.left && s.snap.gx <= r.x1 + l.right && s.snap.gy >= r.y0 - l.below && s.snap.gy <= r.y1 + l.above) {
                 s.pending_act = l.act;
-                s.pointer.click_used();
+                pointer().click_used();
                 s.clicks++;
                 return;
             }
@@ -808,8 +807,6 @@ int position_hook(::Ctx* c, uint64_t, void*) {
 
 }  // namespace
 
-Pointer& pointer() { return S().pointer; }
-
 void game_install(uint64_t module_base) {
     State& s = S();
     if (s.hook_widget) return;
@@ -835,7 +832,7 @@ void game_remove() {
 
 Act game_frame(bool menu_up, const Geometry& g) {
     State& s = S();
-    s.snap = s.pointer.begin_frame(menu_up, g);
+    s.snap = pointer().begin_frame(menu_up, g);
     Act out = s.pending_act;
     s.pending_act = Act::None;
     if (out == Act::None && s.snap.click_unclaimed && s.capable == 0) out = Act::Confirm;   // nothing on this screen takes a click (the title screen, a message): the click is the confirm key

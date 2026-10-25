@@ -4,7 +4,7 @@
 
 #include <cmath>
 
-#include "play/play_glow.h"
+#include "mpr/play_glow.h"
 
 NXTEST_GROUP(gfx_play_glow)
 

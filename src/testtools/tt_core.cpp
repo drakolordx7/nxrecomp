@@ -15,6 +15,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
+#include "nxrt/game.h"
 #include "nxrt/log.h"
 #include "nxrt/runtime.h"
 #include "nxrt/module.h"
@@ -51,6 +52,7 @@ struct State {
     std::atomic<uint64_t> frames{0};
     bool started = false;
     std::atomic<uint64_t> vticks{0};         // virtual clock (19.2 MHz ticks)
+    std::atomic<DWORD> frame_tid{0};         // the host thread that runs the frame boundary (the one whose sleeps move the clock)
     std::atomic<uint64_t> rng_ctr{0};
     uint64_t vbase = 19200000ull * 100;      // the virtual clock starts at "100 seconds"
     uint64_t chain = 0xcbf29ce484222325ull;
@@ -372,7 +374,7 @@ bool init() {
     s.replay_exit = config_get_bool("test", "replay_exit", false);
     s.shot_dir = config_get_str("test", "shot_dir", "");
     if (s.shot_dir.empty()) s.shot_dir = join(s.out, "shots");
-    detail::set_game_base(static_cast<uint64_t>(config_get_int("test", "game_base", static_cast<int64_t>(detail::kDefaultGameBase))));
+    detail::set_game_base(static_cast<uint64_t>(config_get_int("test", "game_base", static_cast<int64_t>(game::info().main_base))));
     parse_regions(s, config_get_str("test", "hash_regions", ""));
     if (src == "tick") s.src = Source::Tick;
     else if (src == "manual") s.src = Source::Manual;
@@ -497,7 +499,7 @@ void reset_for_tests() {
     s.key_sink = keep_k;
     s.shot_fn = sf;
     s.shot_user = su;
-    detail::set_game_base(detail::kDefaultGameBase);
+    detail::set_game_base(game::info().main_base);
     set_probe_layout(ProbeLayout{});
 }
 
@@ -514,12 +516,34 @@ bool virtual_tick(uint64_t* ticks) {
     return true;
 }
 
+// A sleep of the frame thread moves the clock by its length and only yields (the frame's own pacing waits must end). Any other thread waits for
+// the clock to reach its wake time, which the frames move, and for at most the sleep's length of host time; it does not move the clock. When
+// every sleep moved it, a thread that polls in a sleep loop (a pad vibration thread, for one) pushed the
+// shared clock as fast as the host ran the loop: 150 to 2000 virtual seconds per 60 frames, and the New Game load waited forever on the
+// planet loading screen (docs/GAME_BOUNDARY.md, "Deterministic mode and the New Game stall").
 bool virtual_sleep(int64_t ns) {
     State& s = S();
     if (!s.on || !s.det) return false;
-    if (ns > 0) s.vticks.fetch_add(static_cast<uint64_t>(ns) * 192 / 10000, std::memory_order_relaxed);
-    SwitchToThread();
-    return true;
+    const uint64_t add = ns > 0 ? static_cast<uint64_t>(ns) * 192 / 10000 : 0;
+    const DWORD ft = s.frame_tid.load(std::memory_order_relaxed);
+    if (add == 0 || ft == 0 || ft == GetCurrentThreadId()) {
+        if (add) s.vticks.fetch_add(add, std::memory_order_relaxed);
+        SwitchToThread();
+        return true;
+    }
+    const uint64_t target = s.vticks.load(std::memory_order_relaxed) + add;
+    LARGE_INTEGER f, t0, t;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+    const double limit_s = static_cast<double>(ns) * 1e-9;
+    for (;;) {
+        if (s.vticks.load(std::memory_order_relaxed) >= target || !s.on) return true;
+        QueryPerformanceCounter(&t);
+        const double left = limit_s - static_cast<double>(t.QuadPart - t0.QuadPart) / static_cast<double>(f.QuadPart);
+        if (left <= 0) return true;
+        if (left >= 0.002) Sleep(1);
+        else SwitchToThread();
+    }
 }
 
 uint64_t rng_next() {
@@ -641,6 +665,7 @@ void frame_boundary(::Ctx* c) {
     if (s.finished) return;
     const uint64_t k = s.frames.load();
     s.frames.store(k + 1);
+    s.frame_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     diag_frame_tick_nolisten();
     // 1. virtual clock
     if (s.det) {

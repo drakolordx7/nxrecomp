@@ -41,19 +41,24 @@ std::string name_key(const std::string& s) {
 
 // ---- contexts and triggers ---------------------------------------------------------------------------------------------------
 
-const char* const kCtxNames[] = {"all", "gameplay", "morph", "map", "menu", "scan"};
+// The generic names; the registered game names the contexts itself (GameVocabulary::ctx_names).
+const char* const kCtxNames[] = {"all", "play", "alt", "map", "menu", "inspect"};
 static_assert(sizeof(kCtxNames) / sizeof(kCtxNames[0]) == kCtxCount, "one name per Ctx");
+const char* const* ctx_names() {
+    const GameVocabulary* v = game_vocabulary();
+    return v && v->ctx_names ? v->ctx_names : kCtxNames;
+}
 
 const char* const kTrigNames[] = {"press", "tap", "hold", "toggle", "doubletap"};
 
 }  // namespace
 
-const char* ctx_name(Ctx c) { return kCtxNames[static_cast<int>(c)]; }
+const char* ctx_name(Ctx c) { return ctx_names()[static_cast<int>(c)]; }
 
 bool parse_ctx(const std::string& s, Ctx* out) {
     const std::string key = name_key(s);
     for (int i = 0; i < kCtxCount; ++i) {
-        if (key == kCtxNames[i]) {
+        if (key == ctx_names()[i]) {
             if (out) *out = static_cast<Ctx>(i);
             return true;
         }
@@ -147,7 +152,8 @@ bool parse_corner(const std::string& name, Corner* out) {
 
 // ---- actions -----------------------------------------------------------------------------------------------------------------
 
-// One row per Act, in enum order (checked by the static_assert below and by the unit tests).
+// One row per Act, in enum order (checked by the static_assert below and by the unit tests). The generic names and outputs: the game's
+// action slots have no factory output here; the registered game gives its own table (GameVocabulary::acts).
 namespace {
 const ActInfo kActs[] = {
     {Act::None, "none", ""},
@@ -159,30 +165,30 @@ const ActInfo kActs[] = {
     {Act::LookDown, "look_down", "RS_DOWN"},
     {Act::LookLeft, "look_left", "RS_LEFT"},
     {Act::LookRight, "look_right", "RS_RIGHT"},
-    {Act::Fire, "fire", "ZR"},
-    {Act::LockOn, "lock_on", "ZL"},
-    {Act::Missile, "missile", "R"},
-    {Act::Jump, "jump", "B"},
-    {Act::Morph, "morph", "Y"},
-    {Act::FreeLook, "free_look", "RSTICK"},
-    {Act::Map, "map", "PLUS"},
-    {Act::Pause, "pause", "MINUS"},
+    {Act::Primary, "primary", ""},
+    {Act::Target, "target", ""},
+    {Act::Secondary, "secondary", ""},
+    {Act::Jump, "jump", ""},
+    {Act::AltForm, "alt_form", ""},
+    {Act::LookHold, "look_hold", ""},
+    {Act::Map, "map", ""},
+    {Act::Pause, "pause", ""},
     {Act::Confirm, "confirm", "A"},
     {Act::Back, "back", "B"},
     {Act::DpadUp, "dpad_up", "UP"},
     {Act::DpadDown, "dpad_down", "DOWN"},
     {Act::DpadLeft, "dpad_left", "LEFT"},
     {Act::DpadRight, "dpad_right", "RIGHT"},
-    {Act::Beam1, "beam_1", "X+UP"},
-    {Act::Beam2, "beam_2", "X+RIGHT"},
-    {Act::Beam3, "beam_3", "X+DOWN"},
-    {Act::Beam4, "beam_4", "X+LEFT"},
-    {Act::Visor1, "visor_1", "UP"},
-    {Act::Visor2, "visor_2", "RIGHT"},
-    {Act::Visor3, "visor_3", "DOWN"},
-    {Act::Visor4, "visor_4", "LEFT"},
-    {Act::BeamNext, "beam_next", ""},
-    {Act::BeamPrev, "beam_prev", ""},
+    {Act::SetA1, "set_a_1", ""},
+    {Act::SetA2, "set_a_2", ""},
+    {Act::SetA3, "set_a_3", ""},
+    {Act::SetA4, "set_a_4", ""},
+    {Act::SetB1, "set_b_1", ""},
+    {Act::SetB2, "set_b_2", ""},
+    {Act::SetB3, "set_b_3", ""},
+    {Act::SetB4, "set_b_4", ""},
+    {Act::SetANext, "set_a_next", ""},
+    {Act::SetAPrev, "set_a_prev", ""},
     {Act::BtnA, "btn_a", "A"},
     {Act::BtnB, "btn_b", "B"},
     {Act::BtnX, "btn_x", "X"},
@@ -197,13 +203,32 @@ const ActInfo kActs[] = {
     {Act::BtnRStick, "btn_rstick", "RSTICK"},
 };
 static_assert(sizeof(kActs) / sizeof(kActs[0]) == kActCount, "one row per Act");
+const ActInfo* acts() {
+    const GameVocabulary* v = game_vocabulary();
+    return v && v->acts ? v->acts : kActs;
+}
+const char* key_or(const char* GameVocabulary::* field, const char* generic) {
+    const GameVocabulary* v = game_vocabulary();
+    return v && v->*field ? v->*field : generic;
+}
 }  // namespace
 
-const ActInfo& act_info(Act a) { return kActs[static_cast<int>(a)]; }
+const GameVocabulary* game_vocabulary() {
+    const GameDefaults* d = game_defaults();
+    return d ? d->vocabulary : nullptr;
+}
+const char* key_alt_yaw() { return key_or(&GameVocabulary::key_alt_yaw, "alt_yaw"); }
+const char* key_alt_pitch() { return key_or(&GameVocabulary::key_alt_pitch, "alt_pitch"); }
+const char* key_wheel_cycles() { return key_or(&GameVocabulary::key_wheel_cycles, "wheel_cycles"); }
+const char* key_alt_orbit() { return key_or(&GameVocabulary::key_alt_orbit, "alt_orbit"); }
+
+const ActInfo& act_info(Act a) { return acts()[static_cast<int>(a)]; }
 
 bool parse_act(const std::string& name, Act* out) {
     const std::string key = name_key(name);
-    for (const ActInfo& info : kActs) {
+    const ActInfo* table = acts();
+    for (int i = 0; i < kActCount; ++i) {
+        const ActInfo& info = table[i];
         if (key == info.name) {
             if (out) *out = info.act;
             return true;

@@ -10,9 +10,9 @@
 #include <cstring>
 #include <string>
 
-#include "play/play_aim.h"
-#include "play/play_lockcam.h"
-#include "play/play_lookrate.h"
+#include "mpr/play_aim.h"
+#include "mpr/play_lockcam.h"
+#include "mpr/play_lookrate.h"
 
 NXTEST_GROUP(play_lockcam)
 

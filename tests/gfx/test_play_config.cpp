@@ -89,14 +89,14 @@ std::vector<Binding> bindings_in(const Settings& s, int ctx) {
 bool same_settings(const Settings& a, const Settings& b) {
     const MouseSettings &ma = a.mouse, &mb = b.mouse;
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
-          ma.menu_cursor == mb.menu_cursor && ma.wheel_beams == mb.wheel_beams))
+          ma.menu_cursor == mb.menu_cursor && ma.wheel_cycles == mb.wheel_cycles))
         return false;
     if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.gun_drives_view != b.camera.gun_drives_view)
         return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
           pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale &&
-          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens && pa.ball_orbit == pb.ball_orbit))
+          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens && pa.alt_orbit == pb.alt_orbit))
         return false;
     const TimingSettings &ta = a.timing, &tb = b.timing;
     if (!(ta.tap_ms == tb.tap_ms && ta.hold_ms == tb.hold_ms && ta.double_ms == tb.double_ms && ta.pulse_ms == tb.pulse_ms)) return false;
@@ -174,7 +174,7 @@ NXTEST(act_table_is_complete) {
 NXTEST(parse_act_is_lenient) {
     Act a = Act::None;
     CHECK(parse_act("FIRE", &a));
-    CHECK(a == Act::Fire);
+    CHECK(a == Act::Primary);
     CHECK(parse_act("move-forward", &a));
     CHECK(a == Act::MoveForward);
     CHECK(parse_act("Dpad-Up", &a));
@@ -225,7 +225,7 @@ NXTEST(output_parse_terms) {
     REQUIRE(parse_output("X+UP", &o));
     CHECK(o == make_out(btn(kBtnX) | btn(kBtnUp)));
     Output beam1;   // the Beam1 default must be the same output
-    REQUIRE(parse_output(act_info(Act::Beam1).default_out, &beam1));
+    REQUIRE(parse_output(act_info(Act::SetA1).default_out, &beam1));
     CHECK(o == beam1);
 
     REQUIRE(parse_output(" x + up ", &o));   // case and spaces
@@ -373,15 +373,15 @@ NXTEST(input_every_scancode_name_parses_back) {
 NXTEST(default_settings_bindings_and_outputs) {
     const Settings s = default_settings();
     CHECK(act_at(s, "W", Ctx::All) == Act::MoveForward);
-    CHECK(act_at(s, "Mouse1", Ctx::All) == Act::Fire);
+    CHECK(act_at(s, "Mouse1", Ctx::All) == Act::Primary);
     CHECK(act_at(s, "Mouse1", Ctx::Menu) == Act::Confirm);
-    CHECK(act_at(s, "WheelUp", Ctx::All) == Act::BeamPrev);
+    CHECK(act_at(s, "WheelUp", Ctx::All) == Act::SetAPrev);
     CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
-    CHECK(act_at(s, "Left Ctrl", Ctx::All) == Act::Morph);
+    CHECK(act_at(s, "Left Ctrl", Ctx::All) == Act::AltForm);
     CHECK(act_at(s, "W", Ctx::Menu) == Act::kCount);   // menus have no move binding of their own
 
-    CHECK(s.out[(int)Act::Fire] == make_out(btn(kBtnZR)));
-    CHECK(s.out[(int)Act::Beam1] == make_out(btn(kBtnX) | btn(kBtnUp)));
+    CHECK(s.out[(int)Act::Primary] == make_out(btn(kBtnZR)));
+    CHECK(s.out[(int)Act::SetA1] == make_out(btn(kBtnX) | btn(kBtnUp)));
     CHECK(s.out[(int)Act::Confirm] == make_out(btn(kBtnA)));
 
     CHECK_EQ(s.timing.hold_ms, 250);
@@ -437,8 +437,8 @@ NXTEST(binding_trigger_and_ms_parse) {
     REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 2\n", &s, &err));
     REQUIRE_MSG(s.bindings.size() == 3u, "three bindings");
     CHECK(s.bindings[0].in == key_id(SDL_SCANCODE_LCTRL));
-    CHECK(s.bindings[0].ctx == Ctx::Gameplay);
-    CHECK(s.bindings[0].act == Act::Morph);
+    CHECK(s.bindings[0].ctx == Ctx::Play);
+    CHECK(s.bindings[0].act == Act::AltForm);
     CHECK(s.bindings[0].trig == Trig::Hold);
     CHECK_EQ(s.bindings[0].ms, 250);
     CHECK(s.bindings[1].trig == Trig::Toggle);
@@ -463,7 +463,7 @@ NXTEST(inline_comments_and_case) {
     std::string err;
     REQUIRE(parse_settings("[mouse] # the mouse\ninvert_y = 1 ; yes\nwheel_beams = off # no\n", &s, &err));
     CHECK(s.mouse.invert_y);
-    CHECK(!s.mouse.wheel_beams);
+    CHECK(!s.mouse.wheel_cycles);
 
     REQUIRE(parse_settings("[MOUSE]\nINVERT_X = TRUE\n[Display]\nWindow_Mode = Borderless\n", &s, &err));
     CHECK(s.mouse.invert_x);
@@ -645,7 +645,7 @@ NXTEST(format_parse_round_trip_modified) {
     Settings s = default_settings();
     s.mouse.invert_y = true;
     s.mouse.yaw_rad = 0.00125;   // values that %.9g writes exactly
-    s.mouse.wheel_beams = false;
+    s.mouse.wheel_cycles = false;
     s.pad.stick_deadzone = 0.25;
     s.pad.trigger_threshold = 0.5;
     s.pad.gyro = false;
@@ -659,15 +659,15 @@ NXTEST(format_parse_round_trip_modified) {
     s.display.width = 1920;
     s.display.height = 1080;
     s.display.keep_aspect = false;
-    REQUIRE(parse_output("A+RS_UP", &s.out[(int)Act::Fire]));
+    REQUIRE(parse_output("A+RS_UP", &s.out[(int)Act::Primary]));
     REQUIRE(parse_output("none", &s.out[(int)Act::Jump]));
-    REQUIRE(parse_output("LS_LEFT+LS_RIGHT+X", &s.out[(int)Act::LockOn]));
+    REQUIRE(parse_output("LS_LEFT+LS_RIGHT+X", &s.out[(int)Act::Target]));
 
     s.bindings.clear();
     Binding b;
     b.in = key_id(SDL_SCANCODE_LCTRL);
-    b.ctx = Ctx::Gameplay;
-    b.act = Act::Morph;
+    b.ctx = Ctx::Play;
+    b.act = Act::AltForm;
     b.trig = Trig::Hold;
     b.ms = 250;
     s.bindings.push_back(b);
@@ -675,7 +675,7 @@ NXTEST(format_parse_round_trip_modified) {
     b.in.kind = InKind::Mouse;
     b.in.code = 4;
     b.ctx = Ctx::All;
-    b.act = Act::Missile;
+    b.act = Act::Secondary;
     s.bindings.push_back(b);
     b = Binding{};
     b.in = key_id(SDL_SCANCODE_EQUALS);
@@ -692,7 +692,7 @@ NXTEST(format_parse_round_trip_modified) {
     b.in.kind = InKind::Wheel;
     b.in.code = 1;
     b.ctx = Ctx::All;
-    b.act = Act::BeamPrev;
+    b.act = Act::SetAPrev;
     s.bindings.push_back(b);
     b = Binding{};
     b.in = key_id(SDL_SCANCODE_SPACE);
@@ -702,7 +702,7 @@ NXTEST(format_parse_round_trip_modified) {
     s.bindings.push_back(b);
     b = Binding{};
     b.in = key_id(SDL_SCANCODE_Q);
-    b.ctx = Ctx::Morph;
+    b.ctx = Ctx::Alt;
     b.act = Act::Jump;
     b.trig = Trig::DoubleTap;
     b.ms = 300;
@@ -1489,7 +1489,7 @@ NXTEST(pad_stick_keys_defaults) {
     CHECK(near(d.right_deadzone, 0.10));
     CHECK(!d.invert_y);
     CHECK(d.look_sens == 1.0);
-    CHECK(d.ball_orbit == 2.0);
+    CHECK(d.alt_orbit == 2.0);
 }
 
 NXTEST(pad_stick_keys_round_trip) {
@@ -1498,7 +1498,7 @@ NXTEST(pad_stick_keys_round_trip) {
     s.pad.right_deadzone = 0.25;
     s.pad.invert_y = true;
     s.pad.look_sens = 1.5;
-    s.pad.ball_orbit = 3.5;
+    s.pad.alt_orbit = 3.5;
     const std::string text = format_settings(s);
     CHECK(text.find("\ndeadzone = 0.2\nright_deadzone = 0.25\ninvert_y = 1\nlook_sens = 1.5\ntrigger_threshold = ") != std::string::npos);
     Settings r;
@@ -1508,7 +1508,7 @@ NXTEST(pad_stick_keys_round_trip) {
     CHECK(near(r.pad.right_deadzone, 0.25));
     CHECK(r.pad.invert_y);
     CHECK(r.pad.look_sens == 1.5);
-    CHECK(r.pad.ball_orbit == 3.5);
+    CHECK(r.pad.alt_orbit == 3.5);
     CHECK(same_settings(s, r));
     CHECK_EQ(format_settings(r), text);
 }

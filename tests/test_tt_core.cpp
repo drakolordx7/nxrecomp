@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Test tooling core (S5): a fake game whose memory has exactly the shape the probes read (tt_probe.cpp), driven frame by frame
+// Test tooling core (S5): a fake game whose memory has exactly the shape the registered test game's probes read (games/mpr/mpr_tt_probe.cpp), driven frame by frame
 // through tt::frame_boundary. Covers scripted runs (pass, wait timeout, assert), record -> replay determinism, the virtual clock and RNG,
 // memory-region hashing, the warp sequence (host functions registered at the guest addresses of the real functions) and @shot.
 #include "test_framework.h"
@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
@@ -336,6 +337,13 @@ NXTEST(virtual_clock_steps_per_frame) {
     uint64_t t3 = 0;
     virtual_tick(&t3);
     CHECK(t3 >= before + 19200);
+    // A sleep on another thread does not move the clock: it waits for the frames (here: none come) for at most its length of host time.
+    uint64_t t4 = 0, t5 = 0;
+    virtual_tick(&t4);
+    std::thread other([] { for (int i = 0; i < 20; i++) virtual_sleep(1000000); });
+    other.join();
+    virtual_tick(&t5);
+    CHECK(t5 < t4 + 19200);                                // 20 sleeps of 1 ms on the other thread: less than 1 ms of virtual time
     shutdown();
     CHECK(!virtual_tick(&t3));                             // off after shutdown / when not enabled
 }

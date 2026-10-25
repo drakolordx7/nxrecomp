@@ -19,7 +19,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/input.h"
 #include "nxrt/play.h"
-#include "play/play_aim.h"
+#include "mpr/play_aim.h"
 
 NXTEST_GROUP(play_hook)
 

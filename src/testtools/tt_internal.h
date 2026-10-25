@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Private header of the testtools implementation (tt_core.cpp, tt_probe.cpp, tt_runner.cpp, tt_hid.cpp).
+// Private header of the testtools implementation (tt_core.cpp, tt_game.cpp, tt_runner.cpp, tt_hid.cpp).
 #pragma once
 #include <atomic>
 #include <cstdint>
@@ -13,15 +13,15 @@ namespace nxrt::tt::detail {
 
 constexpr uint64_t kDefaultGameBase = 0x7100000000ull;
 
-// ---- tt_probe.cpp ----
+// ---- tt_game.cpp (memory helpers; the rest forwards to the game's tt::GameProbes) ----
 uint64_t game_base();
 void set_game_base(uint64_t b);
 // The warp sequence of the practice mod (docs/mpr/hooks.md section 8), executed with the live context. false: not possible now (no state manager yet).
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
 bool have_state_manager();
-// The game's resource loader thread (CResourceLoaderManager::IsThreadWorkDone, read from memory; S42). Unknown: the loader is not readable
+// The game's resource loader thread, read from memory by the game's probe (games/<id>; S42). Unknown: the loader is not readable
 // (no game globals yet, or a test rig without them). *pending (optional) = the sum of its queue counts when readable.
-enum class LoaderState { Unknown, Busy, Idle };
+using LoaderState = ::nxrt::tt::LoaderState;     // nxrt/tt.h
 LoaderState loader_state(uint32_t* pending = nullptr);
 // @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x2c, 8 bytes per item: amount at +0, capacity at +4); item -1 = every upgrade.
 bool grant(int64_t item, int32_t amount, int32_t capacity);
@@ -97,15 +97,15 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
-bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err);   // tt_probe.cpp: @objs
-bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // tt_probe.cpp: @probe
-bool poke_memory(const std::string& in_path, std::string* err);   // tt_probe.cpp: @poke
-bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err);   // tt_probe.cpp: @peek
-bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // tt_probe.cpp: @rays
-bool watch_start(::Ctx* c, int what);      // tt_probe.cpp: arm the debug-register write watch (1 vel.y, 2 pos.y, 3 both); false when the player is not readable yet
+bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err);   // the game's probes: @objs
+bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // the game's probes: @probe
+bool poke_memory(const std::string& in_path, std::string* err);   // tt_game.cpp: @poke
+bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err);   // tt_game.cpp: @peek
+bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // the game's probes: @rays
+bool watch_start(::Ctx* c, int what);      // the game's probes: arm the debug-register write watch (1 vel.y, 2 pos.y, 3 both); false when the player is not readable yet
 void watch_stop();                          // disarm and log the hits
 void watch_flush(uint64_t frame);           // log the hits recorded since the last call (once per frame)
-bool give_item(int item, int amount);      // tt_probe.cpp: writes amount and capacity of one item of CPlayerStateMP1
+bool give_item(int item, int amount);      // the game's probes: writes amount and capacity of one item of CPlayerStateMP1
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
 bool sample_live(PadFrame* out);           // the pad of the live source (the one installed before ours); false when there is none
