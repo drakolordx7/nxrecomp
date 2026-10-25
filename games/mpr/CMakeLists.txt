@@ -14,10 +14,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NxRecomp.cmake")
 
 get_filename_component(MPR_ROOT_DEFAULT "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
-if(DEFINED NX_ROOT)   # scripts/build_game.cmd passes the repository root as NX_ROOT
-    set(MPR_ROOT_DEFAULT "${NX_ROOT}")
-endif()
 set(MPR_ROOT "${MPR_ROOT_DEFAULT}" CACHE PATH "repository root (game/, work/)")
+if(DEFINED NX_ROOT)   # scripts/build_game.cmd passes the repository root as NX_ROOT; it wins over the cache, as -DMPR_ROOT did
+    set(MPR_ROOT "${NX_ROOT}" CACHE PATH "repository root (game/, work/)" FORCE)
+endif()
 set(MPR_EXEFS "${MPR_ROOT}/game/exefs" CACHE PATH "folder with the NSOs main, sdk, subsdk0 (docs/S1b.md)")
 set(MPR_GEN "${MPR_ROOT}/work/lift" CACHE PATH "where the generated sources go")
 # translation units per module: a unit of ~45k instructions compiles in ~10 s with ~0.4 GB (docs/S1b.md)

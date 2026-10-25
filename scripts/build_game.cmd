@@ -8,10 +8,10 @@ if "%~1"=="" (
     echo usage: scripts\build_game.cmd ^<id^> [ninja args]
     exit /b 2
 )
+rem the game id without quotes, and the arguments after it (cmd's shift does not change %*)
 set "GAME=%~1"
-rem the arguments after the game id (cmd's shift does not change %*)
 set "ARGS=%*"
-call set "ARGS=%%ARGS:*%~1=%%"
+call set "ARGS=%%ARGS:*%1=%%"
 set "HERE=%~dp0"
 set "ROOT=%HERE%..\.."
 for %%I in ("%ROOT%") do set "ROOT=%%~fI"
