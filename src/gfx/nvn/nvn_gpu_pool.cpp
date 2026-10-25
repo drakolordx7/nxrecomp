@@ -324,8 +324,7 @@ void pool_gpu_destroy(PoolGpu* p) {
 // pool itself, as before. A page written again soon after every copy (a ring buffer the game refills each frame) is "hot": it is left in
 // host memory for a while instead of faulting and being copied every frame.
 //
-// [nvn] pool_mirror = off | on | static. static is a measurement mode only: pages are copied once and never followed (CPU writes are not
-// seen, so moving meshes and animated data go stale); it shows what the copies could gain at most.
+// [nvn] pool_mirror = on (default) | off.
 struct Mirror {
     gfx::Buffer buf;
     VkBuffer src = VK_NULL_HANDLE;      // the pool's own buffer (the copies read it)
@@ -365,7 +364,7 @@ int64_t g_wr_pages[6] = {}, g_wr_calls[6] = {};
 
 MirrorMode mirror_mode() {
     static const MirrorMode m = [] {
-        const std::string v = config_get_str("nvn", "pool_mirror", "off");
+        const std::string v = config_get_str("nvn", "pool_mirror", "on");
         if (v == "on" || v == "1" || v == "true") return MirrorMode::On;
         return MirrorMode::Off;
     }();

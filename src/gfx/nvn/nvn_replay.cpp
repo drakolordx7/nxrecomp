@@ -2224,7 +2224,7 @@ void replay_begin_submit(Frame& f) {
     {   // S38: device-local pool copies and tracked barriers. [nvn] gpuperf_ab = N: both are off in even windows of N presents and on in odd
         // ones (the paired-window measurement of S29); without it they follow their own settings.
         static const int64_t ab = config_get_int("nvn", "gpuperf_ab", 0);
-        static const bool tracked = config_get_str("nvn", "pass_barriers", "full") == "tracked";
+        static const bool tracked = config_get_str("nvn", "pass_barriers", "tracked") != "full";
         static int last_on = -1;
         bool on = true;
         if (ab > 0) on = ((counters().presents.load() / static_cast<uint64_t>(ab)) & 1) != 0;
