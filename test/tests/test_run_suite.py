@@ -1,6 +1,6 @@
 """Unit tests for run_suite.py. Stdlib unittest; runs the fake game (fake_game.py) as the exe.
 
-Run from C:\\mpr\\tools\\test:
+Run from the tools test folder:
     ..\\.venv\\Scripts\\python.exe -I -m unittest discover -s tests -p "test_run_suite.py" -v
 """
 import io

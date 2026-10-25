@@ -2,6 +2,7 @@
 // Tests for shadercache.h (folder source and MPRSHC01 pack, verify, cancel, refusals) and the fileio.h helpers it uses
 // (AtomicFileWriter, free_disk_bytes, path helpers). Everything runs in a fresh temp folder that is deleted at the end.
 #include "check.h"
+#include "project_root.h"
 #include "crypto.h"
 #include "fileio.h"
 #include "shadercache.h"
@@ -353,8 +354,8 @@ void test_pack_source(const std::string& root) {
 #endif
 
     // A pack built by make_shader_pack.py from the folder, when Python can be started.
-    const std::wstring py = L"C:\\mpr\\tools\\.venv\\Scripts\\python.exe";
-    const std::wstring script = L"C:\\mpr\\tools\\setup\\scripts\\make_shader_pack.py";
+    const std::wstring py = mprs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
+    const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
     if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
         std::printf("SKIP python pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
         return;
@@ -456,8 +457,8 @@ void test_zstd_pack(const std::string& root) {
     CHECK(!path_exists(path_join(hash_dest, files[2].name)));
 
     // A pack built by make_shader_pack.py --zstd from the folder, when Python can be started.
-    const std::wstring py = L"C:\\mpr\\tools\\.venv\\Scripts\\python.exe";
-    const std::wstring script = L"C:\\mpr\\tools\\setup\\scripts\\make_shader_pack.py";
+    const std::wstring py = mprs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
+    const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
     if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
         std::printf("SKIP python zstd pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
         return;

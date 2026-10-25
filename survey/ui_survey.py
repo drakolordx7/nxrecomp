@@ -6,7 +6,20 @@ Read-only on game/ and refs/. Writes under work/survey/ui/. Uses read_adir copie
 import os, sys, struct, uuid, re, mmap, csv, collections
 from multiprocessing import Pool
 
-ROOT = 'C:/mpr'
+def _project_root():
+    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
+    import os, pathlib
+    env = os.environ.get('NXRT_ROOT')
+    if env:
+        return pathlib.Path(env).as_posix()
+    here = pathlib.Path(__file__).resolve()
+    for p in here.parents:
+        if (p / 'tools').is_dir() and (p / 'work').is_dir():
+            return p.as_posix()
+    return here.parents[2].as_posix()
+
+
+ROOT = _project_root()
 ROMFS = ROOT + '/game/romfs'
 PAKS = ROOT + '/work/survey/paks'
 ELF = ROOT + '/work/elf/main.elf'

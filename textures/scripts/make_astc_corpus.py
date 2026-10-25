@@ -3,8 +3,8 @@
 ASTC file back to PNG as ground truth for later PSNR tests.
 
 Run (rerunnable; overwrites outputs in place):
-    C:\\mpr\\tools\\.venv\\Scripts\\python.exe ^
-        C:\\mpr\\tools\\textures\\scripts\\make_astc_corpus.py --jobs 12
+    tools\\.venv\\Scripts\\python.exe ^
+        tools\\textures\\scripts\\make_astc_corpus.py --jobs 12
 Options: --src <textures_src>  --out <textures_astc>  --astcenc <astcenc-avx2.exe>
          --jobs N   --clean (delete --out first)   --verify-only (check existing output)
 
@@ -41,7 +41,20 @@ from pathlib import Path
 
 from PIL import Image
 
-ROOT = Path(r"C:\mpr\work\corpus")
+def _project_root():
+    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
+    import os, pathlib
+    env = os.environ.get('NXRT_ROOT')
+    if env:
+        return pathlib.Path(env).as_posix()
+    here = pathlib.Path(__file__).resolve()
+    for p in here.parents:
+        if (p / 'tools').is_dir() and (p / 'work').is_dir():
+            return p.as_posix()
+    return here.parents[2].as_posix()
+
+
+ROOT = Path(_project_root()) / "work" / "corpus"
 DEFAULT_SRC = ROOT / "textures_src"
 DEFAULT_OUT = ROOT / "textures_astc"
 DEFAULT_ASTCENC = ROOT / "astcenc" / "bin" / "astcenc-avx2.exe"

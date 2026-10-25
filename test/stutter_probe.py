@@ -1,6 +1,6 @@
 """Frame-time probe for mpr.exe: a scripted gameplay walk, with and without background CPU load.
 
-Run from C:\\mpr:
+Run from the project folder:
 
   tools\\.venv\\Scripts\\python.exe tools\\test\\stutter_probe.py [--variants SPEC] [--load N] [--repeat K] [--out DIR]
   tools\\.venv\\Scripts\\python.exe tools\\test\\stutter_probe.py --load-test SECONDS    (spinners only, for checking the load generator)

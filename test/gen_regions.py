@@ -12,8 +12,22 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_REGIONS = Path(r"C:\mpr\refs\mp1r-practice-mod\src\program\RegionEntries.h")
-DEFAULT_WARP = Path(r"C:\mpr\refs\mp1r-practice-mod\src\program\WarpMenu.cpp")
+def _project_root():
+    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
+    import os, pathlib
+    env = os.environ.get('NXRT_ROOT')
+    if env:
+        return pathlib.Path(env).as_posix()
+    here = pathlib.Path(__file__).resolve()
+    for p in here.parents:
+        if (p / 'tools').is_dir() and (p / 'work').is_dir():
+            return p.as_posix()
+    return here.parents[2].as_posix()
+
+
+_REFS = Path(_project_root()) / "refs" / "mp1r-practice-mod" / "src" / "program"
+DEFAULT_REGIONS = _REFS / "RegionEntries.h"
+DEFAULT_WARP = _REFS / "WarpMenu.cpp"
 DEFAULT_OUT = Path(__file__).resolve().parent / "regions.tsv"
 
 # Display name used in drawWarpMenu -> world key used in the table.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Tests for nso.h: header parsing and build id, on a synthetic header and on the real main NSO when it is present.
 #include "check.h"
+#include "project_root.h"
 #include "fileio.h"
 #include "nso.h"
 #include "storage.h"
@@ -14,7 +15,8 @@ using namespace mprs;
 
 namespace {
 
-const char* kRealMain = "C:\\mpr\\game\\exefs\\main";
+const std::string kRealMainStr = mprs_test::project_path("game/exefs/main");
+const char* kRealMain = kRealMainStr.c_str();
 const char* kRealBuildId = "67C9CA1428222752F951021464A7B3597EB98FEC";
 
 void put32(std::vector<u8>& v, size_t at, u32 x) {
