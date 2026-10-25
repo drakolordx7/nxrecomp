@@ -264,6 +264,26 @@ NXTEST(map_unmap_round_trip) {
     teardown();
 }
 
+// A module's static buffer (state CodeData) mapped as a stack and unmapped again is CodeData afterwards, not heap, and can be mapped again
+// (UnmapMemory used to write heap state over any source).
+NXTEST(unmap_restores_code_data_source) {
+    setup();
+    CHECK_EQ(svc(0x01, 0, 2 * kMiB).rc, 0u);
+    const uint64_t src = mem::kHeapBase + kMiB;
+    const uint64_t dst = mem::kStackBase + 0x40000;
+    mem::vm_set(src, 2 * kPg, mem::kMemCodeData, 3);
+    CHECK_EQ(query(src).type, uint32_t(mem::kMemCodeData));
+    CHECK_EQ(svc(0x04, dst, src, 2 * kPg).rc, 0u);
+    CHECK_EQ(svc(0x05, dst, src, 2 * kPg).rc, 0u);
+    CHECK_EQ(query(src).type, uint32_t(mem::kMemCodeData));
+    CHECK_EQ(query(src).perm, 3u);
+    CHECK_EQ(touch(src, true), 1);
+    CHECK_EQ(svc(0x04, dst, src, 2 * kPg).rc, 0u);   // the same buffer again (a thread made a second time)
+    CHECK_EQ(svc(0x05, dst, src, 2 * kPg).rc, 0u);
+    CHECK_EQ(query(src).type, uint32_t(mem::kMemCodeData));
+    teardown();
+}
+
 NXTEST(map_memory_errors) {
     setup();
     CHECK_EQ(svc(0x01, 0, 2 * kMiB).rc, 0u);
