@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -42,6 +43,17 @@ constexpr double kMaxMenuStep = 0.1;                    // the front end never g
 // CObjectId bytes as the game keeps them (GUID text with its first three groups stored little-endian, tt_script.cpp tt_guid_to_bytes)
 constexpr uint8_t kFrigateWorld[16] = {0x35, 0x86, 0x5e, 0x4b, 0x43, 0x0f, 0xfb, 0x4f, 0x94, 0x27, 0x2e, 0x62, 0x18, 0x6e, 0x51, 0x7d};   // 4b5e8635-0f43-4ffb-9427-2e62186e517d
 constexpr uint8_t kDockingHangar[16] = {0xf6, 0x4f, 0x44, 0xa8, 0xa4, 0xe4, 0x83, 0x41, 0xbf, 0xec, 0x73, 0xd6, 0xd6, 0x40, 0x7f, 0xa5};  // a8444ff6-e4a4-4183-bfec-73d6d6407fa5
+// The opening cutscene's CinematicSkip special function (found in the game: it asks IsCinematicSkippable while the area loads, before the
+// world state names the hangar as the current area, so the area test alone misses it)
+constexpr uint8_t kOpeningSkip[16] = {0xc5, 0x11, 0xc3, 0x2a, 0xaa, 0x55, 0xa6, 0x40, 0x80, 0x2b, 0x21, 0x77, 0xde, 0xaa, 0xe9, 0x76};   // 2ac311c5-55aa-40a6-802b-2177deaae976
+// The front end's transition movies (frames checked with ffmpeg from work/media_fmv) and their lengths in seconds: title -> main menu,
+// into the menu background loop, and out of it (Play -> save slots). The menu backgrounds themselves (loops) and the attract clips are not here.
+struct Transition { uint8_t id[16]; double seconds; };
+constexpr Transition kTransitions[] = {
+    {{0x32, 0x1c, 0x26, 0x96, 0x15, 0x2c, 0xdc, 0x40, 0xad, 0x41, 0xe1, 0x36, 0x21, 0x7b, 0xee, 0x56}, 8.033},   // 96261c32-2c15-40dc-ad41-e136217bee56
+    {{0xc3, 0x26, 0xbe, 0x21, 0x4d, 0x9e, 0x54, 0x40, 0xa5, 0xdb, 0x52, 0x91, 0xe2, 0x56, 0x44, 0xc4}, 3.600},   // 21be26c3-9e4d-4054-a5db-5291e25644c4
+    {{0xf4, 0x6c, 0x81, 0xd6, 0x6f, 0xfd, 0x27, 0x41, 0x9e, 0x00, 0xed, 0xe7, 0x8a, 0xf3, 0xf4, 0x64}, 5.933},   // d6816cf4-fd6f-4127-9e00-ede78af3f464
+};
 constexpr uint8_t kTitleIntro[16] = {0x7e, 0xdd, 0xd4, 0x45, 0xaf, 0x45, 0xf6, 0x40, 0xb6, 0xed, 0x8b, 0x76, 0xc3, 0x3c, 0x90, 0xfb};     // 45d4dd7e-45af-40f6-b6ed-8b76c33c90fb
 
 struct State {
@@ -54,6 +66,9 @@ struct State {
     std::mutex seen_mu;
     std::vector<std::string> seen_movies;   // FMV ids logged once each
     uint32_t skipped_handle = 0xffffffffu;  // the movie handle already told to skip
+    uint32_t transition_handle = 0xffffffffu;   // the front-end transition movie being timed, and when it started (main thread only)
+    int64_t transition_start_ms = 0;
+    int transitions_cut = 0;
     // One opening per new game: the skip is armed when the front end runs (a new game starts from there) and stays on for kSkipWindow after its
     // first press, so a chain of cutscenes in the opening is skipped too but a later cutscene of the same room (a scan, a door) plays as usual.
     std::atomic<bool> armed{true};
@@ -128,10 +143,22 @@ uint64_t call(::Ctx* c, uint64_t fn, uint64_t a0, uint64_t a1 = 0, uint64_t a2 =
 }
 
 // The skip command, read by the two places that start a cutscene skip: "pressed" while the opening cutscene plays.
+bool diag() {
+    static const bool on = std::getenv("NXRT_FASTBOOT_DIAG") != nullptr;
+    return on;
+}
+
+std::string area_text() {
+    uint8_t w[16], a[16];
+    return read_world_area(w, a) ? guid_text(a) : std::string("?");
+}
+
 int pressed_hook(::Ctx* c, uint64_t, void*) {
     if (!g.skip_intro.load(std::memory_order_relaxed)) return 0;
     const uint64_t ret = c->x[30];
     if (ret != g.base + kRetSkipUserInput && ret != g.base + kRetSkipCameraManager) return 0;
+    static std::atomic<int> nd{0};
+    if (diag() && nd++ < 20) NXLOG_I(kTag, "diag: skip read at %s, area %s", ret == g.base + kRetSkipUserInput ? "UserInput" : "CheckForCinematicSkip", area_text().c_str());
     if (!intro_window_open() || !in_intro_area()) return 0;
     if (g.first_press_ms.load(std::memory_order_relaxed) < 0) g.first_press_ms.store(now_ms(), std::memory_order_relaxed);
     if (g.presses++ == 0)
@@ -141,9 +168,16 @@ int pressed_hook(::Ctx* c, uint64_t, void*) {
 }
 
 int skippable_hook(::Ctx* c, uint64_t, void*) {
-    if (!g.skip_intro.load(std::memory_order_relaxed) || !intro_window_open() || !in_intro_area()) return 0;
+    static std::atomic<int> nd{0};
+    if (diag() && nd++ < 40) {
+        uint8_t id[16] = {};
+        guest_read(c->x[1], id, 16);
+        NXLOG_I(kTag, "diag: IsCinematicSkippable %s, area %s", guid_text(id).c_str(), area_text().c_str());
+    }
+    if (!g.skip_intro.load(std::memory_order_relaxed) || !intro_window_open()) return 0;
     uint8_t id[16] = {};
-    guest_read(c->x[1], id, 16);
+    if (!guest_read(c->x[1], id, 16)) return 0;
+    if (!fastboot_is_opening_skip(id) && !in_intro_area()) return 0;
     if (g.skippable++ < 8) NXLOG_I(kTag, "skip_intro: cutscene %s is skippable (opening cutscene area)", guid_text(id).c_str());
     c->x[0] = 1;
     return 1;
@@ -162,17 +196,34 @@ int movie_think_hook(::Ctx* c, uint64_t, void*) {
             NXLOG_I(kTag, "streamed movie %s%s", t.c_str(), fastboot_is_title_intro_movie(id) ? " (the title intro)" : "");
         }
     }
-    if (!g.skip_logos.load(std::memory_order_relaxed) || !fastboot_is_title_intro_movie(id)) return 0;
+    const bool intro = fastboot_is_title_intro_movie(id);
+    const double length = fastboot_menu_transition_length(id);
+    const double rate = g.menu_rate.load(std::memory_order_relaxed);
+    if (!(intro && g.skip_logos.load(std::memory_order_relaxed)) && !(length > 0 && rate > 1.0)) return 0;
     uint32_t handle = 0, invalid = 0, skip_state = 0;
     if (!guest_read(self + kMovieHandle, &handle, 4) || !guest_read(g.base + kMovieInvalidHandle, &invalid, 4) || handle == invalid) return 0;
     if (handle == g.skipped_handle || !guest_read(self + kMovieSkipState, &skip_state, 4) || skip_state != 0) return 0;
     t_in_movie = true;
     const bool playing = (call(c, g.base + kFnMovieIsPlaying, handle) & 1) != 0;
-    if (playing) {
+    bool skip = false;
+    if (playing && intro) {
+        skip = true;
+        NXLOG_I(kTag, "skip_boot_logos: the title intro movie is skipped");
+    } else if (playing) {
+        // A front-end transition movie (title to main menu, into and out of the menu backgrounds): with fast_menus it is cut after
+        // 1/menu_speed of its length, so the menu that waits for its end comes up that much sooner.
+        if (handle != g.transition_handle) {
+            g.transition_handle = handle;
+            g.transition_start_ms = now_ms();
+        } else if (static_cast<double>(now_ms() - g.transition_start_ms) >= length * 1000.0 / rate) {
+            skip = true;
+            if (g.transitions_cut++ < 16) NXLOG_I(kTag, "fast_menus: transition movie %s cut after %.1f of %.1f s", guid_text(id).c_str(), length / rate, length);
+        }
+    }
+    if (skip) {
         call(c, g.base + kFnMovieSkip, self, c->x[1], 1);     // immediate: the Think below ends it and sends its end messages
         g.skipped_handle = handle;
         g.movies++;
-        NXLOG_I(kTag, "skip_boot_logos: the title intro movie is skipped");
     }
     t_in_movie = false;
     return 0;      // the movie's own Think runs now
@@ -210,6 +261,14 @@ int update_sm_hook(::Ctx* c, uint64_t addr, void*) {
 bool fastboot_is_intro_area(const uint8_t world[16], const uint8_t area[16]) {
     return std::memcmp(world, kFrigateWorld, 16) == 0 && std::memcmp(area, kDockingHangar, 16) == 0;
 }
+
+double fastboot_menu_transition_length(const uint8_t id[16]) {
+    for (const Transition& t : kTransitions)
+        if (std::memcmp(id, t.id, 16) == 0) return t.seconds;
+    return 0.0;
+}
+
+bool fastboot_is_opening_skip(const uint8_t id[16]) { return std::memcmp(id, kOpeningSkip, 16) == 0; }
 
 bool fastboot_is_title_intro_movie(const uint8_t id[16]) { return std::memcmp(id, kTitleIntro, 16) == 0; }
 

@@ -3,7 +3,8 @@
 //
 //   skip_intro       The opening cutscene of a new game (the gunship landing on the Frigate Orpheon, Exterior Docking Hangar) is skipped through the
 //                    game's own cutscene skip, as if the skip button had been pressed the moment the game allows it:
-//                    - CGameState::IsCinematicSkippable answers true in that area (the practice mod and the randomizer make every cutscene skippable
+//                    - CGameState::IsCinematicSkippable answers true for the opening's skip object (GUID 2ac311c5-...; it asks while the area
+//                      still loads) and in that area (the practice mod and the randomizer make every cutscene skippable
 //                      the same way, through mCinematicForceSkippableOverride, which that function reads). The area's CinematicSkip special function
 //                      then registers itself as the current skip object (CStateManagerGameLogicMP1 +2932) when the cutscene starts.
 //                    - CCommandFrame::GetDigitalPressedInput answers "pressed" for the two calls that read the skip command: the one in
@@ -15,7 +16,9 @@
 //   fast_menus       The front end's state manager (title, main menu, save slots, options, extras) is updated with its time step times menu_speed:
 //                    CFrontEndIOWin::TimerTick marks the call, NIOWinStateManagerUtils::UpdateStateManager scales the step it hands to
 //                    CStateManager::Update. Every script timer, UI animation and fade of the front end runs that much faster. The movies have their
-//                    own clock (CMovieList::Update) and the game play is a different IOWin, so neither changes.
+//                    own clock (CMovieList::Update) and the game play is a different IOWin, so neither changes. The front end's three
+//                    transition movies (title -> main menu 8 s, into the menu background 3.6 s, Play -> save slots 5.9 s), which the
+//                    menus wait for, are cut with their own Skip(immediate) after 1/menu_speed of their length.
 // Hook sites: recomp games/mpr/main.sites, "S46" block. Without them (an older lift) nothing fires and the game runs as before.
 #pragma once
 #include <cstdint>
@@ -41,5 +44,7 @@ FastbootStats fastboot_stats();
 // as the game keeps it (the first three groups of the GUID little-endian). Exposed for the tests.
 bool fastboot_is_intro_area(const uint8_t world[16], const uint8_t area[16]);
 bool fastboot_is_title_intro_movie(const uint8_t id[16]);
+bool fastboot_is_opening_skip(const uint8_t id[16]);
+double fastboot_menu_transition_length(const uint8_t id[16]);   // seconds for a front-end transition movie, else 0   // the GUID of the opening cutscene's CinematicSkip special function
 
 }  // namespace nxrt::play

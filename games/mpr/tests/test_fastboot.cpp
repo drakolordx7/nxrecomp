@@ -133,7 +133,14 @@ NXTEST(skip_press_only_at_the_two_skip_sites_in_the_hangar) {
     CHECK_EQ(c.x[0], 1ull);
     CHECK(play::fastboot_stats().skip_presses >= 2);
 
-    set_area(kFrigate, kOtherRoom);  // another room: the game's own answer
+    uint8_t opening[16];
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("2ac311c5-55aa-40a6-802b-2177deaae976", opening));
+    CHECK(play::fastboot_is_opening_skip(opening));
+    set_area(kFrigate, kOtherRoom);  // the opening's skip object asks before the hangar is the current area: still skippable
+    c = ctx();
+    c.x[1] = reinterpret_cast<uint64_t>(opening);
+    CHECK_EQ(nx_hook_entry(&c, kBase + kSkippable), 1);
+    // another room: the game's own answer
     c = ctx();
     c.x[30] = kBase + kRetUserInput;
     CHECK_EQ(nx_hook_entry(&c, kBase + kPressed), 0);
@@ -220,4 +227,38 @@ NXTEST(title_intro_movie_skipped_once) {
 
     f.skip_boot_logos = false;
     setup(f);
+}
+
+NXTEST(fast_menus_cuts_transition_movies) {
+    play::FastbootSettings f;
+    f.fast_menus = true;
+    f.menu_speed = 4;
+    setup(f);
+    uint8_t id[16];
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("21be26c3-9e4d-4054-a5db-5291e25644c4", id));   // 3.6 s: cut after 0.9 s at 4x
+    CHECK(std::fabs(play::fastboot_menu_transition_length(id) - 3.6) < 1e-9);
+    std::memcpy(g_f.movie.data() + 128, id, 16);
+    const uint32_t handle = 9, state = 0;
+    std::memcpy(g_f.movie.data() + 160, &handle, 4);
+    std::memcpy(g_f.movie.data() + 144, &state, 4);
+    const int before = g_f.skip_calls;
+    ::Ctx c = ctx();
+    c.x[0] = addr(g_f.movie);
+    nx_hook_entry(&c, kBase + kMovieThink);              // first frame it plays: timing starts
+    CHECK_EQ(g_f.skip_calls, before);
+    Sleep(400);
+    nx_hook_entry(&c, kBase + kMovieThink);
+    CHECK_EQ(g_f.skip_calls, before);                    // 0.4 s: still playing
+    Sleep(700);
+    nx_hook_entry(&c, kBase + kMovieThink);
+    CHECK_EQ(g_f.skip_calls, before + 1);                // 1.1 s: cut
+
+    f.fast_menus = false;                                // off: a transition plays to its end
+    setup(f);
+    const uint32_t h2 = 10;
+    std::memcpy(g_f.movie.data() + 160, &h2, 4);
+    nx_hook_entry(&c, kBase + kMovieThink);
+    Sleep(1100);
+    nx_hook_entry(&c, kBase + kMovieThink);
+    CHECK_EQ(g_f.skip_calls, before + 1);
 }

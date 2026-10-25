@@ -758,9 +758,7 @@ std::string format_settings(const Settings& s) {
     kv("free_lock_margin", num(s.aim.free_lock_margin));
     o += "\n[camera]\n";
     kv("gun_drives_view", flag(s.camera.gun_drives_view));
-    o += "
-[tweaks]
-";
+    o += "\n[tweaks]\n";
     fastboot_format(s.fastboot, &o);
 
     o += "\n[pad]\n";
