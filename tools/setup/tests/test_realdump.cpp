@@ -21,9 +21,9 @@ static int run() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     const char* dump_env = std::getenv("MPRS_DUMP");
     const char* keys_env = std::getenv("MPRS_KEYS");
-    std::string dump = dump_env ? dump_env
-                                : R"(C:/path/to/your/dump.nsp)";
-    std::string keys_path = keys_env ? keys_env : R"(C:\mpr\game\keys\prod.keys)";
+    // Both come from the environment (your own dump and keys); without them the test is skipped.
+    std::string dump = dump_env ? dump_env : "";
+    std::string keys_path = keys_env ? keys_env : "";
     if (!path_exists(dump) || !path_exists(keys_path)) {
         std::printf("test_realdump: skipped (dump or keys not found)\n");
         return 0;
