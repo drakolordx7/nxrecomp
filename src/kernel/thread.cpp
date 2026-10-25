@@ -34,7 +34,8 @@ struct GaugeHook {
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
-// Every thread object ever created and not yet dropped by kernel_reset(): exited threads stay in the list, so this only grows.
+// Thread objects in the list: live threads plus exited ones that something still refers to (a game handle, a waiter). thread_create drops the
+// exited, unreferenced ones, and kernel_reset() drops all of them.
 GaugeHook gauge_threads("kernel.threads", [] {
     AcquireSRWLockShared(&g_list_lock);
     const int64_t n = static_cast<int64_t>(g_all.size());
@@ -70,6 +71,9 @@ DWORD WINAPI host_thread_main(LPVOID param) {
 
 }  // namespace
 
+// The TLS region (tls) and the static TLS block (tp_block) are not freed here: they come from mem::alloc_kernel, a bump allocator with no free,
+// so there is nothing to give back. They cost 0x1000 bytes plus the block (at least 0x1000) per thread ever created, a
+// few hundred KiB an hour at the S34 soak rate, against the 4 GiB kernel region.
 KThread::~KThread() {
     if (host_handle) CloseHandle(static_cast<HANDLE>(host_handle));
 }
