@@ -62,7 +62,7 @@ void check_validation(App& app) {
 
 // Writes the frame to work/nvn_refs/<scene>.png when NXRT_NVN_UPDATE_REFS=1, otherwise compares it with that file when it exists.
 void check_reference(const char* scene, const std::vector<uint8_t>& px) {
-    const std::string path = std::string("C:/mpr/work/nvn_refs/") + scene + ".png";
+    const std::string path = nxtest::project_path("work/nvn_refs/") + scene + ".png";
     const char* upd = std::getenv("NXRT_NVN_UPDATE_REFS");
     if (upd && std::string(upd) == "1") {
         CHECK(nxrt::gfx::save_png_rgba(path, px.data(), kW, kH));

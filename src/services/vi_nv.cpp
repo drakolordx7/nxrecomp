@@ -6,7 +6,7 @@
 // buffer-queue layouts from Eden and yuzu, GPL-2.0-or-later) and from Ryujinx src/Ryujinx.HLE/HOS/Services/{Vi,Nv,SurfaceFlinger}
 // (MIT). Command ids and layouts were also checked against https://switchbrew.org/wiki/NV_services and Display_services.
 //
-// Not here, left to the GPU stream: nvhost channel submission (SUBMIT_GPFIFO only answers success), fences beyond success, presentation.
+// Not here, left to the GPU back end: nvhost channel submission (SUBMIT_GPFIFO only answers success), fences beyond success, presentation.
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -1042,7 +1042,7 @@ uint32_t as_ioctl(NvFile& f, uint32_t nr, Arg a, bool& handled) {
     }
 }
 
-// ---- nvhost-gpu (type 0x48 the channel, 0x47 SET_USER_DATA): the channel's bookkeeping; submission is the GPU stream's
+// ---- nvhost-gpu (type 0x48 the channel, 0x47 SET_USER_DATA): the channel's bookkeeping; submission is the GPU back end's
 
 uint32_t gpu_ioctl(NvFile& f, uint32_t nr, Arg a, bool& handled) {
     NvState& s = nv();
@@ -1053,7 +1053,7 @@ uint32_t gpu_ioctl(NvFile& f, uint32_t nr, Arg a, bool& handled) {
     case 0x1b:   // SUBMIT_GPFIFO through Ioctl2: answered, never run here
         if (!s.submit_logged) {
             s.submit_logged = true;
-            NXLOG_W(kTagNv, "SUBMIT_GPFIFO accepted and not run: the GPU stream owns command submission");
+            NXLOG_W(kTagNv, "SUBMIT_GPFIFO accepted and not run: the GPU back end owns command submission");
         }
         return kNvOk;
     case 0x09:   // ALLOC_OBJ_CTX {u32 class, flags; out u64 object id at 8}: the id is the class number, as ScarletNX answers
