@@ -47,6 +47,21 @@ free_lock_margin = 0.15
 # 0: the view follows only the mouse and the stick; those movements move the gun on screen and the view stays still.
 gun_drives_view = 1
 
+[tweaks]
+# 1: skip the opening cutscene of a new game (the gunship landing) with the game's own cutscene skip. Other cutscenes play as usual.
+skip_intro = 0
+# 1: end the title's intro movie at once.
+skip_boot_logos = 0
+# 1: the title, main menu, save slots and options run menu_speed (1..4) times faster.
+fast_menus = 0
+menu_speed = 2
+# One glow colour for the morph ball (its glowing stripes, inner glow, boost glow, trail and light) and the arm cannon's charge glow: off (the game's own) or R,G,B (0..255 each).
+glow_color = off
+# auto follows glow_color, off keeps the game's colour for that part, or R,G,B gives the part its own colour.
+suit_glow = auto
+ball_glow = auto
+gun_glow = auto
+
 [pad]
 label_abxy = 1
 deadzone = 0.10
@@ -90,6 +105,10 @@ lod_bias = 0
 bloom = 1
 # Chromatic aberration post effect.
 chromatic_aberration = 1
+# Faster GPU memory: copies of the game's vertex and index data in video memory (up to 2 GiB of it); applies at the next start.
+fast_gpu_memory = 1
+# Fewer GPU pipeline waits between render passes; applies at the next start.
+fewer_gpu_waits = 1
 
 [prompts]
 # Button icons in the game's prompts: switch (the game's own), xbox, playstation, keyboard, or auto (follows the last device used; keyboard icons

@@ -102,21 +102,21 @@ void set_call_context(::Ctx* c) { g_call_ctx.store(c); }
 namespace detail {
 bool have_state_manager() { return (g_layout.state_manager ? g_layout.state_manager : g_mgr.load()) != 0; }
 
-LoaderState loader_state(uint32_t* pending) {
+tt::LoaderState loader_state(uint32_t* pending) {
     const uint64_t globals = g_layout.game_globals ? g_layout.game_globals : game_base() + kGameGlobals;
     const uint64_t factory = rd64(globals);
     const uint64_t mgr = factory ? rd64(factory + kFactoryLoader) : 0;
-    if (!mgr) return LoaderState::Unknown;
+    if (!mgr) return tt::LoaderState::Unknown;
     uint32_t sum = 0;
     for (uint64_t off : kLoaderCounts) {
         int32_t n = 0;
-        if (!rd(mgr + off, &n)) return LoaderState::Unknown;
+        if (!rd(mgr + off, &n)) return tt::LoaderState::Unknown;
         if (n > 0) sum += static_cast<uint32_t>(n);
     }
     uint8_t busy = 0;
-    if (!rd(mgr + kLoaderBusyByte, &busy)) return LoaderState::Unknown;
+    if (!rd(mgr + kLoaderBusyByte, &busy)) return tt::LoaderState::Unknown;
     if (pending) *pending = sum;
-    return (sum == 0 && busy == 0) ? LoaderState::Idle : LoaderState::Busy;
+    return (sum == 0 && busy == 0) ? tt::LoaderState::Idle : tt::LoaderState::Busy;
 }
 }
 
@@ -648,6 +648,7 @@ const GameProbes& mpr_game_probes() {
         t.set_player_pointers = &set_player_pointers;
         t.set_call_context = &set_call_context;
         t.have_state_manager = &detail::have_state_manager;
+        t.loader_state = &detail::loader_state;
         t.warp = &detail::warp;
         t.grant = &detail::grant;
         t.give_item = &detail::give_item;

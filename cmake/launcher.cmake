@@ -8,14 +8,16 @@ set(NXRT_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/apps/launcher")
 add_library(mpr_launcher_core STATIC
     "${NXRT_LAUNCHER_DIR}/keymap_win.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp"
     "${NXRT_LAUNCHER_DIR}/pad_capture.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_types.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_config.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_types.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_config.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_fastboot.cpp")
 target_include_directories(mpr_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx" "${NXRT_LAUNCHER_DIR}")
 target_compile_definitions(mpr_launcher_core PUBLIC UNICODE _UNICODE)
 target_link_libraries(mpr_launcher_core PUBLIC SDL3::SDL3-static shell32 shlwapi)
 
 add_executable(mpr_launcher WIN32
     "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
-    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp")
+    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/page_fastboot.cpp"
+    "${NXRT_LAUNCHER_DIR}/page_tweaks.cpp")
 target_link_libraries(mpr_launcher PRIVATE mpr_launcher_core comctl32 uxtheme dwmapi shlwapi ole32 shell32)
 # The game module's part (launcher.rc, nxrt_game_<id>_data, the register call) is added in the top CMakeLists.txt once games/ is configured.
 # The release version the launcher shows (set by the game build: game-build/CMakeLists.txt, -DMPR_VERSION=0.1.0).

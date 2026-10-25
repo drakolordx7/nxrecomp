@@ -258,6 +258,7 @@ void App::on_create() {
     pages_.push_back(make_controls_page());
     pages_.push_back(make_keys_page());
     pages_.push_back(make_pad_page());
+    pages_.push_back(make_tweaks_page());
     for (size_t i = 0; i < pages_.size(); ++i) {
         TCITEMW it{};
         it.mask = TCIF_TEXT;

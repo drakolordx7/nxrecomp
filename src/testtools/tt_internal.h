@@ -21,7 +21,7 @@ bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
 bool have_state_manager();
 // The game's resource loader thread, read from memory by the game's probe (games/<id>; S42). Unknown: the loader is not readable
 // (no game globals yet, or a test rig without them). *pending (optional) = the sum of its queue counts when readable.
-enum class LoaderState { Unknown, Busy, Idle };
+using LoaderState = ::nxrt::tt::LoaderState;     // nxrt/tt.h
 LoaderState loader_state(uint32_t* pending = nullptr);
 // @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x2c, 8 bytes per item: amount at +0, capacity at +4); item -1 = every upgrade.
 bool grant(int64_t item, int32_t amount, int32_t capacity);

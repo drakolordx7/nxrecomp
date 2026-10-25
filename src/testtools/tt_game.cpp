@@ -84,6 +84,10 @@ bool have_state_manager() {
     const GameProbes* p = P();
     return p && p->have_state_manager && p->have_state_manager();
 }
+LoaderState loader_state(uint32_t* pending) {
+    const GameProbes* p = P();
+    return p && p->loader_state ? p->loader_state(pending) : LoaderState::Unknown;
+}
 bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
     const GameProbes* p = P();
     return p && p->warp && p->warp(c, world, area);

@@ -74,6 +74,8 @@ struct GamePlay {
     void (*status_text)(char* buf, size_t n) = nullptr;
     // F1 page, Mouse tab: where = 0 after the sensitivity sliders, 1 after the invert boxes, 2 at the end. Returns true when edit changed.
     bool (*mouse_tab)(int where, Settings& edit) = nullptr;
+    // F1 page, Tweaks tab: the game's optional looks ([tweaks], play_tweaks.h). Returns true when edit changed; nullptr = no Tweaks tab.
+    bool (*tweaks_tab)(Settings& edit) = nullptr;
 };
 
 const GamePlay* game_play();         // the registered game's table, or nullptr

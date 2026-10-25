@@ -390,6 +390,60 @@ void gpass_stamp(Frame& f, const char* label, uint32_t arg) {
     s.gp_n++;
 }
 
+namespace {
+// [nvn] pass_barriers = tracked (S38): a layout change waits only for the stages that can have used the image in its old layout and blocks
+// only the stages that use it in the new one. The layout says how the image was used: the replay keeps every image in the layout of its
+// last use (attachments in the attachment layouts, sampled images in the read-only layouts, copies in the transfer layouts); GENERAL and
+// anything else keep the full barrier.
+std::atomic<bool> g_narrow_barriers{false};
+
+constexpr VkPipelineStageFlags2 kShaderStages = VK_PIPELINE_STAGE_2_PRE_RASTERIZATION_SHADERS_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT |
+                                                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+constexpr VkPipelineStageFlags2 kDepthStages = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+
+// Stages and accesses of an image's use in `layout`; writes_only: the access part names the writes only (the source half of a barrier).
+void layout_scope(VkImageLayout layout, bool src, VkPipelineStageFlags2* stage, VkAccessFlags2* access) {
+    switch (layout) {
+        case VK_IMAGE_LAYOUT_UNDEFINED:
+            // the old contents do not matter, but the memory may have belonged to something still in flight: wait for all earlier commands
+            *stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            *access = src ? VK_ACCESS_2_NONE : (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+            return;
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+            *stage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            *access = src ? VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT : (VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            return;
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+            *stage = kDepthStages;
+            *access = src ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+                          : (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            return;
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+            *stage = kDepthStages | kShaderStages;
+            *access = src ? VK_ACCESS_2_NONE : (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            return;
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+            *stage = kShaderStages;
+            *access = src ? VK_ACCESS_2_NONE : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            return;
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+            *stage = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            *access = src ? VK_ACCESS_2_NONE : VK_ACCESS_2_TRANSFER_READ_BIT;
+            return;
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+            *stage = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+            *access = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            return;
+        default:
+            *stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            *access = src ? VK_ACCESS_2_MEMORY_WRITE_BIT : (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+            return;
+    }
+}
+}  // namespace
+
+void set_narrow_barriers(bool on) { g_narrow_barriers.store(on, std::memory_order_relaxed); }
+
 void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImageLayout to, VkImageAspectFlags aspect, uint32_t base_level,
                    uint32_t level_count, uint32_t base_layer, uint32_t layer_count) {
     g_gauge_barriers_img.add(1);
@@ -398,6 +452,10 @@ void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImag
     b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
     b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    if (g_narrow_barriers.load(std::memory_order_relaxed)) {
+        layout_scope(from, true, &b.srcStageMask, &b.srcAccessMask);
+        layout_scope(to, false, &b.dstStageMask, &b.dstAccessMask);
+    }
     b.oldLayout = from;
     b.newLayout = to;
     b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

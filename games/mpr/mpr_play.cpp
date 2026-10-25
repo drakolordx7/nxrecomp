@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Play mode, the Metroid Prime Remastered side (play_game.h GamePlay): raw mouse aim on CPlayerMP1::ProcessInput, camera look on the camera Think
 // functions, free lock-on and the decoupled gun (play_lockcam.h), the display hooks (display_hooks.h), the tone curve (mpr_tonemap.h), the menu
-// pointer on the game's own UI (menu_mouse_game.h), and what the player state says about the context and the beams.
+// pointer on the game's own UI (menu_mouse_game.h), the glow colour (play_glow.h), the start-up and menu tweaks (mpr_fastboot.h), and what
+// the player state says about the context and the beams.
 //
 // The hook bodies are the ones play.cpp had before the game boundary (docs/GAME_BOUNDARY.md); what they took from play mode's state now comes
 // through GameHost.
@@ -17,6 +18,7 @@
 
 #include "display_hooks.h"
 #include "menu_mouse_game.h"
+#include "mpr_fastboot.h"
 #include "mpr_tonemap.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/frame_limiter.h"
@@ -25,6 +27,7 @@
 #include "play_aim.h"
 #include "play_camlook.h"
 #include "play_game.h"
+#include "play_glow.h"
 #include "play_lockcam.h"
 #include "play_scenefix.h"
 #include "play_lookrate.h"
@@ -78,6 +81,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     const uint64_t now = now_ns();
     const uint64_t player = c->x[0], mgr = c->x[2];
     st.player.store(player);
+    glow_player_tick(c, player);   // S44: the ball's inner glow colour (restores *c)
 
     // The first ProcessInput since the frame boundary takes the mouse counts (late sample: the host pumps the window's events once more first).
     double dx = 0, dy = 0;
@@ -242,12 +246,18 @@ void install(uint64_t base, GameHost* host, const Settings& s) {
     lockcam_install(base, st.aim.get());
     scenefix_install(base);
     lockcam_set(s);
+    glow_install(base);   // after lockcam: both hook CPlayerGunMP1::Update
+    glow_set(s.tweaks);
     mm::game_install(base);
+    fastboot_install(base);
+    fastboot_set(s);
 }
 
 void remove() {
     M& st = m();
+    fastboot_remove();
     mm::game_remove();
+    glow_remove();
     lockcam_remove();
     scenefix_remove();
     if (st.hook_input) hook_remove(st.hook_input);
@@ -260,9 +270,14 @@ void remove() {
 void settings_changed(const Settings& s) {
     display_apply(s.display);
     lockcam_set(s);
+    fastboot_set(s);
+    glow_set(s.tweaks);
 }
 
-void frame_begin() { lockcam_frame(); }
+void frame_begin() {
+    lockcam_frame();
+    glow_frame();
+}
 
 void frame(bool in_game, double step, GameFrame* out) {
     M& st = m();
@@ -326,6 +341,7 @@ const GamePlay& mpr_game_play() {
         p.status = &status;
         p.status_text = &status_text;
         p.mouse_tab = &mpr_mouse_tab;
+        p.tweaks_tab = &glow_tab;                      // play_glow_ui.cpp
         return p;
     }();
     return t;

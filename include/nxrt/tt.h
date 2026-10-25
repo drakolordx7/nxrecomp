@@ -156,6 +156,9 @@ void on_svc(::Ctx* c);
 // ---- the game's probes (nxrt/game.h Info::probes) -----------------------------------------------------------------------------------
 // What the test tooling knows of one game: its frame boundary and player-input hooks, how to read the state, and the script steps that need
 // the game's own functions (@warp @give @grant @call @objs @probe @rays @watch). The entry points above and in tt_internal.h forward here.
+// The game's resource loader as the probe reads it (S42: test warps wait for an idle loader). Unknown: not readable (no game globals yet).
+enum class LoaderState { Unknown, Busy, Idle };
+
 struct GameProbes {
     void (*install_hooks)() = nullptr;
     bool (*read_state)(GameState* out) = nullptr;
@@ -163,6 +166,7 @@ struct GameProbes {
     void (*set_player_pointers)(uint64_t player, uint64_t state_manager) = nullptr;
     void (*set_call_context)(::Ctx* c) = nullptr;
     bool (*have_state_manager)() = nullptr;
+    LoaderState (*loader_state)(uint32_t* pending) = nullptr;   // *pending (may be null) = the queued loads when readable
     bool (*warp)(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) = nullptr;
     bool (*grant)(int64_t item, int32_t amount, int32_t capacity) = nullptr;
     bool (*give_item)(int item, int amount) = nullptr;
