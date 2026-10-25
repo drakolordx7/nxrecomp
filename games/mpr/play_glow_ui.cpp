@@ -50,7 +50,7 @@ bool glow_tab(Settings& edit) {
     bool changed = false;
     ImGui::TextUnformatted("Glow colour");
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("Recolours the morph ball's glow (its glowing stripes, inner glow, boost glow, trail, light and morph flash), the arm cannon's charge glow and the suit's lights where the suit is seen. The game shows the colour at once; Apply and save keeps it.");
+    ImGui::TextDisabled("Recolours the morph ball's glow (its glowing stripes, inner glow, boost glow, trail, light and morph flash), the arm cannon's charge glow and lit panels, and the suit's lights. The game shows the colour at once; Apply and save keeps it.");
     ImGui::PopTextWrapPos();
     if (ImGui::Checkbox("Use a custom glow colour", &t.glow_on)) changed = true;
     ImGui::BeginDisabled(!t.glow_on);
@@ -73,7 +73,7 @@ bool glow_tab(Settings& edit) {
         ImGui::TreePop();
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("The colour multiplies the game's glow: the ball's white glow takes it exactly, the charge's yellow mixes with it (magenta gives a pink-red charge), and a darker colour gives a dimmer glow. The cannon's own lit panels keep their colour.");
+    ImGui::TextDisabled("The colour multiplies the game's glow: the ball's white glow takes it exactly, the charge's yellow mixes with it (magenta gives a pink-red charge), and a darker colour gives a dimmer glow. The cannon's lit panels and the suit's lights take the colour's hue at the game's brightness, with every beam.");
     ImGui::PopTextWrapPos();
     glow_preview(t);
 

@@ -83,7 +83,7 @@ public:
         reset_paint_id_ = f.button(L"Reset the paint", 150, true);
         f.compact(false);
         f.columns(1);
-        f.hint(L"Glow: the morph ball's glow (stripes, inner glow, boost glow, trail, light), the arm cannon's charge glow and the suit's lights; the colour multiplies the game's glow. Paint: the suit (the morph ball follows it) and the arm cannon's shell, black to white, keeping the game's shading and detail; the visor and the lights keep their colours. Off: the game's own.", 4, true);
+        f.hint(L"Glow: the morph ball's glow (stripes, inner glow, boost glow, trail, light), the arm cannon's charge glow and lit panels, and the suit's lights; the colour multiplies the game's glow. Paint: the suit (the morph ball follows it) and the arm cannon's shell, black to white, keeping the game's shading and detail; the visor and the lights keep their colours. Off: the game's own.", 4, true);
 
         f.heading(L"Glow per part");
         f.columns(3);
