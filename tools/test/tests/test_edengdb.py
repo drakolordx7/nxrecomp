@@ -3,7 +3,7 @@
 Everything runs against an in-process fake RSP stub: a threading TCP server on 127.0.0.1
 with an ephemeral port. No Eden, no game, no real GDB.
 
-Run from C:\\mpr\\tools\\test:
+Run from the tools test folder:
   ..\\.venv\\Scripts\\python.exe -I -m unittest discover -s tests -p "test_edengdb.py" -v
 """
 import json

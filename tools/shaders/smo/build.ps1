@@ -1,5 +1,5 @@
 # Builds mx_batch.exe (the batch Maxwell -> GLSL -> SPIR-V driver) with clang-cl, into tools\shaders\build\smo\.
-# Run from anywhere:  pwsh -File C:\mpr\tools\shaders\smo\build.ps1
+# Run from the project folder:  pwsh -File tools\shaders\smo\build.ps1
 # Needs: LLVM (C:\Program Files\LLVM\bin\clang-cl.exe) and the VS Build Tools (vcvars64.bat, for the Windows SDK and CRT).
 $ErrorActionPreference = 'Stop'
 $here  = Split-Path -Parent $MyInvocation.MyCommand.Path

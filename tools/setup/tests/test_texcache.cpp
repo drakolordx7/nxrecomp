@@ -2,7 +2,7 @@
 // Tests for texcache.cpp (BC7 cache of the runtime's ASTC textures).
 //   test_texcache                  full test suite (real-data parts are skipped with a note when the RomFS is missing)
 //   test_texcache planonly [dir]   plan-only pass over every ASTC texture of the RomFS: counts by reject reason, no conversion
-// Environment: MPRS_ROMFS (default C:\mpr\game\romfs), MPRS_NVN_H (default the runtime's nvn.h),
+// Environment: MPRS_ROMFS (default game\romfs below the project folder), MPRS_NVN_H (default the runtime's nvn.h),
 // MPRS_TEXCACHE_LIMIT (real textures for the sample, default 80), MPRS_TEXCACHE_SCRATCH (default %TEMP%\mprs_texcache_test).
 // The reference oracle for the hash is copied from runtime/src/gfx/nvn/nvn_texdata.cpp on purpose (independent of texcache.cpp).
 #include <algorithm>
@@ -23,6 +23,7 @@
 
 #include "astc2bc7.h"
 #include "check.h"
+#include "project_root.h"
 #include "common.h"
 #include "fileio.h"
 #include "pak.h"
@@ -971,7 +972,7 @@ int mkrefs(const std::string& romfs, const std::string& cache, const std::string
 }  // namespace
 
 int main(int argc, char** argv) {
-    const std::string romfs = env_or("MPRS_ROMFS", "C:\\mpr\\game\\romfs");
+    const std::string romfs = env_or("MPRS_ROMFS", mprs_test::project_path("game/romfs"));
     if (argc >= 2 && std::string(argv[1]) == "planonly")
         return planonly(argc >= 3 ? std::string(argv[2]) : romfs);
     if (argc >= 6 && std::string(argv[1]) == "mkrefs")
@@ -986,7 +987,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    const std::string nvn_h = env_or("MPRS_NVN_H", "C:\\mpr\\runtime\\src\\gfx\\nvn\\third_party\\nvn\\nvn.h");
+    const std::string nvn_h = env_or("MPRS_NVN_H", mprs_test::project_path("runtime/src/gfx/nvn/third_party/nvn/nvn.h"));
     const fs::path scratch(widen(env_or("MPRS_TEXCACHE_SCRATCH",
                                         (fs::temp_directory_path() / "mprs_test_texcache").string())));
     try {

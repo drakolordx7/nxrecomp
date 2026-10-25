@@ -23,7 +23,20 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path("C:/mpr")
+def _project_root():
+    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
+    import os, pathlib
+    env = os.environ.get('NXRT_ROOT')
+    if env:
+        return pathlib.Path(env).as_posix()
+    here = pathlib.Path(__file__).resolve()
+    for p in here.parents:
+        if (p / 'tools').is_dir() and (p / 'work').is_dir():
+            return p.as_posix()
+    return here.parents[2].as_posix()
+
+
+ROOT = Path(_project_root())
 ORACLE = ROOT / "tools/textures/oracle"
 
 try:

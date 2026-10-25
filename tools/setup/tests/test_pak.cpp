@@ -7,8 +7,8 @@
 //  3. the tiled GPU buffer of each id listed in MPRS_TXTR_REF has the SHA-256 the Python reference (scripts/txtr_ref_hashes.py)
 //     gives; then every TXTR entry is decoded once on 8 threads
 //  4. synthetic checks that need no game data: LZSS modes, malformed streams, the format table, UUID text, SHA-256 itself
-// Environment: MPRS_ROMFS (default C:\mpr\game\romfs), MPRS_TXTR_TSV (default ...\work\survey\textures\
-// txtr_all.tsv), MPRS_TXTR_REF (the file scripts/txtr_ref_hashes.py writes). Without the romfs, steps 1-3 are skipped with a note.
+// Environment: MPRS_ROMFS (default game\romfs below the project folder), MPRS_TXTR_TSV (default work\survey\textures\
+// txtr_all.tsv below the project folder), MPRS_TXTR_REF (the file scripts/txtr_ref_hashes.py writes). Without the romfs, steps 1-3 are skipped with a note.
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "check.h"
+#include "project_root.h"
 #include "pak.h"
 #include "txtr.h"
 
@@ -288,7 +289,7 @@ int main() {
     synthetic_tests();
 
     const char* env_romfs = std::getenv("MPRS_ROMFS");
-    const fs::path romfs = (env_romfs && *env_romfs) ? fs::path(env_romfs) : fs::path(R"(C:\mpr\game\romfs)");
+    const fs::path romfs = (env_romfs && *env_romfs) ? fs::path(env_romfs) : mprs_test::project_fs_path("game/romfs");
     if (!fs::is_directory(romfs)) {
         std::printf("SKIP: the game romfs was not found at \"%s\" (set MPRS_ROMFS). Steps 1-3 were not run.\n",
                     romfs.string().c_str());
@@ -340,7 +341,7 @@ int main() {
 
     // ---- step 2: TXTR headers against the reference table
     const char* env_tsv = std::getenv("MPRS_TXTR_TSV");
-    const std::string tsv = (env_tsv && *env_tsv) ? env_tsv : R"(C:\mpr\work\survey\textures\txtr_all.tsv)";
+    const std::string tsv = (env_tsv && *env_tsv) ? env_tsv : mprs_test::project_path("work/survey/textures/txtr_all.tsv");
     std::map<std::string, std::vector<TableRow>> table;
     size_t table_rows = 0;
     read_table(tsv, table, table_rows);
