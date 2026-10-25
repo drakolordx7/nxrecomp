@@ -97,6 +97,8 @@ public:
 
     // One column (default) or two: rows then fill left to right. Switching back to 1 starts a new row.
     void columns(int n);
+    // Narrow labels and slider values in multi-column rows (for pages that put several sliders side by side); off by default.
+    void compact(bool on) { compact_ = on; }
 
     using GetBool = std::function<bool(const Settings&)>;
     using SetBool = std::function<void(Settings&, bool)>;
@@ -138,6 +140,7 @@ private:
     int width_;       // page width in pixels
     int y_;           // pixels
     int cols_ = 1;
+    bool compact_ = false;
     int col_ = 0;
     int row_h_ = 0;   // tallest control of the current row (pixels)
 };

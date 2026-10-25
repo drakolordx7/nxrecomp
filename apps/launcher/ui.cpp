@@ -140,6 +140,7 @@ Form::Form(Page& page, int page_width) : page_(page), env_(page.host_->env()), w
 
 int Form::label_w() const {
     if (cols_ == 1) return env_.S(kLabelW);
+    if (compact_) return cell_w() * 24 / 100;
     return cell_w() * (cols_ == 2 ? 40 : 44) / 100;
 }
 
@@ -258,7 +259,7 @@ HWND Form::combo(const wchar_t* text, const std::vector<std::wstring>& items, Ge
 HWND Form::slider(const wchar_t* text, int lo, int hi, GetInt get, SetInt set, std::function<std::wstring(int)> format, After after) {
     int id = 0;
     label(text, cell_x(), y_, label_w());
-    const int value_w = env_.S(100);
+    const int value_w = (compact_ && cols_ > 1) ? env_.S(44) : env_.S(100);
     HWND h = make(TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP, control_x(), y_, control_w() - value_w, env_.S(26), &id);
     SendMessageW(h, TBM_SETRANGEMIN, FALSE, lo);
     SendMessageW(h, TBM_SETRANGEMAX, TRUE, hi);

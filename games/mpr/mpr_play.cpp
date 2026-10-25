@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Play mode, the Metroid Prime Remastered side (play_game.h GamePlay): raw mouse aim on CPlayerMP1::ProcessInput, camera look on the camera Think
 // functions, free lock-on and the decoupled gun (play_lockcam.h), the display hooks (display_hooks.h), the tone curve (mpr_tonemap.h), the menu
-// pointer on the game's own UI (menu_mouse_game.h), the glow colour (play_glow.h), the start-up and menu tweaks (mpr_fastboot.h), and what
-// the player state says about the context and the beams.
+// pointer on the game's own UI (menu_mouse_game.h), the glow colour (play_glow.h), the start-up and menu tweaks (mpr_fastboot.h), the suit and
+// arm cannon paint (mpr_tint.h), and what the player state says about the context and the beams.
 //
 // The hook bodies are the ones play.cpp had before the game boundary (docs/GAME_BOUNDARY.md); what they took from play mode's state now comes
 // through GameHost.
@@ -19,6 +19,7 @@
 #include "display_hooks.h"
 #include "menu_mouse_game.h"
 #include "mpr_fastboot.h"
+#include "mpr_tint.h"
 #include "mpr_tonemap.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/frame_limiter.h"
@@ -251,10 +252,13 @@ void install(uint64_t base, GameHost* host, const Settings& s) {
     mm::game_install(base);
     fastboot_install(base);
     fastboot_set(s);
+    tint_install();
+    tint_set(s.tweaks);
 }
 
 void remove() {
     M& st = m();
+    tint_remove();
     fastboot_remove();
     mm::game_remove();
     glow_remove();
@@ -272,11 +276,13 @@ void settings_changed(const Settings& s) {
     lockcam_set(s);
     fastboot_set(s);
     glow_set(s.tweaks);
+    tint_set(s.tweaks);
 }
 
 void frame_begin() {
     lockcam_frame();
     glow_frame();
+    tint_frame();
 }
 
 void frame(bool in_game, double step, GameFrame* out) {
