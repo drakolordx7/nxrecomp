@@ -941,9 +941,14 @@ const ShaderInfo* ShaderCache::load_stub(const std::string& hash) {
         info->spirv = std::move(words);
     }
     std::lock_guard lk(lock_);
-    auto [it, fresh] = stubs_.emplace(hash, std::move(info));
-    if (!fresh && it->second && it->second->spirv.empty() && !words.empty()) it->second->spirv = std::move(words);
-    return it->second.get();
+    if (auto it = stubs_.find(hash); it != stubs_.end()) {
+        // Another thread made the stub first (and its words may have been dropped since): hand it ours. They sit in info when the
+        // reflection worked, in words otherwise.
+        std::vector<uint32_t>& mine = info ? info->spirv : words;
+        if (it->second && it->second->spirv.empty() && !mine.empty()) it->second->spirv = std::move(mine);
+        return it->second.get();
+    }
+    return stubs_.emplace(hash, std::move(info)).first->second.get();
 }
 
 void ShaderCache::release_stub_spirv(const ShaderInfo* s) {
