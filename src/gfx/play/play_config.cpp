@@ -146,7 +146,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Bindings };
+enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Tweaks, Bindings };
 
 // The factory-defaults revision this build writes ([meta] defaults_rev). Bump it together with a new entry in kDefaultAdditions.
 constexpr int kDefaultsRev = 2;
@@ -180,6 +180,7 @@ const char* sec_label(Sec s) {
         case Sec::Switch: return "[switch]";
         case Sec::Aim: return "[aim]";
         case Sec::Camera: return "[camera]";
+        case Sec::Tweaks: return "[tweaks]";
         default: return "";
     }
 }
@@ -309,6 +310,12 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Camera:
             if (k == "gun_drives_view") return set_bool(&s->camera.gun_drives_view);
             break;
+        case Sec::Tweaks: {
+            bool mine = false;
+            if (!fastboot_apply(k, v, &s->fastboot, &mine, msg)) return false;
+            if (mine) return true;
+            break;
+        }
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
             if (k == "deadzone") return set_real(0.0, 0.5, &s->pad.stick_deadzone);
@@ -594,6 +601,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             else if (key == "fps") sec = Sec::Fps;
             else if (key == "aim") sec = Sec::Aim;
             else if (key == "camera") sec = Sec::Camera;
+            else if (key == "tweaks") sec = Sec::Tweaks;
             else if (key == "switch") sec = Sec::Switch;
             else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else {
@@ -750,6 +758,8 @@ std::string format_settings(const Settings& s) {
     kv("free_lock_margin", num(s.aim.free_lock_margin));
     o += "\n[camera]\n";
     kv("gun_drives_view", flag(s.camera.gun_drives_view));
+    o += "\n[tweaks]\n";
+    fastboot_format(s.fastboot, &o);
 
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));

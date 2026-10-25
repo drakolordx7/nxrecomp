@@ -260,6 +260,16 @@ To change a key, add a line `Key = action` to `[bindings.all]` (every context) o
 
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
+### Start-up and menus (`controls.ini`, `[tweaks]`)
+
+All off by default; with them off the game starts and plays as it always did. They are on the F1 page (Extras tab, "Start-up and menus") and on the launcher's Extras tab. See `docs/S46.md`.
+
+`[tweaks] skip_intro`, default `0`. `1` skips the opening cutscene of a new game (the gunship landing on the Frigate Orpheon) without a key press. It uses the game's own cutscene skip: in the Exterior Docking Hangar the cutscene counts as skippable, and the skip button is pressed for the game the moment the game accepts it (about two seconds in), then the game fades out and jumps to the state the end of the cutscene leaves. Other cutscenes play as usual. Takes effect at the next new game.
+
+`[tweaks] skip_boot_logos`, default `0`. `1` ends the title's 14 second intro movie (the logo forming) as soon as it starts, so the title screen with "press start" comes up at once.
+
+`[tweaks] fast_menus`, default `0`, and `[tweaks] menu_speed`, default `2`, range `1` to `4`. With `fast_menus = 1` the front end (title, main menu, save slots, difficulty, options, extras) runs its clock `menu_speed` times faster: its animations, fades, waits and the attract-mode timer. The transition movies between the title, the main menu and Extras are cut after 1/`menu_speed` of their length. The looping movies behind the menus, their sound and the game itself keep their speed. `menu_speed` is read only while `fast_menus` is on. Applies at once.
+
 ### Controller sticks (`controls.ini`, `[pad]`)
 
 `[pad] deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the left stick (movement). Before the right stick got its own key, this was the only stick dead zone.
