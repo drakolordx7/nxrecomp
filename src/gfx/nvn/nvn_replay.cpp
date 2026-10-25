@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <chrono>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <unordered_map>
 
 #include "nxrt/config.h"
@@ -172,6 +174,33 @@ std::vector<int64_t> g_trace_extra;   // more frames to trace
 // [nvn] trace_after_fs = "67d504": the frame after the first one that draws with a fragment shader of this hash prefix is traced
 // (a frame number is not stable from run to run: the load times differ).
 std::string g_trigger_fs;
+
+// Debug: [nvn] skip_fs_file = FILE (env NXRT_NVN_SKIP_FS_FILE). FILE holds fragment shader hash prefixes separated by blanks; draws whose fragment
+// shader starts with one of them are not drawn. The file is read again twice a second, so it can change while the game runs.
+std::vector<std::string> g_skip_fs;
+int g_draw_idx = 0;   // draws begun in this frame
+bool skip_fs_draw(const std::string& hash) {
+    static const std::string file = nxrt::config_get_str("nvn", "skip_fs_file", "");
+    if (file.empty()) return false;
+    static std::chrono::steady_clock::time_point last{};
+    const auto now = std::chrono::steady_clock::now();
+    if (last.time_since_epoch().count() == 0 || now - last > std::chrono::milliseconds(500)) {
+        last = now;
+        g_skip_fs.clear();
+        std::ifstream f(file);
+        std::string w;
+        while (f >> w) g_skip_fs.push_back(w);
+    }
+    for (const std::string& p : g_skip_fs) {
+        if (!p.empty() && p[0] == '#') {   // "#198" or "#198-210": the draw numbers of the frame (the first draw is #1, as in the trace)
+            const int a = std::atoi(p.c_str() + 1);
+            const size_t dash = p.find('-');
+            const int b = dash == std::string::npos ? a : std::atoi(p.c_str() + dash + 1);
+            if (g_draw_idx >= a && g_draw_idx <= b) return true;
+        } else if (hash.compare(0, p.size(), p) == 0) return true;
+    }
+    return false;
+}
 bool g_trigger_read = false, g_trigger_seen = false, g_trigger_done = false;
 int64_t g_trigger_present = -1;
 int g_trace_n = 0;
@@ -1086,6 +1115,8 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     const ShaderInfo* vs = S.stage[kVertex];
     if (!vs) { log_once("draw-no-vs", "draw without a vertex shader skipped"); return false; }
     if (!S.render_enable) return false;
+    ++g_draw_idx;
+    if (S.stage[kFragment] && skip_fs_draw(S.stage[kFragment]->hash)) return false;
     if (g_dirty & (kPipe | kDesc)) {
         const ShaderInfo* stages[6] = {vs, S.stage[kFragment], S.stage[kGeometry], nullptr, nullptr, nullptr};
         g_pl = prog_layout(stages);
@@ -1147,6 +1178,8 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
               S.stage[kGeometry] ? S.stage[kGeometry]->hash.c_str() : "-", mode, indexed ? 1 : 0, line.c_str(), tex_desc(S.depth_tex.get(), b, sizeof b),
               P.depth_ro ? " (ro)" : "", S.color.blend_enable_mask, S.chmask.mask[0], S.ds.depth_test ? 1 : 0, S.ds.depth_write ? 1 : 0, S.ds.depth_func,
               S.poly.cull_face, static_cast<unsigned long long>(S.ubo[kVertex][0].addr), static_cast<unsigned long long>(S.ubo[kVertex][0].size));
+        if (S.color.blend_enable_mask)
+            TRACE("    blend rt0 rgb %d,%d,%d a %d,%d,%d (nvn enums src,dst,eq)", S.blend[0].src_rgb, S.blend[0].dst_rgb, S.blend[0].eq_rgb, S.blend[0].src_a, S.blend[0].dst_a, S.blend[0].eq_a);
         for (int stg = kVertex; stg <= kFragment; ++stg)
         for (uint32_t slot = 0; slot < 16; ++slot) {    // the first words of every uniform block bound to the vertex and the fragment stage
             const GState::Bind& ub = S.ubo[stg][slot];
@@ -1174,13 +1207,18 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
                 static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
                 if (!dump_dir.empty()) trace_dump_prepared(r.tex, dump_dir);
             }
-            char smp[200] = "", vw[120] = "";
+            char smp[200] = "", vw[160] = "";
             if (r.has_sampler)
                 std::snprintf(smp, sizeof smp, " | sampler min %d mag %d wrap %d,%d,%d lod %g..%g bias %g aniso %g cmp %d", r.smp.min_filter, r.smp.mag_filter, r.smp.wrap_s, r.smp.wrap_t,
                               r.smp.wrap_r, r.smp.lod_min, r.smp.lod_max, r.smp.lod_bias, r.smp.max_anisotropy, r.smp.compare_mode);
             if (r.has_view)
                 std::snprintf(vw, sizeof vw, " | view levels %d+%d layers %d+%d%s", r.view.has_levels ? r.view.min_level : -1, r.view.has_levels ? r.view.num_levels : -1,
                               r.view.has_layers ? r.view.min_layer : -1, r.view.has_layers ? r.view.num_layers : -1, r.view.has_format ? " format" : "");
+            if (r.tex) {
+                const int* sw = (r.has_view && r.view.has_swizzle) ? r.view.swizzle : r.tex->b.swizzle;
+                const size_t n = std::strlen(vw);
+                std::snprintf(vw + n, sizeof vw - n, " swz %d%d%d%d", sw[0], sw[1], sw[2], sw[3]);
+            }
             TRACE("    %s set%u b%u %s -> %s @%p%s mem %d%%%s%s%s", d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? "image" : "tex", d.set, d.binding,
                   d.shader->refl.bindings[d.index].name.c_str(), tex_desc(r.tex, c, sizeof c), r.tex ? static_cast<void*>(r.tex->mem) : nullptr, r.has_sampler ? "" : " (no sampler)", storage_nonzero_pct(r.tex),
                   r.tex && r.tex->cpu_dirty.load() ? " cpu-dirty" : "", smp, vw);
@@ -1370,6 +1408,40 @@ void do_draw_elements(const P_DrawElements& p) {
                 a += t;
             }
             TRACE("      index %u:%s", v, a.c_str());
+        }
+    }
+    if (g_trace) {   // bounds of the first attributes over all indices of the draw (half and float formats decoded), to see what part of a texture a mesh maps
+        const uint32_t isz1 = index_size_bytes(static_cast<int>(p.type));
+        const uint8_t* ix = host_ptr(p.index_address);
+        if (ix && p.count) {
+            std::string a;
+            for (uint32_t k = 0; k < S.attr_count && k < 3; ++k) {
+                const VertexAttribInfo& at = S.attr[k];
+                const auto& st = S.stream[at.stream];
+                const GState::Bind& vb = S.vtx[at.stream];
+                if (!vb.addr) continue;
+                float lo[4] = {1e30f, 1e30f, 1e30f, 1e30f}, hi[4] = {-1e30f, -1e30f, -1e30f, -1e30f};
+                int nc = at.format == 41 ? 4 : at.format == 34 ? 3 : at.format == 17 ? 2 : at.format == 22 ? 2 : 0;
+                for (uint32_t i = 0; nc && i < p.count && i < 20000; ++i) {
+                    uint32_t v = 0;
+                    if (isz1 == 1) v = ix[i]; else if (isz1 == 2) { uint16_t t; std::memcpy(&t, ix + i * 2, 2); v = t; } else std::memcpy(&v, ix + i * 4, 4);
+                    const uint8_t* ve = reinterpret_cast<const uint8_t*>(vb.addr + static_cast<uint64_t>(static_cast<int64_t>(v) + p.base_vertex) * st.stride + at.relative_offset);
+                    for (int c = 0; c < nc; ++c) {
+                        float f;
+                        if (at.format == 41 || at.format == 17) {
+                            uint16_t h; std::memcpy(&h, ve + c * 2, 2);
+                            const int e = (h >> 10) & 31, m = h & 1023; const float sg = (h & 0x8000) ? -1.f : 1.f;
+                            f = e == 0 ? sg * m * (1.f / 16777216.f) : e == 31 ? sg * 65504.f : sg * (1.f + m / 1024.f) * std::ldexp(1.f, e - 15);
+                        } else std::memcpy(&f, ve + c * 4, 4);
+                        lo[c] = std::min(lo[c], f); hi[c] = std::max(hi[c], f);
+                    }
+                }
+                char t[200];
+                if (nc) std::snprintf(t, sizeof t, " a%u[%g..%g, %g..%g, %g..%g, %g..%g]", k, lo[0], hi[0], lo[1], hi[1], nc > 2 ? lo[2] : 0.f, nc > 2 ? hi[2] : 0.f, nc > 3 ? lo[3] : 0.f, nc > 3 ? hi[3] : 0.f);
+                else std::snprintf(t, sizeof t, " a%u(fmt %d: not decoded)", k, at.format);
+                a += t;
+            }
+            TRACE("    bounds:%s", a.c_str());
         }
     }
     const uint32_t isz = index_size_bytes(static_cast<int>(p.type));
@@ -2049,6 +2121,7 @@ void replay_begin_submit(Frame& f) {
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }
     S.window_origin = window_origin_mode();
     S.depth_mode = depth_mode();
+    g_draw_idx = 0;
     P = Pass();
     g_set_cache.clear();
     g_bound_pipeline = VK_NULL_HANDLE;
