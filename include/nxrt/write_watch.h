@@ -42,6 +42,16 @@ void take_written(Region* r, std::vector<uint64_t>& out);
 // Any thread: the operating system is about to write [p, p + n) (a file read into guest memory): armed pages in the range become writable
 // and count as written. Cheap when no region exists.
 void before_os_write(const void* p, uint64_t n);
+// The same for the lifetime of the object, and no page of the range is armed again until it ends: hold it around the ReadFile calls.
+class OsWriteScope {
+public:
+    OsWriteScope(const void* p, uint64_t n);
+    ~OsWriteScope();
+    OsWriteScope(const OsWriteScope&) = delete;
+    OsWriteScope& operator=(const OsWriteScope&) = delete;
+private:
+    int slot_ = -1;
+};
 // memory.cpp: the mapping or protection of [addr, addr + size) is about to change. Armed pages there are made read-write again and
 // forgotten (no longer valid or armed); memory.cpp then sets its own protection. ban: they can never be armed again (another view of
 // them exists).

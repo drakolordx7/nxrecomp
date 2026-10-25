@@ -415,7 +415,7 @@ struct RomfsImage::Impl {
     bool read_host(uint32_t idx, uint64_t ofs, uint8_t* out, uint64_t n) const {
         std::shared_ptr<HandleBox> box = acquire(idx);
         if (!box) return false;
-        mem::ww::before_os_write(out, n);   // ReadFile fails on a page the write tracker made read-only
+        const mem::ww::OsWriteScope ws(out, n);   // ReadFile fails on a page the write tracker made read-only
         while (n > 0) {
             const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(n, 1ull << 30));
             OVERLAPPED ov{};

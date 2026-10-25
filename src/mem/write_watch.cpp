@@ -50,6 +50,22 @@ std::atomic<uint64_t> g_faults{0};
 std::mutex g_mu;                       // create / destroy
 PVOID g_veh = nullptr;
 
+// Operating-system writes in progress (OsWriteScope): arm() leaves these ranges alone, so a page cannot become read-only between the
+// release in before_os_write and the end of the ReadFile that fills it. When every slot is taken, g_os_overflow stops all arming.
+constexpr int kOsSlots = 32;
+struct OsRange { std::atomic<uint64_t> lo{0}, hi{0}; };
+OsRange g_os[kOsSlots];
+std::atomic<int> g_os_overflow{0};
+
+bool os_write_overlaps(uint64_t lo, uint64_t hi) {
+    if (g_os_overflow.load(std::memory_order_seq_cst)) return true;
+    for (OsRange& o : g_os) {
+        const uint64_t h = o.hi.load(std::memory_order_seq_cst);
+        if (h && o.lo.load(std::memory_order_seq_cst) < hi && lo < h) return true;
+    }
+    return false;
+}
+
 uint64_t bit(uint64_t page) { return uint64_t{1} << (page & 63); }
 
 bool test(const std::atomic<uint64_t>* bm, uint64_t page) { return (bm[page >> 6].load(std::memory_order_acquire) & bit(page)) != 0; }
@@ -272,6 +288,14 @@ bool arm(Region* r, uint64_t first, uint64_t count) {
         set_bits(r->prot.get(), first, count, false);
         return false;
     }
+    // A file read into these pages began meanwhile: give them back. (Its scope is published before it releases pages, so either this
+    // sees it, or its release comes after the protection above and undoes it.)
+    if (os_write_overlaps(a, a + n)) {
+        for (uint64_t q = first; q < first + count; ++q)
+            if (test(r->prot.get(), q)) release_page(r, q);
+        set_bits(r->valid.get(), first, count, false);
+        return false;
+    }
     return true;
 }
 
@@ -301,6 +325,34 @@ void take_written(Region* r, std::vector<uint64_t>& out) {
             if (page < r->npages) out.push_back(page);
         }
     }
+}
+
+OsWriteScope::OsWriteScope(const void* p, uint64_t n) {
+    if (!n) return;
+    const uint64_t lo = reinterpret_cast<uint64_t>(p) & ~(kPage - 1), hi = (reinterpret_cast<uint64_t>(p) + n + kPage - 1) & ~(kPage - 1);
+    for (int i = 0; i < kOsSlots && slot_ < 0; ++i) {
+        uint64_t expect = 0;
+        if (g_os[i].hi.load(std::memory_order_relaxed) == 0 && g_os[i].lo.compare_exchange_strong(expect, lo | 1, std::memory_order_seq_cst)) {
+            g_os[i].lo.store(lo, std::memory_order_seq_cst);
+            g_os[i].hi.store(hi, std::memory_order_seq_cst);
+            slot_ = i;
+        }
+    }
+    if (slot_ < 0) {
+        g_os_overflow.fetch_add(1, std::memory_order_seq_cst);
+        slot_ = kOsSlots;
+    }
+    before_os_write(p, n);
+}
+
+OsWriteScope::~OsWriteScope() {
+    if (slot_ < 0) return;
+    if (slot_ == kOsSlots) {
+        g_os_overflow.fetch_sub(1, std::memory_order_seq_cst);
+        return;
+    }
+    g_os[slot_].hi.store(0, std::memory_order_seq_cst);
+    g_os[slot_].lo.store(0, std::memory_order_seq_cst);
 }
 
 void before_os_write(const void* p, uint64_t n) {
