@@ -89,3 +89,12 @@ entryhook 0x71004d7540
 entryhook 0x71001b57ac
 #   CModConSceneNodeMP1::ProcessRenderQuery (the override the game's nodes use): the same
 entryhook 0x7100fba8b8
+# S44 (glow, branch glow2; runtime games/mpr/mpr_glow.cpp, docs/S44.md): the glow colour tweak gives the morph ball's hull and the arm
+# cannon an incandescence modulation colour (CModelFlagsMPT colour mode 2, as CModelFlagsMPT::ColorModulateIncan builds) when the game draws them
+# with Normal flags; the caller is told apart by the return address.
+#   CModelDataMP1::Render(CGameRenderCommandState&, CStateManager const&, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x3 = flags
+entryhook 0x7100fa9694
+#   CModelDataMP1::Render(CGameRenderCommandState&, EWhichModel, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x4 = flags
+entryhook 0x7100fa6c0c
+#   CModelDataMP1::RenderGun(CGameRenderCommandState&, EWhichModel, CTransform4f const&, SGunRenderParams const&, CModelFlagsMPT const&): x5 = flags
+entryhook 0x7100fa7dd0
