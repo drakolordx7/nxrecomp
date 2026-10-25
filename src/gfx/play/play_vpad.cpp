@@ -285,6 +285,8 @@ bool vpad_command(const char* args) {
     return ok;
 }
 
+void vpad_shutdown() { vpad_detach(); }
+
 VpadRumble vpad_last_rumble() {
     std::lock_guard<std::mutex> g(vpad_state().mu);
     return vpad_state().rumble;

@@ -678,6 +678,21 @@ NXTEST(pad_look_leaves_target_alone) {
     CHECK_NEAR(d.pitch(), 0.2, 1e-5);
 }
 
+NXTEST(pad_look_with_unreadable_pitch_writes_nothing) {
+    // the game's pitch is not a number (a bad frame): the pad-look path must not turn that into a write of its own
+    World w;
+    w.init();
+    put<float>(w.pl() + w.layout.free_look_pitch, std::nanf(""));
+    put<float>(w.pl() + w.layout.free_look_target, 0.4f);
+    AimDriver d(0, w.layout);
+    AimParams p;
+    p.pad_look = true;
+    CHECK(d.apply(w.pl(), w.mgr(), 0, -100, p, {}));
+    CHECK(std::isnan(get<float>(w.pl() + w.layout.free_look_pitch)));
+    CHECK(get<float>(w.pl() + w.layout.free_look_target) == 0.4f);
+    CHECK(std::isfinite(d.pitch()));      // the aim's own angle stays a number
+}
+
 NXTEST(pad_look_mouse_moves_pitch_and_target_together) {
     // mouse up with the pad looking: the pitch and the target both move by what the mouse added, so the stick's lead is kept
     World w;
@@ -800,6 +815,29 @@ NXTEST(shift_look_filter_rejects_bad_memory) {
         CHECK(buf == before);
         CHECK(!play::shift_look_filter(f, HUGE_VALF));
         CHECK(buf == before);
+    }
+}
+
+NXTEST(shift_look_filter_bounds_each_array_by_its_own_capacity) {
+    // the first array has room for 16 floats (+12 to +76), the others for 10 (+80 to +120 and +124 on)
+    {
+        std::vector<uint8_t> buf(256, 0);
+        const uint64_t f = A(buf.data());
+        fill_look_filter(f, 16, 10, 10);
+        for (int k = 10; k < 16; ++k) put<float>(f + 12 + 4 * k, 1.0f + k);
+        CHECK(play::shift_look_filter(f, 0.5f));
+        for (int k = 0; k < 16; ++k) CHECK_EQ(get<float>(f + 12 + 4 * k), (1.0f + k) + 0.5f);
+        CHECK_EQ(get<float>(f + 80), 10.5f);
+    }
+    // 11 floats in the second array would run over the third count; in the third, over what follows: refused, nothing written
+    const int32_t counts[4][3] = {{10, 11, 10}, {10, 16, 10}, {10, 10, 11}, {10, 10, 16}};
+    for (int c = 0; c < 4; ++c) {
+        std::vector<uint8_t> buf(256, 0);
+        const uint64_t f = A(buf.data());
+        fill_look_filter(f, counts[c][0], counts[c][1], counts[c][2]);
+        const std::vector<uint8_t> before = buf;
+        CHECK_MSG(!play::shift_look_filter(f, 0.5f), "capacity case " + std::to_string(c));
+        CHECK_MSG(buf == before, "capacity case " + std::to_string(c) + " wrote memory");
     }
 }
 

@@ -37,6 +37,7 @@ constexpr uint64_t kFnGyroFreelook = 0xc3af10;             // NSharedPlayerContr
 constexpr uint64_t kFnGetCommandValue = 0x45a690;          // NControlCommands::GetDataEnumValueForCommand(ECommand): w0 the command
 constexpr uint64_t kFnDigitalHeld = 0x4d7540;              // CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: x0 the frame, x1 the value, x2 the input
 constexpr const char* kTag = "lockcam";
+constexpr double kDefaultPitchLimit = 1.5184;      // the aim's pitch limit before it has read the tweak (87 degrees)
 constexpr uint32_t kOrbitState = 0x4e0;      // CPlayerMP1: EPlayerOrbitState
 constexpr uint32_t kGunTransform = 484;      // CPlayerGunMP1: the gun's world transform
 
@@ -148,12 +149,6 @@ int orientation_hook(::Ctx* c, uint64_t, void*) {
 // the target is carried on at the speed of the last call (what the target will be at the next call, if the stick stays where it is): the game's own value is put
 // back before every call, so the filter and the accumulation see exactly what they would on the console, and at 60 steps per second nothing is added at all. Whatever
 // else moved the target meanwhile (the mouse, a reset) is carried over as it is: only the difference to what was written is kept.
-struct LookCarry {
-    bool have = false;
-    uint64_t player = 0;
-    float written = 0.f;      // the target as the hook left it
-    double prev = 0.0, cur = 0.0;      // the game's target after the call before the last, and after the last
-};
 LookCarry g_carry;
 
 int freelook_hook(::Ctx* c, uint64_t addr, void*) {
@@ -166,70 +161,37 @@ int freelook_hook(::Ctx* c, uint64_t addr, void*) {
     bool timed = false;
     float dt = 0.f;
     if (g_look_rate.load(std::memory_order_relaxed) && g_h.aim->gate(player, mgr) == AimBlock::None && guest_read(input, &dt, sizeof dt) && dt > 1e-4f && dt < 0.5f) {
-        const ::Ctx saved = *c;
-        c->x[0] = mgr;
-        dispatch_call(c, g_h.base + kFnGyroFreelook);
-        const bool gyro = (c->x[0] & 1) != 0;
-        *c = saved;
-        if (!gyro) {
+        if (!lockcam_gyro_freelook(c, mgr)) {
             calls = look_steps(&g_look_clock, dt);
             timed = true;
         }
     }
     if (!timed) {
         g_look_clock = 0.0;
-        g_carry.have = false;
+        g_carry.release(player, target_at);      // no carried offset is left behind in the game's target
         if (!free_lock) return 0;      // the game's own call, as it comes
     }
     g_h.freelook_calls++;
     const ::Ctx saved = *c;
-    float seen = 0.f;
-    const bool seen_ok = timed && guest_read(target_at, &seen, sizeof seen) && std::isfinite(seen);
-    if (timed && !seen_ok) {      // cannot read the target: no carrying
-        g_carry.have = false;
-    } else if (timed) {
-        if (g_carry.have && g_carry.player == player) {
-            const double moved = static_cast<double>(seen) - static_cast<double>(g_carry.written);
-            g_carry.prev += moved;
-            g_carry.cur += moved;
-        } else {
-            g_carry.prev = g_carry.cur = seen;
-        }
-        g_carry.player = player;
-    }
+    const bool seen_ok = timed && g_carry.begin(player, target_at);
     const float step = static_cast<float>(kLookStep);
     const bool set_dt = timed && calls > 0 && guest_write(input, &step, sizeof step);
     if (timed && calls > 0 && !set_dt) calls = 1;      // cannot tell the game the step: one call per step as before
-    if (seen_ok && calls > 0) {      // the game's own target back, for its call
-        const float true_target = static_cast<float>(g_carry.cur);
-        if (true_target != seen) guest_write(target_at, &true_target, sizeof true_target);
-    }
+    if (seen_ok && calls > 0) g_carry.restore(target_at);      // the game's own target back, for its call
     t_in_freelook = true;
     for (int i = 0; i < calls; ++i) {
         *c = saved;
         if (free_lock) run_as_unlocked(c, addr, player);
         else dispatch_call(c, addr);
-        if (seen_ok && i + 1 < calls) {      // the target after every call but the last: the speed of the last one comes from it
-            float t = 0.f;
-            if (guest_read(target_at, &t, sizeof t)) g_carry.cur = t;
-        }
+        if (seen_ok) g_carry.after_call(target_at);      // the target after every call: the speed of the last one comes from it
     }
     t_in_freelook = false;
     if (set_dt) guest_write(input, &dt, sizeof dt);
     if (calls == 0) *c = saved;
     if (seen_ok) {
-        if (calls > 0) {
-            float t = 0.f;
-            if (guest_read(target_at, &t, sizeof t) && std::isfinite(t)) {
-                g_carry.prev = g_carry.cur;
-                g_carry.cur = t;
-            }
-        }
         const double phase = std::max(0.0, std::min(1.0, g_look_clock / kLookStep));
-        const float out = static_cast<float>(g_carry.cur + (g_carry.cur - g_carry.prev) * phase);
-        if (std::isfinite(out)) guest_write(target_at, &out, sizeof out);
-        g_carry.written = out;
-        g_carry.have = true;
+        const double lim = g_h.aim->last_pitch_limit();
+        g_carry.finish(target_at, phase, lim > 0.0 ? lim : kDefaultPitchLimit);
     }
     return 1;
 }
@@ -344,6 +306,60 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
 
 }  // namespace
 
+bool LookCarry::begin(uint64_t player, uint64_t target_at) {
+    float seen = 0.f;
+    if (!guest_read(target_at, &seen, sizeof seen) || !std::isfinite(seen)) {
+        have_ = false;
+        return false;
+    }
+    if (have_ && player_ == player) {
+        const double moved = static_cast<double>(seen) - static_cast<double>(written_);
+        pprev_ += moved;
+        prev_ += moved;
+        cur_ += moved;
+    } else {
+        pprev_ = prev_ = cur_ = seen;
+    }
+    player_ = player;
+    return true;
+}
+
+void LookCarry::restore(uint64_t target_at) {
+    float seen = 0.f;
+    const float want = static_cast<float>(cur_);
+    if (std::isfinite(want) && guest_read(target_at, &seen, sizeof seen) && seen != want) guest_write(target_at, &want, sizeof want);
+}
+
+void LookCarry::after_call(uint64_t target_at) {
+    float t = 0.f;
+    if (guest_read(target_at, &t, sizeof t) && std::isfinite(t)) {
+        pprev_ = prev_;
+        prev_ = cur_;
+        cur_ = t;
+    }
+}
+
+void LookCarry::finish(uint64_t target_at, double phase, double limit) {
+    const float out = static_cast<float>(look_carry_target(pprev_, prev_, cur_, phase, limit));
+    if (!std::isfinite(out)) {
+        have_ = false;
+        return;
+    }
+    guest_write(target_at, &out, sizeof out);
+    written_ = out;
+    have_ = true;
+}
+
+void LookCarry::release(uint64_t player, uint64_t target_at) {
+    if (!have_) return;
+    have_ = false;
+    if (player_ != player) return;
+    float seen = 0.f;
+    if (!guest_read(target_at, &seen, sizeof seen) || !std::isfinite(seen)) return;
+    const float out = static_cast<float>(cur_ + (static_cast<double>(seen) - static_cast<double>(written_)));      // the game's target, and what else moved it since
+    if (std::isfinite(out) && out != seen) guest_write(target_at, &out, sizeof out);
+}
+
 double turn_ramp_step(double* omega, double target, double dt, double tau_up, double tau_down) {
     if (!(dt > 0.0) || !std::isfinite(dt) || !std::isfinite(target)) return *omega;
     const bool speeding_up = (target * *omega > 0.0 && std::fabs(target) > std::fabs(*omega)) || *omega == 0.0;
@@ -423,6 +439,16 @@ void lockcam_frame() {
     const DisplayLive dl = display_live();
     const double aspect = dl.aspect > 0 ? dl.aspect : static_cast<double>(dl.render_w) / std::max(1, dl.render_h);
     g_h.aim->set_free_lock_view(g_h.margin.load(std::memory_order_relaxed), aspect, dl.fov_offset);
+}
+
+bool lockcam_gyro_freelook(::Ctx* c, uint64_t mgr) {
+    if (!g_h.base || !g_h.aim || !mgr) return false;
+    const ::Ctx saved = *c;
+    c->x[0] = mgr;
+    dispatch_call(c, g_h.base + kFnGyroFreelook);
+    const bool on = (c->x[0] & 1) != 0;
+    *c = saved;
+    return on;
 }
 
 bool lockcam_gun_decoupled() { return !g_h.gun_drives_view.load(std::memory_order_relaxed); }

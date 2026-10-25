@@ -44,6 +44,7 @@
 #include "nxrt/overlay.h"
 #include "nxrt/platform.h"
 #include "nxrt/runtime.h"
+#include "nxrt/timestep.h"
 #include "nxrt/tt.h"
 #include "play_aim.h"
 #include "play_lockcam.h"
@@ -573,12 +574,6 @@ void poll_pads(uint64_t now) {
             if (platform::gamepad_sensors(infos[i].id, a, gy)) {
                 map_sensors(a, gy, st.settings.pad, &pf.six);
                 have_six = true;
-                static bool gyro_logged = false;
-                if (!gyro_logged && !pf.six.at_rest) {
-                    gyro_logged = true;
-                    NXLOG_I(kTag, "pad gyro is moving (first time): %.3f %.3f %.3f rev/s, accel %.2f %.2f %.2f G", pf.six.gyro[0], pf.six.gyro[1], pf.six.gyro[2],
-                            pf.six.accel[0], pf.six.accel[1], pf.six.accel[2]);
-                }
             }
         }
         if (rumble_changed || rumble_refresh) platform::gamepad_rumble(infos[i].id, lo, hi, 250);
@@ -664,7 +659,14 @@ int update_hook(::Ctx*, uint64_t, void*) {
     // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
     // can take 100 ms or more per frame under load) must not read as a menu.
     const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
-    if (!in_game && st.source_owner) st.source_owner->set_look_scale(1.f);      // menus and the map get the gyro as it is
+    if (st.source_owner) {
+        // The gyro's rate is added to the pitch target once per call, with no time step (play_lookrate.h): the game gets the rate times (step * 60), so a step of
+        // 1/120 s adds half as much, twice as often. This step's length is known here, before the game reads the sample (the timestep hook on the same Update runs
+        // first: hooks of one address run in registration order); menus and the map get the gyro as it is. The stick needs no such thing: its pitch code runs once
+        // per 1/60 s (the hook on ComputeFreeLook).
+        const double step = timestep::active() ? static_cast<double>(timestep::current_dt()) : static_cast<double>(timestep::kGameStep);
+        st.source_owner->set_look_scale(in_game ? static_cast<float>(look_rate_scale(step)) : 1.f);
+    }
     st.hints = st.aim->hints(st.player.load());
     if (st.hints.valid) {
         static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma
@@ -849,13 +851,9 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         p.invert_x = m.invert_x;
         p.invert_y = m.invert_y;
         p.pitch_limit_rad = st.pitch_limit_deg * kPi / 180.0;
-        p.pad_look = st.source_owner && st.source_owner->pad_look(st.settings.pad.gyro);
-        // The gyro's rate is added to the pitch target once per call, with no time step (play_lookrate.h): the game gets the rate times (step * 60), so a step of
-        // 1/120 s adds half as much, twice as often. The stick needs no such thing: its pitch code runs once per 1/60 s (the hook on ComputeFreeLook).
-        float dt = 0;
-        double scale = 1.0;
-        if (guest_read(c->x[1], &dt, sizeof dt) && dt > 1e-4f && dt < 0.5f) scale = look_rate_scale(dt);
-        if (st.source_owner) st.source_owner->set_look_scale(static_cast<float>(scale));
+        // The pad is the look device while the stick or the gyro moves the pitch, and while the game's gyro camera or Pointer scheme is on: the game then sets the
+        // pitch target from the pad's orientation, and the aim must not write its own angle over it.
+        p.pad_look = st.source_owner && (st.source_owner->pad_look(st.settings.pad.gyro) || lockcam_gyro_freelook(c, mgr));
     }
     XfCall xc{c};
     st.aim->set_transform_fn(&guest_set_transform, &xc);
@@ -1233,6 +1231,7 @@ bool start(const StartOptions& opt) {
 void stop() {
     G& st = g();
     if (!st.started) return;
+    vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
     mm::game_remove();
     lockcam_remove();
     if (st.hook_update) hook_remove(st.hook_update);
