@@ -4,6 +4,7 @@
 // same call. Failure and pass call tt::end_run (exit code 1 / 0).
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -42,6 +43,9 @@ bool Runner::load(const std::string& script_file, const RegionTable* regions, st
     has_keys_ = false;
     regions_ = regions;
     live_path_ = config_get_str("test", "live", "");
+    warp_wait_loader_ = config_get_bool("test", "warp_wait_loader", true);
+    warp_loader_max_ms_ = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("test", "warp_loader_max_ms", 30000)));
+    gate_open_ = false; idle_frames_ = 0; gate_start_ms_ = 0;
     live_off_ = 0;
     live_lines_ = 0;
     const bool ok = parse_script_file(script_file, regions, &script_, err);
@@ -320,6 +324,29 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 return;
             }
             case StepKind::Warp: {
+                if (!warped_ && first) { gate_open_ = !warp_wait_loader_; gate_logged_ = false; idle_frames_ = 0; gate_start_ms_ = GetTickCount64(); }
+                if (!warped_ && !gate_open_) {
+                    uint32_t pending = 0;
+                    const detail::LoaderState ls = detail::loader_state(&pending);
+                    const uint64_t waited = GetTickCount64() - gate_start_ms_;
+                    if (ls == detail::LoaderState::Unknown) {
+                        gate_open_ = true;                     // nothing readable to wait for (no game globals yet, or a test rig without them)
+                    } else if (ls == detail::LoaderState::Idle) {
+                        if (++idle_frames_ >= kWarpIdleFrames) {
+                            gate_open_ = true;
+                            if (waited >= 100) NXLOG_I("tt", "warp gate: the resource loader was idle after %llu ms", static_cast<unsigned long long>(waited));
+                        }
+                    } else {
+                        if (!gate_logged_) { gate_logged_ = true; NXLOG_I("tt", "warp gate: waiting for the resource loader (%u queued)", pending); }
+                        idle_frames_ = 0;
+                        if (waited >= warp_loader_max_ms_) {
+                            gate_open_ = true;
+                            NXLOG_W("tt", "warp gate: the resource loader is still busy after %llu ms (%u queued); warping anyway",
+                                    static_cast<unsigned long long>(waited), pending);
+                        }
+                    }
+                    if (!gate_open_) return;
+                }
                 if (!warped_) {
                     if (detail::warp(c, st.id2, st.id)) {
                         warped_ = true;

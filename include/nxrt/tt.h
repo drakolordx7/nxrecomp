@@ -107,6 +107,7 @@ struct ProbeLayout {
     uint64_t game_state_global = 0;        // address of the gpGameState variable (a pointer to CGameStateMP1); 0 = game_base + 0x459cc70
     uint64_t state_manager = 0;            // CStateManager*, 0 = whatever the ProcessInput hook captured
     uint64_t player = 0;                   // CPlayerMP1*, 0 = derived from the state manager (GameLogic + 0x18) or the hook
+    uint64_t game_globals = 0;             // address of the CGameGlobalObjects static (its +0 = CResourceFactory*); 0 = game_base + 0x4578710
 };
 void set_probe_layout(const ProbeLayout& l);
 

@@ -78,6 +78,14 @@ constexpr uint64_t kFnQuitGame = 0x410544;              // (CGameInstanceState*,
 constexpr uint64_t kFnUpdate = 0x3c81c8;                // CGameArchitectureSupport::Update(float*): the frame boundary
 constexpr uint64_t kFnProcessInput = 0xc70334;          // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 player, x2 state manager
 constexpr int kQuitReasonWarp = 7;
+// The game's resource loader (S42), for the warp gate: TOneStatic<CGameGlobalObjects> lives at main+0x4578710 (CGameArchitecture ctor 0x3c635c);
+// CGameGlobalObjects +0x00 = CResourceFactory* (its ctor 0x3c9174); CResourceFactory +0x10 = CResourceLoaderManager* (strong_ptr {control, object}
+// at +0x08, ctor 0x331558). CResourceLoaderManager::IsThreadWorkDone (0xc7458) is: ints at +0xe8 (load list), +0xa4 (request queue), +0x138 and
+// +0x110 all 0, and the byte at +0x144 is 0.
+constexpr uint64_t kGameGlobals = 0x4578710;
+constexpr uint64_t kFactoryLoader = 0x10;
+constexpr uint64_t kLoaderCounts[] = {0xe8, 0xa4, 0x138, 0x110};
+constexpr uint64_t kLoaderBusyByte = 0x144;
 
 std::atomic<uint64_t> g_player{0}, g_mgr{0}, g_pi_stamp{0};
 std::atomic<::Ctx*> g_call_ctx{nullptr};
@@ -109,6 +117,23 @@ void set_call_context(::Ctx* c) { g_call_ctx.store(c); }
 
 namespace detail {
 bool have_state_manager() { return (g_layout.state_manager ? g_layout.state_manager : g_mgr.load()) != 0; }
+
+LoaderState loader_state(uint32_t* pending) {
+    const uint64_t globals = g_layout.game_globals ? g_layout.game_globals : game_base() + kGameGlobals;
+    const uint64_t factory = rd64(globals);
+    const uint64_t mgr = factory ? rd64(factory + kFactoryLoader) : 0;
+    if (!mgr) return LoaderState::Unknown;
+    uint32_t sum = 0;
+    for (uint64_t off : kLoaderCounts) {
+        int32_t n = 0;
+        if (!rd(mgr + off, &n)) return LoaderState::Unknown;
+        if (n > 0) sum += static_cast<uint32_t>(n);
+    }
+    uint8_t busy = 0;
+    if (!rd(mgr + kLoaderBusyByte, &busy)) return LoaderState::Unknown;
+    if (pending) *pending = sum;
+    return (sum == 0 && busy == 0) ? LoaderState::Idle : LoaderState::Busy;
+}
 }
 
 bool read_state(GameState* out) {
