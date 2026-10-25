@@ -101,7 +101,7 @@ entryhook 0x7100852b28
 #   CArchMsgParmTimerTick const&): fast_menus hands the front end's state manager a longer step (x1 + 8, float)
 entryhook 0x710041a21c
 entryhook 0x710041b000
-# S44 (glow, branch glow2; runtime games/mpr/mpr_glow.cpp, docs/S44.md): the glow colour tweak gives the morph ball's hull and the arm
+# S44 (glow, branch glow2; runtime src/gfx/play/play_glow.cpp, docs/S44.md): the glow colour tweak gives the morph ball's hull and the arm
 # cannon an incandescence modulation colour (CModelFlagsMPT colour mode 2, as CModelFlagsMPT::ColorModulateIncan builds) when the game draws them
 # with Normal flags; the caller is told apart by the return address.
 #   CModelDataMP1::Render(CGameRenderCommandState&, CStateManager const&, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x3 = flags
