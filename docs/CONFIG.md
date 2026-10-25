@@ -260,6 +260,16 @@ To change a key, add a line `Key = action` to `[bindings.all]` (every context) o
 
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
+### Glow colour (`controls.ini`, `[tweaks]`)
+
+`[tweaks] glow_color`, default `off`: `off` keeps the game's colours. `R,G,B` (0 to 255 each, as a colour picker shows them) recolours the glows of Samus's equipment at once: the morph ball's glowing stripes, inner glow, boost glow, trail and light, the arm cannon's charge glow, and the suit's lights where the suit is seen (third person, the pause screen's Samus). The colour multiplies the game's glow, so the ball's white glow takes it exactly, the charge's yellow mixes with it (magenta gives a pink-red charge), and a darker colour gives a dimmer glow. The arm cannon's own lit panels keep their colour. It applies at once, no restart needed. Details in `docs/S44.md`.
+
+`[tweaks] suit_glow`, `ball_glow` and `gun_glow`, default `auto`: `auto` follows `glow_color`, `off` keeps the game's colour for that part even when `glow_color` is set, and `R,G,B` gives the part its own colour.
+
+The launcher's Tweaks tab and the F1 page's Tweaks tab have the switch, three sliders with a colour swatch, a Reset button that goes back to the game's colours, and the per-part choice. The F1 page shows the colour in the game while the sliders move; Apply and save keeps it.
+
+`NXRT_GLOW_TEST_FILE` (environment, test aid): a file of `[tweaks]` lines. When it changes, its values replace the saved ones in the running game (checked twice a second).
+
 ### Controller sticks (`controls.ini`, `[pad]`)
 
 `[pad] deadzone`, default `0.10`, range `0` to `0.5`: the dead zone of the left stick (movement). Before the right stick got its own key, this was the only stick dead zone.

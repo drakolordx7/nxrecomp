@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "nxrt/extras.h"
+#include "play_tweaks.h"
 
 namespace nxrt::play {
 
@@ -213,6 +214,7 @@ struct Settings {
     MouseSettings mouse;
     AimSettings aim;
     CameraSettings camera;
+    TweakSettings tweaks;          // [tweaks] (play_tweaks.h): optional looks, off by default
     PadSettings pad;
     TimingSettings timing;
     DisplaySettings display;

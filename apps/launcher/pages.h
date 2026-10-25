@@ -12,5 +12,6 @@ std::unique_ptr<Page> make_extras_page();      // HDR, low latency, frame rate c
 std::unique_ptr<Page> make_controls_page();     // mouse and button prompts                           (page_controls.cpp)
 std::unique_ptr<Page> make_keys_page();         // keyboard and mouse bindings                        (page_keys.cpp)
 std::unique_ptr<Page> make_pad_page();          // controller options and button remapping           (page_pad.cpp)
+std::unique_ptr<Page> make_tweaks_page();       // optional looks: the glow colour                   (page_tweaks.cpp)
 
 }  // namespace mprl

@@ -12,6 +12,7 @@
 #include <string>
 
 #include "imgui.h"
+#include "play_glow.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/extras.h"
 #include "nxrt/input_source.h"
@@ -972,6 +973,10 @@ void draw_settings_page(UiHost& host) {
         }
         if (ImGui::BeginTabItem("Extras")) {
             extras_tab(p);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Tweaks")) {
+            if (glow_tab(p.edit)) mark(p);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Bindings")) {

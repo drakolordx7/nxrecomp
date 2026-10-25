@@ -33,6 +33,7 @@
 #include "nxrt/ftrace.h"
 #include "play_camlook.h"
 #include "play_display.h"
+#include "play_glow.h"
 #include "play_scenefix.h"
 #include "nxrt/kernel.h"
 #include "nxrt/config.h"
@@ -633,6 +634,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             extras::hdr_refresh_levels();
             apply_fps_counter(s.fps);
             lockcam_set(s);
+            glow_set(s.tweaks);
             st.want_present.store(static_cast<int>(present_mode_for(s.display.vsync)));
             if (s.display.window_mode != old_mode) {
                 set_window_mode(s.display.window_mode);
@@ -653,6 +655,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
     }
     poll_pads(now);
     lockcam_frame();
+    glow_frame();
     if (st.engine) st.engine->frame_tick();
 
     // what the game is doing: the context, the beam, the pointer
@@ -792,6 +795,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     st.pi_calls++;
     const uint64_t player = c->x[0], mgr = c->x[2];
     st.player.store(player);
+    glow_player_tick(c, player);   // S44: the ball's inner glow colour (restores *c)
 
     double dx = 0, dy = 0;
     if (st.update_seq != st.aim_seq) {                // the first ProcessInput since the frame boundary takes the mouse counts
@@ -1227,6 +1231,8 @@ bool start(const StartOptions& opt) {
     lockcam_install(st.base, st.aim.get());
     scenefix_install(st.base);
     lockcam_set(st.settings);
+    glow_install(st.base);   // after lockcam: both hook CPlayerGunMP1::Update
+    glow_set(st.settings.tweaks);
     mm::game_install(st.base);
     st.started = true;
     NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, hooks %u/%u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
@@ -1239,6 +1245,7 @@ void stop() {
     if (!st.started) return;
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
     mm::game_remove();
+    glow_remove();
     lockcam_remove();
     scenefix_remove();
     if (st.hook_update) hook_remove(st.hook_update);
