@@ -83,3 +83,30 @@ entryhook 0x7100c7ad8c
 entryhook 0x7100cb6250
 #   CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: free lock-on tells the aiming cursor that the aim-follow command is held while the lock is on
 entryhook 0x71004d7540
+# S42 (crashes, branch crashes; runtime src/gfx/play/play_scenefix.cpp, docs/S42.md): a ModCon scene node can be in a render list before its model
+# data is loaded; the decal render queries then read its bounds through a null pointer (CFrustumPlanes::BoxInFrustumPlanes on address 0x190).
+#   CModConSceneNode::ProcessRenderQuery(CSceneRenderQuery const&, CSceneRenderQueryResult&): x0 = node; skipped while the node's data is not loaded
+entryhook 0x71001b57ac
+#   CModConSceneNodeMP1::ProcessRenderQuery (the override the game's nodes use): the same
+entryhook 0x7100fba8b8
+# S46 (fastboot; runtime games/mpr/mpr_fastboot.cpp, docs/S46.md): optional start-up and menu tweaks ([tweaks] in controls.ini), all off by default.
+#   CCommandFrame::GetDigitalPressedInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: skip_intro answers "pressed" for the skip command at
+#   its two cutscene-skip call sites (return addresses 0xe51e78 in CGameIOWinMP1::UserInput, 0x4bd840 in CCameraManager::CheckForCinematicSkip)
+entryhook 0x71004d71f0
+#   CGameState::IsCinematicSkippable(CGuid const&) const: skip_intro makes the opening cutscene skippable (what mCinematicForceSkippableOverride does for all)
+entryhook 0x710040a2dc
+#   CStreamedMovieGOC::Think(CStateManager&, float): x0 = the movie component; skip_boot_logos ends the title's intro movie with its own Skip(immediate)
+entryhook 0x7100852b28
+#   CFrontEndIOWin::TimerTick(CArchMsgParmTimerTick const&, CArchitectureQueue&) and NIOWinStateManagerUtils::UpdateStateManager(CStateManager&,
+#   CArchMsgParmTimerTick const&): fast_menus hands the front end's state manager a longer step (x1 + 8, float)
+entryhook 0x710041a21c
+entryhook 0x710041b000
+# S44 (glow, branch glow2; runtime src/gfx/play/play_glow.cpp, docs/S44.md): the glow colour tweak gives the morph ball's hull and the arm
+# cannon an incandescence modulation colour (CModelFlagsMPT colour mode 2, as CModelFlagsMPT::ColorModulateIncan builds) when the game draws them
+# with Normal flags; the caller is told apart by the return address.
+#   CModelDataMP1::Render(CGameRenderCommandState&, CStateManager const&, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x3 = flags
+entryhook 0x7100fa9694
+#   CModelDataMP1::Render(CGameRenderCommandState&, EWhichModel, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x4 = flags
+entryhook 0x7100fa6c0c
+#   CModelDataMP1::RenderGun(CGameRenderCommandState&, EWhichModel, CTransform4f const&, SGunRenderParams const&, CModelFlagsMPT const&): x5 = flags
+entryhook 0x7100fa7dd0

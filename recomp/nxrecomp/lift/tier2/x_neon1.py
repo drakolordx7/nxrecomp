@@ -5,7 +5,7 @@ here, and a missing one is added here. Same-named helpers for the generated C++ 
 Handler signature: i_<mnemonic>(self, f, i, ops) -> one C++ statement (a string); raise Unhandled('why') when a form is
 not supported. i is the Capstone instruction (i.address, i.mnemonic, i.op_str, i.operands, i.writeback), ops = i.operands.
 
-Stream neon1: AdvSIMD integer narrowing (high half), saturating doubling multiply long, saturating / rounding register and
+Family neon1: AdvSIMD integer narrowing (high half), saturating doubling multiply long, saturating / rounding register and
 immediate shifts, shift-and-insert, rounding shift right and accumulate. Tier 1 (a64.py) owns shl, sshr, ushr, shrn,
 sqshrn, uqshrn, sqshrun, xtn, sshll, ushll and sqxtn-style shapes it decodes; those never reach this class."""
 from capstone import arm64_const as A
