@@ -113,8 +113,8 @@ public:
             },
             margin_text);
         f.checkbox(
-            L"Gun drives the view (the game's own)", [](const Settings& s) { return s.camera.gun_drives_view; },
-            [](Settings& s, bool v) { s.camera.gun_drives_view = v; });
+            L"Steady view (gun sway and walking bob move only the gun)", [](const Settings& s) { return !s.camera.gun_drives_view; },
+            [](Settings& s, bool v) { s.camera.gun_drives_view = !v; });
 
         f.heading(L"Button prompts");
         f.combo(
