@@ -438,6 +438,30 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     }
     const uint64_t out_total = out.level.back().offset + out.level.back().size;
 
+    // Debug: [nvn] dump_astc = DIR writes level 0 of every ASTC texture of width [nvn] dump_astc_w (default any) as tight ASTC blocks to
+    // DIR/astc_<key>_<w>x<h>_<bw>x<bh>_<srgb>.bin, to decode them with another decoder.
+    {
+        static const std::string dump_dir = config_get_str("nvn", "dump_astc", "");
+        if (!dump_dir.empty() && fmt.astc && L.block_linear) {
+            static const int64_t want_w = config_get_int("nvn", "dump_astc_w", 0);
+            if (want_w == 0 || want_w == static_cast<int64_t>(geo[0].w)) {
+                char nm[160];
+                std::snprintf(nm, sizeof nm, "/astc_t%u_%016llx_%ux%u_%ux%u_%d.bin", t.id, static_cast<unsigned long long>(key), geo[0].w, geo[0].h,
+                              fmt.block_w, fmt.block_h, fmt.srgb ? 1 : 0);
+                const std::string path = dump_dir + nm;
+                if (!std::filesystem::exists(path)) {
+                    const LevelGeom& lg = geo.back();
+                    std::vector<uint8_t> dl(static_cast<size_t>(lg.lin_off + lg.slice * L.layers));
+                    if (tegra::untile(L.desc, L.layout, src_mem, dl.data())) {
+                        std::ofstream f(path, std::ios::binary);
+                        f.write(reinterpret_cast<const char*>(dl.data() + geo[0].lin_off), static_cast<std::streamsize>(geo[0].slice));
+                        NXLOG_I(kTag, "texture %u: ASTC level 0 written to %s", t.id, path.c_str());
+                    }
+                }
+            }
+        }
+    }
+
     // ---- disk cache ---------------------------------------------------------------------------------------------------------
     const bool bc7 = mode == Mode::Bc7;
     const int quality = bc7 ? bc7_quality() : 0;
