@@ -40,6 +40,7 @@ uint64_t g_heap_cur = 0;                           // bytes; meaningful while me
 // MapMemory mappings: dst (stack region) is a view of src (heap) that stays writable only through dst.
 struct MapRec {
     uint64_t dst, src, size;
+    uint32_t src_state, src_perm;   // what the source was before the map (heap, or CodeData for a module's static buffer): UnmapMemory puts it back
 };
 std::vector<MapRec> g_maps;
 
@@ -287,9 +288,10 @@ void map_memory(::Ctx* c) {
     }
     ft::event(ft::zone_id("mm.protect"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     mem::vm_set(dst, size, mem::kMemStack, kPermRW);
-    mem::vm_set(src, size, mem::vm_query(src).state, 0);  // the source is no-access while mapped
+    const mem::VmInfo src_before = mem::vm_query(src);
+    mem::vm_set(src, size, src_before.state, 0);  // the source is no-access while mapped
     ft::event(ft::zone_id("mm.vmset"), tq0, ft::now_ns(), 0);
-    g_maps.push_back(MapRec{dst, src, size});
+    g_maps.push_back(MapRec{dst, src, size, src_before.state, src_before.perm});
     NXLOG_D(kTag, "MapMemory(dst %llx, src %llx, size %llx)", U(dst), U(src), U(size));
     svc_ret(c, kernel::kOk);
 }
@@ -318,7 +320,11 @@ void unmap_memory(::Ctx* c) {
         }
         std::memcpy(reinterpret_cast<void*>(src), reinterpret_cast<const void*>(dst), size);
         if (!mem::decommit(dst, size)) NXLOG_E(kTag, "UnmapMemory: decommit(%llx, %llx) failed", U(dst), U(size));
-        mem::vm_set(src, size, mem::kMemHeap, kPermRW);
+        if (r.src_perm != kPermRW) {   // the copy back needed it writable; the source had less (SetMemoryPermission before the map)
+            const mem::Prot back = r.src_perm == 0 ? mem::Prot::None : (r.src_perm == kPermR ? mem::Prot::R : mem::Prot::RW);
+            if (back != mem::Prot::RW && !mem::protect(src, size, back)) NXLOG_E(kTag, "UnmapMemory: protect(%llx, %llx) failed", U(src), U(size));
+        }
+        mem::vm_set(src, size, r.src_state, r.src_perm);
         mem::vm_set(dst, size, mem::kMemFree, 0);
         if (prefix) {
             r.dst += size;
