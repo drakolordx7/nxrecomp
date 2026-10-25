@@ -198,7 +198,7 @@ std::string spirv_string(const uint32_t* w, size_t n, size_t* used) {
 
 bool parse_uint(std::string_view s, int base, int& out) {
     if (s.empty()) return false;
-    long v = 0;
+    int64_t v = 0;      // 64-bit: long is 32 bits on Windows, so v * base overflowed (UB) before the range check could see it
     for (char ch : s) {
         int d = ch >= '0' && ch <= '9' ? ch - '0' : ch >= 'a' && ch <= 'f' ? ch - 'a' + 10
                 : ch >= 'A' && ch <= 'F' ? ch - 'A' + 10 : 99;
