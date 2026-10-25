@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // A game dump file (NSP / XCI, and NSZ / XCZ when zstd support is built in) as a list of NCA files plus the title keys of its tickets,
-// and the step that finds the Metroid Prime Remastered program NCA in it.
+// and the step that finds the program NCA of the game setup is built for (game.h) in it.
 #pragma once
 #include <memory>
 #include <string>

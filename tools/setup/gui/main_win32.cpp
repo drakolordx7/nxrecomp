@@ -32,6 +32,7 @@
 
 #include "common.h"
 #include "keys.h"
+#include "game.h"
 #include "log.h"
 #include "pipeline.h"
 
@@ -77,7 +78,6 @@ constexpr wchar_t kClassName[] = L"MprSetupWindow";
 #ifndef MPR_VERSION
 #define MPR_VERSION "dev"
 #endif
-constexpr wchar_t kWindowTitle[] = L"Metroid Prime Remastered PC - Setup";
 constexpr wchar_t kDumpHint[] = L"Pick your own game dump (.nsp, .xci, .nsz or .xcz), or drag it onto this window.";
 constexpr wchar_t kKeysHint[] =
     L"Browse to your prod.keys (dumped from your own Switch with Lockpick_RCM). Nothing is uploaded; the file is only read.";
@@ -501,7 +501,7 @@ int App::run() {
 
     // Created at a placeholder size; WM_CREATE reads the window's own DPI, then the real size is set from that DPI.
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    const std::wstring title = std::wstring(kWindowTitle) + L"  " + (std::isdigit(static_cast<unsigned char>(MPR_VERSION[0])) ? L"v" : L"") + widen(MPR_VERSION);
+    const std::wstring title = widen(mprs::game().product) + L" - Setup  " + (std::isdigit(static_cast<unsigned char>(MPR_VERSION[0])) ? L"v" : L"") + widen(MPR_VERSION);
     CreateWindowExW(0, kClassName, title.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, hinst_, this);
     if (!hwnd_) return static_cast<int>(Fail::Generic);
     // The DPI at WM_CREATE can still be the placeholder; the window's DPI is only settled once it is placed.
@@ -1201,7 +1201,7 @@ void App::start_inspect(const std::string& key) {
 
 void App::show_inspect_result() {
     if (summary_.supported) {
-        set_dump_status(std::format(L"Metroid Prime Remastered found ({}). Needs {}, {} free.", widen(summary_.container),
+        set_dump_status(std::format(L"{} found ({}). Needs {}, {} free.", widen(mprs::game().title), widen(summary_.container),
                                     size_text(summary_.disk_needed), size_text(summary_.disk_free)),
                         kGreen);
         set_disk_line(std::format(L"This folder needs about {} (free: {}).", size_text(summary_.disk_needed),

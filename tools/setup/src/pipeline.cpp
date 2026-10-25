@@ -160,17 +160,17 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
     MPRS_LOGI("Dump: %s, %zu archives", d->c->kind.c_str(), d->c->ncas.size());
     d->t = find_program(*d->c, d->keys, o.expected_title_id);
     if (d->t.have_version && d->t.title_version != 0)
-        fail(Fail::Input, "This is version %u of the game. Only the original v1.0.0 release is supported (updates change the "
-                          "game program).", d->t.title_version);
-    d->version = d->t.have_version ? "1.0.0" : "";
+        fail(Fail::Input, "This is version %u of the game. Only the original v%s release is supported (updates change the "
+                          "game program).", d->t.title_version, game().version);
+    d->version = d->t.have_version ? game().version : "";
     d->exefs = d->t.program->open_pfs0(0);
     for (const char* need : {"main", "rtld", "sdk", "subsdk0", "main.npdm"})
         if (!d->exefs->find(need)) fail(Fail::Input, "The dump's game program is incomplete (\"%s\" is missing).", need);
     NsoInfo ni = nso_read_info(*d->exefs->open_file(*d->exefs->find("main")));
     d->build_id = ni.build_id();
     if (d->build_id != o.expected_build_id)
-        fail(Fail::Input, "This is not the v1.0.0 version of the game (its program has build id %s, expected %s). Only the original v1.0.0 "
-                          "release is supported.", d->build_id.c_str(), o.expected_build_id.c_str());
+        fail(Fail::Input, "This is not the v%s version of the game (its program has build id %s, expected %s). Only the original v%s "
+                          "release is supported.", game().version, d->build_id.c_str(), o.expected_build_id.c_str(), game().version);
     int rom_section = -1;
     for (int i = 0; i < 4; ++i)
         if (const NcaSection* s = d->t.program->section(i))
@@ -253,17 +253,17 @@ std::string find_shader_source(const SetupOptions& o) {
     if (!o.shader_cache_src.empty()) return o.shader_cache_src;
     std::string d = path_join(exe_dir(), "shader_cache");
     if (path_exists(path_join(d, "results.tsv"))) return d;
-    std::string p = path_join(exe_dir(), "shader_cache.mprshc");
+    std::string p = path_join(exe_dir(), game().shader_pack);
     if (path_exists(p)) return p;
     return "";
 }
 
-// True when an earlier run in out_dir finished with the shaders installed: its state says finished, its mpr.ini has the shader_cache
+// True when an earlier run in out_dir finished with the shaders installed: its state says finished, its game ini has the shader_cache
 // line that run wrote, and results.tsv is on disk. Setup then keeps those shaders when no pack is given.
 bool shader_install_present(const SetupOptions& o, State& st) {
     if (o.out_dir.empty() || st.get_meta("finished") != "1") return false;
     std::string ini;
-    if (!read_text_file(path_join(o.out_dir, "mpr.ini"), ini) || ini.find("shader_cache = shader_cache/spirv") == std::string::npos)
+    if (!read_text_file(path_join(o.out_dir, game().game_ini), ini) || ini.find("shader_cache = shader_cache/spirv") == std::string::npos)
         return false;
     return path_exists(path_join(path_join(o.out_dir, "shader_cache\\spirv"), "results.tsv"));
 }
@@ -274,7 +274,7 @@ bool shaders_available(const SetupOptions& o, State& st) {
 }
 
 std::string shader_pack_missing_text() {
-    return "Shader pack not found. Put shader_cache.mprshc in the same folder as the setup program (" + exe_dir() +
+    return std::string("Shader pack not found. Put ") + game().shader_pack + " in the same folder as the setup program (" + exe_dir() +
            "), or give its path with --shader-pack. The game cannot draw anything without it.";
 }
 
@@ -608,11 +608,11 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         // ---- Finish ----------------------------------------------------------------------------------------------------
         t0 = begin(Stage::Finish, 0, "");
         {
-            const std::string ini_path = path_join(o.out_dir, "mpr.ini");
+            const std::string ini_path = path_join(o.out_dir, game().game_ini);
             std::string existing;
             bool ours = !read_text_file(ini_path, existing) || existing.rfind("; Written by mpr_setup", 0) == 0;
             if (ours) write_text_file_atomic(ini_path, make_ini(o.bc7_quality, shaders));
-            else MPRS_LOGW("mpr.ini was edited by hand; left alone. It must contain bc7_quality = %d.", o.bc7_quality);
+            else MPRS_LOGW("%s was edited by hand; left alone. It must contain bc7_quality = %d.", game().game_ini, o.bc7_quality);
             st.set_meta("bc7_quality", std::to_string(o.bc7_quality));
             st.set_meta("finished", "1");
             st.save(true);
