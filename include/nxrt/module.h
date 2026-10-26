@@ -114,6 +114,9 @@ Module* module_load_memory(const void* data, size_t size, const LoadOptions& opt
 Module* module_load_nso_file(const char* path, const LoadOptions& opt = {}, std::string* err = nullptr);
 Module* module_load_nso_memory(const void* data, size_t size, const LoadOptions& opt = {}, std::string* err = nullptr);
 // Phase 2: apply relocations of every module that is mapped but not yet linked, then protect segments. False when a module failed.
+// When the modules include an SDK 20-era "rtld" (Horizon's dynamic linker, built with DT_RELR; it relocates itself and every module
+// again at start-up from the image's values, adding to the slots), every relocated slot is put back to the image's value after the
+// module is linked and checked (statistics and init/fini arrays keep the host's result), so rtld's passes are applied once.
 bool module_link_all();
 // For a title that carries its own dynamic linker (Horizon's rtld relocates every module itself): applies only the page protections and
 // the Horizon memory-state records (svcQueryMemory sees the modules as code / code data), leaving the images exactly as the NSO has

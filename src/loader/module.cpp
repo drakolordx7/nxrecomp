@@ -74,8 +74,9 @@ struct LoaderAccess {
     static Module* create_and_map(const uint8_t* d, size_t n, const LoadOptions& opt, std::string* err);
     static bool parse_dynamic(Module& m, const uint8_t* d, size_t n, std::string* err);
     static void load_static_symtab(Module& m, const uint8_t* d, size_t n, const elf::Ehdr& eh);
-    static bool link(Module& m);
+    static bool link(Module& m, bool guest_relinks = false);
     static void protect(Module& m);
+    static bool has_relr(const Module& m) { return m.relr_ && m.relr_sz_; }
     static uint64_t resolve(Module& m, const std::vector<elf::Sym>& raw, uint32_t symidx, bool* is_weak_null);
 };
 
@@ -373,12 +374,14 @@ uint64_t LoaderAccess::resolve(Module& m, const std::vector<elf::Sym>&, uint32_t
     return hle_address(s.name.c_str());
 }
 
-bool LoaderAccess::link(Module& m) {
+bool LoaderAccess::link(Module& m, bool guest_relinks) {
     using namespace elf;
     if (m.linked_) return true;
     const uint64_t lo = m.base_ - m.bias_, hi = lo + m.size_;
     std::vector<Sym> unused;
     bool ok = true;
+    // guest_relinks: every slot written here, with the image's value, to put back once the module is checked (see below)
+    std::vector<std::pair<uint64_t, uint64_t>> written;
     const uint64_t tables[2][2] = {{m.rela_, m.rela_sz_}, {m.jmprel_, m.jmprel_sz_}};
     for (auto& t : tables) {
         if (!t[0] || !t[1]) continue;
@@ -390,6 +393,7 @@ bool LoaderAccess::link(Module& m) {
             const uint32_t type = static_cast<uint32_t>(r.info), symidx = static_cast<uint32_t>(r.info >> 32);
             if (r.offset < lo || r.offset + 8 > hi) { m.stats_.out_of_range++; NXLOG_W(kTag, "%s: relocation at 0x%llx is outside the image", m.name_.c_str(), (unsigned long long)r.offset); continue; }
             uint64_t* slot = reinterpret_cast<uint64_t*>(m.bias_ + r.offset);
+            if (guest_relinks) written.emplace_back(r.offset, *slot);
             bool weak_null = false;
             switch (type) {
                 case R_AARCH64_RELATIVE:
@@ -438,7 +442,9 @@ bool LoaderAccess::link(Module& m) {
                 m.stats_.total++;
                 if (off < lo || off + 8 > hi) { m.stats_.out_of_range++; return; }
                 m.stats_.relative++;
-                *reinterpret_cast<uint64_t*>(m.bias_ + off) += m.bias_;
+                uint64_t* slot = reinterpret_cast<uint64_t*>(m.bias_ + off);
+                if (guest_relinks) written.emplace_back(off, *slot);
+                *slot += m.bias_;
             };
             uint64_t where = 0;
             for (uint64_t i = 0; i + 8 <= m.relr_sz_; i += 8) {
@@ -464,6 +470,14 @@ bool LoaderAccess::link(Module& m) {
     m.fini_.clear();
     read_array(m.init_arr_, m.init_arr_sz_, m.init_);
     read_array(m.fini_arr_, m.fini_arr_sz_, m.fini_);
+    // The guest's own dynamic linker relocates this module again from the image's values, and some of its passes are not
+    // idempotent (DT_RELR and the lazy JUMP_SLOT pass add the base to what is in the slot; rtld aborts when a JUMP_SLOT does not
+    // hold the image's PLT value). Every slot goes back to the image's value, newest write first; the checks, statistics and the
+    // init/fini arrays above keep the host's result.
+    if (guest_relinks && !written.empty()) {
+        for (auto it = written.rbegin(); it != written.rend(); ++it) *reinterpret_cast<uint64_t*>(m.bias_ + it->first) = it->second;
+        NXLOG_I(kTag, "%s: %zu relocated slots restored to the image's values for the guest's dynamic linker", m.name_.c_str(), written.size());
+    }
     if (m.tls_.present() && !g_tls.present()) g_tls = m.tls_;
     protect(m);
     m.linked_ = true;
@@ -498,7 +512,9 @@ void LoaderAccess::protect(Module& m) {
                        : (f & PF_W) ? mem::Prot::RW : mem::Prot::R;
         uint64_t addr = m.base_ + p * mem::kPage, len = (q - p) * mem::kPage;
         mem::protect(addr, len, pr);
-        if (has[p]) mem::vm_set(addr, len, (f & PF_W) ? mem::kMemCodeData : mem::kMemCode, f & 7);
+        // svcQueryMemory reports Horizon permission bits (R = 1, W = 2, X = 4), not the ELF ones (X = 1, W = 2, R = 4).
+        const uint32_t hp = ((f & PF_R) ? 1u : 0u) | ((f & PF_W) ? 2u : 0u) | ((f & PF_X) ? 4u : 0u);
+        if (has[p]) mem::vm_set(addr, len, (f & PF_W) ? mem::kMemCodeData : mem::kMemCode, hp);
         p = q;
     }
 }
@@ -531,8 +547,14 @@ Module* module_load_file(const char* path, const LoadOptions& opt_in, std::strin
 
 bool module_link_all() {
     std::lock_guard<std::recursive_mutex> lk(g_lock);
+    // Horizon's dynamic linker (the ExeFS module "rtld", entered first) relocates itself and every other module when the process
+    // starts. The rtld of SDK 20-era titles (itself built with DT_RELR) relocates from the image's values and its passes add to
+    // the slots, so after the host has linked and checked the modules the images go back to the NSO's values for it. An older
+    // rtld (no DT_RELR, RELA only) is idempotent and keeps the host's result.
+    bool guest_relinks = false;
+    for (auto& m : g_modules) guest_relinks = guest_relinks || (m->name() == "rtld" && LoaderAccess::has_relr(*m));
     bool ok = true;
-    for (auto& m : g_modules) ok = LoaderAccess::link(*m) && ok;
+    for (auto& m : g_modules) ok = LoaderAccess::link(*m, guest_relinks) && ok;
     return ok;
 }
 
