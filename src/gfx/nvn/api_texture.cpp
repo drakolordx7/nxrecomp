@@ -216,6 +216,7 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
     t->block_linear = L.block_linear;
     t->block_height_gobs = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;
     t->is_display = (info.flags & NVN_TEXTURE_FLAGS_DISPLAY) != 0;
+    t->cpu_coherent = t->mem && (pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED) && !(pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS);
     t->levels = L.levels;
     t->layers = L.layers;
     t->id = next_texture_id(info.device);
