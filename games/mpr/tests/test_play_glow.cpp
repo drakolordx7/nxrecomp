@@ -106,6 +106,56 @@ NXTEST(glow_texture_tail_hash_ignores_level_0_and_sees_the_tail) {
     CHECK_EQ(glow_texture_tail_hash(nullptr, 0, 1, 1, 1), uint64_t{0});
 }
 
+// ---- glow texture edit ids (S44c): the edited data must follow the texture's content, not only its tail ------------------------------
+
+NXTEST(glow_texture_id_changes_with_level_0_and_keeps_the_row) {
+    using namespace nxrt::play;
+    std::vector<uint8_t> tex(1 << 20);
+    for (size_t i = 0; i < tex.size(); ++i) tex[i] = static_cast<uint8_t>(i * 131 + (i >> 9));
+    std::vector<uint8_t> early = tex;
+    std::fill(early.begin(), early.begin() + early.size() / 2, uint8_t{0});   // level 0 not streamed in yet: same tail
+    CHECK_EQ(glow_texture_tail_hash(early.data(), early.size(), 2048, 2048, 12), glow_texture_tail_hash(tex.data(), tex.size(), 2048, 2048, 12));
+    const uint64_t a = glow_texture_id(3, tex.data(), tex.size());
+    const uint64_t b = glow_texture_id(3, early.data(), early.size());
+    CHECK(a != b);                                       // the complete texture never gets the data edited from the early upload
+    CHECK_EQ(a, glow_texture_id(3, tex.data(), tex.size()));   // the same content keeps its id (its edited data is reused)
+    CHECK_EQ(glow_texture_row(a), 3);
+    CHECK_EQ(glow_texture_row(b), 3);
+    CHECK(a < (1ull << 55) && b < (1ull << 55));         // below the discovery ids and the texture edit hook's client bits
+    CHECK(glow_texture_id(0, tex.data(), tex.size()) != glow_texture_id(1, tex.data(), tex.size()));
+    CHECK_EQ(glow_texture_row(glow_texture_id(0, nullptr, 0)), 0);
+}
+
+NXTEST(glow_texture_row_rejects_discovery_and_unknown_ids) {
+    using namespace nxrt::play;
+    size_t n = 0;
+    glow_textures(&n);
+    CHECK_EQ(glow_texture_row(0), -1);
+    CHECK_EQ(glow_texture_row((1ull << 55) | 1001), -1);   // NXRT_GLOW_LOG_TEXTURES discovery ids change nothing
+    CHECK_EQ(glow_texture_row((1ull << 55) | 1), -1);
+    CHECK_EQ(glow_texture_row(static_cast<uint64_t>(n) + 1), -1);   // past the table
+    CHECK_EQ(glow_texture_row(static_cast<uint64_t>(n)), static_cast<int>(n) - 1);
+}
+
+NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
+    using namespace nxrt::play;
+    size_t n = 0;
+    const GlowTexture* t = glow_textures(&n);
+    int suit_bodies = 0, suit_arms = 0, gun = 0;
+    for (size_t i = 0; i < n; ++i) {
+        // the 1024 x 1024 glow texture that the suit shader also samples is shared with the hangar's signal lights: never recoloured
+        CHECK(t[i].tail != 0x315648d5a9d07890ull);
+        CHECK(!(t[i].w == 1024 && t[i].h == 1024));
+        for (size_t j = 0; j < i; ++j) CHECK(t[j].tail != t[i].tail);
+        if (t[i].part == GlowTexPart::Suit && t[i].w == 2048 && t[i].h == 2048) ++suit_bodies;
+        if (t[i].part == GlowTexPart::Suit && t[i].w == 2048 && t[i].h == 1024) ++suit_arms;
+        if (t[i].part == GlowTexPart::Gun) ++gun;
+    }
+    CHECK_EQ(suit_bodies, 4);   // Power, Varia, Gravity, Phazon
+    CHECK_EQ(suit_arms, 4);
+    CHECK_EQ(gun, 2);
+}
+
 // ---- the shared texture edit hook (mpr_texedit.h): the tint and the glow colour each get their own textures -------------------------
 
 namespace {
