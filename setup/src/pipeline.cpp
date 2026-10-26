@@ -127,15 +127,84 @@ private:
     bool dirty_ = false;
 };
 
+struct OpenedAoc {
+    u64 title_id = 0;
+    u32 version = 0;
+    std::string dir;                        // "aoc/<16 hex>"
+    std::unique_ptr<Romfs> rom;
+};
+
 struct Opened {
     KeySet keys;
-    std::unique_ptr<Container> c;
-    DumpTitle t;
+    std::vector<std::unique_ptr<Container>> c;
+    DumpSet t;
+    const Nca* program = nullptr;           // the NCA the ExeFS comes from (the update's when there is one)
     std::unique_ptr<Pfs> exefs;
     std::unique_ptr<Romfs> rom;
+    std::vector<OpenedAoc> aoc;
     std::string build_id;
     std::string version;
+    std::string update;                     // display version of the applied update, "" for none
+    std::string kinds;                      // "XCI + NSP"
 };
+
+struct Supported {
+    std::string build_id;                   // upper case, 40 digits
+    std::string version;
+};
+
+std::string norm_build(std::string b) {
+    for (char& c : b) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    while (b.size() < 40) b += '0';
+    return b;
+}
+
+// The releases setup accepts: the test override, else the game's list, else its single build.
+std::vector<Supported> supported_builds(const SetupOptions& o) {
+    const GameProfile& g = game();
+    const std::string def = g.build_id ? g.build_id : "";
+    std::vector<Supported> v;
+    if (o.expected_build_id == def && g.builds)
+        for (const GameBuild* b = g.builds; b->build_id; ++b) v.push_back({norm_build(b->build_id), b->version ? b->version : ""});
+    if (v.empty()) v.push_back({norm_build(o.expected_build_id), g.version ? g.version : ""});
+    return v;
+}
+
+std::string supported_text(const std::vector<Supported>& v) {
+    std::string s;
+    for (const Supported& x : v) {
+        if (!s.empty()) s += ", ";
+        s += (x.version.empty() ? std::string("build ") : "v" + x.version + " (build ") + x.build_id + (x.version.empty() ? "" : ")");
+    }
+    return s;
+}
+
+// The display version from the control NCA's control.nacp (offset 0x3060, 16 bytes), or "".
+std::string display_version(const Nca* control) {
+    if (!control) return "";
+    try {
+        const int rs = control->romfs_section();
+        if (rs < 0) return "";
+        auto rom = Romfs::open(control->open_romfs_image(rs));
+        for (const RomfsFile& f : rom->files()) {
+            if (f.path != "control.nacp" || f.size < 0x3070) continue;
+            char v[17] = {};
+            rom->open_file(f)->read(0x3060, v, 16);
+            std::string s(v);
+            if (s.find_first_not_of("0123456789.") != std::string::npos) return "";
+            return s;
+        }
+    } catch (const std::exception& e) {
+        MPRS_LOGW("Could not read the version from the dump: %s", e.what());
+    }
+    return "";
+}
+
+std::string main_build_id(const Pfs& exefs) {
+    const PfsEntry* m = exefs.find("main");
+    if (!m) fail(Fail::Input, "The dump's game program is incomplete (\"main\" is missing).");
+    return nso_read_info(*exefs.open_file(*m)).build_id();
+}
 
 void load_keys(const SetupOptions& o, KeySet& keys) {
     std::vector<std::string> files = o.key_files;
@@ -156,37 +225,76 @@ void load_keys(const SetupOptions& o, KeySet& keys) {
 std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
     auto d = std::make_unique<Opened>();
     load_keys(o, d->keys);
-    d->c = open_container(o.input_path);
-    MPRS_LOGI("Dump: %s, %zu archives", d->c->kind.c_str(), d->c->ncas.size());
-    d->t = find_program(*d->c, d->keys, o.expected_title_id);
-    if (d->t.have_version && d->t.title_version != 0)
-        fail(Fail::Input, "This is version %u of the game. Only the original v%s release is supported (updates change the "
-                          "game program).", d->t.title_version, game().version);
-    d->version = d->t.have_version ? game().version : "";
-    d->exefs = d->t.program->open_pfs0(0);
+    const std::vector<std::string> inputs = setup_inputs(o);
+    if (inputs.empty()) fail(Fail::Input, "No game dump was chosen.");
+    std::vector<const Container*> cs;
+    for (const std::string& in : inputs) {
+        d->c.push_back(open_container(in));
+        cs.push_back(d->c.back().get());
+        if (!d->kinds.empty()) d->kinds += " + ";
+        d->kinds += d->c.back()->kind;
+        MPRS_LOGI("Dump: %s, %s, %zu archives", in.c_str(), d->c.back()->kind.c_str(), d->c.back()->ncas.size());
+    }
+    d->t = select_titles(cs, d->keys, o.expected_title_id);
+    const Nca* base = d->t.base.get();
+    const Nca* patch = d->t.patch.get();
+    for (u32 v : d->t.other_patches) MPRS_LOGI("An older update (v%u) was also given; the newest one is used.", v);
+    const std::string shown = display_version(d->t.control.get());
+    if (patch) d->update = shown.empty() ? "v" + std::to_string(d->t.patch_version) : shown;
+
+    d->program = patch ? patch : base;
+    d->exefs = d->program->open_pfs0(0);
     for (const char* need : {"main", "rtld", "sdk", "subsdk0", "main.npdm"})
         if (!d->exefs->find(need)) fail(Fail::Input, "The dump's game program is incomplete (\"%s\" is missing).", need);
-    NsoInfo ni = nso_read_info(*d->exefs->open_file(*d->exefs->find("main")));
-    d->build_id = ni.build_id();
-    if (d->build_id != o.expected_build_id)
-        fail(Fail::Input, "This is not the v%s version of the game (its program has build id %s, expected %s). Only the original v%s "
-                          "release is supported.", game().version, d->build_id.c_str(), o.expected_build_id.c_str(), game().version);
-    int rom_section = -1;
-    for (int i = 0; i < 4; ++i)
-        if (const NcaSection* s = d->t.program->section(i))
-            if (s->fs_type == 0 && s->hash_type == 3) { rom_section = i; break; }
-    if (rom_section < 0) fail(Fail::Input, "The dump has no game data (RomFS) section.");
-    d->rom = Romfs::open(d->t.program->open_romfs_image(rom_section));
-    MPRS_LOGI("Game %s version %s, program %s, %zu files (%s)", o.expected_title_id.c_str(), d->version.c_str(), d->build_id.c_str(),
-              d->rom->files().size(), gb(d->rom->total_file_bytes()).c_str());
-    return d;
-}
+    d->build_id = main_build_id(*d->exefs);
+    const std::vector<Supported> sup = supported_builds(o);
+    const Supported* match = nullptr;
+    for (const Supported& x : sup)
+        if (x.build_id == norm_build(d->build_id)) match = &x;
+    if (!match) {
+        std::string found = !shown.empty() ? "v" + shown : patch ? "update v" + std::to_string(d->t.patch_version) : "the base game";
+        std::string hint;
+        if (patch) {
+            try {
+                const std::string bb = norm_build(main_build_id(*base->open_pfs0(0)));
+                for (const Supported& x : sup)
+                    if (x.build_id == bb) hint = " The base game alone is supported: leave the update out.";
+            } catch (const Error&) {
+            }
+        }
+        fail(Fail::Input, "This version of the game is not supported: found %s (program build id %s). Supported: %s.%s",
+             found.c_str(), d->build_id.c_str(), supported_text(sup).c_str(), hint.c_str());
+    }
+    d->version = !shown.empty() ? shown : (d->t.have_version || patch) ? match->version : "";
 
-int rom_section_of(const Nca& n) {
-    for (int i = 0; i < 4; ++i)
-        if (const NcaSection* s = n.section(i))
-            if (s->fs_type == 0 && s->hash_type == 3) return i;
-    return -1;
+    const int rs = base->romfs_section();
+    if (rs < 0) fail(Fail::Input, "The dump has no game data (RomFS) section.");
+    if (patch) {
+        const int prs = patch->romfs_section();
+        if (prs < 0) fail(Fail::Input, "The update has no game data (RomFS) section.");
+        d->rom = Romfs::open(patch->open_romfs_image(prs, base));
+    } else {
+        d->rom = Romfs::open(base->open_romfs_image(rs));
+    }
+    MPRS_LOGI("Game %s version %s%s%s, program %s, %zu files (%s)", o.expected_title_id.c_str(), d->version.c_str(),
+              patch ? ", update " : "", d->update.c_str(), d->build_id.c_str(), d->rom->files().size(),
+              gb(d->rom->total_file_bytes()).c_str());
+
+    for (AocContent& a : d->t.aoc) {
+        try {
+            const int ars = a.data->romfs_section();
+            if (ars < 0) fail(Fail::Input, "no RomFS section");
+            char dir[32];
+            std::snprintf(dir, sizeof dir, "aoc/%016llX", (unsigned long long)a.title_id);
+            OpenedAoc oa{a.title_id, a.version, dir, Romfs::open(a.data->open_romfs_image(ars))};
+            MPRS_LOGI("DLC %s v%u: %zu files (%s)", dir + 4, a.version, oa.rom->files().size(), gb(oa.rom->total_file_bytes()).c_str());
+            d->aoc.push_back(std::move(oa));
+        } catch (const Error& e) {
+            if (e.kind == Fail::Cancelled) throw;
+            MPRS_LOGW("DLC %016llX cannot be read and is skipped: %s", (unsigned long long)a.title_id, e.what());
+        }
+    }
+    return d;
 }
 
 u64 bytes_missing(const std::string& dir, const std::string& rel, u64 size) {
@@ -322,14 +430,25 @@ void write_program_list(const SetupOptions& o, const std::function<bool()>& canc
 
 }  // namespace
 
+std::vector<std::string> setup_inputs(const SetupOptions& o) {
+    std::vector<std::string> v;
+    if (!o.input_path.empty()) v.push_back(o.input_path);
+    for (const std::string& p : o.input_paths)
+        if (!p.empty()) v.push_back(p);
+    return v;
+}
+
 InputSummary inspect_input(const SetupOptions& o) {
     InputSummary s;
     try {
         auto d = open_dump(o);
-        s.container = d->c->kind;
+        s.container = d->kinds;
         s.title_id = o.expected_title_id;
         s.version = d->version;
         s.build_id = d->build_id;
+        s.update = d->update;
+        s.dlc_count = static_cast<u32>(d->aoc.size());
+        for (auto& a : d->aoc) s.dlc_bytes += a.rom->total_file_bytes();
         s.romfs_files = static_cast<u32>(d->rom->files().size());
         s.romfs_bytes = d->rom->total_file_bytes();
         for (auto& e : d->exefs->entries()) s.exefs_bytes += e.size;
@@ -338,6 +457,8 @@ InputSummary inspect_input(const SetupOptions& o) {
         u64 need = 0;
         for (auto& e : d->exefs->entries()) need += bytes_missing(path_join(o.out_dir, "exefs"), e.name, e.size);
         for (auto& f : d->rom->files()) need += bytes_missing(path_join(o.out_dir, "romfs"), f.path, f.size);
+        for (auto& a : d->aoc)
+            for (auto& f : a.rom->files()) need += bytes_missing(path_join(o.out_dir, a.dir), f.path, f.size);
         if (!o.skip_textures && st.get_meta("textures_done").empty()) need += kBc7Estimate;
         if (!find_shader_source(o).empty()) need += kShaderEstimate;
         s.disk_needed = need + need / 50;
@@ -370,7 +491,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
     auto cancelled = [&] { return r.cancel_requested(); };
     auto check_cancel = [&] { if (cancelled()) fail(Fail::Cancelled, "Stopped by the user. Run setup again to continue where it left off."); };
     State st(path_join(o.out_dir, kStateName));
-    for (const char* sub : {"exefs", "romfs", "bc7_cache", "shader_cache"})
+    for (const char* sub : {"exefs", "romfs", "aoc", "bc7_cache", "shader_cache"})
         if (int n = remove_part_files(path_join(o.out_dir, sub))) MPRS_LOGI("Removed %d unfinished file(s) from an earlier run in %s.", n, sub);
     auto begin = [&](Stage s, u64 total, const char* unit) {
         MPRS_LOGI("%s", stage_name(s));
@@ -389,16 +510,24 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         auto d = open_dump(o);
         if (o.verify_input) {
             MPRS_LOGI("Checking the dump's own hashes (this reads the whole file once).");
-            const int rs = rom_section_of(*d->t.program);
+            struct Check { const Nca* n; int sec; const Nca* base; };
+            std::vector<Check> checks{{d->program, 0, nullptr}};
+            if (d->t.patch) checks.push_back({d->t.patch.get(), d->t.patch->romfs_section(), d->t.base.get()});
+            else checks.push_back({d->t.base.get(), d->t.base->romfs_section(), nullptr});
+            for (const AocContent& a : d->t.aoc)
+                if (std::any_of(d->aoc.begin(), d->aoc.end(), [&](const OpenedAoc& x) { return x.title_id == a.title_id; }))
+                    checks.push_back({a.data.get(), a.data->romfs_section(), nullptr});
             u64 total = 0;
-            for (int i : {0, rs}) if (const NcaSection* s = d->t.program->section(i)) total += s->size;
+            for (const Check& c : checks)
+                if (const NcaSection* s = c.n->section(c.sec)) total += s->size;
             r.stage_begin(Stage::Inspect, stage_name(Stage::Inspect), total, "bytes");
             u64 base = 0;
-            for (int i : {0, rs}) {
-                const NcaSection* s = d->t.program->section(i);
+            for (const Check& c : checks) {
+                const NcaSection* s = c.n->section(c.sec);
                 if (!s) continue;
                 u64 b0 = base;
-                d->t.program->verify_section(i, [&](u64 done, u64 tot) { r.stage_progress(b0 + done * s->size / std::max<u64>(tot, 1)); }, cancelled);
+                c.n->verify_section(c.sec, [&](u64 done, u64 tot) { r.stage_progress(b0 + done * s->size / std::max<u64>(tot, 1)); },
+                                    cancelled, c.base);
                 base += s->size;
             }
             MPRS_LOGI("The dump's hashes are all correct.");
@@ -409,6 +538,12 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
 
         st.set_meta("title_id", o.expected_title_id);
         st.set_meta("build_id", d->build_id);
+        st.set_meta("update", d->update);
+        {
+            std::string aoc;
+            for (auto& a : d->aoc) aoc += (aoc.empty() ? "" : ",") + a.dir.substr(4) + ":" + std::to_string(a.version);
+            st.set_meta("aoc", aoc);
+        }
 
         // ---- Space -----------------------------------------------------------------------------------------------------
         t0 = begin(Stage::Space, 0, "");
@@ -418,6 +553,8 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             u64 need = 0;
             for (auto& e : d->exefs->entries()) need += bytes_missing(exedir, e.name, e.size);
             for (auto& f : d->rom->files()) need += bytes_missing(romdir, f.path, f.size);
+            for (auto& a : d->aoc)
+                for (auto& f : a.rom->files()) need += bytes_missing(path_join(o.out_dir, a.dir), f.path, f.size);
             if (!o.skip_textures && st.get_meta("textures_done").empty()) need += kBc7Estimate;
             if (!find_shader_source(o).empty()) need += kShaderEstimate;
             need += need / 50 + (64u << 20);
@@ -457,14 +594,24 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
 
         // ---- RomFS -----------------------------------------------------------------------------------------------------
         {
-            const u64 total = d->rom->total_file_bytes();
+            struct Job { const Romfs* fs; const RomfsFile* f; const std::string* dir; };
+            const std::string romfs_dir = "romfs";
+            std::vector<Job> order;
+            u64 total = d->rom->total_file_bytes();
+            for (auto& f : d->rom->files()) order.push_back({d->rom.get(), &f, &romfs_dir});
+            std::sort(order.begin(), order.end(), [](const Job& a, const Job& b) { return a.f->offset < b.f->offset; });
+            create_dirs(path_join(o.out_dir, "romfs"));
+            for (const std::string& dir : d->rom->dirs()) create_dirs(to_win(path_join(path_join(o.out_dir, "romfs"), dir)));
+            for (auto& a : d->aoc) {
+                const size_t first = order.size();
+                for (auto& f : a.rom->files()) order.push_back({a.rom.get(), &f, &a.dir});
+                std::sort(order.begin() + first, order.end(), [](const Job& x, const Job& y) { return x.f->offset < y.f->offset; });
+                total += a.rom->total_file_bytes();
+                const std::string top = to_win(path_join(o.out_dir, a.dir));
+                create_dirs(top);
+                for (const std::string& dir : a.rom->dirs()) create_dirs(to_win(path_join(top, dir)));
+            }
             t0 = begin(Stage::Romfs, total, "bytes");
-            const std::string romdir = path_join(o.out_dir, "romfs");
-            create_dirs(romdir);
-            for (const std::string& dir : d->rom->dirs()) create_dirs(to_win(path_join(romdir, dir)));
-            std::vector<const RomfsFile*> order;
-            for (auto& f : d->rom->files()) order.push_back(&f);
-            std::sort(order.begin(), order.end(), [](const RomfsFile* a, const RomfsFile* b) { return a->offset < b->offset; });
             std::atomic<size_t> next{0};
             std::atomic<u64> done{0}, written{0}, wfiles{0}, sfiles{0};
             std::atomic<bool> stop{false};
@@ -479,10 +626,10 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                         if (stop) return;
                         size_t i = next++;
                         if (i >= order.size()) return;
-                        const RomfsFile& f = *order[i];
-                        const std::string rel = "romfs/" + f.path;
+                        const RomfsFile& f = *order[i].f;
+                        const std::string rel = *order[i].dir + "/" + f.path;
                         const std::string dest = to_win(path_join(o.out_dir, rel));
-                        StoragePtr src = d->rom->open_file(f);
+                        StoragePtr src = order[i].fs->open_file(f);
                         std::string sha;
                         if (file_is_done(dest, rel, f.size, st, o.verify_output, src.get(), [&] { return stop.load() || cancelled(); }, sha)) {
                             r.stage_progress(done += f.size);

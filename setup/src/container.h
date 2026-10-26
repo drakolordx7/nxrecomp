@@ -40,4 +40,43 @@ struct DumpTitle {
 // what the dump is instead (another game, an update-only dump, DLC only) when it is not there.
 DumpTitle find_program(const Container& c, const KeySet& keys, const std::string& title_id);
 
+// ---- several inputs: base game, update, DLC ----------------------------------------------------------------------------------
+
+enum class MetaType : u8 { Application = 0x80, Patch = 0x81, AddOnContent = 0x82 };
+
+// One content meta (the .cnmt file inside a Meta NCA).
+struct ContentMeta {
+    u64 title_id = 0;
+    u32 version = 0;
+    u8 type = 0;                         // MetaType value (others are kept but not used)
+    u64 application_id = 0;              // Patch / AddOnContent: the game's title id (extended header), else 0
+    struct Content { std::string id; u8 type = 0; };   // id: 32 lower-case hex digits; type: 0 meta, 1 program, 2 data, 3 control
+    std::vector<Content> contents;
+};
+// Parses the bytes of a .cnmt file. Throws Error(Input) when it is too short.
+ContentMeta parse_cnmt(const std::vector<u8>& bytes);
+
+struct AocContent {
+    u64 title_id = 0;
+    u32 version = 0;
+    std::unique_ptr<Nca> data;           // the Data / PublicData NCA (its RomFS holds the DLC files)
+};
+
+// What the inputs hold for one game: the base program, the newest update for it and every DLC of it.
+struct DumpSet {
+    u64 title_id = 0;
+    std::unique_ptr<Nca> base;           // the Application's program NCA
+    u32 base_version = 0;
+    bool have_version = false;           // a CNMT for the base was found
+    std::unique_ptr<Nca> patch;          // the newest Patch's program NCA, or null
+    u32 patch_version = 0;
+    std::unique_ptr<Nca> control;        // the control NCA of the update, else of the base (may be null)
+    std::vector<AocContent> aoc;         // sorted by title id
+    std::vector<u32> other_patches;      // versions of older updates that were found and not used
+};
+// Classifies every content of every input by its CNMT and picks the Application of `title_id`, the newest Patch (title id
+// + 0x800) and the newest version of every AddOnContent (title id + 0x1000 and up, same upper bits). Tickets of all inputs are
+// used for every input. Throws like find_program when the base game is not there.
+DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet& keys, const std::string& title_id);
+
 }  // namespace mprs

@@ -6,7 +6,11 @@ You run it once. It needs about 13 GB of free disk space and takes about 5 minut
 ## What you need
 
 - A dump of the game, version 1.0.0, made from your own Switch: an `.nsp` (eShop) or `.xci` (cartridge) file.
-  `.nsz` and `.xcz` work too. Updates and patches are not supported. The base game is title id `010012101468C000`.
+  `.nsz` and `.xcz` work too. The base game is title id `010012101468C000`.
+- Only for a game whose supported version is an update: the update file too (an `.nsp` from the eShop, or the cartridge dump if
+  the cartridge carries it). Give the base game and the update together, in any order; setup applies the newest update it is
+  given and says which version it found and which versions it supports. Metroid Prime Remastered needs no update.
+- Optional: DLC files (`.nsp`). Setup copies each DLC's files to `aoc\<title id>\` in the install folder.
 - Your Switch keys (`prod.keys`), dumped from your own console with Lockpick_RCM. The tool only reads the file and never
   copies or uploads it. If you use an emulator (yuzu, Eden, Ryujinx and similar), the tool finds its keys by itself.
   If your eShop dump was bought on another console, put that console's title key in a `title.keys` file next to `prod.keys`.
@@ -17,7 +21,8 @@ You run it once. It needs about 13 GB of free disk space and takes about 5 minut
 ## Run it
 
 1. Start `mpr_setup.exe`.
-2. Pick your dump file, or drag it into the window. Check the green line under it.
+2. Pick your dump file, or drag it into the window (pick or drag the update and DLC files with it, if you have them). Check the
+   green line under it.
 3. Pick the keys file if it was not found, and the install folder.
 4. Press **Start setup**. You can press **Stop** at any time and run it again later; it carries on where it left off.
 
@@ -27,6 +32,7 @@ When it finishes, the install folder has everything the game needs. Start the ga
 
 ```text
 mpr_setup_cli --input "Metroid Prime Remastered.nsp" --out D:\MPR [--keys prod.keys] [--quality 3] [--threads 8]
+mpr_setup_cli --input base.xci --input update.nsp --input dlc.nsp --out D:\Game   # base game + update + DLC (or --input a,b,c)
 mpr_setup_cli --input dump.nsp --check            # only look at the dump, write nothing
 mpr_setup_cli --find-keys                         # list key files it can find
 mpr_setup_cli --input dump.nsp --out D:\MPR --shader-pack D:\packs\shader_cache.mprshc   # pack from another place (--shader-cache also works)
@@ -40,7 +46,8 @@ Exit codes: 0 done, 1 error, 2 the dump cannot be used or the shader pack is mis
 ```
 <install folder>\
   exefs\            the game program (copied from the dump unchanged)
-  romfs\            the game's data files
+  romfs\            the game's data files (with the update applied, when one was given)
+  aoc\<title id>\   the files of each DLC that was given
   bc7_cache\        the game's textures converted to a format PC graphics cards read directly (about 4.4 GB)
   shader_cache\     translated shaders, copied from the shader pack
                     programs.bin lists the shader programs of your own game files; the game compiles them ahead from it (see "Prepare shaders" in the launcher)
@@ -83,7 +90,10 @@ the noise texture) and the mean from 48.4 to 50.0 dB; textures under 33 dB went 
 
 - **"The keys cannot open this dump"**: your keys file is older than the game. Dump the keys again from a console on recent
   firmware.
-- **"This is an update"** or **"different game"**: use the original v1.0.0 base game dump.
+- **"This is an update"**: the update was given without the base game. Give both.
+- **"This version of the game is not supported"**: the message names the version found and the supported ones. Give the
+  supported update with the base game, or leave an unsupported update out.
+- **"different game"**: use the dump of this game.
 - **"The dump is damaged"**: the file was not copied completely or is corrupt. Copy it again, or dump the game again. The tool
   checks the dump's own hashes before it writes anything.
 - "Shader pack not found": put `shader_cache.mprshc` in the same folder as `mpr_setup.exe`, or start setup with

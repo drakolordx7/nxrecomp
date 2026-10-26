@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "bktr.h"
 #include "crypto.h"
 #include "log.h"
 
@@ -14,40 +15,6 @@ u32 rd32(const u8* p) { return u32(p[0]) | u32(p[1]) << 8 | u32(p[2]) << 16 | u3
 u64 rd64(const u8* p) { return u64(rd32(p)) | u64(rd32(p + 4)) << 32; }
 
 constexpr u64 kNcaHeaderSize = 0xC00;
-
-// AES-128-CTR over an encrypted section. The counter is ctr_hi (8 bytes) followed by the big-endian 64-bit value
-// (absolute byte offset inside the NCA file) / 16.
-class AesCtrStorage final : public IStorage {
-public:
-    AesCtrStorage(StoragePtr base, const Key128& key, const std::array<u8, 8>& hi, u64 nca_offset)
-        : base_(std::move(base)), key_(key), hi_(hi), nca_off_(nca_offset) {}
-    u64 size() const override { return base_->size(); }
-    void read(u64 off, void* buf, size_t len) const override {
-        if (len == 0) return;
-        u64 abs = nca_off_ + off;
-        u64 a = abs & ~u64(15);
-        size_t extra = static_cast<size_t>(abs - a);
-        u8 ctr[16];
-        std::memcpy(ctr, hi_.data(), 8);
-        u64 blk = a >> 4;
-        for (int i = 0; i < 8; ++i) ctr[8 + i] = static_cast<u8>(blk >> (56 - 8 * i));
-        if (extra == 0) {
-            base_->read(off, buf, len);
-            aes_ctr_crypt(key_.data(), ctr, buf, len);
-        } else {
-            std::vector<u8> tmp(extra + len);
-            // bytes before `off` inside the 16-byte block are not needed from storage; zero them (their key stream is discarded)
-            base_->read(off, tmp.data() + extra, len);
-            aes_ctr_crypt(key_.data(), ctr, tmp.data(), tmp.size());
-            std::memcpy(buf, tmp.data() + extra, len);
-        }
-    }
-private:
-    StoragePtr base_;
-    Key128 key_;
-    std::array<u8, 8> hi_;
-    u64 nca_off_;
-};
 
 std::string rights_hex(const std::array<u8, 16>& r) { return hex_encode(r.data(), 16); }
 
@@ -107,6 +74,23 @@ std::unique_ptr<Nca> Nca::open(StoragePtr file, const KeySet& keys, const Ticket
         s.hash_type = s.header[3];
         s.enc_type = s.header[4];
         for (int k = 0; k < 8; ++k) s.ctr_hi[k] = s.header[0x140 + 7 - k];
+        const u8* hd = s.header.data();
+        s.meta_hash_type = hd[5];
+        if (std::memcmp(hd + 0x110, "BKTR", 4) == 0) {
+            s.indirect_off = rd64(hd + 0x100);
+            s.indirect_size = rd64(hd + 0x108);
+            s.indirect_count = rd32(hd + 0x118);
+        }
+        if (std::memcmp(hd + 0x130, "BKTR", 4) == 0) {
+            s.aes_ctr_ex_off = rd64(hd + 0x120);
+            s.aes_ctr_ex_size = rd64(hd + 0x128);
+            s.aes_ctr_ex_count = rd32(hd + 0x138);
+        }
+        s.sparse_generation = static_cast<u16>(hd[0x170] | hd[0x171] << 8);
+        s.compression_size = rd64(hd + 0x180);
+        if (s.indirect_off > s.size || s.indirect_size > s.size - s.indirect_off || s.aes_ctr_ex_off > s.size ||
+            s.aes_ctr_ex_size > s.size - s.aes_ctr_ex_off)
+            fail(Fail::Input, "An update table in the dump points outside its section.");
     }
     return n;
 }
@@ -140,15 +124,48 @@ Key128 Nca::section_key(const NcaSection& s) const {
     return out;
 }
 
-StoragePtr Nca::open_section(int i) const {
+StoragePtr Nca::open_section(int i, const Nca* base) const {
     const NcaSection* s = section(i);
     if (!s) fail(Fail::Input, "The dump has no section %d in an archive where one is expected.", i);
+    if (s->sparse_generation != 0)
+        fail(Fail::Input, "An archive in the dump is stored sparse (a layout this setup does not read yet).");
+    if (s->compression_size != 0)
+        fail(Fail::Input, "An archive in the dump is compressed inside (a layout this setup does not read yet).");
     StoragePtr raw = make_sub_storage(file_, s->offset, s->size);
-    if (s->enc_type == 1) return raw;
-    if (s->enc_type == 3) return std::make_shared<AesCtrStorage>(raw, section_key(*s), s->ctr_hi, s->offset);
-    if (s->enc_type == 4)
-        fail(Fail::Input, "This is a game update (patch) file. Only the original v1.0.0 game dump is supported.");
-    fail(Fail::Input, "An archive in the dump uses an encryption mode (%u) that is not supported.", (unsigned)s->enc_type);
+    if (s->enc_type != 1 && s->enc_type != 3 && s->enc_type != 4)
+        fail(Fail::Input, "An archive in the dump uses an encryption mode (%u) that is not supported.", (unsigned)s->enc_type);
+    if (!s->is_patch()) {
+        if (s->enc_type == 1) return raw;
+        if (s->enc_type == 3) return make_aes_ctr_storage(raw, section_key(*s), s->ctr_hi, s->offset);
+        fail(Fail::Input, "An archive in the dump is an update section without its patch table.");
+    }
+    if (!base)
+        fail(Fail::Input, "This is a game update (patch). Its data is a change to the base game, so setup needs the base game "
+                          "dump too (give it as another input).");
+    const int brs = base->romfs_section();
+    if (brs < 0) fail(Fail::Input, "The base game has no RomFS section for the update to apply to.");
+    const Key128 key = s->enc_type == 1 ? Key128{} : section_key(*s);
+    // The patch tables use the section's own counter; the data regions use the AES-CTR-EX entries.
+    StoragePtr plain = s->enc_type == 1 ? raw : make_aes_ctr_storage(raw, key, s->ctr_hi, s->offset);
+    u64 ind_end = 0;
+    std::vector<IndirectEntry> ind =
+        parse_indirect_table(read_all(*plain, s->indirect_off, static_cast<size_t>(s->indirect_size)), s->indirect_count, ind_end);
+    StoragePtr data = plain;
+    if (s->enc_type == 4) {
+        if (s->aes_ctr_ex_size == 0) fail(Fail::Input, "The update has no encryption table.");
+        u64 ex_end = 0;
+        std::vector<AesCtrExEntry> ex = parse_aes_ctr_ex_table(
+            read_all(*plain, s->aes_ctr_ex_off, static_cast<size_t>(s->aes_ctr_ex_size)), s->aes_ctr_ex_count, ex_end);
+        data = make_aes_ctr_ex_storage(raw, key, s->ctr_hi, s->offset, std::move(ex), ex_end);
+    }
+    return make_indirect_storage(std::move(ind), ind_end, base->open_section(brs), data);
+}
+
+int Nca::romfs_section() const {
+    for (int i = 0; i < 4; ++i)
+        if (const NcaSection* s = section(i))
+            if (s->fs_type == 0 && s->hash_type == 3) return i;
+    return -1;
 }
 
 namespace {
@@ -178,7 +195,8 @@ struct Ivfc {
     std::array<u8, 32> master{};
     std::vector<IvfcLevel> level;
 };
-Ivfc parse_ivfc(const NcaSection& s) {
+// limit = the size of the opened section (an updated section is larger than the update's own bytes).
+Ivfc parse_ivfc(const NcaSection& s, u64 limit) {
     const u8* hd = s.header.data() + 8;
     if (std::memcmp(hd, "IVFC", 4) != 0) fail(Fail::Input, "The RomFS section of the dump has no integrity tree header.");
     Ivfc t;
@@ -187,7 +205,7 @@ Ivfc parse_ivfc(const NcaSection& s) {
     for (u32 i = 0; i + 1 < nlev; ++i) {
         const u8* e = hd + 0x10 + 0x18 * i;
         IvfcLevel l{rd64(e), rd64(e + 8), rd32(e + 16)};
-        if (l.bs < 9 || l.bs > 24 || l.off > s.size || l.size > s.size - l.off)
+        if (l.bs < 9 || l.bs > 24 || l.off > limit || l.size > limit - l.off)
             fail(Fail::Input, "The RomFS integrity tree points outside its section.");
         t.level.push_back(l);
     }
@@ -205,20 +223,20 @@ std::unique_ptr<Pfs> Nca::open_pfs0(int i) const {
     return Pfs::open(make_sub_storage(sec, l.data_off, l.data_size));
 }
 
-StoragePtr Nca::open_romfs_image(int i) const {
+StoragePtr Nca::open_romfs_image(int i, const Nca* base) const {
     const NcaSection* s = section(i);
     if (!s || s->fs_type != 0 || s->hash_type != 3)
         fail(Fail::Input, "The dump does not have the expected RomFS section.");
-    Ivfc t = parse_ivfc(*s);
-    StoragePtr sec = open_section(i);
+    StoragePtr sec = open_section(i, base);
+    Ivfc t = parse_ivfc(*s, sec->size());
     const IvfcLevel& d = t.level.back();
     return make_sub_storage(sec, d.off, d.size);
 }
 
-u64 Nca::verify_section(int i, const ProgressFn& progress, const CancelFn& cancelled) const {
+u64 Nca::verify_section(int i, const ProgressFn& progress, const CancelFn& cancelled, const Nca* base) const {
     const NcaSection* s = section(i);
     if (!s) fail(Fail::Input, "The dump has no section %d to check.", i);
-    StoragePtr sec = open_section(i);
+    StoragePtr sec = open_section(i, base);
     u64 hashed = 0;
     auto check_cancel = [&] {
         if (cancelled && cancelled()) fail(Fail::Cancelled, "Stopped by the user.");
@@ -269,7 +287,7 @@ u64 Nca::verify_section(int i, const ProgressFn& progress, const CancelFn& cance
         return hashed;
     }
     if (s->hash_type == 3) {
-        Ivfc t = parse_ivfc(*s);
+        Ivfc t = parse_ivfc(*s, sec->size());
         // level 0 against the master hash (one block covering the whole level)
         {
             std::vector<u8> l0 = read_all(*sec, t.level[0].off, static_cast<size_t>(t.level[0].size));
