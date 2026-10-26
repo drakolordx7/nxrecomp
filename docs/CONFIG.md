@@ -309,7 +309,7 @@ Both are on the launcher's Tweaks tab and the F1 page's Tweaks tab (a switch, th
 
 `[mouse] ball_camera`, default `1`: in the morph ball, the mouse and the right stick turn the camera around the ball. Moving the mouse left or right puts the camera on another side of the ball, and it stays there; the ball then rolls in the direction you see. Moving the mouse up or down raises or lowers the camera, between just above the floor and almost overhead. The vertical part goes back to normal when you leave the ball. Rooms with a fixed or scripted camera keep it. `0` gives you the game's own camera, which the mouse does not move. Details in `docs/S48.md`.
 
-`[mouse] ball_sensitivity`, default `2`: how fast the mouse turns the morph ball camera, on the same Source engine scale as the settings page (2 is the same speed as the default aim). It sets both directions. Older files with `morph_yaw` and `morph_pitch` (radians per count) still load. A vertical speed of its own can be kept by putting `morph_pitch = <radians per count>` after `ball_sensitivity`; the game writes it that way when the two differ.
+`[mouse] ball_sensitivity`, default `2`, range `0.1` to `20`: how fast the mouse turns the morph ball camera, on the same Source engine scale as the settings page (2 is the same speed as the default aim). It sets both directions. Older files with `morph_yaw` and `morph_pitch` (radians per count) still load. A vertical speed of its own can be kept by putting `morph_pitch = <radians per count>` after `ball_sensitivity`; the game writes it that way when the two differ.
 
 ## Window modes and the picture (`controls.ini`, `[display]`)
 

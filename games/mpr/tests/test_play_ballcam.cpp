@@ -136,7 +136,54 @@ NXTEST(pitch_range_follows_the_camera_height) {
     CHECK_NEAR(play::clamp_ball_pitch(0.1, elev, lo, hi), 0.1, 1e-12);                 // inside: as asked
     CHECK_NEAR(play::clamp_ball_pitch(1.0, elev, lo, hi), elev - lo, 1e-12);           // looking up lowers the camera: stops 5 degrees above the ball
     CHECK_NEAR(play::clamp_ball_pitch(-2.0, elev, lo, hi), elev - hi, 1e-12);          // looking down raises it: stops at 80 degrees
-    CHECK_NEAR(play::clamp_ball_pitch(0.0, 2.0, lo, hi), 2.0 - hi, 1e-12);             // a camera the game put too high is brought into range
+}
+
+NXTEST(pitch_range_never_flips_the_sign) {
+    const double lo = play::kBallMinElevation, hi = play::kBallMaxElevation;
+    // the game put the camera below the lowest height: looking up gives nothing, and never a push the other way (the camera would rise against the input)
+    CHECK(play::clamp_ball_pitch(0.3, 0.5 * lo, lo, hi) == 0.0);
+    CHECK_NEAR(play::clamp_ball_pitch(-0.3, 0.5 * lo, lo, hi), -0.3, 1e-12);          // looking down still works there
+    // above the highest: looking down gives nothing, looking up works
+    CHECK(play::clamp_ball_pitch(-0.3, hi + 0.1, lo, hi) == 0.0);
+    CHECK_NEAR(play::clamp_ball_pitch(0.3, hi + 0.1, lo, hi), 0.3, 1e-12);
+    for (double e = -1.0; e <= 2.0; e += 0.05)
+        for (double w = -1.5; w <= 1.5; w += 0.1) {
+            const double p = play::clamp_ball_pitch(w, e, lo, hi);
+            CHECK(p * w >= 0.0);                       // same sign as asked (or 0)
+            CHECK(std::fabs(p) <= std::fabs(w) + 1e-15);   // never more than asked
+        }
+}
+
+NXTEST(think_drops_everything_while_the_camera_is_not_free) {
+    play::LookParams p;
+    p.pitch_limit_rad = play::kBallMaxElevation;
+    play::BallOrbit o;
+    o.add_mouse(200, -100, p);
+    CHECK(o.begin_think(false) == 0.0);               // a room camera: the yaw is not applied
+    CHECK(o.end_think(false, 0.5) == 0.0);            // nor the pitch
+    CHECK(o.pending_yaw() == 0.0);
+    CHECK(o.pitch() == 0.0);                          // and neither is kept for later
+    CHECK(o.begin_think(true) == 0.0);                // free again: nothing left over
+    CHECK(o.end_think(true, 0.5) == 0.0);
+}
+
+NXTEST(think_applies_and_keeps_the_turn_while_free) {
+    play::LookParams p;
+    p.pitch_limit_rad = play::kBallMaxElevation;
+    play::BallOrbit o;
+    o.add_mouse(-100, -50, p);
+    CHECK_NEAR(o.begin_think(true), 100 * p.yaw_rad, 1e-12);
+    CHECK(o.begin_think(true) == 0.0);                // the yaw is applied once
+    const double elev = 30.0 * kPi / 180.0;
+    CHECK_NEAR(o.end_think(true, elev), 50 * p.pitch_rad, 1e-12);
+    CHECK_NEAR(o.end_think(true, elev), 50 * p.pitch_rad, 1e-12);   // the pitch is held from Think to Think
+    // pushed past the lowest height: the stored offset is what was applied, so moving back down acts at once
+    o.add_mouse(0, -100000, p);
+    const double at_limit = o.end_think(true, elev);
+    CHECK_NEAR(at_limit, elev - play::kBallMinElevation, 1e-12);
+    CHECK_NEAR(o.pitch(), at_limit, 1e-12);
+    o.reset();                                        // leaving the ball (the ProcessInput hook resets on unmorph)
+    CHECK(o.pitch() == 0.0 && o.pending_yaw() == 0.0);
 }
 
 NXTEST(yaw_turn_moves_the_camera_around_the_ball) {

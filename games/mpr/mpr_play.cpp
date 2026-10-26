@@ -229,7 +229,7 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
         st.ball_behaviour = behaviour;
         st.ball_free = ballcam_free(state, behaviour);
         have_pivot = ball_pivot(pivot);
-        const double yaw = st.ball.take_yaw();          // a turn made while the room's camera rules is dropped
+        const double yaw = st.ball.begin_think(st.ball_free);   // a turn made while the room's camera rules is dropped (yaw and pitch)
         if (yaw != 0 && st.ball_free && have_pivot && read_xf(cam, &xfp, cur)) {
             float out[12];
             orbit_transform(cur, pivot, yaw, 0.0, out);
@@ -273,10 +273,9 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
     }
     if (ball) {
         st.ball_applied_pitch = 0;
-        if (st.ball_free && have_pivot && st.ball.pitch() != 0) {
-            // keep the camera between kBallMinElevation and kBallMaxElevation above the ball; a push past the limit is not stored, so the way back is immediate
-            const double p = clamp_ball_pitch(st.ball.pitch(), camera_elevation(work, pivot), kBallMinElevation, kBallMaxElevation);
-            st.ball.set_pitch(p);
+        if (have_pivot && st.ball.pitch() != 0) {
+            // kept between kBallMinElevation and kBallMaxElevation above the ball, only ever shortened toward 0 (play_ballcam.h)
+            const double p = st.ball.end_think(st.ball_free, camera_elevation(work, pivot));
             if (p != 0) {
                 float out[12];
                 orbit_transform(work, pivot, 0.0, p, out);

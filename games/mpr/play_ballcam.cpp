@@ -30,9 +30,25 @@ double camera_elevation(const float xf[12], const float pivot[3]) {
 }
 
 double clamp_ball_pitch(double want, double elev, double min_elev, double max_elev) {
-    const double lo = elev - max_elev, hi = elev - min_elev;
-    if (lo > hi) return 0.0;
-    return std::clamp(want, lo, hi);
+    // Looking up (want > 0) lowers the camera: at most down to min_elev. Looking down raises it: at most up to max_elev. A camera the game already put
+    // past a limit gets no offset that way, and never one of the other sign (that would move the view against the player's input).
+    if (want > 0) return std::min(want, std::max(0.0, elev - min_elev));
+    if (want < 0) return std::max(want, std::min(0.0, elev - max_elev));
+    return 0.0;
+}
+
+double BallOrbit::begin_think(bool free) {
+    if (!free) {          // the room's camera rules: what was asked meanwhile is dropped, yaw and pitch
+        reset();
+        return 0.0;
+    }
+    return take_yaw();
+}
+
+double BallOrbit::end_think(bool free, double elev) {
+    if (!free) return 0.0;
+    pitch_ = clamp_ball_pitch(pitch_, elev, kBallMinElevation, kBallMaxElevation);   // a push past the limit is not kept, so the way back is immediate
+    return pitch_;
 }
 
 void BallOrbit::add_mouse(double dx, double dy, const LookParams& p) {

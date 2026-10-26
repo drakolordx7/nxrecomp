@@ -40,8 +40,8 @@ void camera_heading_pitch(const float xf[12], double* heading, double* pitch);
 // The elevation of the camera above the pivot, radians (0 = level with it, + = above).
 double camera_elevation(const float xf[12], const float pivot[3]);
 
-// The pitch offset (+ = look up, which lowers the camera) that can be applied to a camera at elevation `elev` without leaving
-// [min_elev, max_elev]: `want` clamped to [elev - max_elev, elev - min_elev].
+// The pitch offset (+ = look up, which lowers the camera) that can be applied to a camera at elevation `elev`: `want` shortened so the camera does
+// not pass min_elev (looking up) or max_elev (looking down). It only ever moves toward 0, never changes sign.
 double clamp_ball_pitch(double want, double elev, double min_elev, double max_elev);
 
 // What the input asks of the ball camera: a turn collected until the next Think (yaw, radians, + = view turns left) and a held pitch offset.
@@ -57,6 +57,10 @@ public:
     double pitch() const { return pitch_; }
     void set_pitch(double p) { pitch_ = p; }
     void reset() { yaw_ = pitch_ = 0; }
+    // The Think hook's two steps. Before the game's Think: the yaw to turn the camera by (0 and everything dropped while the camera is not free).
+    double begin_think(bool free);
+    // After it: the pitch offset to apply to a camera at elevation `elev` above the ball (kept within the limits, stored as applied); 0 when not free.
+    double end_think(bool free, double elev);
 private:
     double yaw_ = 0, pitch_ = 0;
 };
