@@ -98,6 +98,7 @@ private:
     std::vector<Seg> segs_;
     uint64_t relro_start_ = 0, relro_size_ = 0;
     uint64_t rela_ = 0, rela_sz_ = 0, jmprel_ = 0, jmprel_sz_ = 0;     // vaddrs from the dynamic section
+    uint64_t relr_ = 0, relr_sz_ = 0;                                 // DT_RELR (SDK 20 modules: packed RELATIVE relocations)
     std::vector<uint64_t> init_rel_, fini_rel_;                       // module-relative init/fini entries read before relocation
     uint64_t init_arr_ = 0, init_arr_sz_ = 0, fini_arr_ = 0, fini_arr_sz_ = 0;
     uint64_t init_fn_ = 0, fini_fn_ = 0;                              // DT_INIT / DT_FINI
