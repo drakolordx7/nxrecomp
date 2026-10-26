@@ -9,10 +9,12 @@
 // whose colours are in the effect assets; their particles are near white, so they get the colour as the generators' modulation colour
 // (CParticleGen::SetModulationColor, called on the guest every frame while on: from CPlayerMP1::ProcessInput for the ball and after
 // CPlayerGunMP1::Update for the gun, both existing hook sites).
-// The glowing stripes of the ball, the cannon's lit parts and the suit's lights are the models' incandescence maps: their draw calls
-// (CModelDataMP1::Render / RenderGun, S44 hook sites, told apart by the return address) get CModelFlagsMPT colour mode 2, the
-// incandescence modulation colour (CModelFlagsMPT::ColorModulateIncan), with the setting's colour.
+// The glowing stripes of the ball are that inner glow and the ball's light (S44c: the CModelFlagsMPT mode-2 incandescence colour that S44 gave
+// the ball's draws is gone: it lit the whole shell). S44b: the arm cannon's lit panels take their colour from a small ramp texture and the
+// suits' lights from their glow maps; those textures are recoloured as the game uploads them (nxrt/tex_edit.h through mpr_texedit.h, told apart
+// by a hash of their smaller mip levels).
 #pragma once
+#include <cstddef>
 #include <cstdint>
 
 #include "nxrt/abi.h"
@@ -34,12 +36,32 @@ float glow_srgb_to_linear(uint8_t c);
 // The game's colour `vanilla` recoloured to `want`: the hue and saturation of `want`, the brightness of `want` scaled by the game's brightest channel,
 // the game's alpha. A black game colour stays black.
 void glow_recolor(const float vanilla[4], const GlowRgb& want, float out[4]);
+uint8_t glow_linear_to_srgb(float v);
+// Identity of a glow texture: a hash of the last quarter of its tiled storage (the smaller mip levels, which the game loads before level 0)
+// with its size and shape.
+uint64_t glow_texture_tail_hash(const uint8_t* tiled, size_t size, uint32_t w, uint32_t h, uint32_t levels);
+// One texel of a glow ramp texture (RGBA8, sRGB-encoded when srgb) recoloured to want in place: glow_recolor in linear light, alpha kept.
+void glow_recolor_texel(uint8_t rgba[4], bool srgb, const GlowRgb& want);
+
+// The glow textures (S44b, S44c): the arm cannon's ramps and the suits' glow maps, recoloured at upload. All ASTC 8x5 sRGB.
+enum class GlowTexPart : uint8_t { Gun, Suit };
+struct GlowTexture {
+    uint32_t w, h, levels;
+    uint64_t tail;      // glow_texture_tail_hash of the game's texture
+    GlowTexPart part;
+    const char* what;
+};
+const GlowTexture* glow_textures(size_t* count);
+// The texture edit id of a texture that matched row `row`: the row and a hash of the whole storage, so data edited from an early upload
+// (level 0 not streamed in yet, same tail) is not reused for the complete texture. Below 2^55 (the discovery ids have bit 55).
+uint64_t glow_texture_id(size_t row, const uint8_t* tiled, size_t size);
+int glow_texture_row(uint64_t id);   // the row of a glow_texture_id, -1 for 0, a discovery id or an unknown row
 
 struct GlowStats {
     bool ball_tables_known = false;       // the game's table values were read (static init has run)
     bool ball_written = false;            // the tables hold our colours now
     uint64_t gun_writes = 0;              // frames the charge effect was tinted
-    uint64_t model_tints = 0;             // model draws (ball, cannon, suit) given the incandescence colour
+    uint64_t ramp_levels = 0;             // glow ramp texture levels recoloured (the cannon's panels, the suit's lights)
 };
 GlowStats glow_stats();
 

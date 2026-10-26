@@ -22,6 +22,7 @@
 #include "nxrt/log.h"
 #include "nxrt/services.h"
 #include "nxrt/tex_edit.h"
+#include "mpr_texedit.h"
 #include "pak.h"
 #include "txtr.h"
 
@@ -315,7 +316,7 @@ void ensure_hooks() {
     h.generation = &hook_generation;
     h.edit = &hook_edit;
     h.user = nullptr;
-    gfx::set_texture_edit(&h);
+    texedit_set(TexEditClient::Tint, &h);   // the hook is shared with the glow colour (mpr_texedit.h)
 }
 
 // Test aid: NXRT_TINT_TEST_FILE names a file of [tweaks] lines (suit_color = ..., gun_color = ...). When it changes, its values replace the
