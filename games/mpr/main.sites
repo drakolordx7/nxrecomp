@@ -110,3 +110,7 @@ entryhook 0x7100fa9694
 entryhook 0x7100fa6c0c
 #   CModelDataMP1::RenderGun(CGameRenderCommandState&, EWhichModel, CTransform4f const&, SGunRenderParams const&, CModelFlagsMPT const&): x5 = flags
 entryhook 0x7100fa7dd0
+# S50 (jump; runtime games/mpr/play_jump.cpp, docs/S50.md): the jump timer's last frame. In the step where the timer ends partway (timer < dt) JumpInput
+# blends jump and gravity; at the rise cap the jump part is lost to the next frame's cap together with the gravity part, so uneven steps overshoot.
+entryhook 0x7100cf0060   # CPlayerMP1::JumpInput(float dt, CFinalInput const&, CStateManager&): the runtime records dt (s0)
+midhook 0x7100cf0750     # JumpInput, blend frame only: s8 = f * jump force, s9 = (1 - f) * gravity, s0 = mass (fmul s0,s9,s0; fadd s9,s8,s0 follow)
