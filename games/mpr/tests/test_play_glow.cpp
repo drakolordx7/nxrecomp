@@ -141,8 +141,12 @@ NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
     using namespace nxrt::play;
     size_t n = 0;
     const GlowTexture* t = glow_textures(&n);
-    int suit_bodies = 0, suit_arms = 0, gun = 0;
+    int suit_bodies = 0, suit_arms = 0, gun = 0, small = 0;
     for (size_t i = 0; i < n; ++i) {
+        // the Gravity Suit's shoulder stripes (7f5c390c) and the Phazon Suit's glow ramp (b9513805), uploaded only while that suit is worn
+        if (t[i].part == GlowTexPart::Suit && ((t[i].w == 8 && t[i].h == 8 && t[i].tail == 0x6b0345201e4c882bull) ||
+                                                (t[i].w == 128 && t[i].h == 4 && t[i].tail == 0x5b14cbbac87c70bbull)))
+            ++small;
         // the 1024 x 1024 glow texture that the suit shader also samples is shared with the hangar's signal lights: never recoloured
         CHECK(t[i].tail != 0x315648d5a9d07890ull);
         CHECK(!(t[i].w == 1024 && t[i].h == 1024));
@@ -153,6 +157,7 @@ NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
     }
     CHECK_EQ(suit_bodies, 4);   // Power, Varia, Gravity, Phazon
     CHECK_EQ(suit_arms, 4);
+    CHECK_EQ(small, 2);
     CHECK_EQ(gun, 2);
 }
 
