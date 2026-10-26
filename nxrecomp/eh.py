@@ -290,7 +290,11 @@ def cfi_rows(rd, fde, cie):
                     raise ValueError('unknown CFA opcode %x' % op)
 
     def emit_row():
-        rows.append((loc, state['cfa_reg'], state['cfa_off'], dict(state['saved'])))
+        # a CFA offset is 64-bit two's complement: assemblers write `.cfi_def_cfa_offset -16` as the ULEB of 2^64 - 16
+        off = state['cfa_off']
+        if off >= 1 << 63:
+            off -= 1 << 64
+        rows.append((loc, state['cfa_reg'], off, dict(state['saved'])))
 
     run(cie.insns[0], cie.insns[1], True)
     init = {'saved': dict(state['saved'])}
