@@ -30,6 +30,7 @@
 #include "play_camlook.h"
 #include "play_game.h"
 #include "play_glow.h"
+#include "play_jump.h"
 #include "play_lockcam.h"
 #include "play_scenefix.h"
 #include "play_lookrate.h"
@@ -312,6 +313,7 @@ void install(uint64_t base, GameHost* host, const Settings& s) {
     st.hook_ballcam = hook_add_entry(base + kFnBallCamThink, &cam_think_hook, &st);
     lockcam_install(base, st.aim.get());
     scenefix_install(base);
+    jump_install(base);     // S50: the jump timer's last frame (play_jump.h)
     lockcam_set(s);
     glow_install(base);   // after lockcam: both hook CPlayerGunMP1::Update
     glow_set(s.tweaks);
@@ -330,6 +332,7 @@ void remove() {
     glow_remove();
     lockcam_remove();
     scenefix_remove();
+    jump_remove();
     if (st.hook_input) hook_remove(st.hook_input);
     if (st.hook_fpcam) hook_remove(st.hook_fpcam);
     if (st.hook_ballcam) hook_remove(st.hook_ballcam);
