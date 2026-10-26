@@ -191,6 +191,7 @@ struct CommandBuffer : Obj {
 uint64_t handle_register(Ref<CmdList> list);
 Ref<CmdList> handle_lookup(uint64_t handle);
 void handle_release(uint64_t handle);            // the game finalized the handle (nvnDeviceFinalizeCommandHandle)
+void handle_release_unbacked(uint64_t handle);   // drops the handle only when its list has no command memory region
 void handles_release_pool(const MemoryPool* pool);
 size_t handles_live();
 uint64_t handles_missing();      // lookups of unknown handles so far

@@ -2,7 +2,10 @@
 // NVNcommandHandle table and the command-memory lifetime rule. On the console a handle is valid until the game records over
 // the command memory the list used (or frees the memory pool). The back end keeps the same rule with an estimate of the
 // memory a list uses (nvn_cmd_lifecycle in api_cmdbuf.cpp): a list is dropped when a newer list occupies an overlapping
-// range of command memory, when its pool is finalized, or when its command buffer is finalized. There is no count limit: the
+// range of command memory or when its pool is finalized. Finalizing the command buffer does not end its lists: the command
+// words are in the game's memory, not the buffer object's. Animal Crossing initializes a command buffer per worker job each
+// frame, records one list, finalizes the buffer and only then has the frame's primary list call that handle. Only a list
+// without a command memory region (nothing else would ever drop it) goes with its buffer. There is no count limit: the
 // game calls some lists (character draw lists, the map) long after recording them.
 // The rule is taken from SuperMarioWonderRecomp docs/nvn/DEBUG.md #26, DEBUG-2 #90, #91 (MIT); the code is new.
 #include <atomic>
@@ -97,6 +100,12 @@ Ref<CmdList> handle_lookup(uint64_t handle) {
 void handle_release(uint64_t handle) {
     std::lock_guard<std::mutex> lk(g_mu);
     drop_locked(handle);
+}
+
+void handle_release_unbacked(uint64_t handle) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    auto it = g_handles.find(handle);
+    if (it != g_handles.end() && it->second.end <= it->second.start) drop_locked(handle);
 }
 
 void handles_release_pool(const MemoryPool* pool) {
