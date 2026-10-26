@@ -61,6 +61,18 @@ bool within(uint64_t addr, uint64_t size, uint64_t base, uint64_t len) {
 }
 bool in_stack(uint64_t addr, uint64_t size) { return within(addr, size, mem::kStackBase, mem::kStackSize); }
 bool in_heap(uint64_t addr, uint64_t size, uint64_t heap) { return within(addr, size, mem::kHeapBase, heap); }
+// Every block of [addr, addr + size) is a module's .data/.bss (CodeData or AliasCodeData): states the kernel lets a process reprotect
+// (mesosphere: KMemoryState_FlagCanReprotect; the SDK's rtld makes each module's RELRO read-only with SetMemoryPermission).
+bool all_code_data(uint64_t addr, uint64_t size) {
+    constexpr uint32_t kMemAliasCodeData = 0x09;   // svc::MemoryState_AliasCodeData (not in mem::)
+    if (addr + size < addr) return false;
+    for (uint64_t a = addr, end = addr + size; a < end;) {
+        const mem::VmInfo b = mem::vm_query(a);
+        if (b.state != mem::kMemCodeData && b.state != kMemAliasCodeData) return false;
+        a = b.addr + b.size;
+    }
+    return true;
+}
 
 // The map region: where MapSharedMemory / MapTransferMemory / MapPhysicalMemory destinations may be, the ASLR region GetInfo reports
 // (svc_info.cpp: 0x8000000 + 0x7FF8000000). The SDK picks random free addresses in it (StackGuardManager::MapAtRandomAddress) and retries
@@ -207,7 +219,7 @@ void set_memory_permission(::Ctx* c) {
         return;
     }
     std::lock_guard lk(g_mu);
-    const bool inside = in_heap(addr, size, heap_now()) || in_stack(addr, size);
+    const bool inside = in_heap(addr, size, heap_now()) || in_stack(addr, size) || all_code_data(addr, size);
     if (!inside || !mem::is_mapped(addr, size)) {
         fail(c, "SetMemoryPermission", kernel::kInvalidMemoryState, addr, size, perm);
         return;
