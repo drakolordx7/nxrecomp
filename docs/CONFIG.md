@@ -273,7 +273,7 @@ All off by default; with them off the game starts and plays as it always did. Th
 
 ### Glow colour (`controls.ini`, `[tweaks]`)
 
-`[tweaks] glow_color`, default `off`: `off` keeps the game's colours. `R,G,B` (0 to 255 each, as a colour picker shows them) recolours the glows of Samus's equipment at once: the morph ball's glowing stripes, inner glow, boost glow, trail and light, the arm cannon's charge glow and lit panels, and the suit's lights (the visor glow and the small lights on the chest, belt, knees and shins, on all four suits, from their glow maps). The colour multiplies the game's glow, so the ball's white glow takes it exactly, the charge's yellow mixes with it (magenta gives a pink-red charge), and a darker colour gives a dimmer glow. The morph ball's shell keeps its colours. The cannon's panels and the suit's lights take the setting's hue at the game's brightness, with every beam (their glow textures are recoloured when they are uploaded, which takes about a second in the background). It applies at once, no restart needed. Details in `docs/S44.md`.
+`[tweaks] glow_color`, default `off`: `off` keeps the game's colours. `R,G,B` (0 to 255 each, as a colour picker shows them) recolours the glows of Samus's equipment: the morph ball's glowing stripes, inner glow, boost glow, trail and light, the arm cannon's charge glow and lit panels, and the suit's lights (the visor glow and the small lights on the chest, belt, knees and shins, on all four suits, from their glow maps). The colour multiplies the game's glow, so the ball's white glow takes it exactly, the charge's yellow mixes with it (magenta gives a pink-red charge), and a darker colour gives a dimmer glow. The morph ball's shell keeps its colours. The cannon's panels and the suit's lights keep the game's brightness and take the setting's hue, for every beam. Their glow textures are recoloured as the game uploads them, which takes about a second in the background. A change applies at once, with no restart. Details in `docs/S44.md`.
 
 `[tweaks] suit_glow`, `ball_glow` and `gun_glow`, default `auto`: `auto` follows `glow_color`, `off` keeps the game's colour for that part even when `glow_color` is set, and `R,G,B` gives the part its own colour.
 
@@ -281,7 +281,7 @@ The launcher's Tweaks tab and the F1 page's Tweaks tab have the switch, three sl
 
 `NXRT_GLOW_TEST_FILE` (environment, test aid): a file of `[tweaks]` lines. When it changes, its values replace the saved ones in the running game (checked twice a second).
 
-`NXRT_GLOW_LOG_TEXTURES` (environment, discovery aid): `1` logs the identity (tail hash) of every sRGB ASTC texture the glow's texture hook sees, once each, while a glow colour is on. `WxH,WxH,...` also claims every texture of those sizes under a numbered discovery id without changing it, so the runtime's `edited by the host (id ...)` lines tie each texture id to its tail. See `docs/S44.md`.
+`NXRT_GLOW_LOG_TEXTURES` (environment, discovery aid): `1` logs the identity (tail hash) of every sRGB ASTC texture the glow's texture hook sees, once each, while a glow colour is on. `WxH,WxH,...` also claims every texture of those sizes under a numbered discovery id without changing it, so the runtime's `edited by the host (id ...)` lines match each texture id to its tail. See `docs/S44.md`.
 
 `NXRT_GLOW_TEST_FILL` (environment, test aid): `1` paints every glow texture texel in the glow colour at full strength, to show whether a texture reaches the screen.
 
