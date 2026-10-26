@@ -31,7 +31,8 @@ constexpr uint64_t kRingCount = 0x18;
 constexpr uint64_t kRingEntries = 0x20;              // first AtomicStorage<T>
 constexpr uint64_t kCommonStorage = 0x30;            // AtomicStorage<NpadCommonState>: u64 sampling + 0x28 state
 constexpr uint64_t kTouchStorage = 0x298;            // AtomicStorage<TouchScreenState>: u64 sampling + 0x290 state
-constexpr uint64_t kEntrySampling = 0x0;             // AtomicStorage.SamplingNumber
+constexpr uint64_t kEntrySampling = 0x8;             // the state's sampling number (AtomicStorage's own is a sequence lock: 2n)
+constexpr uint64_t kEntrySeqLock = 0x0;              // AtomicStorage.SamplingNumber: even when stable
 constexpr uint64_t kEntryButtons = 0x10;             // NpadCommonState.Buttons at state + 0x8
 constexpr uint64_t kEntryStickL = 0x18;              // NpadCommonState.AnalogStickL at state + 0x10 (int32 x, int32 y)
 constexpr uint64_t kEntryAttributes = 0x28;          // NpadCommonState.Attributes at state + 0x20
@@ -154,6 +155,7 @@ NXTEST(hid_fullkey_pad_sample) {
     CHECK_EQ(rd64(lifo, kRingCount), 2u);
     const uint8_t* last = latest_entry(lifo, kCommonStorage);
     CHECK_EQ(rd64(last, kEntrySampling), 2u);
+    CHECK_EQ(rd64(last, kEntrySeqLock), 4u);
     CHECK((rd64(last, kEntryButtons) & kButtonA) != 0);
     CHECK((rd64(last, kEntryButtons) & kButtonStickLDown) != 0);
     CHECK_EQ(rd32s(last, kEntryStickL), 1000);
