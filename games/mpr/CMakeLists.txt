@@ -30,7 +30,7 @@ if(TARGET nxrt_gfx)
     add_library(nxrt_game_mpr STATIC
         "${_mpr}/mpr_game.cpp" "${_mpr}/mpr_play.cpp" "${_mpr}/mpr_ui.cpp" "${_mpr}/mpr_prompts.cpp" "${_mpr}/mpr_tonemap.cpp"
         "${_mpr}/display_hooks.cpp" "${_mpr}/menu_mouse_game.cpp" "${_mpr}/play_aim.cpp" "${_mpr}/play_ballcam.cpp" "${_mpr}/play_lockcam.cpp" "${_mpr}/play_lookrate.cpp"
-        "${_mpr}/play_scenefix.cpp" "${_mpr}/play_glow.cpp" "${_mpr}/play_glow_ui.cpp" "${_mpr}/mpr_fastboot.cpp"
+        "${_mpr}/play_scenefix.cpp" "${_mpr}/play_jump.cpp" "${_mpr}/play_glow.cpp" "${_mpr}/play_glow_ui.cpp" "${_mpr}/mpr_fastboot.cpp"
         "${_mpr}/mpr_tint.cpp" "${_mpr}/mpr_texedit.cpp")
     target_link_libraries(nxrt_game_mpr PUBLIC nxrt_game_mpr_core nxrt_gfx nxrt_mprpak)
 endif()
