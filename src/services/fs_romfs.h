@@ -15,13 +15,17 @@
 
 namespace nxrt::services::fs {
 
+class ModOverlay;   // fs_mods.h
+
 class RomfsImage {
 public:
     RomfsImage();
     ~RomfsImage();
     // Scans `host_dir` (recursively; names are taken as UTF-8 from the host paths) and builds the tables. False with *err set when the
-    // folder does not exist or an entry cannot be described. Replaces an earlier build.
-    bool build(const std::string& host_dir, std::string* err = nullptr);
+    // folder does not exist or an entry cannot be described. Replaces an earlier build. `mods` (fs_mods.h, may be null): the mods' files
+    // replace or join the folder's, and the entries their .stub markers name are left out, before the tables are laid out; the game then
+    // sees one tree through the image (open, size, listing, hash lookups).
+    bool build(const std::string& host_dir, std::string* err = nullptr, const ModOverlay* mods = nullptr);
     bool built() const;
     uint64_t size() const;                                  // total image size in bytes
     // Copies [offset, offset + len) of the image into dst. False when the range is outside the image or a host file cannot be read
