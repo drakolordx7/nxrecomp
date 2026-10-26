@@ -2088,8 +2088,10 @@ void run_list(const CmdList& list, int depth) {
                     if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                     break;
                 }
-                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed, primitives generated and feedback primitives written are reported as non-zero");
-                if (p.type == NVN_COUNTER_TYPE_TIMESTAMP) rep.counter = 0;
+                // TIMESTAMP_TOP is a timestamp too (taken when the command reaches the top of the pipe): its counter word is 0 like TIMESTAMP's
+                const bool stamp = p.type == NVN_COUNTER_TYPE_TIMESTAMP || p.type == NVN_COUNTER_TYPE_TIMESTAMP_TOP;
+                if (!stamp) note_unsupported("statistics counters other than samples passed, primitives generated and feedback primitives written are reported as non-zero");
+                if (stamp) rep.counter = 0;
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
             }
