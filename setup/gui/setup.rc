@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Resources for mpr_setup: manifest (Common Controls 6, per-monitor DPI, UTF-8, asInvoker) and version info.
+// Resources for the setup program (<game>_setup.exe; names from CMakeLists.txt): manifest (Common Controls 6, per-monitor DPI, UTF-8, asInvoker) and version info.
 #include <winres.h>
 
 1 24 "setup.manifest"
@@ -18,11 +18,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", ""
-            VALUE "FileDescription", "Metroid Prime Remastered PC - Setup"
+            VALUE "FileDescription", MPRS_RC_PRODUCT " - Setup"
             VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", "mpr_setup"
-            VALUE "OriginalFilename", "mpr_setup.exe"
-            VALUE "ProductName", "Metroid Prime Remastered PC - Setup"
+            VALUE "InternalName", MPRS_RC_EXE
+            VALUE "OriginalFilename", MPRS_RC_EXE ".exe"
+            VALUE "ProductName", MPRS_RC_PRODUCT " - Setup"
             VALUE "ProductVersion", "1.0.0.0"
         END
     END

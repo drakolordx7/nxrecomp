@@ -377,7 +377,7 @@ void check_installed(const std::string& out, const std::string& build_id, const 
     for (const auto& [rel, bytes] : files) CHECK(same_bytes((root / "romfs" / rel).string(), bytes));
     const std::vector<uint8_t> ini = read_bytes((root / "mpr.ini").string());
     CHECK(has(as_text(ini), "bc7_quality = 3"));
-    CHECK(has(as_text(ini), "; Written by mpr_setup"));
+    CHECK(has(as_text(ini), "; Written by " MPRS_EXE_NAME));
     CHECK(fs::is_regular_file(root / "setup_state.tsv"));
     CHECK(fs::is_regular_file(root / "setup.log"));
     std::error_code ec;
