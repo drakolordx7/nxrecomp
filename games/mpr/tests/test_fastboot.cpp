@@ -129,13 +129,17 @@ NXTEST(skip_press_only_at_the_two_skip_sites_in_the_hangar) {
     uint8_t guid[16] = {1, 2, 3};
     c = ctx();
     c.x[1] = reinterpret_cast<uint64_t>(guid);
-    CHECK_EQ(nx_hook_entry(&c, kBase + kSkippable), 1);
-    CHECK_EQ(c.x[0], 1ull);
+    CHECK_EQ(nx_hook_entry(&c, kBase + kSkippable), 0);      // another cutscene of the hangar (a scan, a door): the game's own answer, window open or not
     CHECK(play::fastboot_stats().skip_presses >= 2);
 
     uint8_t opening[16];
     REQUIRE(nxrt::tt::tt_guid_to_bytes("2ac311c5-55aa-40a6-802b-2177deaae976", opening));
     CHECK(play::fastboot_is_opening_skip(opening));
+    c = ctx();
+    c.x[1] = reinterpret_cast<uint64_t>(opening);
+    CHECK_EQ(nx_hook_entry(&c, kBase + kSkippable), 1);      // the opening's skip object, hangar current
+    CHECK_EQ(c.x[0], 1ull);
+    CHECK(play::fastboot_stats().skippable_answers >= 1);
     set_area(kFrigate, kOtherRoom);  // the opening's skip object asks before the hangar is the current area: still skippable
     c = ctx();
     c.x[1] = reinterpret_cast<uint64_t>(opening);

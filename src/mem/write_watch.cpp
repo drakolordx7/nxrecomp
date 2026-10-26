@@ -39,6 +39,7 @@ struct Region {
     std::unique_ptr<std::atomic<uint64_t>[]> prot, valid, written, ban;
     int slot = -1;
     SRWLOCK lock = SRWLOCK_INIT;
+    std::unique_ptr<std::atomic<uint16_t>[]> releasing;   // per page: releasers that saw it armed and have not finished its VirtualProtect (release_page)
 };
 
 struct SharedLock {
@@ -61,6 +62,7 @@ std::atomic<int> g_hi{0};              // slots [0, g_hi) may be in use
 std::atomic<int> g_busy{0};            // fault handlers and os-write calls looking at the table
 std::atomic<int> g_live{0};
 std::atomic<uint64_t> g_faults{0};
+std::atomic<uint64_t> g_waits{0};      // rounds a fault waited for another releaser (statistics, tests)
 std::mutex g_mu;                       // create / destroy
 PVOID g_veh = nullptr;
 
@@ -139,29 +141,45 @@ DWORD page_protect(uint64_t addr) {
 bool release_page(Region* r, uint64_t page) {
     const uint64_t b = bit(page);
     const uint64_t w = page >> 6;
+    // Announce the release before the bit goes: whoever finds the bit already clear can then tell "somebody is making this page writable"
+    // (the count is up from before the bit went until after the VirtualProtect) from "nobody is": a foreign read-only page.
+    std::atomic<uint16_t>& rel = r->releasing[page];
+    const bool armed = (r->prot[w].load(std::memory_order_acquire) & b) != 0;
+    if (armed) rel.fetch_add(1, std::memory_order_seq_cst);
     const uint64_t old = r->prot[w].fetch_and(~b, std::memory_order_acq_rel);
     r->valid[w].fetch_and(~b, std::memory_order_acq_rel);
     r->written[w].fetch_or(b, std::memory_order_acq_rel);
     const uint64_t addr = r->base + page * kPage;
     if (old & b) {
+        bool ok = true;
         DWORD was = 0;
-        if (!VirtualProtect(reinterpret_cast<void*>(addr), kPage, PAGE_READWRITE, &was)) return false;
-        if ((was & 0xff) != PAGE_READONLY) {           // somebody else set this protection: give it back and let the fault through
+        if (!VirtualProtect(reinterpret_cast<void*>(addr), kPage, PAGE_READWRITE, &was)) {
+            ok = false;
+        } else if ((was & 0xff) != PAGE_READONLY) {    // somebody else set this protection: give it back and let the fault through
             DWORD tmp = 0;
             VirtualProtect(reinterpret_cast<void*>(addr), kPage, was, &tmp);
-            return false;
+            ok = false;
         }
-        return true;
+        rel.fetch_sub(1, std::memory_order_seq_cst);
+        return ok;
     }
-    // Not armed (any more): another releaser (also holding the lock shared) may be making it writable right now. Wait a little for it to
-    // become writable; anything else is a real fault.
-    for (int i = 0; i < 2000; ++i) {
+    if (armed) rel.fetch_sub(1, std::memory_order_seq_cst);   // lost the race for the bit: not a releaser (and must not make others wait for it)
+    // Not armed (any more): another releaser (also holding the lock shared) may be making it writable right now. Wait for it only while
+    // such a release is in progress; with none, a read-only page is somebody else's and the fault goes on at once. The count is read before
+    // the protection: a releaser that cleared the bit before our fetch_and has counted itself in before that, so a zero count means every
+    // such release has finished and its effect is visible in the protection we read next.
+    // The wait has no round limit: a releaser that is counted in will finish (it only has its VirtualProtect left), but it may be descheduled
+    // for a long time on a busy machine, and giving up early would pass a fault on that is ours (seen as an unhandled access violation).
+    for (int i = 0;; ++i) {
+        const uint16_t busy = rel.load(std::memory_order_seq_cst);
         const DWORD pr = page_protect(addr) & 0xff;
         if (pr == PAGE_READWRITE || pr == PAGE_EXECUTE_READWRITE) return true;
-        if (pr != PAGE_READONLY) return false;
-        if (i > 50) Sleep(0); else YieldProcessor();
+        if (pr != PAGE_READONLY || busy == 0) return false;
+        g_waits.fetch_add(1, std::memory_order_relaxed);
+        if (i < 50) YieldProcessor();
+        else if (i < 1000) Sleep(0);
+        else Sleep(1);
     }
-    return false;
 }
 
 LONG CALLBACK on_fault(EXCEPTION_POINTERS* ep) {
@@ -229,6 +247,8 @@ Region* region_create(uint64_t addr, uint64_t size) {
         bm->reset(new std::atomic<uint64_t>[r->nwords]);
         for (uint64_t i = 0; i < r->nwords; ++i) (*bm)[i].store(0, std::memory_order_relaxed);
     }
+    r->releasing.reset(new std::atomic<uint16_t>[r->npages]);
+    for (uint64_t i = 0; i < r->npages; ++i) r->releasing[i].store(0, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lk(g_mu);
         if (!g_veh) g_veh = AddVectoredExceptionHandler(1, on_fault);
@@ -393,5 +413,6 @@ void forget(uint64_t addr, uint64_t size, bool ban) {
 void ban_section(uint64_t offset, uint64_t size) { forget(kHeapBase + offset, size, true); }
 
 uint64_t faults() { return g_faults.load(std::memory_order_relaxed); }
+uint64_t fault_waits() { return g_waits.load(std::memory_order_relaxed); }
 
 }  // namespace nxrt::mem::ww

@@ -2,6 +2,14 @@
 // S44: glow colour tweak, see play_glow.h and docs/S44.md.
 #include "play_glow.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -59,6 +67,8 @@ struct State {
     bool tables_known = false;
     float vanilla[kTableCount][kEntries][4] = {};
     uint32_t ball_applied = 0;                           // what the tables hold: 0 = the game's values
+    std::atomic<uint32_t> table_thread{0};               // id of the thread the tables are written from: the first glow_frame caller after install (0 = none yet)
+    bool wrong_thread_logged = false;
     std::atomic<uint64_t> gun_writes{0};                 // frames the charge effect was tinted
     // glow ramp textures (S44b), main thread only
     bool recolor_hook = false;                           // the texture edit client is set (from the first time a ramp part is on)
@@ -418,6 +428,8 @@ void glow_recolor(const float vanilla[4], const GlowRgb& want, float out[4]) {
 void glow_install(uint64_t game_base) {
     glow_remove();
     g.base = game_base;
+    g.table_thread.store(0, std::memory_order_release);
+    g.wrong_thread_logged = false;
     g.hook = hook_add_entry(game_base + kFnGunUpdate, &gun_update_hook);
 }
 
@@ -458,8 +470,22 @@ void glow_preview(const TweakSettings& t) {
     g.preview_ns.store(FrameLimiter::now_ns(), std::memory_order_relaxed);
 }
 
+// The tables are the game's own statics, read by CMorphBallMP1's methods (Render, UpdateEffects, the colour getters, the pause-screen doll). An
+// entry is 16 bytes at an 8-byte alignment (every table starts at 8 mod 16), so there is no single store that is atomic for a whole colour. The
+// write is instead tied to the game's frame: it happens only here, at the top of CGameArchitectureSupport::Update on the guest main thread, before
+// the game's update and draw for the frame run on that same thread. From any other thread it is refused (S47).
 void glow_frame() {
     if (!g.base) return;
+    const uint32_t me = GetCurrentThreadId();
+    uint32_t owner = g.table_thread.load(std::memory_order_acquire);
+    if (owner == 0 && g.table_thread.compare_exchange_strong(owner, me, std::memory_order_acq_rel)) owner = me;
+    if (owner != me) {
+        if (!g.wrong_thread_logged) {
+            g.wrong_thread_logged = true;
+            NXLOG_W(kTag, "morph ball glow: frame update called from thread %u, not the game's frame thread %u: tables left alone", me, owner);
+        }
+        return;
+    }
     poll_test_file();
     ramps_frame();
     const uint32_t want = want_ball();
