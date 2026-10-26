@@ -73,10 +73,13 @@ struct DumpSet {
     std::unique_ptr<Nca> control;        // the control NCA of the update, else of the base (may be null)
     std::vector<AocContent> aoc;         // sorted by title id
     std::vector<u32> other_patches;      // versions of older updates that were found and not used
+    std::vector<bool> input_used;        // per input: it holds content of this game (picked or not)
+    std::vector<std::string> skipped;    // plain messages: an update or DLC found but not usable
 };
 // Classifies every content of every input by its CNMT and picks the Application of `title_id`, the newest Patch (title id
 // + 0x800) and the newest version of every AddOnContent (title id + 0x1000 and up, same upper bits). Tickets of all inputs are
-// used for every input. Throws like find_program when the base game is not there.
+// used for every input. Throws like find_program when the base game is not there, and Error(Keys) when a listed content of the
+// picked base, update or DLC cannot be opened with the keys.
 DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet& keys, const std::string& title_id);
 
 }  // namespace mprs

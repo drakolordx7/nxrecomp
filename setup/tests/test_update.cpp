@@ -290,6 +290,7 @@ void test_select(const Game& g) {
     CHECK_EQ(s.patch_version, 0x20000u);            // the NSP's update is newer than the XCI's
     CHECK_EQ(s.other_patches.size(), size_t(1));
     CHECK_EQ(s.aoc.size(), size_t(2));              // the DLC in both inputs counts once
+    CHECK(s.input_used.size() == 2 && s.input_used[0] && s.input_used[1]);
     if (s.aoc.size() == 2) {
         CHECK_EQ(s.aoc[0].title_id, kApp + 0x1001);
         CHECK_EQ(s.aoc[1].title_id, kApp + 0x1002);
@@ -300,7 +301,7 @@ void test_select(const Game& g) {
         // the patched section: what the builder laid out, read through IndirectStorage + AES-CTR-EX over the base
         const int rs = s.patch->romfs_section();
         CHECK_EQ(rs, 1);
-        CHECK(has(error_of([&] { s.patch->open_section(rs); }), "base game"));
+        CHECK(has(error_of([&] { s.patch->open_section(rs); }), "update"));
         const StoragePtr sec = s.patch->open_section(rs, s.base.get());
         CHECK_EQ(sec->size(), u64(g.new_section.size()));
         CHECK(read_all(*sec, 0, static_cast<size_t>(sec->size())) == g.new_section);
@@ -317,8 +318,8 @@ void test_select(const Game& g) {
     // inputs in the other order pick the same
     DumpSet s2 = select_titles({n.get(), x.get()}, ks, kTitleId);
     CHECK_EQ(s2.patch_version, 0x20000u);
-    // the update alone is not enough
-    CHECK(has(error_of([&] { select_titles({n.get()}, ks, kTitleId); }), "update"));
+    // the update alone is not enough (a profile without a builds list keeps its old message)
+    CHECK(has(error_of([&] { select_titles({n.get()}, ks, kTitleId); }), "updates are not supported"));
 }
 
 void test_storage_direct() {
@@ -343,8 +344,9 @@ void test_storage_direct() {
     CHECK(parse_indirect_table(t, 2, end).size() == 2);
     CHECK_EQ(end, u64(0x100));
     CHECK(has(error_of([&] { parse_indirect_table(t, 3, end); }), "damaged"));
-    put32(t.data() + 4, 3000);   // more sets than one index node holds
-    CHECK(has(error_of([&] { parse_indirect_table(t, 2, end); }), "does not read"));
+    CHECK(has(error_of([&] { parse_indirect_table(t, 2046u * 818u + 1u, end); }), "does not read"));   // needs a second index level
+    put32(t.data() + 4, 2);   // set count does not match the entries
+    CHECK(has(error_of([&] { parse_indirect_table(t, 2, end); }), "damaged"));
 }
 
 struct NullReporter : Reporter {};
@@ -365,6 +367,7 @@ void test_pipeline(const Game& g) {
     CHECK(in.supported);
     if (!in.supported) std::printf("  inspect: %s\n", in.problem.c_str());
     CHECK_EQ(in.dlc_count, 2u);
+    CHECK(in.notes.empty());   // the DLC in both inputs is no "unused input"
     CHECK_EQ(in.update, std::string("v131072"));   // no control NCA: the CNMT version number
     CHECK_EQ(in.build_id, std::string(kNewBuild));
 
@@ -384,6 +387,7 @@ void test_pipeline(const Game& g) {
     CHECK(has(sts, ("meta\taoc\t" + tid_hex(kApp + 0x1001) + ":0," + tid_hex(kApp + 0x1002) + ":0").c_str()));
     CHECK(has(sts, ("file\taoc/" + tid_hex(kApp + 0x1001) + "/aoc/item.bin").c_str()));
     CHECK(has(sts, "meta\tupdate\tv131072"));
+    CHECK(!has(sts, "meta\trebuild"));
 
     // a second run only checks
     err = error_of([&] { run_setup(o, r); });
@@ -396,7 +400,7 @@ void test_pipeline(const Game& g) {
     base_only.out_dir = g.dir + "/out2";
     InputSummary b = inspect_input(base_only);
     CHECK(!b.supported);
-    CHECK(has(b.problem, "not supported") && has(b.problem, "found") && has(b.problem, kNewBuild));
+    CHECK(has(b.problem, "This is not the v1.0.0 version") && has(b.problem, kNewBuild));   // the old message (no builds list)
     SetupOptions want_base = o;
     want_base.expected_build_id = kBaseBuild;
     want_base.out_dir = g.dir + "/out3";
@@ -413,6 +417,96 @@ void test_pipeline(const Game& g) {
     shortid.expected_build_id = std::string(kNewBuild).substr(0, 32);
     shortid.out_dir = g.dir + "/out4";
     CHECK(inspect_input(shortid).supported);
+
+    // A profile with a builds list: the list decides, messages name what was found and what is supported.
+    static const GameBuild only_new[] = {{kNewBuild, "2.0.0"}, {nullptr, nullptr}};
+    static const GameBuild both[] = {{kBaseBuild, "1.0.0"}, {kNewBuild, "2.0.0"}, {nullptr, nullptr}};
+    SetupOptions listed = o;
+    listed.expected_build_id = SetupOptions().expected_build_id;   // the default, so the list is used
+    listed.builds = only_new;
+    listed.out_dir = g.dir + "/out5";
+    b = inspect_input(listed);
+    CHECK(b.supported);
+    CHECK_EQ(b.version, std::string("2.0.0"));
+    listed.input_paths = {g.base_only};
+    b = inspect_input(listed);
+    CHECK(!b.supported);
+    CHECK(has(b.problem, "not supported: found the base game") && has(b.problem, "Supported: v2.0.0"));
+    listed.builds = both;
+    b = inspect_input(listed);
+    CHECK(b.supported);
+    CHECK_EQ(b.version, std::string("1.0.0"));
+
+    // Rebuild into the same folder: base only, then base + update again. No stale files, no stale meta.
+    SetupOptions down = o;
+    down.input_paths = {g.base_only};
+    down.expected_build_id = kBaseBuild;
+    err = error_of([&] { run_setup(down, r); });
+    log_close();
+    CHECK(err.empty());
+    if (!err.empty()) std::printf("  rebuild to base: %s\n", err.c_str());
+    CHECK(!fs::exists(out + "/romfs/data/c.bin"));
+    CHECK(!fs::exists(out + "/aoc"));
+    for (const auto& [p, bytes] : kBaseFiles) CHECK(read_file(out + "/romfs/" + p) == bytes);
+    auto bex = Pfs::open(make_memory_storage(mprs_test::synth_exefs(kBaseBuild)));
+    CHECK(read_file(out + "/exefs/main") == read_all(*bex->open_file(*bex->find("main")), 0, static_cast<size_t>(bex->find("main")->size)));
+    {
+        const std::vector<uint8_t> st2 = read_file(out + "/setup_state.tsv");
+        const std::string t2(st2.begin(), st2.end());
+        CHECK(!has(t2, "meta\tupdate"));
+        CHECK(!has(t2, "meta\taoc"));
+        CHECK(!has(t2, "meta\trebuild"));
+        CHECK(!has(t2, "data/c.bin"));
+    }
+    err = error_of([&] { run_setup(o, r); });
+    log_close();
+    CHECK(err.empty());
+    for (const auto& [p, bytes] : kNewFiles) CHECK(read_file(out + "/romfs/" + p) == bytes);
+    for (const auto& [p, bytes] : kDlcB) CHECK(read_file(out + "/aoc/" + tid_hex(kApp + 0x1002) + "/" + p) == bytes);
+}
+
+void test_notes_and_keys(const Game& g) {
+    // An input for another game is named in the notes; a DLC whose title key is missing is a keys problem.
+    const u64 other = 0x0100000000AAA000ull;
+    write_file(g.dir + "/other_dlc.nsp",
+               mprs_test::synth_nsp({{cid(20) + ".nca", dlc_nca(other + 0x1001, kDlcB)},
+                                     {cid(21) + ".cnmt.nca", meta_nca(other + 0x1001, cnmt_bytes(other + 0x1001, 0, 0x82, other, {{cid(20), 2}}))}}));
+    SetupOptions o;
+    o.input_paths = {g.base_only, g.dir + "/other_dlc.nsp"};
+    o.key_files = {g.keys};
+    o.out_dir = g.dir + "/out_notes";
+    o.expected_title_id = kTitleId;
+    o.expected_build_id = kBaseBuild;
+    o.skip_textures = true;
+    o.allow_no_shaders = true;
+    InputSummary in = inspect_input(o);
+    CHECK(in.supported);
+    CHECK_EQ(in.notes.size(), size_t(1));
+    if (!in.notes.empty()) CHECK(has(in.notes[0], "other_dlc.nsp"));
+
+    SynthNcaSpec sp;
+    sp.content_type = 5;
+    sp.program_id = kApp + 0x1003;
+    sp.has_rights = true;
+    sp.rights_id = seeded(70);
+    sp.titlekey = seeded(71);
+    sp.sections = {SynthSection{0, 3, mprs_test::synth_romfs(kDlcB)}};
+    write_file(g.dir + "/locked_dlc.nsp",
+               mprs_test::synth_nsp({{cid(22) + ".nca", mprs_test::synth_nca(sp)},
+                                     {cid(23) + ".cnmt.nca", meta_nca(kApp + 0x1003, cnmt_bytes(kApp + 0x1003, 0, 0x82, kApp, {{cid(22), 2}}))}}));
+    o.input_paths = {g.base_only, g.dir + "/locked_dlc.nsp"};
+    NullReporter r;
+    Fail kind = Fail::Generic;
+    std::string msg;
+    try {
+        run_setup(o, r);
+    } catch (const Error& e) {
+        kind = e.kind;
+        msg = e.what();
+    }
+    log_close();
+    CHECK(kind == Fail::Keys);
+    CHECK(has(msg, "DLC") && has(msg, "title key"));
 }
 
 void test_damaged_patch(const std::string& root) {
@@ -443,5 +537,6 @@ int main() {
     test_select(g);
     test_pipeline(g);
     test_damaged_patch(root);
+    test_notes_and_keys(g);
     return TEST_SUMMARY("test_update");
 }

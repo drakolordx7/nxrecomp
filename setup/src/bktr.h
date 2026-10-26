@@ -11,6 +11,8 @@
 namespace mprs {
 
 constexpr u64 kBucketNodeSize = 0x4000;
+// Largest table this reader takes: one index node plus as many entry sets as it can list.
+constexpr u64 kMaxBucketTableSize = (1 + (kBucketNodeSize - 0x10) / 8) * kBucketNodeSize;
 
 struct IndirectEntry {
     u64 virt = 0;          // offset in the patched section

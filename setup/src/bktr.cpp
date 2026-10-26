@@ -18,13 +18,15 @@ template <class Take>
 void walk_bucket_tree(const std::vector<u8>& t, u32 entry_count, size_t entry_size, const char* what, u64& end_offset, Take take) {
     auto bad = [&](const char* why) { fail(Fail::Input, "The update's %s table is damaged (%s).", what, why); };
     if (entry_count == 0) bad("no entries");
+    const u64 per_set = (kBucketNodeSize - 0x10) / entry_size;
+    const u64 need_sets = (u64(entry_count) + per_set - 1) / per_set;
+    if (need_sets > (kBucketNodeSize - 0x10) / 8)
+        fail(Fail::Input, "The update's %s table uses a layout this setup does not read yet (more than one index level).", what);
     if (t.size() < kBucketNodeSize) bad("too short");
     const u32 sets = rd32(t.data() + 4);
     end_offset = rd64(t.data() + 8);
-    const u64 per_set = (kBucketNodeSize - 0x10) / entry_size;
     if (sets == 0) bad("no entry sets");
-    if (sets > (kBucketNodeSize - 0x10) / 8)
-        fail(Fail::Input, "The update's %s table uses a layout this setup does not read yet (more than one index level).", what);
+    if (sets != need_sets) bad("entry set count does not match");
     if (t.size() / kBucketNodeSize < 1 + u64(sets)) bad("entry sets missing");
     u64 total = 0;
     for (u32 k = 0; k < sets; ++k) {
@@ -88,8 +90,9 @@ public:
         : raw_(std::move(raw)), key_(key), hi_(hi), nca_off_(nca_off), e_(std::move(e)), end_(end) {}
     u64 size() const override { return raw_->size(); }
     void read(u64 off, void* buf, size_t len) const override {
+        if (len == 0) return;
         u8* p = static_cast<u8*>(buf);
-        if (len && (off < e_.front().offset || off > end_ || len > end_ - off))
+        if (off < e_.front().offset || off > end_ || len > end_ - off)
             fail(Fail::Input, "The update points outside its encrypted data (offset %llu, %llu bytes).", (unsigned long long)off,
                  (unsigned long long)len);
         auto it = std::upper_bound(e_.begin(), e_.end(), off, [](u64 v, const AesCtrExEntry& x) { return v < x.offset; }) - 1;
@@ -128,6 +131,7 @@ public:
         if (off > size_ || len > size_ - off)
             fail(Fail::Input, "A read goes past the end of the updated game data (offset %llu, %llu bytes).", (unsigned long long)off,
                  (unsigned long long)len);
+        if (len == 0) return;
         u8* p = static_cast<u8*>(buf);
         auto it = std::upper_bound(e_.begin(), e_.end(), off, [](u64 v, const IndirectEntry& x) { return v < x.virt; }) - 1;
         while (len > 0) {

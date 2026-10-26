@@ -8,6 +8,7 @@
 #include <exception>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <mutex>
 #include <thread>
 
@@ -71,9 +72,20 @@ public:
         files_[rel] = r;
         dirty_ = true;
     }
-    void set_meta(const std::string& k, const std::string& v) {
+    void set_meta(const std::string& k, const std::string& v) {   // an empty value removes the key
         std::lock_guard lk(mu_);
-        if (meta[k] != v) { meta[k] = v; dirty_ = true; }
+        auto it = meta.find(k);
+        if (v.empty()) {
+            if (it != meta.end()) { meta.erase(it); dirty_ = true; }
+        } else if (it == meta.end() || it->second != v) {
+            meta[k] = v;
+            dirty_ = true;
+        }
+    }
+    void clear_files() {
+        std::lock_guard lk(mu_);
+        files_.clear();
+        dirty_ = true;
     }
     std::string get_meta(const std::string& k) {
         std::lock_guard lk(mu_);
@@ -146,6 +158,7 @@ struct Opened {
     std::string version;
     std::string update;                     // display version of the applied update, "" for none
     std::string kinds;                      // "XCI + NSP"
+    std::vector<std::string> notes;         // InputSummary::notes
 };
 
 struct Supported {
@@ -164,11 +177,14 @@ std::vector<Supported> supported_builds(const SetupOptions& o) {
     const GameProfile& g = game();
     const std::string def = g.build_id ? g.build_id : "";
     std::vector<Supported> v;
-    if (o.expected_build_id == def && g.builds)
-        for (const GameBuild* b = g.builds; b->build_id; ++b) v.push_back({norm_build(b->build_id), b->version ? b->version : ""});
+    if (o.expected_build_id == def && o.builds)
+        for (const GameBuild* b = o.builds; b->build_id; ++b) v.push_back({norm_build(b->build_id), b->version ? b->version : ""});
     if (v.empty()) v.push_back({norm_build(o.expected_build_id), g.version ? g.version : ""});
     return v;
 }
+
+// The profile lists its releases (it may need an update). Without a list setup behaves as it did for a base-only game.
+bool lists_builds(const SetupOptions& o) { return o.builds && o.builds[0].build_id; }
 
 std::string supported_text(const std::vector<Supported>& v) {
     std::string s;
@@ -238,7 +254,17 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
     d->t = select_titles(cs, d->keys, o.expected_title_id);
     const Nca* base = d->t.base.get();
     const Nca* patch = d->t.patch.get();
+    const bool listed = lists_builds(o);
+    if (!listed && d->t.have_version && d->t.base_version != 0)
+        fail(Fail::Input, "This is version %u of the game. Only the original v%s release is supported (updates change the "
+                          "game program).", d->t.base_version, game().version);
     for (u32 v : d->t.other_patches) MPRS_LOGI("An older update (v%u) was also given; the newest one is used.", v);
+    for (const std::string& m : d->t.skipped) d->notes.push_back(m);
+    for (size_t i = 0; i < inputs.size(); ++i)
+        if (!d->t.input_used[i]) {
+            d->notes.push_back("Nothing in " + inputs[i] + " belongs to this game; the file was not used.");
+            MPRS_LOGW("%s", d->notes.back().c_str());
+        }
     const std::string shown = display_version(d->t.control.get());
     if (patch) d->update = shown.empty() ? "v" + std::to_string(d->t.patch_version) : shown;
 
@@ -251,6 +277,9 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
     const Supported* match = nullptr;
     for (const Supported& x : sup)
         if (x.build_id == norm_build(d->build_id)) match = &x;
+    if (!match && !listed && !patch)
+        fail(Fail::Input, "This is not the v%s version of the game (its program has build id %s, expected %s). Only the original v%s "
+                          "release is supported.", game().version, d->build_id.c_str(), o.expected_build_id.c_str(), game().version);
     if (!match) {
         std::string found = !shown.empty() ? "v" + shown : patch ? "update v" + std::to_string(d->t.patch_version) : "the base game";
         std::string hint;
@@ -265,7 +294,8 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
         fail(Fail::Input, "This version of the game is not supported: found %s (program build id %s). Supported: %s.%s",
              found.c_str(), d->build_id.c_str(), supported_text(sup).c_str(), hint.c_str());
     }
-    d->version = !shown.empty() ? shown : (d->t.have_version || patch) ? match->version : "";
+    if (!listed && !patch) d->version = d->t.have_version ? game().version : "";
+    else d->version = !shown.empty() ? shown : (d->t.have_version || patch) ? match->version : "";
 
     const int rs = base->romfs_section();
     if (rs < 0) fail(Fail::Input, "The dump has no game data (RomFS) section.");
@@ -291,7 +321,12 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
             d->aoc.push_back(std::move(oa));
         } catch (const Error& e) {
             if (e.kind == Fail::Cancelled) throw;
-            MPRS_LOGW("DLC %016llX cannot be read and is skipped: %s", (unsigned long long)a.title_id, e.what());
+            if (e.kind == Fail::Keys)
+                fail(Fail::Keys, "DLC %016llX cannot be opened: %s", (unsigned long long)a.title_id, e.what());
+            char m[64];
+            std::snprintf(m, sizeof m, "DLC %016llX cannot be read and is skipped: ", (unsigned long long)a.title_id);
+            d->notes.push_back(m + std::string(e.what()));
+            MPRS_LOGW("%s", d->notes.back().c_str());
         }
     }
     return d;
@@ -340,6 +375,36 @@ std::string sha_of_file(const std::string& path, const std::function<bool()>& ca
 std::string to_win(std::string p) {
     for (char& c : p) if (c == '/') c = '\\';
     return p;
+}
+
+// Relative output path, '/' separated and lower case (Windows names do not differ by case).
+std::string lower_rel(std::string s) {
+    for (char& c : s) c = c == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// Deletes every file under out/<sub> (for each sub) whose relative path is not in keep, then the folders left empty. Returns the
+// number of files removed.
+int remove_files_not_in(const std::string& out, const std::vector<std::string>& subs, const std::set<std::string>& keep) {
+    namespace fs = std::filesystem;
+    int n = 0;
+    const fs::path root(widen(out));
+    for (const std::string& sub : subs) {
+        std::error_code ec;
+        const fs::path top = root / widen(sub);
+        if (!fs::is_directory(top, ec)) continue;
+        std::vector<fs::path> dirs;
+        for (fs::recursive_directory_iterator it(top, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->is_directory(ec)) { dirs.push_back(it->path()); continue; }
+            const std::string rel = lower_rel(narrow(it->path().lexically_relative(root).wstring()));
+            if (!keep.count(rel) && fs::remove(it->path(), ec)) ++n;
+        }
+        std::sort(dirs.begin(), dirs.end(), [](const fs::path& a, const fs::path& b) { return a.native().size() > b.native().size(); });
+        for (const fs::path& d : dirs)
+            if (fs::is_empty(d, ec)) fs::remove(d, ec);
+        if (fs::is_empty(top, ec)) fs::remove(top, ec);
+    }
+    return n;
 }
 
 // Is `dest` (relative name `rel`) already the file we would write? Size always; hash too when verifying.
@@ -449,6 +514,7 @@ InputSummary inspect_input(const SetupOptions& o) {
         s.update = d->update;
         s.dlc_count = static_cast<u32>(d->aoc.size());
         for (auto& a : d->aoc) s.dlc_bytes += a.rom->total_file_bytes();
+        s.notes = d->notes;
         s.romfs_files = static_cast<u32>(d->rom->files().size());
         s.romfs_bytes = d->rom->total_file_bytes();
         for (auto& e : d->exefs->entries()) s.exefs_bytes += e.size;
@@ -536,14 +602,33 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         if (o.inspect_only) { rep.total_seconds = secs_since(t_all); return rep; }
         check_cancel();
 
+        std::string aoc_meta;
+        for (auto& a : d->aoc) aoc_meta += (aoc_meta.empty() ? "" : ",") + a.dir.substr(4) + ":" + std::to_string(a.version);
+        // The folder holds another version (other build, update or DLC set): drop the file records so every output is hashed
+        // against the new dump or written again, remove files the new version does not have, and redo the texture cache and the
+        // shader program list. "rebuild" stays set until a run finishes, so a stopped rebuild goes on as a rebuild.
+        {
+            const std::string old_build = st.get_meta("build_id");
+            if (!old_build.empty() &&
+                (old_build != d->build_id || st.get_meta("title_id") != o.expected_title_id || st.get_meta("update") != d->update ||
+                 st.get_meta("aoc") != aoc_meta)) {
+                MPRS_LOGI("The folder holds another version of the game (build %s%s%s); every file is checked again and files the "
+                          "new version does not have are removed.", old_build.c_str(), st.get_meta("update").empty() ? "" : ", update ",
+                          st.get_meta("update").c_str());
+                st.clear_files();
+                st.set_meta("textures_done", "");
+                st.set_meta("rebuild", "1");
+                std::error_code ec;
+                std::filesystem::remove(widen(to_win(path_join(o.out_dir, "shader_cache\\programs.bin"))), ec);
+            }
+        }
+        const bool rebuild = st.get_meta("rebuild") == "1";
+        const bool verify_out = o.verify_output || rebuild;
         st.set_meta("title_id", o.expected_title_id);
         st.set_meta("build_id", d->build_id);
         st.set_meta("update", d->update);
-        {
-            std::string aoc;
-            for (auto& a : d->aoc) aoc += (aoc.empty() ? "" : ",") + a.dir.substr(4) + ":" + std::to_string(a.version);
-            st.set_meta("aoc", aoc);
-        }
+        st.set_meta("aoc", aoc_meta);
+        st.save();
 
         // ---- Space -----------------------------------------------------------------------------------------------------
         t0 = begin(Stage::Space, 0, "");
@@ -578,7 +663,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                 const std::string dest = to_win(path_join(o.out_dir, rel));
                 StoragePtr src = d->exefs->open_file(e);
                 std::string sha;
-                if (file_is_done(dest, rel, e.size, st, o.verify_output, src.get(), cancelled, sha)) {
+                if (file_is_done(dest, rel, e.size, st, verify_out, src.get(), cancelled, sha)) {
                     ++rep.files_skipped;
                 } else {
                     sha = copy_to_file(*src, dest, [&](u64 n) { r.stage_progress(done += n); rep.bytes_written += n; }, cancelled);
@@ -631,7 +716,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                         const std::string dest = to_win(path_join(o.out_dir, rel));
                         StoragePtr src = order[i].fs->open_file(f);
                         std::string sha;
-                        if (file_is_done(dest, rel, f.size, st, o.verify_output, src.get(), [&] { return stop.load() || cancelled(); }, sha)) {
+                        if (file_is_done(dest, rel, f.size, st, verify_out, src.get(), [&] { return stop.load() || cancelled(); }, sha)) {
                             r.stage_progress(done += f.size);
                             ++sfiles;
                         } else {
@@ -661,6 +746,13 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             if (first_error) std::rethrow_exception(first_error);
             end(Stage::Romfs, t0);
             MPRS_LOGI("RomFS: %llu files written, %llu already present.", (unsigned long long)wfiles.load(), (unsigned long long)sfiles.load());
+            if (rebuild) {
+                std::set<std::string> keep;
+                for (auto& e : d->exefs->entries()) keep.insert(lower_rel("exefs/" + e.name));
+                for (const Job& j : order) keep.insert(lower_rel(*j.dir + "/" + j.f->path));
+                const int n = remove_files_not_in(o.out_dir, {"exefs", "romfs", "aoc"}, keep);
+                if (n) MPRS_LOGI("Removed %d file(s) the new version does not have.", n);
+            }
         }
         check_cancel();
 
@@ -762,6 +854,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             else MPRS_LOGW("%s was edited by hand; left alone. It must contain bc7_quality = %d.", game().game_ini, o.bc7_quality);
             st.set_meta("bc7_quality", std::to_string(o.bc7_quality));
             st.set_meta("finished", "1");
+            st.set_meta("rebuild", "");
             st.save(true);
         }
         end(Stage::Finish, t0);

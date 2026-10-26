@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <map>
 
 #include "game.h"
 #include "log.h"
@@ -160,6 +161,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
         for (auto& p : c->tickets.personalized) tickets.personalized.push_back(p);
     }
     std::vector<Item> items;
+    std::map<std::string, std::string> key_failed;   // content id -> the key error
     int keyerrs = 0, opened = 0;
     std::string first_keyerr;
     for (size_t ci = 0; ci < inputs.size(); ++ci) {
@@ -171,6 +173,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
                 if (e.kind == Fail::Keys) {
                     ++keyerrs;
                     if (first_keyerr.empty()) first_keyerr = e.what();
+                    if (std::string id = content_id_of(f.name); !id.empty()) key_failed[id] = e.what();
                 } else {
                     MPRS_LOGW("Skipping %s: %s", f.name.c_str(), e.what());
                 }
@@ -202,12 +205,22 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
     // Newest first, so the first match of a title wins.
     std::stable_sort(metas.begin(), metas.end(), [](const Meta& a, const Meta& b) { return a.m.version > b.m.version; });
 
-    // The NCA a meta lists for a content type; else (no list, or renamed files) the one NCA in the same input its header matches.
-    auto take = [&](const Meta& mt, u8 ctype, const std::function<bool(const Nca&)>& fits) -> std::unique_ptr<Nca> {
+    DumpSet r;
+    r.title_id = want;
+    r.input_used.assign(inputs.size(), false);
+    // The NCA a meta lists for a content type (it must also fit); else (no list, or renamed files) the one NCA in the same input
+    // its header matches. A listed content whose header the keys could not open is a keys problem.
+    auto take = [&](const Meta& mt, u8 ctype, const char* what, const std::function<bool(const Nca&)>& fits) -> std::unique_ptr<Nca> {
         for (const auto& c : mt.m.contents) {
             if (c.type != ctype) continue;
             for (Item& it : items)
-                if (it.nca && it.id == c.id) return std::move(it.nca);
+                if (it.nca && it.id == c.id && fits(*it.nca)) {
+                    r.input_used[it.input] = true;
+                    r.input_used[mt.input] = true;
+                    return std::move(it.nca);
+                }
+            if (auto k = key_failed.find(c.id); k != key_failed.end())
+                fail(Fail::Keys, "The keys cannot open the %s (%s.nca): %s", what, c.id.c_str(), k->second.c_str());
         }
         Item* pick = nullptr;
         for (Item& it : items)
@@ -215,29 +228,35 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
                 if (pick) return nullptr;   // more than one: cannot tell
                 pick = &it;
             }
-        return pick ? std::move(pick->nca) : nullptr;
+        if (!pick) return nullptr;
+        r.input_used[pick->input] = true;
+        return std::move(pick->nca);
     };
-    auto is_program = [](const Nca& n, u64 pid, bool patch) {
-        if (n.content_type() != NcaContentType::Program || n.program_id() != pid) return false;
+    // An update's program and control carry the game's title id, or (some dumps) the update's.
+    auto is_program = [&](const Nca& n, bool patch) {
+        if (n.content_type() != NcaContentType::Program) return false;
+        if (n.program_id() != want && !(patch && n.program_id() == patch_id)) return false;
         const int rs = n.romfs_section();
         return rs < 0 || n.section(rs)->is_patch() == patch;
     };
-    auto is_control = [want](const Nca& n) { return n.content_type() == NcaContentType::Control && n.program_id() == want; };
+    auto is_control = [&](const Nca& n, bool patch) {
+        return n.content_type() == NcaContentType::Control && (n.program_id() == want || (patch && n.program_id() == patch_id));
+    };
+    auto for_game = [&](const ContentMeta& m) { return m.application_id == 0 || m.application_id == want; };
 
-    DumpSet r;
-    r.title_id = want;
     for (const Meta& mt : metas) {
         if (mt.m.type != u8(MetaType::Application) || mt.m.title_id != want) continue;
-        r.base = take(mt, 1, [&](const Nca& n) { return is_program(n, want, false); });
+        r.base = take(mt, 1, "base game program", [&](const Nca& n) { return is_program(n, false); });
         if (!r.base) continue;
         r.base_version = mt.m.version;
         r.have_version = true;
-        r.control = take(mt, 3, is_control);
+        r.control = take(mt, 3, "base game control data", [&](const Nca& n) { return is_control(n, false); });
         break;
     }
     if (!r.base) {   // no content list: the first base program of the game
         for (Item& it : items)
-            if (it.nca && is_program(*it.nca, want, false)) {
+            if (it.nca && is_program(*it.nca, false) && it.nca->program_id() == want) {
+                r.input_used[it.input] = true;
                 r.base = std::move(it.nca);
                 break;
             }
@@ -252,9 +271,13 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
             if (it.nca->program_id() == patch_id || it.nca->program_id() == want) update_seen = true;
             else other = it.nca->program_id();
         }
-        if (update_seen)
+        if (update_seen) {
+            if (!game_lists_builds())
+                fail(Fail::Input, "This is an update (patch) for the game, not the game itself. Setup needs the original v%s "
+                                  "dump (the base game), and updates are not supported.", game().version);
             fail(Fail::Input, "This is an update (patch) for the game, not the game itself. Setup needs the base game dump too: "
                               "give the base game and the update together.");
+        }
         if (other)
             fail(Fail::Input, "This dump is a different game (title id %s). Setup needs %s (%s).", tid_hex(other).c_str(),
                  game().title, title_id.c_str());
@@ -262,35 +285,43 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
     }
 
     for (const Meta& mt : metas) {
-        if (mt.m.type != u8(MetaType::Patch) || mt.m.title_id != patch_id) continue;
+        if (mt.m.type != u8(MetaType::Patch) || mt.m.title_id != patch_id || !for_game(mt.m)) continue;
         if (r.patch) {
             if (mt.m.version != r.patch_version) r.other_patches.push_back(mt.m.version);
             continue;
         }
-        r.patch = take(mt, 1, [&](const Nca& n) { return is_program(n, want, true); });
+        r.patch = take(mt, 1, "update's program", [&](const Nca& n) { return is_program(n, true); });
         if (!r.patch) {
-            MPRS_LOGW("The update v%u in the dump has no readable program; skipped.", mt.m.version);
+            r.skipped.push_back("The update v" + std::to_string(mt.m.version) + " has no readable program; it was not used.");
+            MPRS_LOGW("%s", r.skipped.back().c_str());
             continue;
         }
         r.patch_version = mt.m.version;
-        if (auto c = take(mt, 3, is_control)) r.control = std::move(c);
+        if (auto c = take(mt, 3, "update's control data", [&](const Nca& n) { return is_control(n, true); })) r.control = std::move(c);
     }
 
     for (const Meta& mt : metas) {
         const u64 t = mt.m.title_id;
-        if (mt.m.type != u8(MetaType::AddOnContent) || (t & ~u64(0xFFF)) != aoc_base) continue;
+        if (mt.m.type != u8(MetaType::AddOnContent) || (t & ~u64(0xFFF)) != aoc_base || !for_game(mt.m)) continue;
         if (std::any_of(r.aoc.begin(), r.aoc.end(), [&](const AocContent& a) { return a.title_id == t; })) continue;
         auto is_data = [t](const Nca& n) {
             return (n.content_type() == NcaContentType::Data || n.content_type() == NcaContentType::PublicData) && n.program_id() == t;
         };
-        std::unique_ptr<Nca> d = take(mt, 2, is_data);
+        const std::string what = "DLC " + tid_hex(t);
+        std::unique_ptr<Nca> d = take(mt, 2, what.c_str(), is_data);
         if (!d) {
-            MPRS_LOGW("DLC %s v%u in the dump has no readable data; skipped.", tid_hex(t).c_str(), mt.m.version);
+            r.skipped.push_back("DLC " + tid_hex(t) + " v" + std::to_string(mt.m.version) + " has no readable data; it was not used.");
+            MPRS_LOGW("%s", r.skipped.back().c_str());
             continue;
         }
         r.aoc.push_back({t, mt.m.version, std::move(d)});
     }
     std::sort(r.aoc.begin(), r.aoc.end(), [](const AocContent& a, const AocContent& b) { return a.title_id < b.title_id; });
+    // An input whose content list names this game belongs to it (a copy of a DLC or an older update counts too).
+    for (const Meta& mt : metas) {
+        const u64 t = mt.m.title_id;
+        if (t == want || t == patch_id || ((t & ~u64(0xFFF)) == aoc_base && for_game(mt.m))) r.input_used[mt.input] = true;
+    }
     return r;
 }
 

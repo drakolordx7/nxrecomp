@@ -40,6 +40,7 @@ struct SetupOptions {
     // Test hooks (the shipped tool always uses the defaults, those of the game it is built for: game.h).
     std::string expected_title_id = game().title_id;
     std::string expected_build_id = game().build_id ? game().build_id : "";   // main NSO build id, hex, first 20 bytes
+    const GameBuild* builds = game().builds;   // supported releases ({nullptr, nullptr} ends it); used while expected_build_id is the default
 };
 
 // input_path (if set) followed by input_paths.
@@ -53,6 +54,7 @@ struct InputSummary {
     std::string update;                     // the update that is applied ("3.0.3" style, or "v<number>"), "" for none
     u32 dlc_count = 0;                      // DLC found for the game
     u64 dlc_bytes = 0;
+    std::vector<std::string> notes;         // things the player should see: an input that was not used, a DLC that cannot be read
     u64 romfs_bytes = 0;                    // total size of the RomFS files
     u64 exefs_bytes = 0;
     u32 romfs_files = 0;

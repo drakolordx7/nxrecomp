@@ -6,6 +6,7 @@
 
 #include "bktr.h"
 #include "crypto.h"
+#include "game.h"
 #include "log.h"
 
 namespace mprs {
@@ -139,14 +140,19 @@ StoragePtr Nca::open_section(int i, const Nca* base) const {
         if (s->enc_type == 3) return make_aes_ctr_storage(raw, section_key(*s), s->ctr_hi, s->offset);
         fail(Fail::Input, "An archive in the dump is an update section without its patch table.");
     }
-    if (!base)
+    if (!base) {
+        if (!game_lists_builds())
+            fail(Fail::Input, "This is a game update (patch) file. Only the original v%s game dump is supported.", game().version);
         fail(Fail::Input, "This is a game update (patch). Its data is a change to the base game, so setup needs the base game "
                           "dump too (give it as another input).");
+    }
     const int brs = base->romfs_section();
     if (brs < 0) fail(Fail::Input, "The base game has no RomFS section for the update to apply to.");
     const Key128 key = s->enc_type == 1 ? Key128{} : section_key(*s);
     // The patch tables use the section's own counter; the data regions use the AES-CTR-EX entries.
     StoragePtr plain = s->enc_type == 1 ? raw : make_aes_ctr_storage(raw, key, s->ctr_hi, s->offset);
+    if (s->indirect_size > kMaxBucketTableSize || s->aes_ctr_ex_size > kMaxBucketTableSize)
+        fail(Fail::Input, "The update's patch tables are larger than this setup reads (damaged, or a layout not supported yet).");
     u64 ind_end = 0;
     std::vector<IndirectEntry> ind =
         parse_indirect_table(read_all(*plain, s->indirect_off, static_cast<size_t>(s->indirect_size)), s->indirect_count, ind_end);

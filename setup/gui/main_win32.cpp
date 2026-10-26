@@ -52,7 +52,7 @@ enum ControlId : int {
     IDC_OUT_LABEL, IDC_OUT_EDIT, IDC_OUT_BROWSE, IDC_OUT_DISK,
     IDC_QUALITY_LABEL, IDC_QUALITY, IDC_QUALITY_NOTE,
     IDC_START, IDC_OPEN_FOLDER, IDC_OPEN_LOG,
-    IDC_STAGE_TITLE, IDC_STAGE_DETAIL, IDC_STAGE_BAR, IDC_OVERALL_TEXT, IDC_OVERALL_BAR, IDC_LOG,
+    IDC_STAGE_TITLE, IDC_STAGE_DETAIL, IDC_STAGE_BAR, IDC_OVERALL_TEXT, IDC_OVERALL_BAR, IDC_LOG, IDC_DUMP_CLEAR,
 };
 
 // Window messages posted from worker threads. Payloads are heap objects owned by the handler (see post_owned).
@@ -484,6 +484,7 @@ private:
     void browse_keys();
     void browse_folder();
     void set_dump(const std::wstring& path);
+    void add_dumps(const std::vector<std::wstring>& paths);   // appends to the list, skipping files already in it
     void set_keys(const std::wstring& path, const std::wstring& source);
     void update_keys_hint();
     void request_inspect();
@@ -508,7 +509,7 @@ private:
     std::vector<HWND> bold_;
     std::vector<HWND> gray_;
 
-    HWND dump_label_ = nullptr, dump_edit_ = nullptr, dump_browse_ = nullptr, dump_status_ = nullptr;
+    HWND dump_label_ = nullptr, dump_edit_ = nullptr, dump_browse_ = nullptr, dump_clear_ = nullptr, dump_status_ = nullptr;
     HWND keys_label_ = nullptr, keys_edit_ = nullptr, keys_browse_ = nullptr, keys_hint_ = nullptr;
     HWND out_label_ = nullptr, out_edit_ = nullptr, out_browse_ = nullptr, out_disk_ = nullptr;
     HWND quality_label_ = nullptr, quality_ = nullptr, quality_note_ = nullptr;
@@ -692,6 +693,7 @@ void App::create_controls() {
     dump_label_ = add_label(L"Your game dump", IDC_DUMP_LABEL, true);
     dump_edit_ = add(L"EDIT", L"", edit | ES_READONLY, IDC_DUMP_EDIT);
     dump_browse_ = add(L"BUTTON", L"Browse...", button, IDC_DUMP_BROWSE);
+    dump_clear_ = add(L"BUTTON", L"Clear", button, IDC_DUMP_CLEAR);
     dump_status_ = add_label(L"", IDC_DUMP_STATUS);
 
     keys_label_ = add_label(L"Your Switch keys", IDC_KEYS_LABEL, true);
@@ -769,7 +771,8 @@ void App::layout() {
     int y = S(12);
     put(dump_label_, x0, y, w, S(18));
     y += S(22);
-    put(dump_edit_, x0, y, ew, S(26));
+    put(dump_edit_, x0, y, ew - S(70) - gap, S(26));
+    put(dump_clear_, x0 + ew - S(70), y, S(70), S(26));
     put(dump_browse_, xb, y, bw, S(26));
     y += S(32);
     put(dump_status_, x0, y, w, S(34));      // two lines of the status text (the keys message wraps)
@@ -874,6 +877,9 @@ void App::on_command(int id, int code) {
         case IDC_DUMP_BROWSE:
             if (code == BN_CLICKED) browse_dump();
             break;
+        case IDC_DUMP_CLEAR:
+            if (code == BN_CLICKED) set_dump(L"");
+            break;
         case IDC_KEYS_BROWSE:
             if (code == BN_CLICKED) browse_keys();
             break;
@@ -934,7 +940,7 @@ void App::on_drop(HDROP drop) {
     DragFinish(drop);
     if (running_) return;
     if (!keys.empty()) set_keys(keys, L"");
-    if (!dumps.empty()) set_dump(join_dump_paths(dumps));
+    if (!dumps.empty()) add_dumps(dumps);
     else if (!keys.empty()) request_inspect();
 }
 
@@ -1165,7 +1171,7 @@ bool App::can_start() const {
 void App::update_controls() {
     if (!start_) return;
     const bool idle = !running_;
-    for (HWND h : {dump_browse_, keys_edit_, keys_browse_, out_edit_, out_browse_, quality_}) EnableWindow(h, idle);
+    for (HWND h : {dump_browse_, dump_clear_, keys_edit_, keys_browse_, out_edit_, out_browse_, quality_}) EnableWindow(h, idle);
     if (running_) {
         set_text(start_, stop_requested_ ? L"Stopping..." : L"Stop");
         EnableWindow(start_, !stop_requested_);
@@ -1183,7 +1189,7 @@ void App::browse_dump() {
         {L"All files (*.*)", L"*.*"},
     };
     const std::vector<std::wstring> p = pick_files(hwnd_, L"Choose your game dump (and its update and DLC)", specs, 2);
-    if (!p.empty()) set_dump(join_dump_paths(p));
+    if (!p.empty()) add_dumps(p);
 }
 
 void App::browse_keys() {
@@ -1210,6 +1216,16 @@ void App::set_dump(const std::wstring& path) {
     dump_path_ = trim_path(path);
     set_text(dump_edit_, dump_path_);
     request_inspect();
+}
+
+void App::add_dumps(const std::vector<std::wstring>& paths) {
+    std::vector<std::wstring> v = split_dump_paths(dump_path_);
+    for (const auto& p : paths) {
+        const std::wstring t = trim_path(p);
+        if (t.empty()) continue;
+        if (std::none_of(v.begin(), v.end(), [&](const std::wstring& x) { return lower(x) == lower(t); })) v.push_back(t);
+    }
+    set_dump(join_dump_paths(v));
 }
 
 void App::set_keys(const std::wstring& path, const std::wstring& source) {
@@ -1265,9 +1281,14 @@ void App::start_inspect(const std::string& key) {
 
 void App::show_inspect_result() {
     if (summary_.supported) {
-        set_dump_status(std::format(L"{} found ({}). Needs {}, {} free.", widen(mprs::game().title), widen(summary_.container),
-                                    size_text(summary_.disk_needed), size_text(summary_.disk_free)),
-                        kGreen);
+        std::wstring extra;
+        if (!summary_.update.empty()) extra += L", update " + widen(summary_.update);
+        if (summary_.dlc_count) extra += std::format(L", {} DLC ({})", summary_.dlc_count, size_text(summary_.dlc_bytes));
+        std::wstring text = std::format(L"{} found ({}{}). Needs {}, {} free.", widen(mprs::game().title), widen(summary_.container), extra,
+                                        size_text(summary_.disk_needed), size_text(summary_.disk_free));
+        if (!summary_.notes.empty())
+            text += L" Note: " + widen(summary_.notes[0]) + (summary_.notes.size() > 1 ? L" (more in the log)" : L"");
+        set_dump_status(text, kGreen);
         set_disk_line(std::format(L"This folder needs about {} (free: {}).", size_text(summary_.disk_needed),
                                   size_text(summary_.disk_free)));
     } else {

@@ -28,4 +28,7 @@ struct GameProfile {
 
 const GameProfile& game();     // src/games/<MPRS_GAME>.cpp
 
+// True when the profile lists its supported releases (GameProfile::builds); such a game may need an update.
+inline bool game_lists_builds() { return game().builds && game().builds[0].build_id; }
+
 }  // namespace mprs
