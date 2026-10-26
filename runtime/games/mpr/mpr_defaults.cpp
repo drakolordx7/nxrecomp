@@ -27,9 +27,10 @@ defaults_rev = 2
 # (yaw_source = 2.0 is 2.0 * 0.022 degrees per count).
 yaw = 0.000767945
 pitch = 0.000767945
-# The morph ball camera (the mouse orbits the camera around the ball) has its own sensitivity, same unit.
-morph_yaw = 0.000767945
-morph_pitch = 0.000767945
+# Morph ball camera: 1 = the mouse and the right stick turn the camera around the ball, 0 = the game's own camera.
+ball_camera = 1
+# Its sensitivity on the Source scale (2.0 = the same speed as yaw above). morph_pitch = <radians per count> after it gives the vertical its own.
+ball_sensitivity = 2
 invert_y = 0
 invert_x = 0
 # In menus the mouse is a pointer: visible cursor, hover highlights, left click activates, right click goes back, the wheel scrolls.

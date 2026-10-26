@@ -61,5 +61,6 @@ void forget(uint64_t addr, uint64_t size, bool ban);
 void ban_section(uint64_t offset, uint64_t size);
 
 uint64_t faults();     // write faults handled so far (statistics)
+uint64_t fault_waits(); // rounds a fault spent waiting for another thread's release of the same page (statistics; stays 0 for foreign faults)
 
 }  // namespace nxrt::mem::ww

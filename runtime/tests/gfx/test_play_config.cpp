@@ -1598,3 +1598,102 @@ NXTEST(pad_right_deadzone_default_kept_without_pad_deadzone) {
     REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
     CHECK(near(s.pad.right_deadzone, 0.10));
 }
+
+// ---- the alternate body's camera (mpr: the morph ball camera, S48): [mouse] alt_camera, alt_sensitivity ------------------------------------
+
+NXTEST(alt_camera_defaults_on) {
+    const MouseSettings d = default_settings().mouse;
+    CHECK(d.alt_camera);
+    CHECK(d.alt_yaw_rad == d.alt_pitch_rad);
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);   // a file without the keys keeps the camera on
+    CHECK(s.mouse.alt_camera);
+}
+
+NXTEST(alt_camera_off_parses_and_round_trips) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings(std::string("[mouse]\n") + key_alt_camera() + " = 0\n", &s, &err), err);
+    CHECK(!s.mouse.alt_camera);
+    const std::string text = format_settings(s);
+    CHECK(text.find(std::string("\n") + key_alt_camera() + " = 0\n") != std::string::npos);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(!r.mouse.alt_camera);
+    CHECK_EQ(format_settings(r), text);
+    REQUIRE(!parse_settings(std::string("[mouse]\n") + key_alt_camera() + " = maybe\n", &r, &err));
+}
+
+NXTEST(alt_sensitivity_is_source_scale_for_both) {
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings(std::string("[mouse]\n") + key_alt_sens() + " = 3.5\n", &s, &err), err);
+    CHECK(near(s.mouse.alt_yaw_rad, 3.5 * 0.022 * kPi / 180.0));
+    CHECK(s.mouse.alt_pitch_rad == s.mouse.alt_yaw_rad);
+    CHECK(near(s.mouse.yaw_rad, default_settings().mouse.yaw_rad));    // the aim keeps its own
+    const std::string text = format_settings(s);
+    CHECK(text.find(std::string("\n") + key_alt_sens() + " = 3.5\n") != std::string::npos);
+    CHECK(text.find(std::string("\n") + key_alt_pitch() + " = ") == std::string::npos);   // the same for both: one key
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(std::fabs(r.mouse.alt_yaw_rad - s.mouse.alt_yaw_rad) < 1e-11);
+    CHECK_EQ(format_settings(r), text);
+    REQUIRE(!parse_settings(std::string("[mouse]\n") + key_alt_sens() + " = fast\n", &r, &err));
+}
+
+NXTEST(alt_sensitivity_keeps_a_separate_vertical) {
+    // the older radians-per-count keys still read; a vertical of its own is written after the pair and survives the round trip
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings(std::string("[mouse]\n") + key_alt_yaw() + " = 0.001\n" + key_alt_pitch() + " = 0.0005\n", &s, &err), err);
+    CHECK(s.mouse.alt_yaw_rad == 0.001);
+    CHECK(s.mouse.alt_pitch_rad == 0.0005);
+    const std::string text = format_settings(s);
+    const size_t sens_at = text.find(std::string("\n") + key_alt_sens() + " = ");
+    const size_t pitch_at = text.find(std::string("\n") + key_alt_pitch() + " = 0.0005\n");
+    REQUIRE(sens_at != std::string::npos && pitch_at != std::string::npos);
+    CHECK(sens_at < pitch_at);
+    Settings r;
+    REQUIRE_MSG(parse_settings(text, &r, &err), err);
+    CHECK(std::fabs(r.mouse.alt_yaw_rad - 0.001) < 1e-11);   // written on the Source scale with 9 digits
+    CHECK(r.mouse.alt_pitch_rad == 0.0005);
+}
+
+NXTEST(ball_camera_keys_with_the_mpr_vocabulary) {
+    // the test executable registers Metroid Prime Remastered: its words for the alternate body's camera keys
+    REQUIRE(std::string(key_alt_camera()) == "ball_camera");
+    REQUIRE(std::string(key_alt_sens()) == "ball_sensitivity");
+    REQUIRE(std::string(key_alt_yaw()) == "morph_yaw");
+    REQUIRE(std::string(key_alt_pitch()) == "morph_pitch");
+    Settings s;
+    std::string err;
+    REQUIRE_MSG(parse_settings("[mouse]\nball_camera = 0\nball_sensitivity = 4\n", &s, &err), err);
+    CHECK(!s.mouse.alt_camera);
+    CHECK(near(s.mouse.alt_yaw_rad, rad_per_count(4.0)) && s.mouse.alt_pitch_rad == s.mouse.alt_yaw_rad);
+    const std::string text = format_settings(s);
+    CHECK(text.find("\nball_camera = 0\nball_sensitivity = 4\n") != std::string::npos);
+    CHECK(text.find("morph_yaw") == std::string::npos && text.find("morph_pitch") == std::string::npos);
+    // older files: morph_yaw and morph_pitch in radians per count
+    REQUIRE_MSG(parse_settings("[mouse]\nmorph_yaw = 0.002\nmorph_pitch = 0.001\n", &s, &err), err);
+    CHECK(s.mouse.alt_yaw_rad == 0.002 && s.mouse.alt_pitch_rad == 0.001);
+    CHECK(s.mouse.alt_camera);
+    // morph_pitch before ball_sensitivity: the later key wins, so both take the sensitivity
+    REQUIRE_MSG(parse_settings("[mouse]\nmorph_pitch = 0.001\nball_sensitivity = 3\n", &s, &err), err);
+    CHECK(near(s.mouse.alt_pitch_rad, rad_per_count(3.0)) && s.mouse.alt_yaw_rad == s.mouse.alt_pitch_rad);
+    // after it: the vertical keeps its own
+    REQUIRE_MSG(parse_settings("[mouse]\nball_sensitivity = 3\nmorph_pitch = 0.001\n", &s, &err), err);
+    CHECK(near(s.mouse.alt_yaw_rad, rad_per_count(3.0)) && s.mouse.alt_pitch_rad == 0.001);
+}
+
+NXTEST(ball_sensitivity_range) {
+    Settings s;
+    std::string err;
+    for (const char* bad : {"0", "-1", "0.05", "25", "1e9"})
+        CHECK(!parse_settings(std::string("[mouse]\nball_sensitivity = ") + bad + "\n", &s, &err));
+    for (const char* bad : {"0", "-0.001", "1"}) {
+        CHECK(!parse_settings(std::string("[mouse]\nmorph_yaw = ") + bad + "\n", &s, &err));
+        CHECK(!parse_settings(std::string("[mouse]\nmorph_pitch = ") + bad + "\n", &s, &err));
+    }
+    for (const char* ok : {"0.1", "2", "20"}) REQUIRE_MSG(parse_settings(std::string("[mouse]\nball_sensitivity = ") + ok + "\n", &s, &err), err);
+}

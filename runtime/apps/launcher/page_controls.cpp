@@ -23,7 +23,7 @@ const wchar_t* vocab_label(const char* nxrt::play::GameVocabulary::* field, cons
     *keep = game_text(v ? v->*field : nullptr, generic);
     return keep->c_str();
 }
-std::wstring g_alt_camera_label, g_wheel_cycles_label;
+std::wstring g_alt_camera_label, g_alt_camera_on_label, g_wheel_cycles_label;
 using nxrt::play::PromptStyle;
 using nxrt::play::rad_per_count;
 using nxrt::play::source_sens;
@@ -87,7 +87,15 @@ public:
             L"Use the same sensitivity for both", [](const Settings& s) { return same_steps(s); },
             [](Settings&, bool) {},   // not saved: only the two sliders are
             [this]() { linked_ = !linked_; });
-        f.slider(
+        f.checkbox(
+            vocab_label(&nxrt::play::GameVocabulary::label_alt_camera_on, L"Mouse and right stick turn the alternate camera", &g_alt_camera_on_label),
+            [](const Settings& s) { return s.mouse.alt_camera; },
+            [](Settings& s, bool v) { s.mouse.alt_camera = v; },
+            [this]() {
+                alt_on_ = !alt_on_;
+                EnableWindow(alt_slider_, alt_on_);   // greyed out while the camera is off, as on the F1 page
+            });
+        alt_slider_ = f.slider(
             vocab_label(&nxrt::play::GameVocabulary::label_alt_camera, L"Alternate camera", &g_alt_camera_label), kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.alt_yaw_rad); },
             [this](Settings& s, int pos) {
                 if (pos == alt0_) return;
@@ -143,9 +151,11 @@ public:
         yaw0_ = slider_pos(s.mouse.yaw_rad);
         pitch0_ = slider_pos(s.mouse.pitch_rad);
         alt0_ = slider_pos(s.mouse.alt_yaw_rad);
+        alt_on_ = s.mouse.alt_camera;
         margin0_ = margin_pos(s.aim.free_lock_margin);
         linked_ = same_steps(s);
         Page::load(s);
+        if (alt_slider_) EnableWindow(alt_slider_, alt_on_);
     }
 
 private:
@@ -161,6 +171,8 @@ private:
 
     HWND yaw_ = nullptr, pitch_ = nullptr;
     int yaw0_ = 0, pitch0_ = 0, alt0_ = 0, margin0_ = 0;   // slider positions as loaded
+    HWND alt_slider_ = nullptr;                            // the ball camera speed, greyed out while the camera is off
+    bool alt_on_ = true;
     bool linked_ = false;                      // the "same for both" box (not saved)
     bool syncing_ = false;
 };

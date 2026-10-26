@@ -5,7 +5,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <thread>
 #include <vector>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#undef near
+#undef far
 
 #include "mpr/mpr_texedit.h"
 #include "mpr/play_glow.h"
@@ -141,8 +150,12 @@ NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
     using namespace nxrt::play;
     size_t n = 0;
     const GlowTexture* t = glow_textures(&n);
-    int suit_bodies = 0, suit_arms = 0, gun = 0;
+    int suit_bodies = 0, suit_arms = 0, gun = 0, small = 0;
     for (size_t i = 0; i < n; ++i) {
+        // the Gravity Suit's shoulder stripes (7f5c390c) and the Phazon Suit's glow ramp (b9513805), uploaded only while that suit is worn
+        if (t[i].part == GlowTexPart::Suit && ((t[i].w == 8 && t[i].h == 8 && t[i].tail == 0x6b0345201e4c882bull) ||
+                                                (t[i].w == 128 && t[i].h == 4 && t[i].tail == 0x5b14cbbac87c70bbull)))
+            ++small;
         // the 1024 x 1024 glow texture that the suit shader also samples is shared with the hangar's signal lights: never recoloured
         CHECK(t[i].tail != 0x315648d5a9d07890ull);
         CHECK(!(t[i].w == 1024 && t[i].h == 1024));
@@ -153,6 +166,7 @@ NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
     }
     CHECK_EQ(suit_bodies, 4);   // Power, Varia, Gravity, Phazon
     CHECK_EQ(suit_arms, 4);
+    CHECK_EQ(small, 2);
     CHECK_EQ(gun, 2);
 }
 
@@ -196,3 +210,36 @@ NXTEST(texedit_dispatch_routes_ids_to_their_client) {
     CHECK_EQ(texedit::generation(nullptr), uint64_t{10});
     texedit_set(TexEditClient::Tint, nullptr);   // the last client: the runtime hook goes
 }
+
+// S47: the ball colour tables are written only from the thread that runs the game's frame boundary (the first caller after install).
+NXTEST(glow_ball_tables_are_written_only_from_the_frame_thread) {
+    constexpr uint64_t kBase = 0x5D00000000ull;
+    constexpr uint64_t kTables[5] = {0x4b24a48, 0x4b24a98, 0x4b24ae8, 0x4b24b38, 0x4b24b88};
+    REQUIRE(VirtualAlloc(reinterpret_cast<void*>(kBase + 0x4b24000), 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != nullptr);
+    auto table = [&](int i, int e, int k) { return reinterpret_cast<volatile float*>(kBase + kTables[i] + 16u * e)[k]; };
+    for (int i = 0; i < 5; ++i)
+        for (int e = 0; e < 5; ++e) {
+            const float v[4] = {0.5f, 0.25f, 0.125f, 1.f};
+            std::memcpy(reinterpret_cast<void*>(kBase + kTables[i] + 16u * e), v, 16);
+        }
+    nxrt::play::glow_install(kBase);
+    nxrt::play::TweakSettings t;
+    t.glow_on = true;
+    t.glow = GlowRgb{255, 0, 0};
+    t.ball.mode = nxrt::play::GlowMode::Color;
+    t.ball.rgb = GlowRgb{255, 0, 0};
+    nxrt::play::glow_set(t);
+    // the thread that calls first after install owns the tables
+    nxrt::play::glow_frame();
+    CHECK(nxrt::play::glow_stats().ball_written);
+    CHECK(table(0, 0, 0) == 0.5f && table(0, 0, 1) == 0.f && table(0, 0, 3) == 1.f);   // red at the game's brightest channel, alpha kept
+    t.ball.rgb = GlowRgb{0, 0, 255};
+    nxrt::play::glow_set(t);
+    std::thread other([] { nxrt::play::glow_frame(); });
+    other.join();
+    CHECK(table(0, 0, 0) == 0.5f && table(0, 0, 2) == 0.f);                               // unchanged by the stranger
+    nxrt::play::glow_frame();                                                              // the owner applies it
+    CHECK(table(0, 0, 0) == 0.f && table(0, 0, 2) == 0.5f);
+    nxrt::play::glow_remove();
+}
+

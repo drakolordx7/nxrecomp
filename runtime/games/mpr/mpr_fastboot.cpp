@@ -182,8 +182,9 @@ int skippable_hook(::Ctx* c, uint64_t, void*) {
     if (!g.skip_intro.load(std::memory_order_relaxed) || !intro_window_open()) return 0;
     uint8_t id[16] = {};
     if (!guest_read(c->x[1], id, 16)) return 0;
-    if (!fastboot_is_opening_skip(id) && !in_intro_area()) return 0;
-    if (g.skippable++ < 8) NXLOG_I(kTag, "skip_intro: cutscene %s is skippable (opening cutscene area)", guid_text(id).c_str());
+    // Only the opening's own skip object: another hangar cutscene (a scan, a door) keeps the game's answer even inside the 10 s window.
+    if (!fastboot_is_opening_skip(id)) return 0;
+    if (g.skippable++ < 8) NXLOG_I(kTag, "skip_intro: the opening cutscene (%s) is skippable", guid_text(id).c_str());
     c->x[0] = 1;
     return 1;
 }

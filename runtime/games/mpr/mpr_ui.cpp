@@ -26,17 +26,14 @@ bool mpr_mouse_tab(int where, Settings& edit) {
     MouseSettings& m = edit.mouse;
     if (where == 0) {
         ImGui::Spacing();
-        ImGui::TextUnformatted("Morph ball camera (mouse orbits the camera around the ball)");
+        if (ImGui::Checkbox("Mouse and right stick turn the morph ball camera", &m.alt_camera)) changed = true;
+        ImGui::BeginDisabled(!m.alt_camera);
         double src = source_sens(m.alt_yaw_rad);
-        if (slider("Ball camera horizontal", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-            m.alt_yaw_rad = rad_per_count(src);
+        if (slider("Ball camera sensitivity", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
+            m.alt_yaw_rad = m.alt_pitch_rad = rad_per_count(src);   // both directions ([mouse] ball_sensitivity)
             changed = true;
         }
-        src = source_sens(m.alt_pitch_rad);
-        if (slider("Ball camera vertical", &src, 0.1, 20.0, "%.2f", ImGuiSliderFlags_Logarithmic)) {
-            m.alt_pitch_rad = rad_per_count(src);
-            changed = true;
-        }
+        ImGui::EndDisabled();
     } else if (where == 1) {
         if (ImGui::Checkbox("Mouse wheel cycles beams", &m.wheel_cycles)) changed = true;
     } else if (where == 2) {

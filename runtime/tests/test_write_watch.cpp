@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -150,6 +151,7 @@ NXTEST(writer_thread_while_arming) {
     int armed = 0;
     for (int i = 0; i < 3000; ++i)
         armed += ww::arm(r, static_cast<uint64_t>(i % 13), 4) ? 1 : 0;
+    for (int i = 0; i < 5000 && writes.load() == 0; ++i) Sleep(1);     // the writer may start late on a loaded machine
     stop.store(true);
     t.join();
     CHECK(armed > 0);
@@ -162,5 +164,68 @@ NXTEST(writer_thread_while_arming) {
     }
     for (uint64_t p = 0; p < 16; ++p) *reinterpret_cast<volatile uint32_t*>(mem::kHeapBase + p * kPg) = 1;   // every page still writable through faults
     for (uint64_t p = 0; p < 16; ++p) CHECK(!ww::page_valid(r, p));
+    teardown(r);
+}
+
+namespace {
+
+// The store sits in a non-inlined callee: clang-cl's SEH only models faults at call sites (see test_memory.cpp).
+__declspec(noinline) void store_word(uint64_t addr) { *reinterpret_cast<volatile uint32_t*>(addr) = 0x55aa; }
+
+// A write that may fault; true when the fault went past the tracker to the caller's own handler. (SEH needs a function without destructors.)
+__declspec(noinline) bool write_passes_or_faults(uint64_t addr) {
+    __try {
+        store_word(addr);
+        return false;
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return true;
+    }
+}
+
+}  // namespace
+
+NXTEST(foreign_fault_passes_on_at_once) {
+    ww::Region* r = setup();
+    REQUIRE(r != nullptr);
+    DWORD was = 0;
+    REQUIRE(VirtualProtect(reinterpret_cast<void*>(mem::kHeapBase + 30 * kPg), kPg, PAGE_READONLY, &was));   // inside the region, not armed by us
+    const uint64_t faults0 = ww::faults(), waits0 = ww::fault_waits();
+    CHECK(write_passes_or_faults(mem::kHeapBase + 30 * kPg + 16));          // nobody is releasing: not ours, no waiting
+    CHECK(write_passes_or_faults(mem::kHeapBase + 30 * kPg + 32));
+    CHECK_EQ(ww::fault_waits(), waits0);
+    CHECK_EQ(ww::faults(), faults0);
+    CHECK_EQ(prot_of(mem::kHeapBase + 30 * kPg), static_cast<DWORD>(PAGE_READONLY));
+    // an armed page next to it is still handled
+    CHECK(ww::arm(r, 31, 1));
+    CHECK(!write_passes_or_faults(mem::kHeapBase + 31 * kPg));
+    CHECK_EQ(ww::faults(), faults0 + 1);
+    // after a release has finished, a second fault on the same page (a late writer) finds it writable and goes on without waiting
+    CHECK(!write_passes_or_faults(mem::kHeapBase + 31 * kPg + 4));
+    teardown(r);
+}
+
+NXTEST(writers_race_for_the_same_armed_pages) {
+    ww::Region* r = setup();
+    REQUIRE(r != nullptr);
+    std::atomic<bool> stop{false};
+    std::atomic<int> failed{0};
+    std::vector<std::thread> ts;
+    for (int t = 0; t < 4; ++t)
+        ts.emplace_back([&, t] {
+            uint32_t n = static_cast<uint32_t>(t);
+            while (!stop.load()) {
+                for (uint64_t p = 0; p < 8; ++p)
+                    if (write_passes_or_faults(mem::kHeapBase + p * kPg + (n % 1024) * 4)) failed.fetch_add(1);   // a fault the tracker did not handle
+                ++n;
+            }
+        });
+    // keep arming until the writers have really raced the arms (they start late on a loaded machine): at least 3000 arms and 20000 faults, or 5 s
+    const uint64_t faults0 = ww::faults();
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 3000 || (ww::faults() - faults0 < 20000 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5)); ++i) ww::arm(r, 0, 8);
+    stop.store(true);
+    for (auto& t : ts) t.join();
+    CHECK_EQ(failed.load(), 0);
+    CHECK(ww::faults() > faults0);
     teardown(r);
 }

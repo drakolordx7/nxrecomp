@@ -274,8 +274,16 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Mouse:
             if (k == "yaw") return set_num(&s->mouse.yaw_rad);
             if (k == "pitch") return set_num(&s->mouse.pitch_rad);
-            if (k == key_alt_yaw()) return set_num(&s->mouse.alt_yaw_rad);
-            if (k == key_alt_pitch()) return set_num(&s->mouse.alt_pitch_rad);
+            // the ball camera's speed: 0.1 to 20 on the Source scale (the F1 slider's range), in radians per count for the older keys
+            if (k == key_alt_yaw()) return set_real(rad_per_count(0.1), rad_per_count(20.0), &s->mouse.alt_yaw_rad);
+            if (k == key_alt_pitch()) return set_real(rad_per_count(0.1), rad_per_count(20.0), &s->mouse.alt_pitch_rad);
+            if (k == key_alt_camera()) return set_bool(&s->mouse.alt_camera);
+            if (k == key_alt_sens()) {   // Source scale, both directions
+                double x = 0;
+                if (!set_real(0.1, 20.0, &x)) return false;
+                s->mouse.alt_yaw_rad = s->mouse.alt_pitch_rad = rad_per_count(x);
+                return true;
+            }
             if (k == "yaw_source" || k == "pitch_source") {   // Source scale, converted to radians per count
                 double x = 0;
                 if (!set_num(&x)) return false;
@@ -749,8 +757,9 @@ std::string format_settings(const Settings& s) {
     o += "\n[mouse]\n";
     kv("yaw", num(s.mouse.yaw_rad));
     kv("pitch", num(s.mouse.pitch_rad));
-    kv(key_alt_yaw(), num(s.mouse.alt_yaw_rad));
-    kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));
+    kv(key_alt_camera(), flag(s.mouse.alt_camera));
+    kv(key_alt_sens(), num(source_sens(s.mouse.alt_yaw_rad)));
+    if (s.mouse.alt_pitch_rad != s.mouse.alt_yaw_rad) kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));   // a vertical of its own, after the pair
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_cursor", flag(s.mouse.menu_cursor));

@@ -744,7 +744,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
         st.last_status_ns = now;
         GameStatus gs;
         if (gp && gp->status) gp->status(&gs);
-        char game_part[256] = "";
+        char game_part[512] = "";
         if (gp && gp->status_text) gp->status_text(game_part, sizeof game_part);
         NXLOG_I(kTag, "status: ctx=%s in_game=%d aim=%s frames=%llu process_input=%llu aim_frames=%llu events=%llu pads=%zu captured=%d%s", ctx_name(ctx),
                 in_game ? 1 : 0, gs.aim, static_cast<unsigned long long>(st.frames.load()),
