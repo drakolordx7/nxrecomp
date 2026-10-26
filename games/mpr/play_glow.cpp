@@ -195,6 +195,12 @@ constexpr GlowTexture kTextures[] = {
     {2048, 1024, 12, 0x2d9b3b57fa799f2aull, GlowTexPart::Suit, "Varia Suit arm glow map (834be0bf)"},
     {2048, 1024, 12, 0x2b3fb8dba4c2fc05ull, GlowTexPart::Suit, "Gravity Suit arm glow map (211798a7)"},
     {2048, 1024, 12, 0x0e29b3f9e87c90d5ull, GlowTexPart::Suit, "Phazon Suit arm glow map (dfe04668)"},
+    // Two small glow textures of the Gravity and Phazon Suit models. The game uploads them only while Samus wears that suit (the glow maps
+    // above are in memory in the hangar, these are not), so a hangar log never showed them. Their tails are the assets' own, as for the maps.
+    // The Gravity Suit's cyan stripes on top of the shoulders: one 8 x 8 texture that fills both the colour and the glow slot of its material.
+    {8, 8, 4, 0x6b0345201e4c882bull, GlowTexPart::Suit, "Gravity Suit shoulder stripes (7f5c390c)"},
+    // The Phazon Suit's red glow lines (shoulders, chest): a 128 x 4 colour ramp, sampled by fragment shader 8da4e38b4246a74f.
+    {128, 4, 8, 0x5b14cbbac87c70bbull, GlowTexPart::Suit, "Phazon Suit glow ramp (b9513805)"},
 };
 constexpr size_t kTextureCount = sizeof kTextures / sizeof kTextures[0];
 
@@ -224,8 +230,9 @@ uint64_t ramp_match(const gfx::TexEditReq& r, void*) {
         auto it = seen.find(tail);
         if (it == seen.end()) {
             it = seen.emplace(tail, 1000 + seen.size()).first;
-            NXLOG_I(kTag, "texture %s %u levels ASTC %ux%u sRGB, tail %016llx%s, discovery id %llx", size, r.levels, r.block_w, r.block_h,
-                    static_cast<unsigned long long>(tail), claim ? "" : " (not claimed)", static_cast<unsigned long long>(kDiscoveryFlag | it->second));
+            NXLOG_I(kTag, "texture %s %u levels ASTC %ux%u sRGB, %zu bytes, tail %016llx%s, discovery id %llx", size, r.levels, r.block_w, r.block_h,
+                    r.tiled_size, static_cast<unsigned long long>(tail), claim ? "" : " (not claimed)",
+                    static_cast<unsigned long long>(kDiscoveryFlag | it->second));
         }
         if (claim) return kDiscoveryFlag | it->second;
     }
