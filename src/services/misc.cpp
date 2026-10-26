@@ -12,6 +12,7 @@
 // Every command in a table has a handler: accepted-and-ignored (logged at Debug), an error result, or a real answer. No table command
 // falls through to kStubService. Two services have no table in the sources read, so their commands do fall through: pcm, and the IUser
 // that nfc:mf:u hands out. "banana" is a StubService by design.
+#include <atomic>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -551,8 +552,19 @@ std::shared_ptr<Service> make_nfc_user() {
 
 std::shared_ptr<Service> make_nfp_user() {
     return make_iface("nn::nfp::detail::IUser", [](Service& s) {
-        s.add_cmd(0, "Initialize", accept("nfp", "Initialize"));
-        s.add_cmd(1, "Finalize", accept("nfp", "Finalize"));
+        // The object's State (Ryujinx IUser: NonInitialized 0, Initialized 1): GetState reports it, so a caller that checks it
+        // before nn::nfp::Initialize does not initialise twice (the SDK aborts on a second Initialize).
+        auto state = std::make_shared<std::atomic<uint32_t>>(0);
+        s.add_cmd(0, "Initialize", [state](Request&, Response&) -> uint32_t {
+            state->store(1);
+            NXLOG_D("nfp", "Initialize: state Initialized");
+            return 0;
+        });
+        s.add_cmd(1, "Finalize", [state](Request&, Response&) -> uint32_t {
+            state->store(0);
+            NXLOG_D("nfp", "Finalize: state NonInitialized");
+            return 0;
+        });
         s.add_cmd(2, "ListDevices", [](Request& req, Response& rsp) -> uint32_t {
             zero_buffer(req.out_buf(0));
             rsp.push<int32_t>(0);
@@ -580,8 +592,8 @@ std::shared_ptr<Service> make_nfp_user() {
             rsp.out_copy.push_back(events().nfp_deactivate.new_handle());
             return 0;
         });
-        s.add_cmd(19, "GetState", [](Request&, Response& rsp) -> uint32_t {
-            rsp.push<uint32_t>(0);   // NonInitialized
+        s.add_cmd(19, "GetState", [state](Request&, Response& rsp) -> uint32_t {
+            rsp.push<uint32_t>(state->load());
             return 0;
         });
         s.add_cmd(20, "GetDeviceState", nfp_no_device("nfp", "GetDeviceState"));
