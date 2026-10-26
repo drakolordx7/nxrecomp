@@ -104,11 +104,33 @@ class Image:
         return out
 
     def relocs(self):
-        """[(offset, info, addend)] of DT_RELA (R_AARCH64_RELATIVE etc.); offset is module-relative."""
-        if 7 not in self.dt:
+        """[(offset, info, addend)] of DT_RELA (R_AARCH64_RELATIVE etc.), then the DT_RELR entries as RELATIVE
+        relocations whose addend is the value stored in place; offset is module-relative."""
+        out = []
+        if 7 in self.dt:
+            rela, sz = self.dt[7], self.dt[8]
+            out = [struct.unpack_from('<QQq', self.mem, rela + i * 24) for i in range(sz // 24)]
+        out += [(o, 0x403, struct.unpack_from('<q', self.mem, o)[0]) for o in self.relr_offsets()]
+        return out
+
+    def relr_offsets(self):
+        """Module offsets relocated by DT_RELR (36, size DT_RELRSZ 35; SDK 20 modules use it for most RELATIVE
+        relocations). An even entry is an address; an odd one is a bitmap of the 63 words after the last address."""
+        if 36 not in self.dt:
             return []
-        rela, sz = self.dt[7], self.dt[8]
-        return [struct.unpack_from('<QQq', self.mem, rela + i * 24) for i in range(sz // 24)]
+        off, sz = self.dt[36], self.dt.get(35, 0)
+        out, where = [], 0
+        for i in range(sz // 8):
+            e = struct.unpack_from('<Q', self.mem, off + i * 8)[0]
+            if not e & 1:
+                out.append(e)
+                where = e + 8
+            else:
+                for bit in range(1, 64):
+                    if e >> bit & 1:
+                        out.append(where + (bit - 1) * 8)
+                where += 63 * 8
+        return out
 
     def jmprel(self):
         """[(slot offset, info, addend)] of DT_JMPREL (the PLT's GOT slots)."""
