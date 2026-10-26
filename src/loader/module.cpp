@@ -254,6 +254,8 @@ bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::str
             case DT_RELASZ: m.rela_sz_ = dn.val; break;
             case DT_JMPREL: m.jmprel_ = dn.val; break;
             case DT_PLTRELSZ: m.jmprel_sz_ = dn.val; break;
+            case DT_RELR: m.relr_ = dn.val; break;
+            case DT_RELRSZ: m.relr_sz_ = dn.val; break;
             case DT_INIT: m.init_fn_ = dn.val; break;
             case DT_FINI: m.fini_fn_ = dn.val; break;
             case DT_INIT_ARRAY: m.init_arr_ = dn.val; break;
@@ -422,6 +424,33 @@ bool LoaderAccess::link(Module& m) {
                     m.stats_.unhandled++;
                     if (m.stats_.unhandled <= 8) NXLOG_W(kTag, "%s: relocation type %u (sym %u) at 0x%llx is not handled", m.name_.c_str(), type, symidx, (unsigned long long)r.offset);
                     break;
+            }
+        }
+    }
+    // DT_RELR: packed RELATIVE relocations (the addend is the value already in the slot). An even entry is the address of
+    // one slot; an odd entry is a bitmap over the 63 slots after the last one relocated.
+    if (m.relr_ && m.relr_sz_) {
+        if (m.relr_ < lo || m.relr_ > hi || m.relr_sz_ > hi - m.relr_) {
+            NXLOG_E(kTag, "%s: DT_RELR table is outside the image", m.name_.c_str());
+            ok = false;
+        } else {
+            auto fix = [&](uint64_t off) {
+                m.stats_.total++;
+                if (off < lo || off + 8 > hi) { m.stats_.out_of_range++; return; }
+                m.stats_.relative++;
+                *reinterpret_cast<uint64_t*>(m.bias_ + off) += m.bias_;
+            };
+            uint64_t where = 0;
+            for (uint64_t i = 0; i + 8 <= m.relr_sz_; i += 8) {
+                const uint64_t e = *reinterpret_cast<const uint64_t*>(m.bias_ + m.relr_ + i);
+                if (!(e & 1)) {
+                    fix(e);
+                    where = e + 8;
+                } else {
+                    for (int bit = 1; bit < 64; bit++)
+                        if (e >> bit & 1) fix(where + uint64_t(bit - 1) * 8);
+                    where += 63 * 8;
+                }
             }
         }
     }

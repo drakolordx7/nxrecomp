@@ -30,9 +30,13 @@ if errorlevel 1 goto :fail
 "%LLVM%\llvm-objcopy.exe" --strip-sections "%OUTDIR%\fixture_aarch64.elf" "%OUTDIR%\fixture_nosections.elf"
 if errorlevel 1 goto :fail
 
+rem fixture_relr.elf: the same object with packed relative relocations (DT_RELR), as SDK 20 modules have them.
+"%LLVM%\ld.lld.exe" -shared -Bsymbolic -z relro -z pack-relative-relocs -z max-page-size=4096 -z separate-code -e fixture_entry --hash-style=both "%WORK%\fixture.o" -o "%OUTDIR%\fixture_relr.elf"
+if errorlevel 1 goto :fail
+
 rmdir /s /q "%WORK%"
 
-for %%F in ("%OUTDIR%\fixture_aarch64.elf" "%OUTDIR%\fixture_nosections.elf") do echo %%~nxF %%~zF bytes
+for %%F in ("%OUTDIR%\fixture_aarch64.elf" "%OUTDIR%\fixture_nosections.elf" "%OUTDIR%\fixture_relr.elf") do echo %%~nxF %%~zF bytes
 exit /b 0
 
 :nollvm

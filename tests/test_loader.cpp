@@ -19,6 +19,7 @@ namespace {
 
 const char* kFull = NXRT_TEST_DATA_DIR "/fixture_aarch64.elf";
 const char* kNoSec = NXRT_TEST_DATA_DIR "/fixture_nosections.elf";
+const char* kRelr = NXRT_TEST_DATA_DIR "/fixture_relr.elf";      // same object, packed relative relocations (DT_RELR)
 
 // Facts from fixture_info.txt (module-relative ELF virtual addresses).
 constexpr uint64_t kFnA = 0x2000, kFnB = 0x2008, kFnC = 0x2010, kCtorA = 0x2018, kCtorB = 0x2030, kDtorA = 0x2048;
@@ -101,6 +102,28 @@ NXTEST(data_and_relative_relocations) {
     CHECK_EQ(peek64(b + kFnTableRo + 16), b + kFnA);
     CHECK_EQ(std::memcmp(reinterpret_cast<void*>(b + 0x1130), "NXRT-FIXTURE", 13), 0);   // .rodata
     for (int i = 0; i < 64; i++) CHECK_EQ(*reinterpret_cast<int*>(b + kBssBlock + 4 * i), 0);   // .bss zero
+    reset();
+}
+
+NXTEST(packed_relative_relocations) {
+    // SDK 20 modules keep their RELATIVE relocations in DT_RELR (addresses and bitmaps, addend in the slot). The layout differs from
+    // the full fixture, so the addresses come from the symbols.
+    reset();
+    Module* m = load_linked(kRelr);
+    REQUIRE(m);
+    const uint64_t values = m->find_symbol("values"), fn_a = m->find_symbol("fn_a"), fn_b = m->find_symbol("fn_b"), fn_c = m->find_symbol("fn_c");
+    REQUIRE(values && fn_a && fn_b && fn_c);
+    CHECK_EQ(peek64(m->find_symbol("ptr_to_values")), values + 8);
+    const uint64_t t = m->find_symbol("fn_table"), ro = m->find_symbol("fn_table_ro");
+    CHECK_EQ(peek64(t), fn_a);
+    CHECK_EQ(peek64(t + 8), fn_b);
+    CHECK_EQ(peek64(t + 16), fn_c);
+    CHECK_EQ(peek64(ro), fn_c);
+    CHECK_EQ(peek64(ro + 16), fn_a);
+    const RelocStats& s = m->stats();
+    CHECK_EQ(s.unhandled, 0u);
+    CHECK_EQ(s.out_of_range, 0u);
+    CHECK_EQ(s.relative, 11u);                 // the same 11 RELATIVE relocations as the RELA fixture
     reset();
 }
 
