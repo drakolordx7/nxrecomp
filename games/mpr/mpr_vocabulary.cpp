@@ -108,6 +108,9 @@ const GameVocabulary& mpr_vocabulary() {
         g.key_alt_pitch = "morph_pitch";
         g.key_wheel_cycles = "wheel_beams";
         g.key_alt_orbit = "ball_orbit";
+        g.key_alt_camera = "ball_camera";
+        g.key_alt_sens = "ball_sensitivity";
+        g.label_alt_camera_on = "Mouse and right stick turn the morph ball camera";
         g.label_alt_camera = "Morph ball camera";
         g.label_wheel_cycles = "Mouse wheel changes the beam";
         return g;

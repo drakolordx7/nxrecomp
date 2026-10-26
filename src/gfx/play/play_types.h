@@ -112,6 +112,7 @@ struct MouseSettings {
     double pitch_rad = 0.000767945;   // radians per count, vertical (separate)
     double alt_yaw_rad = 0.000767945;     // the alternate body's camera (mpr: the morph ball camera): its own sensitivity, radians per count
     double alt_pitch_rad = 0.000767945;
+    bool alt_camera = true;                        // the mouse and the right stick turn the alternate body's camera (mpr: the morph ball camera)
     bool invert_y = false;                         // false: mouse up looks up
     bool invert_x = false;
     bool menu_cursor = true;                       // in menus the mouse is a pointer: cursor, hover, click, right click, wheel
@@ -278,8 +279,11 @@ struct GameVocabulary {
     const char* key_alt_pitch = nullptr;             // [mouse] (mpr: "morph_pitch"; generic "alt_pitch")
     const char* key_wheel_cycles = nullptr;          // [mouse] (mpr: "wheel_beams"; generic "wheel_cycles")
     const char* key_alt_orbit = nullptr;             // [pad]   (mpr: "ball_orbit"; generic "alt_orbit")
+    const char* key_alt_camera = nullptr;            // [mouse] on/off (mpr: "ball_camera"; generic "alt_camera")
+    const char* key_alt_sens = nullptr;              // [mouse] one sensitivity for both directions, Source scale (mpr: "ball_sensitivity"; generic "alt_sensitivity")
     const char* label_alt_camera = nullptr;          // launcher slider (mpr: "Morph ball camera")
     const char* label_wheel_cycles = nullptr;        // launcher check box (mpr: "Mouse wheel changes the beam")
+    const char* label_alt_camera_on = nullptr;       // launcher check box (mpr: "Mouse and right stick turn the morph ball camera")
 };
 const GameVocabulary* game_vocabulary();             // the registered game's, or nullptr
 // The settings-file keys of the alternate-body and cycle settings: the game's, else the generic ones.
@@ -287,12 +291,16 @@ const char* key_alt_yaw();
 const char* key_alt_pitch();
 const char* key_wheel_cycles();
 const char* key_alt_orbit();
+const char* key_alt_camera();
+const char* key_alt_sens();
 
 // ---- the settings file ---------------------------------------------------------------------------------------------------------
 // Plain ini, '#' or ';' starts a comment. Sections and keys are case-insensitive, whitespace around names and values is ignored.
 //   [meta]     defaults_rev = <n>   (written by the game; the factory-defaults revision of the file, a file without it counts as 0)
 //   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_cursor = 1   wheel_beams = 1     (radians per count)
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
+//              alt_camera = 1 (the alternate body's camera follows the mouse and the right stick), alt_sensitivity = 2.0 (its sensitivity, Source
+//              scale, both directions; alt_yaw / alt_pitch in radians per count set one direction each)
 //   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale alt_orbit
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
 //   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
