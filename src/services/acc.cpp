@@ -222,13 +222,14 @@ uint32_t get_baas_manager(ipc::Request& req, ipc::Response& rsp) {
 
 void setup_app(ipc::Service& s) {
     add_shared(s, false);
-    // Accepted and ignored: the application's init call (InitializeApplicationInfo / V0 take the pid, Switchbrew).
+    // Accepted and ignored: the application's init call (InitializeApplicationInfo / V0 / V2 take the pid, Switchbrew).
     auto accept = [](ipc::Request&, ipc::Response&) -> uint32_t {
         NXLOG_D("acc", "InitializeApplicationInfo: accepted, no state kept");
         return 0;
     };
     s.add_cmd(100, "InitializeApplicationInfoV0", accept);
     s.add_cmd(140, "InitializeApplicationInfo", accept);
+    s.add_cmd(160, "InitializeApplicationInfoV2", accept);   // newer SDKs' init call (Switchbrew: same pid input)
     s.add_cmd(101, "GetBaasAccountManagerForApplication", get_baas_manager);
     s.add_cmd(130, "LoadOpenContext", get_baas_manager);
     s.add_cmd(131, "ListOpenContextStoredUsers", [](ipc::Request& req, ipc::Response&) -> uint32_t {
