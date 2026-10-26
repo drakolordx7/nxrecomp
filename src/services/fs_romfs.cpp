@@ -20,6 +20,8 @@
 #include <system_error>
 #include <vector>
 
+#include "nxrt/diag.h"
+#include "nxrt/log.h"
 #include "nxrt/write_watch.h"
 
 namespace nxrt::services::fs {
@@ -194,6 +196,7 @@ struct FileRec {
     std::wstring host;
     uint64_t size = 0;
     uint64_t image_off = 0;
+    std::string path;            // path inside the image ("/a/b.bin"), for the first-read note
 };
 
 // Everything build() produces. Replaced as a whole.
@@ -343,7 +346,7 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err) {
         const uint64_t img = kPartitionOfs + f->data;
         if (img > cursor) L.segs.push_back({cursor, img - cursor, Segment::Kind::kZero, 0, 0});
         const uint32_t idx = static_cast<uint32_t>(L.files.size());
-        L.files.push_back({f->host, f->size, img});
+        L.files.push_back({f->host, f->size, img, f->path});
         if (f->size > 0) L.segs.push_back({img, f->size, Segment::Kind::kFile, 0, idx});
         L.by_path[f->path] = idx;
         cursor = img + f->size;
@@ -382,7 +385,18 @@ struct OpenSlot {
 
 struct RomfsImage::Impl {
     Layout l;
-    mutable std::mutex mu;                  // guards cache and tick
+    mutable std::mutex mu;                  // guards cache, tick and read_seen
+    mutable std::vector<uint8_t> read_seen; // per file: read at least once (the game's loads, in the log and the crash report)
+    void note_read(uint32_t idx) const {
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            if (idx >= read_seen.size() || read_seen[idx]) return;
+            read_seen[idx] = 1;
+        }
+        const std::string& path = l.files[idx].path;
+        NXLOG_D("fs", "romfs: first read of %s", path.c_str());
+        diag_note_file("rom", path.c_str());
+    }
     mutable std::vector<OpenSlot> cache;    // at most kOpenFiles entries
     mutable uint64_t tick = 0;
 
@@ -441,6 +455,7 @@ bool RomfsImage::build(const std::string& host_dir, std::string* err) {
     std::lock_guard<std::mutex> lk(p_->mu);
     p_->cache.clear();
     p_->l = ok ? std::move(fresh) : Layout{};
+    p_->read_seen.assign(p_->l.files.size(), 0);
     return ok;
 }
 
@@ -465,6 +480,7 @@ bool RomfsImage::read(uint64_t offset, void* dst, uint64_t len) const {
             case Segment::Kind::kTables: std::memcpy(out, L.tables.data() + g.src + within, n); break;
             case Segment::Kind::kZero: std::memset(out, 0, n); break;
             case Segment::Kind::kFile:
+                p_->note_read(g.file);
                 if (!p_->read_host(g.file, g.src + within, out, n)) return false;
                 break;
         }
