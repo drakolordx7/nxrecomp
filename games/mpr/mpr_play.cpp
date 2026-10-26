@@ -26,6 +26,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "play_aim.h"
+#include "play_ballcam.h"
 #include "play_camlook.h"
 #include "play_game.h"
 #include "play_glow.h"
@@ -48,7 +49,13 @@ struct M {
     uint64_t base = 0x7100000000ull;
     std::unique_ptr<AimDriver> aim;
     std::atomic<uint64_t> player{0};
-    LookOffsets free_look, ball_look;     // free look (first person, Alt held) and the morph ball camera orbit; main thread only
+    LookOffsets free_look;                // free look (first person, Alt held); main thread only
+    BallOrbit ball;                       // S48: the turn of the morph ball camera (play_ballcam.h); main thread only
+    BallCamLayout ball_layout;
+    // the last ball camera Think, for the status line
+    double ball_heading = 0, ball_pitch = 0, ball_applied_pitch = 0, ball_yaw_total = 0;
+    uint32_t ball_state = 0, ball_behaviour = 0;
+    bool ball_free = false;
     uint32_t hook_input = 0, hook_fpcam = 0, hook_ballcam = 0;
 };
 
@@ -87,32 +94,37 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     // The first ProcessInput since the frame boundary takes the mouse counts (late sample: the host pumps the window's events once more first).
     double dx = 0, dy = 0;
     host.input_tick(&dx, &dy);
-    // Camera look instead of body aim: the morph ball camera takes the mouse in the ball; the free look key makes the first-person mouse turn the
-    // view and not Samus. The counts are consumed here (the aim gets none), and the camera Think hooks below apply the offsets.
+    // Camera look instead of body aim: the morph ball camera takes the mouse in the ball (S48, [mouse] ball_camera); the free look key makes the
+    // first-person mouse turn the view and not Samus. The counts are consumed here (the aim gets none), and the camera Think hooks below apply them.
     {
         const AimBlock gate = st.aim->gate(player, mgr);
         const MouseSettings& ms = host.settings().mouse;
         uint32_t morph_word = 0;                       // 0 unmorphed, 2 and 3 transitions, 1 in the ball (the gate stops at "not first person" first)
         guest_read(player + 0x4d4, &morph_word, sizeof morph_word);
         if (morph_word == 1) {
-            LookParams lp;
-            lp.yaw_rad = ms.alt_yaw_rad;
-            lp.pitch_rad = ms.alt_pitch_rad;
-            lp.invert_x = ms.invert_x;
-            lp.invert_y = ms.invert_y;
-            if (dx != 0 || dy != 0) st.ball_look.add(dx, dy, lp);
-            dx = dy = 0;
-            // the right stick orbits the camera too, at a speed in radians per second (the game gives the stick no job in the ball, so nothing else moves with it)
-            float sx = 0, sy = 0, dt_in = 0;
-            if (host.settings().pad.alt_orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
-                host.right_stick(&sx, &sy);
-                if (sx != 0 || sy != 0) {
-                    const double rate = host.settings().pad.alt_orbit * static_cast<double>(dt_in);
-                    st.ball_look.add_angles(-static_cast<double>(sx) * rate, static_cast<double>(sy) * rate, lp);
+            if (ms.alt_camera) {
+                LookParams lp;
+                lp.yaw_rad = ms.alt_yaw_rad;
+                lp.pitch_rad = ms.alt_pitch_rad;
+                lp.invert_x = ms.invert_x;
+                lp.invert_y = ms.invert_y;
+                lp.pitch_limit_rad = kBallMaxElevation;   // the real limit is the camera's height above the ball (cam_think_hook)
+                if (dx != 0 || dy != 0) st.ball.add_mouse(dx, dy, lp);
+                // the right stick turns the camera too, at a speed in radians per second (the game gives the stick no job in the ball)
+                float sx = 0, sy = 0, dt_in = 0;
+                if (host.settings().pad.alt_orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
+                    host.right_stick(&sx, &sy);
+                    if (sx != 0 || sy != 0) {
+                        const double rate = host.settings().pad.alt_orbit * static_cast<double>(dt_in);
+                        st.ball.add_angles(-static_cast<double>(sx) * rate, static_cast<double>(sy) * rate, lp);
+                    }
                 }
+            } else {
+                st.ball.reset();
             }
+            dx = dy = 0;
         } else {
-            st.ball_look.reset();
+            st.ball.reset();
         }
         if (gate == AimBlock::None && host.action_active(Act::LookHold, now)) {
             LookParams lp;
@@ -153,8 +165,10 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
     return 1;
 }
 
-// Camera Think hooks: after the game's own Think the camera transform is turned by the current look offset (free look: about the eye; morph ball:
-// about the ball). Before the next Think the game's own transform is put back, so its camera logic never sees the offset.
+// Camera Think hooks. Free look (first person): after the game's own Think the camera transform is turned about the eye by the look offset, and
+// before the next Think the game's own transform is put back, so its camera logic never sees the offset. Morph ball (S48, play_ballcam.h): the
+// yaw turns the game's own camera around the ball before its Think (CBallCameraMP1::TeleportCamera), so the game carries on from there; the
+// pitch is a view offset like free look's, about the ball.
 struct CamMemo { bool have = false; float orig[12] = {}, applied[12] = {}; uint64_t cam = 0; };
 thread_local bool t_in_cam_think = false;
 CamMemo g_cam_memo[2];
@@ -167,11 +181,36 @@ bool read_xf(uint64_t actor, uint64_t* xfp, float xf[12]) {
     return guest_read(a, xf, 12 * sizeof(float));
 }
 
+// The centre of the ball: the player's position (the bottom of the ball) plus the ball's radius, up.
+bool ball_pivot(float pivot[3]) {
+    M& st = m();
+    const uint64_t player = st.player.load();
+    float pxf[12];
+    uint64_t pp = 0;
+    if (!player || !read_xf(player, &pp, pxf)) return false;
+    pivot[0] = pxf[3];
+    pivot[1] = pxf[7] + st.ball_layout.ball_radius;
+    pivot[2] = pxf[11];
+    return std::isfinite(pivot[0]) && std::isfinite(pivot[1]) && std::isfinite(pivot[2]);
+}
+
+// The game's CBallCameraMP1::TeleportCamera(cam, xf, mgr) from inside the Think hook.
+void ball_teleport(::Ctx* c, uint64_t cam, uint64_t mgr, const float xf[12]) {
+    M& st = m();
+    alignas(16) float copy[12];
+    std::memcpy(copy, xf, sizeof copy);
+    ::Ctx saved = *c;
+    c->x[0] = cam;
+    c->x[1] = reinterpret_cast<uint64_t>(copy);
+    c->x[2] = mgr;
+    dispatch_call(c, st.base + st.ball_layout.fn_teleport);
+    *c = saved;
+}
+
 int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
     if (t_in_cam_think) return 0;
     M& st = m();
     const bool ball = user != nullptr;
-    LookOffsets& off = ball ? st.ball_look : st.free_look;
     CamMemo& memo = g_cam_memo[ball ? 1 : 0];
     const uint64_t cam = c->x[0];
     XfCall xc{c};
@@ -179,6 +218,25 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
     float cur[12];
     if (memo.have && memo.cam == cam && read_xf(cam, &xfp, cur) && std::memcmp(cur, memo.applied, sizeof cur) == 0) guest_set_transform(&xc, cam, memo.orig);
     memo.have = false;
+    float pivot[3] = {};
+    bool have_pivot = false;
+    if (ball) {
+        const BallCamLayout& bl = st.ball_layout;
+        uint32_t state = ~0u, behaviour = ~0u;
+        guest_read(cam + bl.state, &state, sizeof state);
+        guest_read(cam + bl.behaviour, &behaviour, sizeof behaviour);
+        st.ball_state = state;
+        st.ball_behaviour = behaviour;
+        st.ball_free = ballcam_free(state, behaviour);
+        have_pivot = ball_pivot(pivot);
+        const double yaw = st.ball.take_yaw();          // a turn made while the room's camera rules is dropped
+        if (yaw != 0 && st.ball_free && have_pivot && read_xf(cam, &xfp, cur)) {
+            float out[12];
+            orbit_transform(cur, pivot, yaw, 0.0, out);
+            ball_teleport(c, cam, c->x[1], out);        // Think(this, float dt, CStateManager&): x1 = the state manager
+            st.ball_yaw_total += yaw;
+        }
+    }
     {
         ::Ctx saved = *c;
         t_in_cam_think = true;
@@ -206,19 +264,28 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
     } else if (!ball) {
         lockcam_clear_gun_delta();
     }
-    if (off.active()) {
-        float pivot[3] = {work[3], work[7], work[11]};          // free look: the eye itself
-        if (ball) {
-            float pxf[12];
-            uint64_t pp = 0;
-            const uint64_t player = st.player.load();
-            if (!player || !read_xf(player, &pp, pxf)) return 1;
-            pivot[0] = pxf[3]; pivot[1] = pxf[7]; pivot[2] = pxf[11];
-        }
+    if (!ball && st.free_look.active()) {
+        const float eye[3] = {work[3], work[7], work[11]};
         float out[12];
-        orbit_transform(work, pivot, off.yaw(), off.pitch(), out);
+        orbit_transform(work, eye, st.free_look.yaw(), st.free_look.pitch(), out);
         std::memcpy(work, out, sizeof work);
         changed = true;
+    }
+    if (ball) {
+        st.ball_applied_pitch = 0;
+        if (st.ball_free && have_pivot && st.ball.pitch() != 0) {
+            // keep the camera between kBallMinElevation and kBallMaxElevation above the ball; a push past the limit is not stored, so the way back is immediate
+            const double p = clamp_ball_pitch(st.ball.pitch(), camera_elevation(work, pivot), kBallMinElevation, kBallMaxElevation);
+            st.ball.set_pitch(p);
+            if (p != 0) {
+                float out[12];
+                orbit_transform(work, pivot, 0.0, p, out);
+                std::memcpy(work, out, sizeof work);
+                changed = true;
+                st.ball_applied_pitch = p;
+            }
+        }
+        camera_heading_pitch(work, &st.ball_heading, &st.ball_pitch);
     }
     if (!changed) return 1;
     std::memcpy(memo.orig, cur, sizeof cur);
@@ -320,6 +387,12 @@ void status(GameStatus* out) {
 
 // " display_hook_calls=... menumouse(...)": the part of the status line the base printed for this game before the boundary.
 void status_text(char* buf, size_t n) {
+    M& st = m();
+    const int k = std::snprintf(buf, n, " ballcam(heading=%.3f pitch=%.3f offset=%.3f turned=%.3f state=%u behaviour=%u free=%d)", st.ball_heading, st.ball_pitch,
+                                st.ball_applied_pitch, st.ball_yaw_total, st.ball_state, st.ball_behaviour, st.ball_free ? 1 : 0);
+    if (k < 0 || static_cast<size_t>(k) >= n) return;
+    buf += k;
+    n -= static_cast<size_t>(k);
     std::snprintf(buf, n, " display_hook_calls=%u menumouse(active=%d hovers=%llu clicks=%llu widget_calls=%llu hook_calls=%llu)", display_hook_calls(),
                   mm::game_snapshot().active ? 1 : 0, static_cast<unsigned long long>(mm::game_stats().hovers), static_cast<unsigned long long>(mm::game_stats().clicks),
                   static_cast<unsigned long long>(mm::game_stats().widget_calls), static_cast<unsigned long long>(mm::game_hook_calls()));

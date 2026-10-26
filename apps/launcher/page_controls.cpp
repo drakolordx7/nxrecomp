@@ -23,7 +23,7 @@ const wchar_t* vocab_label(const char* nxrt::play::GameVocabulary::* field, cons
     *keep = game_text(v ? v->*field : nullptr, generic);
     return keep->c_str();
 }
-std::wstring g_alt_camera_label, g_wheel_cycles_label;
+std::wstring g_alt_camera_label, g_alt_camera_on_label, g_wheel_cycles_label;
 using nxrt::play::PromptStyle;
 using nxrt::play::rad_per_count;
 using nxrt::play::source_sens;
@@ -87,6 +87,10 @@ public:
             L"Use the same sensitivity for both", [](const Settings& s) { return same_steps(s); },
             [](Settings&, bool) {},   // not saved: only the two sliders are
             [this]() { linked_ = !linked_; });
+        f.checkbox(
+            vocab_label(&nxrt::play::GameVocabulary::label_alt_camera_on, L"Mouse and right stick turn the alternate camera", &g_alt_camera_on_label),
+            [](const Settings& s) { return s.mouse.alt_camera; },
+            [](Settings& s, bool v) { s.mouse.alt_camera = v; });
         f.slider(
             vocab_label(&nxrt::play::GameVocabulary::label_alt_camera, L"Alternate camera", &g_alt_camera_label), kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.alt_yaw_rad); },
             [this](Settings& s, int pos) {
