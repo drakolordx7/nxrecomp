@@ -43,6 +43,18 @@ struct MapRec {
     uint32_t src_state, src_perm;   // what the source was before the map (heap, or CodeData for a module's static buffer): UnmapMemory puts it back
 };
 std::vector<MapRec> g_maps;
+// Ranges given the PermissionLocked attribute (SetMemoryAttribute, 16.0.0+): start -> size. The SDK's rtld locks each module's
+// RELRO after making it read-only; the kernel then refuses SetMemoryPermission there and QueryMemory reports the attribute.
+std::map<uint64_t, uint64_t> g_perm_locked;
+constexpr uint32_t kAttrUncached = 0x08, kAttrPermissionLocked = 0x10;   // svc::MemoryAttribute bits
+bool overlaps_perm_locked(uint64_t addr, uint64_t size) {   // call with g_mu held
+    auto it = g_perm_locked.upper_bound(addr);
+    if (it != g_perm_locked.begin()) {
+        auto p = std::prev(it);
+        if (p->first + p->second > addr) return true;
+    }
+    return it != g_perm_locked.end() && it->first < addr + size;
+}
 
 // Host views in the alias region made by MapSharedMemory, MapTransferMemory and MapPhysicalMemory, keyed by their address.
 enum class WinKind : uint8_t { Shared, Transfer, Physical };
@@ -220,7 +232,7 @@ void set_memory_permission(::Ctx* c) {
     }
     std::lock_guard lk(g_mu);
     const bool inside = in_heap(addr, size, heap_now()) || in_stack(addr, size) || all_code_data(addr, size);
-    if (!inside || !mem::is_mapped(addr, size)) {
+    if (!inside || !mem::is_mapped(addr, size) || overlaps_perm_locked(addr, size)) {
         fail(c, "SetMemoryPermission", kernel::kInvalidMemoryState, addr, size, perm);
         return;
     }
@@ -235,7 +247,8 @@ void set_memory_permission(::Ctx* c) {
 }
 
 // ---- SetMemoryAttribute (0x03) -----------------------------------------------------------------------------------------------
-// Only the Uncached bit (mask 8) with value 0 or 8 is accepted. Anything else is refused; the accepted form is a no-op here.
+// The mask and value checks are mesosphere's: the bits are Uncached (8) and PermissionLocked (16); PermissionLocked can only be set.
+// Uncached is a no-op here. PermissionLocked needs module .data/.bss (CodeData, mesosphere FlagCanPermissionLock) and is recorded.
 void set_memory_attribute(::Ctx* c) {
     const uint64_t addr = reg(c, 0), size = reg(c, 1);
     const uint32_t mask = static_cast<uint32_t>(reg(c, 2)), value = static_cast<uint32_t>(reg(c, 3));
@@ -247,11 +260,25 @@ void set_memory_attribute(::Ctx* c) {
         fail(c, "SetMemoryAttribute", kernel::kInvalidSize, addr, size, mask);
         return;
     }
-    if (mask != 8 || (value != 0 && value != 8)) {
-        fail(c, "SetMemoryAttribute", kernel::kInvalidPermission, addr, mask, value);
+    constexpr uint32_t kSupported = kAttrUncached | kAttrPermissionLocked;
+    if ((mask | value) != mask || (mask | value | kSupported) != kSupported ||
+        (mask & kAttrPermissionLocked) != (value & kAttrPermissionLocked)) {
+        fail(c, "SetMemoryAttribute", kernel::kInvalidCombination, addr, mask, value);
         return;
     }
-    NXLOG_D(kTag, "SetMemoryAttribute(%llx, %llx, mask %u, value %u): no-op", U(addr), U(size), mask, value);
+    if (addr + size < addr) {
+        fail(c, "SetMemoryAttribute", kernel::kInvalidMemoryState, addr, mask, value);
+        return;
+    }
+    if (mask & kAttrPermissionLocked) {
+        std::lock_guard lk(g_mu);
+        if (!all_code_data(addr, size) || overlaps_perm_locked(addr, size)) {
+            fail(c, "SetMemoryAttribute (permission lock)", kernel::kInvalidMemoryState, addr, mask, value);
+            return;
+        }
+        g_perm_locked.emplace(addr, size);
+    }
+    NXLOG_D(kTag, "SetMemoryAttribute(%llx, %llx, mask %u, value %u)", U(addr), U(size), mask, value);
     svc_ret(c, kernel::kOk);
 }
 
@@ -377,6 +404,10 @@ void query_memory(::Ctx* c) {
     info.size = vi.size;
     info.type = vi.state;
     info.permission = vi.perm;
+    {
+        std::lock_guard lk(g_mu);
+        if (vi.state != mem::kMemFree && overlaps_perm_locked(vi.addr, vi.size)) info.attribute |= kAttrPermissionLocked;
+    }
     std::memcpy(reinterpret_cast<void*>(out), &info, sizeof info);
     reg(c, 1) = 0;
     NXLOG_D(kTag, "QueryMemory(%llx) -> base %llx size %llx type %u perm %u", U(addr), U(vi.addr), U(vi.size), vi.state,
@@ -652,6 +683,7 @@ void svc_memory_reset_for_tests() {
     for (auto& kv : g_windows) alias_free(kv.first);
     g_windows.clear();
     g_maps.clear();
+    g_perm_locked.clear();
     g_heap_cur = 0;
 }
 
