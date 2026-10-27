@@ -8,6 +8,7 @@
 //            skip_boot_logos = 0   1: the title's intro movie is skipped, the title screen ("press start") comes up at once
 //            fast_menus = 0        1: the front end (title, main menu, save slots, options) runs its animations, fades and waits faster
 //            menu_speed = 2        how much faster with fast_menus = 1: 1..4 (1 = normal speed)
+//            language = auto       the game's language: auto (the Windows display language) or a name such as French; next start
 #pragma once
 #include <string>
 
@@ -18,6 +19,8 @@ struct FastbootSettings {
     bool skip_boot_logos = false;   // [tweaks] skip_boot_logos
     bool fast_menus = false;        // [tweaks] fast_menus
     int menu_speed = 2;             // [tweaks] menu_speed, 1..4; read only while fast_menus is on
+    std::string language;           // [tweaks] language: a language name (AmericanEnglish, French, ...) or "" = auto (the Windows language).
+                                    // Read by the settings service at start-up (services/common.cpp); a change applies at the next start.
 };
 
 // One `key = value` of the [tweaks] section. Returns false with *msg set for a bad value of one of these keys. *known is false (and the

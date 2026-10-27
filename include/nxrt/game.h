@@ -35,6 +35,7 @@ struct Info {
     uint64_t program_id = 0;                // the Switch title id
     const char* version = "";               // the game version the hooks were found in: "1.0.0"
     uint64_t main_base = 0x7100000000ull;   // where main is mapped (the lifter's base for it): hook offsets are relative to this
+    uint32_t languages = 0;                 // control.nacp SupportedLanguage: bit n = services::Language n (0: American English only)
 
     // ---- files and branding ----
     const char* exe_name = "";              // the game exe: "mpr.exe"
