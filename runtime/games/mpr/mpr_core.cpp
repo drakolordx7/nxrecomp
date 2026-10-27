@@ -23,13 +23,7 @@ void title_defaults(services::TitleProfile& p) {
     p.program_id = data_info().program_id;
     p.name = data_info().title;
     p.display_version = data_info().version;
-    // control.nacp SupportedLanguage: 13 languages.
-    uint32_t m = 0;
-    for (Language l : {Language::AmericanEnglish, Language::BritishEnglish, Language::Japanese, Language::French, Language::German,
-                       Language::LatinAmericanSpanish, Language::Spanish, Language::Italian, Language::Dutch, Language::CanadianFrench,
-                       Language::Korean, Language::TraditionalChinese, Language::SimplifiedChinese})
-        m |= 1u << static_cast<uint32_t>(l);
-    p.supported_languages = m;
+    p.supported_languages = data_info().languages;   // control.nacp SupportedLanguage (mpr_data.cpp)
     p.account_save_size = 4ull << 20;          // UserAccountSaveDataSize 4 MiB
     p.account_save_journal = 1ull << 20;       // UserAccountSaveDataJournalSize 1 MiB
     p.main_thread_stack = 0x100000;            // main.npdm

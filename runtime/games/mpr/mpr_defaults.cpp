@@ -56,6 +56,8 @@ skip_boot_logos = 0
 # 1: the title, main menu, save slots and options run menu_speed (1..4) times faster.
 fast_menus = 0
 menu_speed = 2
+# The game's language: auto (the Windows display language) or one of AmericanEnglish BritishEnglish French CanadianFrench German Italian Spanish LatinAmericanSpanish Dutch Japanese Korean SimplifiedChinese TraditionalChinese. Applies at the next start.
+language = auto
 # One glow colour for the morph ball (its glowing stripes, inner glow, boost glow, trail and light), the arm cannon's charge glow and lit panels, and the suit's lights: off (the game's own) or R,G,B (0..255 each).
 glow_color = off
 # auto follows glow_color, off keeps the game's colour for that part, or R,G,B gives the part its own colour.

@@ -141,7 +141,7 @@ Rules:
 | `title` | `main_thread_stack` | `1048576` (0x100000) | `NXRT_TITLE_MAIN_THREAD_STACK` | `src/services/common.cpp` | Main thread stack size, in bytes (main.npdm). |
 | `title` | `main_thread_priority` | `44` | `NXRT_TITLE_MAIN_THREAD_PRIORITY` | `src/services/common.cpp` | Main thread priority (main.npdm). |
 | `title` | `main_thread_core` | `0` | `NXRT_TITLE_MAIN_THREAD_CORE` | `src/services/common.cpp` | Main thread processor number (main.npdm). |
-| `system` | `language` | `AmericanEnglish` | `NXRT_SYSTEM_LANGUAGE` | `src/services/common.cpp` | Console language by name, e.g. `Japanese`. A name that matches nothing keeps the default. |
+| `system` | `language` | `auto` | `NXRT_SYSTEM_LANGUAGE` | `src/services/common.cpp` | Console language by name, e.g. `Japanese`. `auto` or empty: the player's pick in controls.ini (`[tweaks] language`, set in the launcher), else the Windows display language. A language the title lacks falls to its nearest sibling (British for American English, and so on), else American English. The log says which language was used and where it came from. |
 | `system` | `region` | empty (USA, 1) | `NXRT_SYSTEM_REGION` | `src/services/common.cpp` | Region by name (`Japan`, `USA`, `Europe`, `Australia`, `HongKongTaiwanKorea`, `China`) or number (Japan 0 to China 5). Empty: USA. |
 | `system` | `firmware` | `12.1.0` | `NXRT_SYSTEM_FIRMWARE` | `src/services/common.cpp` | Firmware version that `set:sys` GetFirmwareVersion reports. |
 | `system` | `nickname` | `nxrt` | `NXRT_SYSTEM_NICKNAME` | `src/services/common.cpp` | Console nickname. |
@@ -269,6 +269,8 @@ All off by default; with them off the game starts and plays as it always did. Th
 `[tweaks] skip_intro`, default `0`. `1` skips the opening cutscene of a new game (the gunship landing on the Frigate Orpheon) without a key press. It uses the game's own cutscene skip: in the Exterior Docking Hangar the cutscene counts as skippable, and the skip button is pressed for the game the moment the game accepts it (about two seconds in), then the game fades out and jumps to the state the end of the cutscene leaves. Other cutscenes play as usual. Takes effect at the next new game.
 
 `[tweaks] skip_boot_logos`, default `0`. `1` ends the title's 14 second intro movie (the logo forming) as soon as it starts, so the title screen with "press start" comes up at once.
+
+`[tweaks] language`, default `auto`. The game's language: `auto` uses the Windows display language when the game has it, else English; a name such as `French` or `LatinAmericanSpanish` picks one (names as in `[system] language`). The launcher's Extras tab sets it. `[system] language` in the game ini wins over it. Applies at the next start.
 
 `[tweaks] fast_menus`, default `0`, and `[tweaks] menu_speed`, default `2`, range `1` to `4`. With `fast_menus = 1` the front end (title, main menu, save slots, difficulty, options, extras) runs its clock `menu_speed` times faster: its animations, fades, waits and the attract-mode timer. The transition movies between the title, the main menu and Extras are cut after 1/`menu_speed` of their length. The looping movies behind the menus, their sound and the game itself keep their speed. `menu_speed` is read only while `fast_menus` is on. Applies at once.
 

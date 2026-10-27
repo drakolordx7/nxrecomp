@@ -47,6 +47,10 @@ bool fastboot_apply(const std::string& key, const std::string& value, FastbootSe
         s->menu_speed = static_cast<int>(x);
         return true;
     }
+    if (k == "language") {
+        s->language = lower(value) == "auto" ? std::string() : value;
+        return true;
+    }
     *known = false;
     return true;
 }
@@ -57,6 +61,7 @@ void fastboot_format(const FastbootSettings& s, std::string* out) {
     kv("skip_boot_logos", s.skip_boot_logos ? "1" : "0");
     kv("fast_menus", s.fast_menus ? "1" : "0");
     kv("menu_speed", std::to_string(std::clamp(s.menu_speed, 1, 4)));
+    kv("language", s.language.empty() ? "auto" : s.language);
 }
 
 double fastboot_menu_rate(const FastbootSettings& s) { return s.fast_menus ? static_cast<double>(std::clamp(s.menu_speed, 1, 4)) : 1.0; }
