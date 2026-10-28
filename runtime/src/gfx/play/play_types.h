@@ -253,6 +253,15 @@ struct GameDefaultAddition {
     const char* input;
     Act act;
 };
+// A factory setting that a later revision changed: a controls.ini below `rev` that still has the old factory value `from` takes `to` once
+// (a value the player picked themselves stays).
+struct GameDefaultChange {
+    int rev;
+    const char* section;   // "aim"
+    const char* key;       // "lock_mode"
+    const char* from;
+    const char* to;
+};
 struct GameVocabulary;
 struct GameDefaults {
     const char* settings_text = "";                  // the factory settings file
@@ -260,6 +269,8 @@ struct GameDefaults {
     const GameDefaultAddition* additions = nullptr;
     unsigned addition_count = 0;
     const GameVocabulary* vocabulary = nullptr;      // the names of the action and context slots (below)
+    const struct GameDefaultChange* changes = nullptr;
+    unsigned change_count = 0;
 };
 const GameDefaults* game_defaults();                 // the registered game's, or nullptr
 

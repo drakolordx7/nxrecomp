@@ -70,6 +70,23 @@ public:
     const wchar_t* title() const override { return L"Controls"; }
 
     void build(Form& f) override {
+        f.heading(L"Lock-on and camera");
+        f.combo(
+            L"Lock-on camera", {L"Classic (the view turns to the target)", L"Free (you keep control of the view, the default)"},
+            [](const Settings& s) { return s.aim.lock_mode == LockMode::Free ? 1 : 0; },
+            [](Settings& s, int i) { s.aim.lock_mode = i == 1 ? LockMode::Free : LockMode::Classic; });
+        f.hint(L"Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.", 3);
+        f.slider(
+            L"Free lock edge margin", 0, 40, [](const Settings& s) { return margin_pos(s.aim.free_lock_margin); },
+            [this](Settings& s, int pct) {
+                if (pct == margin0_) return;   // only a value the player moved is written
+                s.aim.free_lock_margin = pct / 100.0;
+            },
+            margin_text);
+        f.checkbox(
+            L"Steady view (gun sway and walking bob move only the gun)", [](const Settings& s) { return !s.camera.gun_drives_view; },
+            [](Settings& s, bool v) { s.camera.gun_drives_view = !v; });
+
         f.heading(L"Mouse");
         yaw_ = f.slider(
             L"Horizontal sensitivity", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.yaw_rad); },
@@ -116,23 +133,6 @@ public:
         f.checkbox(
             L"Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
             [](Settings& s, bool v) { s.mouse.menu_cursor = v; });
-
-        f.heading(L"Lock-on and camera");
-        f.combo(
-            L"Lock-on camera", {L"Classic (the view turns to the target)", L"Free (you keep control of the view)"},
-            [](const Settings& s) { return s.aim.lock_mode == LockMode::Free ? 1 : 0; },
-            [](Settings& s, int i) { s.aim.lock_mode = i == 1 ? LockMode::Free : LockMode::Classic; });
-        f.hint(L"Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.", 3);
-        f.slider(
-            L"Free lock edge margin", 0, 40, [](const Settings& s) { return margin_pos(s.aim.free_lock_margin); },
-            [this](Settings& s, int pct) {
-                if (pct == margin0_) return;   // only a value the player moved is written
-                s.aim.free_lock_margin = pct / 100.0;
-            },
-            margin_text);
-        f.checkbox(
-            L"Steady view (gun sway and walking bob move only the gun)", [](const Settings& s) { return !s.camera.gun_drives_view; },
-            [](Settings& s, bool v) { s.camera.gun_drives_view = !v; });
 
         f.heading(L"Button prompts");
         f.combo(

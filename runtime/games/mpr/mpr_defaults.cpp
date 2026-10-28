@@ -20,7 +20,7 @@ const char* settings_text() {
 [meta]
 # The factory-defaults revision this file was written with. A file with bindings and an older revision gets the newer factory bindings
 # added where the key is still unbound (docs/CONFIG.md). Do not change it by hand.
-defaults_rev = 2
+defaults_rev = 3
 
 [mouse]
 # Radians per mouse count (raw, unaccelerated). The settings page shows the same value on the Source engine scale
@@ -39,7 +39,7 @@ wheel_beams = 1
 
 [aim]
 # Lock-on (hold the lock button): classic is the game's own, the view turns to face the target. free keeps the lock, the homing shots and the strafing, but the view stays under your control (mouse and right stick). Scanning always uses classic.
-lock_mode = classic
+lock_mode = free
 # With free, the view can move once the lock is established, but the locked target stays on screen. This is the part of the screen kept free along every edge, 0 to 0.4 (0.15 = the target stays in the middle 70 percent).
 free_lock_margin = 0.15
 
@@ -254,9 +254,13 @@ Mouse2 = none
 }
 
 // Factory bindings that an older controls.ini does not have (append new ones with the next revision and bump kDefaultsRev).
-constexpr int kDefaultsRev = 2;
+constexpr int kDefaultsRev = 3;
 const GameDefaultAddition kAdditions[] = {
     {2, Ctx::Map, "X", Act::BtnX},   // the map's Key / Legend button (its footer shows X)
+};
+// Factory values a later revision changed; a file still on the old factory value moves to the new one once.
+const GameDefaultChange kChanges[] = {
+    {3, "aim", "lock_mode", "classic", "free"},   // Free lock-on is the default (playtest: players never found it)
 };
 
 }  // namespace
@@ -265,7 +269,7 @@ const GameVocabulary& mpr_vocabulary();     // mpr_vocabulary.cpp
 
 const GameDefaults& mpr_game_defaults() {
     static const GameDefaults d{settings_text(), kDefaultsRev, kAdditions, static_cast<unsigned>(sizeof kAdditions / sizeof kAdditions[0]),
-                                &mpr_vocabulary()};
+                                &mpr_vocabulary(), kChanges, static_cast<unsigned>(sizeof kChanges / sizeof kChanges[0])};
     return d;
 }
 

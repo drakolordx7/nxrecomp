@@ -422,6 +422,19 @@ NXTEST(file_with_only_mouse_keeps_default_bindings) {
     CHECK(act_at(s, "W", Ctx::All) == Act::MoveForward);
 }
 
+NXTEST(old_factory_lock_mode_moves_to_free_once) {
+    // A rev 2 file still on the old factory value takes the new one; a player's own choice in a current file stays.
+    Settings s;
+    std::string err;
+    REQUIRE(parse_settings("[aim]\nlock_mode = classic\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 2\n", &s, &err));
+    CHECK(s.aim.lock_mode == LockMode::Free);
+    CHECK(s.migrated);
+    CHECK(s.migration_added.find("lock_mode = free") != std::string::npos);
+    Settings k;
+    REQUIRE(parse_settings("[aim]\nlock_mode = classic\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 3\n", &k, &err));
+    CHECK(k.aim.lock_mode == LockMode::Classic);
+}
+
 NXTEST(one_bindings_section_drops_default_bindings) {
     Settings s;
     std::string err;
@@ -563,9 +576,9 @@ NXTEST(camera_gun_drives_view_parses_and_round_trips) {
     CHECK(same_settings(s, r));
 }
 
-NXTEST(camera_and_aim_defaults_are_classic_and_on) {
+NXTEST(camera_and_aim_defaults_are_free_and_on) {
     const Settings d = default_settings();
-    CHECK(d.aim.lock_mode == LockMode::Classic);
+    CHECK(d.aim.lock_mode == LockMode::Free);
     CHECK(d.aim.free_lock_margin == 0.15);
     CHECK(d.camera.gun_drives_view);
 }
@@ -1414,7 +1427,7 @@ NXTEST(old_file_gets_new_factory_binding_on_map) {
     std::string err;
     REQUIRE_MSG(parse_settings("[bindings.map]\nReturn = confirm\n", &s, &err), err);
     CHECK(s.migrated);
-    CHECK_EQ(s.defaults_rev, 2);
+    CHECK_EQ(s.defaults_rev, 3);
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
     CHECK(act_at(s, "Return", Ctx::Map) == Act::Confirm);   // the file's own binding is kept
     CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 2);
@@ -1432,20 +1445,20 @@ NXTEST(old_file_keeps_users_own_key_on_map) {
 NXTEST(file_at_current_revision_is_not_migrated) {
     Settings s;
     std::string err;
-    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 2\n[bindings.map]\nReturn = confirm\n", &s, &err), err);
+    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 3\n[bindings.map]\nReturn = confirm\n", &s, &err), err);
     CHECK(!s.migrated);
-    CHECK_EQ(s.defaults_rev, 2);
+    CHECK_EQ(s.defaults_rev, 3);
     CHECK(act_at(s, "X", Ctx::Map) == Act::kCount);   // the user removed X: it stays removed
 }
 
 NXTEST(format_round_trip_keeps_defaults_rev) {
     const Settings s = default_settings();
     const std::string text = format_settings(s);
-    CHECK(text.find("[meta]\ndefaults_rev = 2\n") != std::string::npos);
+    CHECK(text.find("[meta]\ndefaults_rev = 3\n") != std::string::npos);
     Settings back;
     std::string err;
     REQUIRE_MSG(parse_settings(text, &back, &err), err);
-    CHECK_EQ(back.defaults_rev, 2);
+    CHECK_EQ(back.defaults_rev, 3);
     CHECK(!back.migrated);
     CHECK(same_settings(s, back));
 }
@@ -1454,9 +1467,9 @@ NXTEST(factory_text_is_at_current_revision) {
     Settings s;
     std::string err;
     REQUIRE_MSG(parse_settings(default_settings_text(), &s, &err), err);
-    CHECK_EQ(s.defaults_rev, 2);
+    CHECK_EQ(s.defaults_rev, 3);
     CHECK(!s.migrated);
-    CHECK_EQ(default_settings().defaults_rev, 2);
+    CHECK_EQ(default_settings().defaults_rev, 3);
     CHECK(act_at(default_settings(), "X", Ctx::Map) == Act::BtnX);
 }
 
@@ -1464,7 +1477,7 @@ NXTEST(meta_defaults_rev_is_known_and_unknown_meta_key_warns) {
     Settings s;
     std::string err;
     std::vector<std::string> w;
-    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 2\n[bindings.all]\nW = fire\n", &s, &err, &w), err);
+    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 3\n[bindings.all]\nW = fire\n", &s, &err, &w), err);
     CHECK(w.empty());
     std::vector<std::string> w2;
     REQUIRE_MSG(parse_settings("[meta]\nfoo = 1\n", &s, &err, &w2), err);
@@ -1477,7 +1490,7 @@ NXTEST(file_without_bindings_gets_factory_bindings_at_current_revision) {
     std::string err;
     REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
     CHECK(!s.migrated);
-    CHECK_EQ(s.defaults_rev, 2);
+    CHECK_EQ(s.defaults_rev, 3);
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
 }
 
