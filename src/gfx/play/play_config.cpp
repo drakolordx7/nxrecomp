@@ -504,6 +504,46 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
 
 // Adds the factory bindings newer than `file_rev` to a file that has bindings sections. A binding is added only when no binding of the
 // same context already uses that input. Sets *added to a description of what was added (for the log line).
+// A fixed section by its lower-case name ([bindings.*] is not one); Sec::Unknown when there is none.
+Sec fixed_sec(const std::string& key) {
+    if (key == "meta") return Sec::Meta;
+    if (key == "mouse") return Sec::Mouse;
+    if (key == "pad") return Sec::Pad;
+    if (key == "padmap") return Sec::PadMap;
+    if (key == "timing") return Sec::Timing;
+    if (key == "display") return Sec::Display;
+    if (key == "hdr") return Sec::Hdr;
+    if (key == "upscale") return Sec::Upscale;
+    if (key == "latency") return Sec::Latency;
+    if (key == "prompts") return Sec::Prompts;
+    if (key == "fps") return Sec::Fps;
+    if (key == "aim") return Sec::Aim;
+    if (key == "camera") return Sec::Camera;
+    if (key == "tweaks") return Sec::Tweaks;
+    if (key == "switch") return Sec::Switch;
+    return Sec::Unknown;
+}
+
+// Factory values a later revision changed (GameDefaults::changes): where the file still has the old factory value, it takes the new one.
+// "Still has" = setting the old value changes nothing in the written file, so any value the player picked stays.
+void apply_default_changes(Settings* s, int file_rev, std::string* added) {
+    const GameDefaults* gd = game_defaults();
+    for (unsigned i = 0; gd && i < gd->change_count; ++i) {
+        const GameDefaultChange& c = gd->changes[i];
+        const Sec sec = fixed_sec(lower(c.section));
+        if (c.rev <= file_rev || sec == Sec::Unknown) continue;
+        Settings old = *s, now = *s;
+        bool known = false;
+        std::string msg;
+        if (!apply_fixed(sec, lower(c.key), c.from, &old, &known, &msg) || !known) continue;
+        if (format_settings(old) != format_settings(*s)) continue;
+        if (!apply_fixed(sec, lower(c.key), c.to, &now, &known, &msg) || !known) continue;
+        *s = now;
+        if (!added->empty()) *added += ", ";
+        *added += std::string(c.key) + " = " + c.to + " in [" + c.section + "]";
+    }
+}
+
 void apply_default_additions(Settings* s, int file_rev, std::string* added) {
     const GameDefaults* gd = game_defaults();
     for (unsigned i = 0; gd && i < gd->addition_count; ++i) {
@@ -591,26 +631,8 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             }
             const std::string name = trim(line.substr(1, line.size() - 2));
             const std::string key = lower(name);
-            if (key == "meta") sec = Sec::Meta;
-            else if (key == "mouse") sec = Sec::Mouse;
-            else if (key == "pad") sec = Sec::Pad;
-            else if (key == "padmap") sec = Sec::PadMap;
-            else if (key == "timing") sec = Sec::Timing;
-            else if (key == "display") sec = Sec::Display;
-            else if (key == "hdr") sec = Sec::Hdr;
-            else if (key == "upscale") sec = Sec::Upscale;
-            else if (key == "latency") sec = Sec::Latency;
-            else if (key == "prompts") sec = Sec::Prompts;
-            else if (key == "fps") sec = Sec::Fps;
-            else if (key == "aim") sec = Sec::Aim;
-            else if (key == "camera") sec = Sec::Camera;
-            else if (key == "tweaks") sec = Sec::Tweaks;
-            else if (key == "switch") sec = Sec::Switch;
-            else if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
-            else {
-                sec = Sec::Unknown;
-                warn(i, "unknown section '[" + name + "]'");
-            }
+            if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
+            else if ((sec = fixed_sec(key)) == Sec::Unknown) warn(i, "unknown section '[" + name + "]'");
             continue;
         }
 
@@ -688,6 +710,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
         if (file_rev < defaults_rev()) {
             std::string added;
             apply_default_additions(s, file_rev, &added);
+            apply_default_changes(s, file_rev, &added);
             s->defaults_rev = defaults_rev();
             s->migrated = true;
             s->migration_added = added;
