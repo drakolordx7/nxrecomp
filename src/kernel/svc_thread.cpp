@@ -187,9 +187,10 @@ void svc_break(::Ctx* c) {
     uint64_t arg = X(c, 1), size = X(c, 2);
     bool notify_only = (reason & 0x80000000u) != 0;
     char extra[96] = "";
-    if ((reason & 0x7FFFFFFF) == 4 && size == 4 && arg && mem::is_mapped(arg, 4)) {
+    // SDK 20's nn::diag abort passes the Result with reason 0 (Panic), older SDKs with reason 4: any 4-byte argument is shown.
+    if (size == 4 && arg && mem::is_mapped(arg, 4)) {
         uint32_t r = *reinterpret_cast<uint32_t*>(arg);
-        snprintf(extra, sizeof extra, " (abort with Result 0x%x: module %u, description %u)", r, r & 0x1FF, (r >> 9) & 0x1FFF);
+        snprintf(extra, sizeof extra, " (4-byte argument 0x%x: as a Result module %u, description %u)", r, r & 0x1FF, (r >> 9) & 0x1FFF);
     }
     NXLOG_E("svc", "svcBreak reason 0x%x arg 0x%llx size 0x%llx%s lr=0x%llx in f_%llx", reason, (unsigned long long)arg, (unsigned long long)size, extra,
             (unsigned long long)X(c, 30), (unsigned long long)c->fn);
