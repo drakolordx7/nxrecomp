@@ -97,7 +97,28 @@ NXTEST(nim_eca_creation_succeeds) {
     REQUIRE(server.valid());
     nxsvc::Session accessor = server.sub(server.call(0));   // CreateAccessorInterface (0)
     REQUIRE(accessor.valid());
-    CHECK_EQ(accessor.call(0).result, 0u);                   // CreateAsyncInterface (0)
+    // CreateAsyncInterface(FixedParams {Uid, TimeSpan, u8 method}) (0) -> (handle<copy> event, IShopServiceAsync)
+    nxsvc::Reply ar = accessor.call(0, nxsvc::Args().u64(1).u64(0).u64(60000000000ull).u8(0).pad(7));
+    CHECK_EQ(ar.result, 0u);
+    REQUIRE(ar.copy.size() == 1);
+    nxsvc::Session async = accessor.sub(ar);
+    REQUIRE(async.valid());
+    CHECK(!signalled(ar.copy[0]));                           // nothing requested yet
+    // Prepare(InArray<char> path, InArray<char> post data) (5), then Request (4): the event signals, the body is "[]"
+    const char path[] = "/v1/applications/{applicationId}/consumables?country={country}&lang=en-US";
+    CHECK_EQ(async.call(5, nxsvc::Args().buf_x(path, sizeof(path) - 1, 0)).result, 0u);
+    CHECK_EQ(async.call(4).result, 0u);
+    CHECK(signalled(ar.copy[0]));
+    nxsvc::Reply sz = async.call(1);                         // GetSize
+    CHECK_EQ(sz.result, 0u);
+    CHECK_EQ(sz.get<uint64_t>(0), 2u);
+    char body[8] = {};
+    nxsvc::Reply rd = async.call(2, nxsvc::Args().u64(0).buf_b(body, sizeof(body)));   // Read(Out<u64>, u64 offset, OutBuffer)
+    CHECK_EQ(rd.result, 0u);
+    CHECK_EQ(rd.get<uint64_t>(0), 2u);
+    CHECK(body[0] == '[' && body[1] == ']');
+    CHECK_EQ(async.call(3).get<uint64_t>(0), 0u);            // GetErrorCode: none
+    kernel::handle_close(ar.copy[0]);
     CHECK_EQ(nim.call(4).get<uint8_t>(0), 0);                 // IsLargeResourceAvailable: false
 }
 
