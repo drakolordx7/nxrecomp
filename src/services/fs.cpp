@@ -541,6 +541,18 @@ std::shared_ptr<Service> make_info_reader() {
 uint32_t open_save(uint8_t space, const SaveAttr& a, bool read_only, std::shared_ptr<Service>* out) {
     if (space == 2 || space == 4) return fs::rc::kPortSdCardNoDevice;
     const std::string key = save_key(a);
+    // The running title's device save data (type 3) exists before it starts on the console: the system creates it at launch from
+    // control.nacp's DeviceSaveDataSize (Ryujinx: EnsureApplicationSaveData when the application is loaded). Here it is made on the
+    // first open, when the title profile gives a device save size.
+    const TitleProfile& p = profile();
+    if (a.type == 3 && a.application_id == p.program_id && p.device_save_size > 0 && !save_exists(key)) {
+        SaveAttr d;
+        d.application_id = p.program_id;
+        d.type = 3;
+        std::memcpy(d.raw, &d.application_id, 8);
+        d.raw[32] = 3;
+        create_save(d, static_cast<int64_t>(p.device_save_size), static_cast<int64_t>(p.device_save_journal), p.save_data_owner_id);
+    }
     if (!save_exists(key)) {
         NXLOG_I("fs", "OpenSaveDataFileSystem %s: no such save data", key.c_str());
         return fs::rc::kTargetNotFound;
