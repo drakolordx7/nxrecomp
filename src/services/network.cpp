@@ -1138,10 +1138,27 @@ void write_text(const ipc::Buffer& out, const std::string& text) {
     buf_write(out, z.data(), z.size());
 }
 
+// The name a lookup asks for (input buffer n), logged once per distinct name: shows which servers a title wants.
+void note_lookup(const ipc::Request& req, const char* what) {
+    const ipc::Buffer b = req.in_buf(0);
+    if (!b.addr || !b.size) return;
+    const char* p = reinterpret_cast<const char*>(static_cast<uintptr_t>(b.addr));
+    std::string name(p, strnlen(p, static_cast<size_t>(b.size)));
+    const ipc::Buffer sv = req.in_buf(1);
+    if (sv.addr && sv.size) {
+        const char* q = reinterpret_cast<const char*>(static_cast<uintptr_t>(sv.addr));
+        const std::string service(q, strnlen(q, static_cast<size_t>(sv.size)));
+        if (!service.empty()) name += ":" + service;
+    }
+    std::lock_guard<std::mutex> lk(st().mu);
+    if (st().seen.insert(std::string("lookup ") + name).second) NXLOG_I("net", "sfdnsres %s %s: not resolved (offline)", what, name.c_str());
+}
+
 std::shared_ptr<ipc::Service> make_resolver() {
     return make_iface("nn::socket::resolver::IResolver", [](ipc::Service& s) {
         // GetHostByNameRequest / GetHostByAddrRequest: (netdb_error, bsd_errno, size)
-        cmd(s, "sfdnsres", 2, "GetHostByNameRequest", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+        cmd(s, "sfdnsres", 2, "GetHostByNameRequest", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            note_lookup(req, "GetHostByNameRequest");
             rsp.push(static_cast<uint32_t>(kNetdbHostNotFound));
             rsp.push(static_cast<uint32_t>(kBsdNetDown));
             rsp.push(static_cast<uint32_t>(0));
@@ -1164,7 +1181,8 @@ std::shared_ptr<ipc::Service> make_resolver() {
             return 0;
         });
         // GetAddrInfoRequest: (bsd_errno, gai_error, size)
-        cmd(s, "sfdnsres", 6, "GetAddrInfoRequest", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+        cmd(s, "sfdnsres", 6, "GetAddrInfoRequest", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            note_lookup(req, "GetAddrInfoRequest");
             rsp.push(static_cast<uint32_t>(0));
             rsp.push(static_cast<int32_t>(kEaiNoName));
             rsp.push(static_cast<uint32_t>(0));
@@ -1178,7 +1196,8 @@ std::shared_ptr<ipc::Service> make_resolver() {
             {9, "CancelRequest", K::Ok},
         });
         // GetHostByNameRequestWithOptions / GetHostByAddrRequestWithOptions: (size, netdb_error, bsd_errno)
-        cmd(s, "sfdnsres", 10, "GetHostByNameRequestWithOptions", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+        cmd(s, "sfdnsres", 10, "GetHostByNameRequestWithOptions", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            note_lookup(req, "GetHostByNameRequestWithOptions");
             rsp.push(static_cast<uint32_t>(0));
             rsp.push(static_cast<uint32_t>(kNetdbHostNotFound));
             rsp.push(static_cast<uint32_t>(kBsdNetDown));
@@ -1191,7 +1210,8 @@ std::shared_ptr<ipc::Service> make_resolver() {
             return 0;
         });
         // GetAddrInfoRequestWithOptions: (size, gai_error, netdb_error, bsd_errno)
-        cmd(s, "sfdnsres", 12, "GetAddrInfoRequestWithOptions", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+        cmd(s, "sfdnsres", 12, "GetAddrInfoRequestWithOptions", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            note_lookup(req, "GetAddrInfoRequestWithOptions");
             rsp.push(static_cast<uint32_t>(0));
             rsp.push(static_cast<int32_t>(kEaiNoName));
             rsp.push(static_cast<uint32_t>(0));
