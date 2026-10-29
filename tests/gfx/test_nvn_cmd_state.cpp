@@ -593,3 +593,39 @@ NXTEST(nothing_recorded_outside_recording_or_for_null_arguments) {
     expect_count(list, 0);
     expect_count(second, 0);
 }
+
+// A list recorded into command memory outlives its command buffer: the game may finalize the buffer and call the handle later
+// (Animal Crossing's worker jobs do it every frame). A newer list recorded over the same memory still drops it, and a list without
+// command memory goes with its buffer.
+NXTEST(handles_outlive_their_finalized_command_buffer) {
+    setup();
+    auto add_mem = abi::proc<PFNNVNCOMMANDBUFFERADDCOMMANDMEMORYPROC>("nvnCommandBufferAddCommandMemory");
+    NVNcommandHandle backed = 0, unbacked = 0;
+    {
+        Recorder r(false);
+        add_mem(&r.cb, nullptr, 0x10000, 0x1000);
+        abi::proc<PFNNVNCOMMANDBUFFERBEGINRECORDINGPROC>("nvnCommandBufferBeginRecording")(&r.cb);
+        abi::proc<PFNNVNCOMMANDBUFFERSETLINEWIDTHPROC>("nvnCommandBufferSetLineWidth")(&r.cb, 2.0f);
+        backed = abi::proc<PFNNVNCOMMANDBUFFERENDRECORDINGPROC>("nvnCommandBufferEndRecording")(&r.cb);
+    }
+    {
+        Recorder r;
+        abi::proc<PFNNVNCOMMANDBUFFERSETLINEWIDTHPROC>("nvnCommandBufferSetLineWidth")(&r.cb, 2.0f);
+        unbacked = abi::proc<PFNNVNCOMMANDBUFFERENDRECORDINGPROC>("nvnCommandBufferEndRecording")(&r.cb);
+    }
+    CHECK(backed != 0);
+    CHECK(unbacked != 0);
+    const Ref<CmdList> kept = handle_lookup(backed);
+    CHECK(kept);
+    if (kept) expect_count(kept, 1);
+    CHECK(!handle_lookup(unbacked));
+    {
+        Recorder r(false);
+        add_mem(&r.cb, nullptr, 0x10000, 0x1000);   // the same memory again
+        abi::proc<PFNNVNCOMMANDBUFFERBEGINRECORDINGPROC>("nvnCommandBufferBeginRecording")(&r.cb);
+        abi::proc<PFNNVNCOMMANDBUFFERSETLINEWIDTHPROC>("nvnCommandBufferSetLineWidth")(&r.cb, 3.0f);
+        const NVNcommandHandle over = abi::proc<PFNNVNCOMMANDBUFFERENDRECORDINGPROC>("nvnCommandBufferEndRecording")(&r.cb);
+        CHECK(handle_lookup(over));
+        CHECK(!handle_lookup(backed));
+    }
+}
