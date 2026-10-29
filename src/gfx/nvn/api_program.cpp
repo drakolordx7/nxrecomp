@@ -6,8 +6,9 @@
 //
 // Signatures: the five entries in work/nvn/sigs.txt use those types. nvnProgramSetSampleShading has no signature in sigs.txt
 // (table entry '?'): assumed void(NVNprogram*, int), the argument order smo-recomp runtime/gfx/nvn_gl.c (GPL-3.0) uses
-// (layout/defaults checked, no code copied). nvnProgramSetShadersExt is not implemented: its stride is not settled (see
-// the report). nvnProgramSetSubroutineLinkage is accepted and ignored: the back end has no subroutine support.
+// (layout/defaults checked, no code copied). nvnProgramSetShadersExt(NVNprogram*, int count, entries): 0x18-byte entries whose first
+// two words are NVNshaderData's {data, control}; the third word is not used here. Stride from ACNH 3.0.3 main+0x24d9a8 (the caller
+// fills the array with `mov w24, #0x18`), as ACNHRecomp (MIT) found. nvnProgramSetSubroutineLinkage is accepted and ignored: the back end has no subroutine support.
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
@@ -147,6 +148,24 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     return (all_found || (accept_unlinked && addresses_ok)) ? 1 : 0;
 }
 
+// The Ext entry: NVNshaderData plus one more word (see the header comment).
+struct ShaderDataExt {
+    NVNshaderData base;
+    uint64_t extra;
+};
+static_assert(sizeof(ShaderDataExt) == 0x18, "nvnProgramSetShadersExt entries are 0x18 bytes");
+
+NVNboolean nvnProgramSetShadersExt(NVNprogram* program, int count, const ShaderDataExt* shaders) {
+    if (count > 0 && !shaders) return nvnProgramSetShaders(program, count, nullptr);
+    NVNshaderData plain[6]{};
+    if (count < 0 || count > 6) {
+        NXLOG_W("nvn", "nvnProgramSetShadersExt: %d stages (at most 6)", count);
+        return 0;
+    }
+    for (int k = 0; k < count; ++k) plain[k] = shaders[k].base;
+    return nvnProgramSetShaders(program, count, plain);
+}
+
 NVNboolean nvnProgramSetSubroutineLinkage(NVNprogram* program, int stage, const NVNsubroutineLinkageMapPtr* map) {
     (void)stage;
     (void)map;
@@ -176,6 +195,7 @@ void register_api_program() {
     NVN_REG(nvnProgramFinalize);
     NVN_REG(nvnProgramSetDebugLabel);
     NVN_REG(nvnProgramSetShaders);
+    NVN_REG(nvnProgramSetShadersExt);
     NVN_REG(nvnProgramSetSubroutineLinkage);
     NVN_REG(nvnProgramSetSampleShading);
 }
