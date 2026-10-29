@@ -1277,9 +1277,27 @@ uint32_t host_getaddrinfo(ipc::Request& req, ipc::Response& rsp, bool with_optio
         }
         return 0u;
     };
+    // Hints (one serialized addrinfo): flags, socktype and protocol; socktype and protocol are echoed back when given.
+    int32_t flags = 0, socktype = 0, protocol = 0;
+    uint8_t h[24] = {};
+    if (buf_read(req.in_buf(2), h, sizeof h) == sizeof h && be32_at(h) == 0xBEEFCAFEu) {
+        flags = static_cast<int32_t>(be32_at(h + 4));
+        socktype = static_cast<int32_t>(be32_at(h + 12));
+        protocol = static_cast<int32_t>(be32_at(h + 16));
+    }
     uint8_t ip[4];
     std::string name;
-    if (!host_lookup(req, with_options ? "GetAddrInfoRequestWithOptions" : "GetAddrInfoRequest", true, ip, &name)) return answer(kEaiNoName, 0);
+    if (lookup_name(req).empty()) {
+        // No host: the local address to bind (AI_PASSIVE 1: 0.0.0.0) or to reach (127.0.0.1), as POSIX getaddrinfo does. RakNet's
+        // Startup asks this way for its bind addresses and fails without an answer.
+        const bool passive = (flags & 1) != 0;
+        ip[0] = passive ? 0 : 127, ip[1] = 0, ip[2] = 0, ip[3] = passive ? 0 : 1;
+        std::lock_guard<std::mutex> lk(st().mu);
+        if (st().seen.insert(passive ? "lookup (null host, passive)" : "lookup (null host)").second)
+            NXLOG_I("net", "sfdnsres GetAddrInfo with no host: %s", passive ? "0.0.0.0 (AI_PASSIVE)" : "127.0.0.1");
+    } else if (!host_lookup(req, with_options ? "GetAddrInfoRequestWithOptions" : "GetAddrInfoRequest", true, ip, &name)) {
+        return answer(kEaiNoName, 0);
+    }
     // The service: a port number, empty, or http / https (Ryujinx takes numbers and empty; EAI_SERVICE -8 otherwise).
     std::string service;
     const ipc::Buffer sv = req.in_buf(1);
@@ -1297,13 +1315,6 @@ uint32_t host_getaddrinfo(ipc::Request& req, ipc::Response& rsp, bool with_optio
         const unsigned long n = std::strtoul(service.c_str(), &end, 10);
         if (!end || *end || n > 65535) return answer(-8, 0);
         port = static_cast<uint16_t>(n);
-    }
-    // Hints (one serialized addrinfo): socktype and protocol are echoed back when given.
-    int32_t socktype = 0, protocol = 0;
-    uint8_t h[24] = {};
-    if (buf_read(req.in_buf(2), h, sizeof h) == sizeof h && be32_at(h) == 0xBEEFCAFEu) {
-        socktype = static_cast<int32_t>(be32_at(h + 12));
-        protocol = static_cast<int32_t>(be32_at(h + 16));
     }
     const std::vector<uint8_t> ai = serialize_addrinfo(name, ip, port, socktype, protocol);
     return answer(0, static_cast<uint32_t>(buf_write(req.out_buf(0), ai.data(), ai.size())));
