@@ -176,6 +176,13 @@ struct TwoEvents {
     ServiceEvent b;
 };
 
+// [net] nifm_connected (default false): nifm reports a working Wi-Fi connection (request accepted, an address, connection status
+// "connected") while every socket stays down (bsd ENETDOWN, no DNS). For titles that refuse to start without a connection: they get
+// past their network check and meet their own "server not reachable" path instead of the system's error applet. Answers as Ryujinx
+// gives them with internet access enabled (Nifm/StaticService/IRequest.cs, IGeneralService.cs, Types/InternetConnectionStatus.cs).
+bool nifm_connected() { return config_get_bool("net", "nifm_connected", false); }
+constexpr uint32_t kFakeIpAddress = 0x0200a8c0;   // 192.168.0.2 (network byte order as the guest reads the u32)
+
 // =============================================================================================================================================
 // nifm: nifm:u, nifm:a, nifm:s (IStaticService). Switchbrew "Network Interface services", ScarletNX nifm.swipc, Ryujinx Nifm/.
 // No connection: GetCurrentIpAddress and the other address/profile answers return nifm 300 (NoInternetConnection).
@@ -232,6 +239,16 @@ std::shared_ptr<ipc::Service> make_request() {
             rsp.out_copy.push_back(ev->b.new_handle());
             return 0;
         });
+        if (nifm_connected()) {
+            rows(s, "nifm", {
+                {0, "GetRequestState", K::U32, 3},               // 3 = Available (Ryujinx RequestState)
+                {1, "GetResult", K::Ok},
+            });
+            cmd(s, "nifm", 4, "Submit", [ev](ipc::Request&, ipc::Response&) -> uint32_t {
+                ev->a.signal();                                  // the state is Available at once
+                return 0;
+            });
+        }
         cmd(s, "nifm", 21, "GetAppletInfo", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
             // The error applet (0xE) with no data, as Ryujinx answers it when the request has failed.
             rsp.push(static_cast<uint32_t>(0xE));
@@ -316,6 +333,26 @@ std::shared_ptr<ipc::Service> make_general() {
             {56, "GetNetworkEmulationProfile", K::Fail, kNifmNoConnection},
             {57, "SetWowlTcpKeepAliveTimeout", K::Ok},
         });
+        if (nifm_connected()) {
+            rows(s, "nifm", {
+                {5, "GetCurrentNetworkProfile", K::BufZero, 0, 0x17c},   // NetworkProfileData, all zero
+                {15, "GetCurrentIpConfigInfo", K::Zeros, 0, 0x16},        // IpAddressSetting 0xd + DnsSetting 0x9
+                {21, "IsAnyInternetRequestAccepted", K::U8, 1},
+                {22, "IsAnyForegroundRequestAccepted", K::U8, 1},
+                {33, "ConfirmSystemAvailability", K::Ok},
+                {36, "GetCurrentAccessPoint", K::BufZero, 0, 0x34},
+            });
+            cmd(s, "nifm", 12, "GetCurrentIpAddress", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+                rsp.push(kFakeIpAddress);
+                return 0;
+            });
+            cmd(s, "nifm", 18, "GetInternetConnectionStatus", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+                rsp.push(static_cast<uint8_t>(1));   // Type WiFi
+                rsp.push(static_cast<uint8_t>(3));   // WifiStrength 3
+                rsp.push(static_cast<uint8_t>(4));   // State Connected
+                return 0;
+            });
+        }
     });
 }
 
@@ -1252,6 +1289,7 @@ std::shared_ptr<ipc::Service> make_notif() {
 void register_network() {
     const bool offline = config_get_bool("net", "offline", true);
     NXLOG_I("net", "network services: [net] offline=%s (no connection, no friends, no BCAT data in either mode)", offline ? "true" : "false");
+    if (nifm_connected()) NXLOG_I("net", "network services: [net] nifm_connected=true (nifm reports Wi-Fi; sockets stay down)");
 
     for (const char* n : {"nifm:u", "nifm:a", "nifm:s"}) add(n, [] { return make_nifm_static(); });
     for (const char* n : {"bsd:u", "bsd:a", "bsd:s"}) add(n, [] { return make_bsd(); });
