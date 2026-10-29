@@ -648,6 +648,24 @@ void destroy_texture_gpu(TexGpu* t) {
     defer_destroy([t] { tex_destroy(t); });
 }
 
+void release_texture_gpu(Texture* t) {
+    if (!g || !t) return;
+    Ref<Texture> keep = Ref<Texture>::share(t);
+    {
+        std::lock_guard<std::mutex> lk(g->qmu);
+        if (g->stop) return;
+        g->queue.push_back([keep] {
+            Texture* x = keep.get();
+            if (!x->destroyed.load() || !x->gpu) return;   // initialized again meanwhile, or never got an image
+            TexGpu* img = x->gpu;
+            x->gpu = nullptr;
+            destroy_texture_gpu(img);
+        });
+        g_gauge_render_queue.add(1);
+    }
+    g->qcv.notify_one();
+}
+
 void destroy_pool_gpu(PoolGpu* p) {
     if (!p) return;
     if (!g) { pool_gpu_destroy(p); return; }
