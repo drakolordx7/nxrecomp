@@ -170,6 +170,7 @@ struct HostSock {
     SOCKET s = INVALID_SOCKET;
     bool nonblock = false;
     bool connect_logged = false;
+    bool sendto_target_logged = false;   // a failed SendTo named its target once
     std::set<std::string> errors_logged;   // "<cmd> <errno>"
     ~HostSock() {
         if (s != INVALID_SOCKET) closesocket(s);
@@ -429,6 +430,11 @@ uint32_t do_send(ipc::Request& req, ipc::Response& rsp, bool to, bool plain_writ
         if (!read_sockaddr(req.in_buf(1), a)) return reply(rsp, -1, kEAFNOSUPPORT);
         a.sin_port = htons(map_port(ntohs(a.sin_port)));
         n = ::sendto(p->s, ptr, clamp_len(data.size), host_msg_flags(flags), reinterpret_cast<const sockaddr*>(&a), sizeof a);
+        if (n == SOCKET_ERROR) {   // name the target once per fd: a bad address (0.0.0.0, port 0) is the usual cause
+            const uint8_t* ip = reinterpret_cast<const uint8_t*>(&a.sin_addr);
+            if (!p->sendto_target_logged && (p->sendto_target_logged = true))
+                NXLOG_I("net", "bsd sendto fd=%d target %u.%u.%u.%u:%u (%u bytes)", fd, ip[0], ip[1], ip[2], ip[3], ntohs(a.sin_port), static_cast<unsigned>(data.size));
+        }
     } else {
         n = ::send(p->s, ptr, clamp_len(data.size), host_msg_flags(flags));
     }
