@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // appletOE and appletAE (S3c): the applet manager as the one application sees it. The application is in focus, its message
-// queue holds what the console queues for it, the notification flags it sets are real state, and library applets are not available.
+// queue holds what the console queues for it, the notification flags it sets are real state, and the one library applet is the
+// software keyboard, which answers a configured text without showing anything.
 // Command ids and layouts follow the Switchbrew "Applet Manager services" page and ScarletNX's am.swipc.
 // Adapted from ScarletNX src/nx/hle/services/am.c and am.swipc (GPL-3.0-or-later): the command table, the message queue, the lock
 // accessor, the audio volumes, the save data rules and the launch parameter storage.
@@ -58,14 +59,14 @@ const uint32_t kNoMessages = res(128, 3);            // ResultNoMessages: 0x680
 const uint32_t kInvalidOffset = res(128, 503);       // ResultInvalidOffset
 const uint32_t kInvalidStorage = res(128, 511);      // ResultInvalidStorageType
 const uint32_t kOutOfMemory = res(128, 600);         // MemoryAllocationFailed
-const uint32_t kLibraryAppletFailed = res(128, 35);  // AppletLaunchFailed (library applets are not supported here)
+const uint32_t kLibraryAppletFailed = res(128, 35);  // AppletLaunchFailed (a library applet that is not supported here)
 
 // Everything the applet manager keeps for the process. Replaced by fresh_state() on start-up and by am_reset().
 struct AmState {
     std::deque<uint32_t> msgs;                         // the AppletMessage queue, oldest first
     ServiceEvent msg_event{false};                     // signalled while msgs is not empty
     ServiceEvent sleep_lock_event{false};
-    ServiceEvent launchable_event{true};               // a library applet can always be launched (none can)
+    ServiceEvent launchable_event{true};               // a library applet can always be launched
     ServiceEvent tick_event{true};                     // accumulated suspended tick changed
     ServiceEvent never_event{false};                   // the events that never fire
     bool docked = true;
@@ -508,16 +509,329 @@ ServicePtr make_window_controller() {
     });
 }
 
-// ILibraryAppletCreator: library applets are not available, so creating one fails the way an absent applet does. Storages work.
+// Library applets: the software keyboard (LibraryAppletId 0x11) in its normal, full-screen form. It shows nothing: on Start it
+// answers with the text of [applet] swkbd_text, as a player who typed that text and pressed OK would. Command ids follow the
+// Switchbrew "Applet Manager services" page (IAppletAccessor / ILibraryAppletAccessor); the storage layouts follow Eden
+// src/core/hle/service/am/frontend/applet_software_keyboard{.cpp,_types.h} (GPL-3.0-or-later, from yuzu): CommonArguments, then
+// SwkbdConfigCommon (0x3D4 bytes) and its version tail, then the work buffer; the output is SwkbdResult then a 0x7D4-byte string.
+constexpr uint32_t kAppletIdSwkbd = 0x11;                     // nn::applet::AppletId LibraryAppletSwkbd
+constexpr uint32_t kAppletModeAllForeground = 0;              // nn::applet::LibraryAppletMode: the normal keyboard
+constexpr size_t kSwkbdStringSize = 0x7D4;                    // STRING_BUFFER_SIZE
+constexpr size_t kSwkbdOutputSize = 4 + kSwkbdStringSize;     // SwkbdResult + string: 0x7D8
+constexpr size_t kSwkbdTextCheckSize = 4 + kSwkbdStringSize;  // SwkbdTextCheck the application pushes back: 0x7D8
+constexpr uint32_t kSwkbdDefaultMaxLength = 500;              // DEFAULT_MAX_TEXT_LENGTH, the longest text the keyboard takes
+constexpr uint32_t kSwkbdResultOk = 0;
+constexpr uint32_t kSwkbdResultCancel = 1;
+constexpr uint32_t kTextCheckSuccess = 0;                     // SwkbdTextCheckResult: Success 0, Failure 1, Confirm 2, Silent 3
+constexpr uint32_t kTextCheckConfirm = 2;
+// SwkbdConfigCommon field offsets (the struct in applet_software_keyboard_types.h laid out by hand).
+constexpr size_t kCfgMaxTextLength = 0x3AC;
+constexpr size_t kCfgUseUtf8 = 0x3BD;
+constexpr size_t kCfgUseTextCheck = 0x3D0;
+constexpr size_t kCfgCommonSize = 0x3D4;
+constexpr size_t kCommonArgsLibraryVersion = 8;               // CommonArguments: version, size, library_version, theme ...
+
+// UTF-8 to UTF-16 code units. Bad sequences become U+FFFD.
+std::u16string utf8_to_utf16(const std::string& s) {
+    std::u16string out;
+    for (size_t i = 0; i < s.size();) {
+        const uint8_t c = static_cast<uint8_t>(s[i]);
+        uint32_t cp = 0xFFFD;
+        size_t n = 1;
+        if (c < 0x80) {
+            cp = c;
+        } else if ((c >> 5) == 0x6) {
+            n = 2;
+            cp = c & 0x1Fu;
+        } else if ((c >> 4) == 0xE) {
+            n = 3;
+            cp = c & 0x0Fu;
+        } else if ((c >> 3) == 0x1E) {
+            n = 4;
+            cp = c & 0x07u;
+        }
+        if (n > 1) {
+            if (i + n > s.size()) {
+                cp = 0xFFFD;
+                n = 1;
+            }
+            for (size_t k = 1; k < n; ++k) {
+                const uint8_t cc = static_cast<uint8_t>(s[i + k]);
+                if ((cc >> 6) != 0x2) {
+                    cp = 0xFFFD;
+                    n = k;
+                    break;
+                }
+                cp = (cp << 6) | (cc & 0x3Fu);
+            }
+        }
+        i += n;
+        if (cp >= 0x10000 && cp <= 0x10FFFF) {
+            cp -= 0x10000;
+            out.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
+            out.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
+        } else {
+            out.push_back(static_cast<char16_t>(cp > 0xFFFF ? 0xFFFD : cp));
+        }
+    }
+    return out;
+}
+
+// UTF-16 code units back to UTF-8 (the keyboard's use_utf8 mode, and the log).
+std::string utf16_to_utf8(const std::u16string& s) {
+    std::string out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        uint32_t cp = s[i];
+        if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] < 0xE000) {
+            cp = 0x10000 + ((cp - 0xD800) << 10) + (static_cast<uint32_t>(s[i + 1]) - 0xDC00);
+            ++i;
+        }
+        if (cp < 0x80) {
+            out.push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
+    return out;
+}
+
+template <typename T>
+T read_at(const Bytes& b, size_t off, T fallback) {
+    T v = fallback;
+    if (off + sizeof(T) <= b.size()) std::memcpy(&v, b.data() + off, sizeof(T));
+    return v;
+}
+
+// One library applet's channels and state. Guarded by mu().
+struct AppletState {
+    uint32_t id = 0;
+    uint32_t mode = 0;
+    bool started = false;
+    bool completed = false;
+    std::deque<std::shared_ptr<Bytes>> in_data;            // PushInData, oldest first
+    std::deque<std::shared_ptr<Bytes>> interactive_in;     // PushInteractiveInData
+    std::deque<std::shared_ptr<Bytes>> out_data;           // PopOutData
+    std::deque<std::shared_ptr<Bytes>> interactive_out;    // PopInteractiveOutData
+    ServiceEvent state_event{false};                       // signalled once the applet has ended
+    ServiceEvent out_event{false};                         // signalled while out_data is not empty
+    ServiceEvent interactive_out_event{false};             // signalled while interactive_out is not empty
+    bool utf8 = false;                                     // software keyboard: the config's use_utf8
+    bool text_check = false;                               // software keyboard: the config's use_text_check
+    std::u16string text;                                   // software keyboard: the text answered
+};
+
+// Ends the applet: it has exited and its state-changed event fires. The caller holds mu().
+void applet_finish(AppletState& a) {
+    a.completed = true;
+    a.state_event.signal();
+}
+
+// Copies `text` into a zeroed buffer of `cap` bytes at `dst`, as UTF-8 or UTF-16LE, leaving room for the NUL.
+void put_text(uint8_t* dst, size_t cap, const std::u16string& text, bool utf8) {
+    if (utf8) {
+        const std::string t = utf16_to_utf8(text);
+        std::memcpy(dst, t.data(), t.size() < cap - 1 ? t.size() : cap - 1);
+    } else {
+        const size_t n = text.size() * 2;
+        std::memcpy(dst, text.data(), n < cap - 2 ? n : cap - 2);
+    }
+}
+
+// The 0x7D8-byte keyboard output: SwkbdResult, then the text, zero padded. The applet then ends. The caller holds mu().
+void swkbd_submit(AppletState& a, uint32_t result) {
+    auto out = std::make_shared<Bytes>(kSwkbdOutputSize, uint8_t{0});
+    std::memcpy(out->data(), &result, 4);
+    if (result == kSwkbdResultOk) put_text(out->data() + 4, kSwkbdStringSize, a.text, a.utf8);
+    a.out_data.push_back(out);
+    a.out_event.signal();
+    applet_finish(a);
+}
+
+// Start of the normal keyboard: in data 0 is CommonArguments, 1 the keyboard config, 2 the work buffer (initial text, dictionary).
+// With text check on, the text first goes to the application as interactive out data (u64 byte size with the NUL, then the
+// string, 8 + 0x7D4 bytes) for it to judge; its answer comes back through PushInteractiveInData. The caller holds mu().
+void swkbd_start(AppletState& a) {
+    std::shared_ptr<Bytes> common = a.in_data.size() > 0 ? a.in_data[0] : nullptr;
+    std::shared_ptr<Bytes> cfg = a.in_data.size() > 1 ? a.in_data[1] : nullptr;
+    const uint32_t version = common ? read_at<uint32_t>(*common, kCommonArgsLibraryVersion, 0) : 0;
+    uint32_t max_len = kSwkbdDefaultMaxLength;
+    if (cfg && cfg->size() >= kCfgCommonSize) {
+        const uint32_t m = read_at<uint32_t>(*cfg, kCfgMaxTextLength, 0);
+        if (m > 0 && m <= kSwkbdDefaultMaxLength) max_len = m;
+        a.utf8 = read_at<uint8_t>(*cfg, kCfgUseUtf8, 0) != 0;
+        a.text_check = read_at<uint8_t>(*cfg, kCfgUseTextCheck, 0) != 0;
+    } else {
+        NXLOG_W("am", "swkbd: no keyboard config among the %zu storages pushed: defaults used", a.in_data.size());
+    }
+    a.text = utf8_to_utf16(nxrt::config_get_str("applet", "swkbd_text", "Player"));
+    if (a.text.size() > max_len) a.text.resize(max_len);
+    NXLOG_I("am", "swkbd: version 0x%x, config %zu bytes, max length %u, utf8 %d, text check %d: answering \"%s\"", version,
+            cfg ? cfg->size() : size_t{0}, max_len, a.utf8 ? 1 : 0, a.text_check ? 1 : 0, utf16_to_utf8(a.text).c_str());
+    if (!a.text_check) {
+        swkbd_submit(a, kSwkbdResultOk);
+        return;
+    }
+    auto out = std::make_shared<Bytes>(8 + kSwkbdStringSize, uint8_t{0});
+    const uint64_t size = a.utf8 ? utf16_to_utf8(a.text).size() + 1 : (a.text.size() + 1) * 2;
+    std::memcpy(out->data(), &size, 8);
+    put_text(out->data() + 8, kSwkbdStringSize, a.text, a.utf8);
+    a.interactive_out.push_back(out);
+    a.interactive_out_event.signal();
+}
+
+// The application's text check answer (SwkbdTextCheck). Success or Confirm submits the text. Failure or Silent would send the player
+// back to the keyboard, which here would only give the same text again, so the keyboard ends with Cancel. The caller holds mu().
+void swkbd_interactive(AppletState& a) {
+    if (a.interactive_in.empty() || !a.text_check || a.completed) return;
+    std::shared_ptr<Bytes> d = a.interactive_in.front();
+    a.interactive_in.pop_front();
+    if (d->size() != kSwkbdTextCheckSize) NXLOG_W("am", "swkbd: text check storage is %zu bytes, 0x7D8 expected", d->size());
+    const uint32_t check = read_at<uint32_t>(*d, 0, 1);
+    if (check == kTextCheckSuccess || check == kTextCheckConfirm) {
+        swkbd_submit(a, kSwkbdResultOk);
+    } else {
+        NXLOG_W("am", "swkbd: the application rejected the text (text check result %u): keyboard cancelled", check);
+        swkbd_submit(a, kSwkbdResultCancel);
+    }
+}
+
+// The bytes of the storage handed in (an IStorage this file made). Null when there is none or it is not one.
+std::shared_ptr<Bytes> storage_bytes(const Request& req) {
+    if (req.in_services.empty() || !req.in_services[0]) return nullptr;
+    auto src = std::dynamic_pointer_cast<AmStorage>(req.in_services[0]);
+    return src ? src->data : nullptr;
+}
+
+// Pops the oldest storage of `q` as a new IStorage; `ev` is cleared once `q` is empty.
+uint32_t pop_storage(std::deque<std::shared_ptr<Bytes>>& q, ServiceEvent& ev, Response& rsp) {
+    std::shared_ptr<Bytes> d;
+    {
+        std::lock_guard<std::mutex> lk(mu());
+        if (!q.empty()) {
+            d = q.front();
+            q.pop_front();
+        }
+        if (q.empty()) ev.clear();
+    }
+    if (!d) return kNoData;
+    rsp.push_object(new_storage(d));
+    return 0;
+}
+
+// ILibraryAppletAccessor over one AppletState. Pushed storages are copied (the guest may reuse its storage afterwards).
+ServicePtr make_library_applet_accessor(uint32_t id, uint32_t mode) {
+    auto a = std::make_shared<AppletState>();
+    a->id = id;
+    a->mode = mode;
+    return make_iface("ILibraryAppletAccessor", [a](Service& s) {
+        s.add_cmd(0, "GetAppletStateChangedEvent", [a](Request&, Response& rsp) -> uint32_t {
+            rsp.out_copy.push_back(a->state_event.new_handle());
+            return 0;
+        });
+        s.add_cmd(1, "IsCompleted", [a](Request&, Response& rsp) -> uint32_t {
+            std::lock_guard<std::mutex> lk(mu());
+            rsp.push<uint8_t>(a->completed ? 1 : 0);
+            return 0;
+        });
+        s.add_cmd(10, "Start", [a](Request&, Response&) -> uint32_t {
+            std::lock_guard<std::mutex> lk(mu());
+            if (a->started) return 0;
+            a->started = true;
+            if (a->id == kAppletIdSwkbd) swkbd_start(*a);
+            return 0;
+        });
+        // RequestExit / Terminate: the applet ends at once (nothing is shown that would need closing).
+        s.add_cmd(20, "RequestExit", [a](Request&, Response&) -> uint32_t {
+            std::lock_guard<std::mutex> lk(mu());
+            if (!a->completed) applet_finish(*a);
+            return 0;
+        });
+        s.add_cmd(25, "Terminate", [a](Request&, Response&) -> uint32_t {
+            std::lock_guard<std::mutex> lk(mu());
+            if (!a->completed) applet_finish(*a);
+            return 0;
+        });
+        s.add_cmd(30, "GetResult", [](Request&, Response&) -> uint32_t { return 0; });
+        s.add_cmd(50, "SetOutOfFocusApplicationSuspendingEnabled", ignored("SetOutOfFocusApplicationSuspendingEnabled"));
+        s.add_cmd(60, "PresetLibraryAppletGpuTimeSliceZero", ignored("PresetLibraryAppletGpuTimeSliceZero"));
+        s.add_cmd(100, "PushInData", [a](Request& req, Response&) -> uint32_t {
+            std::shared_ptr<Bytes> d = storage_bytes(req);
+            if (!d) return kInvalidStorage;
+            std::lock_guard<std::mutex> lk(mu());
+            a->in_data.push_back(std::make_shared<Bytes>(*d));
+            return 0;
+        });
+        s.add_cmd(101, "PopOutData", [a](Request&, Response& rsp) -> uint32_t {
+            return pop_storage(a->out_data, a->out_event, rsp);
+        });
+        s.add_cmd(102, "PushExtraStorage", [](Request& req, Response&) -> uint32_t {
+            return storage_bytes(req) ? 0 : kInvalidStorage;   // nothing the keyboard reads comes this way
+        });
+        s.add_cmd(103, "PushInteractiveInData", [a](Request& req, Response&) -> uint32_t {
+            std::shared_ptr<Bytes> d = storage_bytes(req);
+            if (!d) return kInvalidStorage;
+            std::lock_guard<std::mutex> lk(mu());
+            a->interactive_in.push_back(std::make_shared<Bytes>(*d));
+            if (a->id == kAppletIdSwkbd && a->started) swkbd_interactive(*a);
+            return 0;
+        });
+        s.add_cmd(104, "PopInteractiveOutData", [a](Request&, Response& rsp) -> uint32_t {
+            return pop_storage(a->interactive_out, a->interactive_out_event, rsp);
+        });
+        s.add_cmd(105, "GetPopOutDataEvent", [a](Request&, Response& rsp) -> uint32_t {
+            rsp.out_copy.push_back(a->out_event.new_handle());
+            return 0;
+        });
+        s.add_cmd(106, "GetPopInteractiveOutDataEvent", [a](Request&, Response& rsp) -> uint32_t {
+            rsp.out_copy.push_back(a->interactive_out_event.new_handle());
+            return 0;
+        });
+        s.add_cmd(110, "NeedsToExitProcess", ignored("NeedsToExitProcess", 1));
+        // GetLibraryAppletInfo -> LibraryAppletInfo {u32 applet id, u32 library applet mode}.
+        s.add_cmd(120, "GetLibraryAppletInfo", [a](Request&, Response& rsp) -> uint32_t {
+            rsp.push<uint32_t>(a->id);
+            rsp.push<uint32_t>(a->mode);
+            return 0;
+        });
+        s.add_cmd(150, "RequestForAppletToGetForeground", ignored("RequestForAppletToGetForeground"));
+    });
+}
+
+// CreateLibraryApplet(u32 applet id, u32 library applet mode) and CreateLibraryAppletEx (the same two words first): the keyboard in
+// its normal mode is made. Anything else, the inline keyboard's partial-foreground modes included, fails as an absent applet does.
+uint32_t create_library_applet(const char* cmd, Request& req, Response& rsp) {
+    const uint32_t id = req.arg<uint32_t>(0);
+    const uint32_t mode = req.arg<uint32_t>(4);
+    if (id == kAppletIdSwkbd && mode == kAppletModeAllForeground) {
+        NXLOG_I("am", "%s(applet 0x%x, mode %u): software keyboard", cmd, id, mode);
+        rsp.push_object(make_library_applet_accessor(id, mode));
+        return 0;
+    }
+    if (id == kAppletIdSwkbd)
+        NXLOG_W("am", "%s(applet 0x%x, mode %u): the inline software keyboard is not supported", cmd, id, mode);
+    else
+        NXLOG_I("am", "%s(applet 0x%x): library applets are not supported", cmd, id);
+    return kLibraryAppletFailed;
+}
+
+// ILibraryAppletCreator: the software keyboard (above); other library applets fail the way an absent applet does. Storages work.
 ServicePtr make_library_applet_creator() {
     return make_iface("ILibraryAppletCreator", [](Service& s) {
-        s.add_cmd(0, "CreateLibraryApplet", [](Request& req, Response&) -> uint32_t {
-            NXLOG_I("am", "CreateLibraryApplet(applet 0x%x): library applets are not supported", req.arg<uint32_t>(0));
-            return kLibraryAppletFailed;
+        s.add_cmd(0, "CreateLibraryApplet", [](Request& req, Response& rsp) -> uint32_t {
+            return create_library_applet("CreateLibraryApplet", req, rsp);
         });
-        s.add_cmd(3, "CreateLibraryAppletEx", [](Request& req, Response&) -> uint32_t {
-            NXLOG_I("am", "CreateLibraryAppletEx(applet 0x%x): library applets are not supported", req.arg<uint32_t>(0));
-            return kLibraryAppletFailed;
+        s.add_cmd(3, "CreateLibraryAppletEx", [](Request& req, Response& rsp) -> uint32_t {
+            return create_library_applet("CreateLibraryAppletEx", req, rsp);
         });
         s.add_cmd(10, "CreateStorage", [](Request& req, Response& rsp) -> uint32_t {
             const int64_t size = req.arg<int64_t>(0);
