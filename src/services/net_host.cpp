@@ -834,36 +834,53 @@ uint32_t do_dup(ipc::Request& req, ipc::Response& rsp) {
 bool sockets_host() { return lower(trim(config_get_str("net", "sockets", "off"))) == "host"; }
 
 void install_bsd(ipc::Service& s) {
+    // [net] trace: every bsd command is logged with its first argument (the fd for most) and its (ret, errno) reply words.
+    const bool trace = config_get_bool("net", "trace", false);
+    auto add = [&s, trace](uint32_t id, const char* name, ipc::Handler h) {
+        if (!trace) {
+            s.add_cmd(id, name, std::move(h));
+            return;
+        }
+        s.add_cmd(id, name, [id, name, h = std::move(h)](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            const int32_t a0 = req.arg<int32_t>(0);
+            const uint32_t rc = h(req, rsp);
+            int32_t w0 = 0, w1 = 0;
+            if (rsp.out.size() >= 4) std::memcpy(&w0, rsp.out.data(), 4);
+            if (rsp.out.size() >= 8) std::memcpy(&w1, rsp.out.data() + 4, 4);
+            NXLOG_I("net", "bsd %u %s(%d) -> rc=0x%x out=[%d, %d] (%zu bytes)", id, name, a0, rc, w0, w1, rsp.out.size());
+            return rc;
+        });
+    };
     wsa_start();
-    s.add_cmd(0, "RegisterClient", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+    add(0, "RegisterClient", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
         rsp.push(uint32_t{0});   // bsd_errno; the transfer memory is not used
         return 0;
     });
-    s.add_cmd(1, "StartMonitoring", [](ipc::Request&, ipc::Response&) -> uint32_t { return 0; });
-    s.add_cmd(2, "Socket", do_socket);
-    s.add_cmd(3, "SocketExempt", do_socket);
-    s.add_cmd(5, "Select", do_select);
-    s.add_cmd(6, "Poll", do_poll);
-    s.add_cmd(8, "Recv", [](ipc::Request& q, ipc::Response& r) { return do_recv(q, r, false, false); });
-    s.add_cmd(9, "RecvFrom", [](ipc::Request& q, ipc::Response& r) { return do_recv(q, r, true, false); });
-    s.add_cmd(10, "Send", [](ipc::Request& q, ipc::Response& r) { return do_send(q, r, false, false); });
-    s.add_cmd(11, "SendTo", [](ipc::Request& q, ipc::Response& r) { return do_send(q, r, true, false); });
-    s.add_cmd(12, "Accept", do_accept);
-    s.add_cmd(13, "Bind", do_bind);
-    s.add_cmd(14, "Connect", do_connect);
-    s.add_cmd(15, "GetPeerName", [](ipc::Request& q, ipc::Response& r) { return do_name(q, r, true); });
-    s.add_cmd(16, "GetSockName", [](ipc::Request& q, ipc::Response& r) { return do_name(q, r, false); });
-    s.add_cmd(17, "GetSockOpt", do_getsockopt);
-    s.add_cmd(18, "Listen", do_listen);
-    s.add_cmd(19, "Ioctl", do_ioctl);
-    s.add_cmd(20, "Fcntl", do_fcntl);
-    s.add_cmd(21, "SetSockOpt", do_setsockopt);
-    s.add_cmd(22, "Shutdown", do_shutdown);
-    s.add_cmd(23, "ShutdownAllSockets", do_shutdown_all);
-    s.add_cmd(24, "Write", [](ipc::Request& q, ipc::Response& r) { return do_send(q, r, false, true); });
-    s.add_cmd(25, "Read", [](ipc::Request& q, ipc::Response& r) { return do_recv(q, r, false, true); });
-    s.add_cmd(26, "Close", do_close);
-    s.add_cmd(27, "DuplicateSocket", do_dup);
+    add(1, "StartMonitoring", [](ipc::Request&, ipc::Response&) -> uint32_t { return 0; });
+    add(2, "Socket", do_socket);
+    add(3, "SocketExempt", do_socket);
+    add(5, "Select", do_select);
+    add(6, "Poll", do_poll);
+    add(8, "Recv", [](ipc::Request& q, ipc::Response& r) { return do_recv(q, r, false, false); });
+    add(9, "RecvFrom", [](ipc::Request& q, ipc::Response& r) { return do_recv(q, r, true, false); });
+    add(10, "Send", [](ipc::Request& q, ipc::Response& r) { return do_send(q, r, false, false); });
+    add(11, "SendTo", [](ipc::Request& q, ipc::Response& r) { return do_send(q, r, true, false); });
+    add(12, "Accept", do_accept);
+    add(13, "Bind", do_bind);
+    add(14, "Connect", do_connect);
+    add(15, "GetPeerName", [](ipc::Request& q, ipc::Response& r) { return do_name(q, r, true); });
+    add(16, "GetSockName", [](ipc::Request& q, ipc::Response& r) { return do_name(q, r, false); });
+    add(17, "GetSockOpt", do_getsockopt);
+    add(18, "Listen", do_listen);
+    add(19, "Ioctl", do_ioctl);
+    add(20, "Fcntl", do_fcntl);
+    add(21, "SetSockOpt", do_setsockopt);
+    add(22, "Shutdown", do_shutdown);
+    add(23, "ShutdownAllSockets", do_shutdown_all);
+    add(24, "Write", [](ipc::Request& q, ipc::Response& r) { return do_send(q, r, false, true); });
+    add(25, "Read", [](ipc::Request& q, ipc::Response& r) { return do_recv(q, r, false, true); });
+    add(26, "Close", do_close);
+    add(27, "DuplicateSocket", do_dup);
 }
 
 bool resolve_ipv4(const std::string& name_in, uint8_t ip[4], const char** how) {
