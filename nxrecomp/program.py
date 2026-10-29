@@ -201,11 +201,18 @@ class Env:
         self.ends = {}
         for r in rows:
             self.ends[self.base + r['start']] = self.base + r['end']
+        added = []
         for off in list(self.cfg.extra_entries.get(self.img.name, ())) + list(extra):
             a = self.base + off
             if a not in self.ends:
                 self.ends[a] = self.base + off + 4
+                added.append(a)
         self.starts = sorted(self.ends)
+        # an extra entry runs to the next known entry (or the end of .text), not one instruction: an entry reached only
+        # through a pointer may hold several instructions before the next function (SDK 10 rtld+0x14a0)
+        for a in added:
+            i = bisect.bisect_right(self.starts, a)
+            self.ends[a] = self.starts[i] if i < len(self.starts) else max(self.ends[a], self.text_hi)
         # an extra entry splits the function it falls into: keep that function's end as is
         return self.starts
 
