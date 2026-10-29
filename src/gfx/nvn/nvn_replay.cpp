@@ -181,6 +181,13 @@ gfx::Buffer g_xfb_counter;
 // Primitive counters (NVN_COUNTER_TYPE_PRIMITIVES_GENERATED = 13, TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN = 14): counted on the CPU by every
 // draw (count_primitives), process-wide like the console's, zeroed by ResetCounter of their type, dropped at shutdown.
 uint64_t g_prims_generated = 0, g_prims_xfb = 0;
+// Conditional render (SetRenderEnableConditional): the console compares the 64-bit counter words of two reports, at the address and
+// 16 bytes after it (yuzu Maxwell3D::ProcessQueryCondition: IfEqual / IfNotEqual), when the command runs. The replay runs in GPU
+// order, so the counters it writes itself (ReportCounter other than samples passed, ReportValue) are known here: g_reports keeps
+// them by address. kReportUnknown marks an address the GPU writes later (samples passed): a condition on it renders, as before. An
+// address the replay never wrote (the game's own memory) is read from the pool.
+constexpr uint64_t kReportUnknown = ~0ull;
+std::unordered_map<uint64_t, uint64_t> g_reports;
 nxrt::GaugeCounter g_gauge_pipeline_binds("nvn.cnt.pipeline_binds");   // graphics pipeline binds (cumulative)
 VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
 bool g_trace = false;
@@ -1640,6 +1647,35 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     counters().dispatches.fetch_add(1, std::memory_order_relaxed);
 }
 
+// ---- conditional render ---------------------------------------------------------------------------------------------------------
+void note_report(uint64_t address, uint64_t counter) {
+    if (!address) return;
+    if (g_reports.size() > 65536) g_reports.clear();   // bounded: a forgotten address reads from memory again
+    g_reports[address] = counter;
+}
+
+// The counter word at a report address; false when it is not known before the GPU runs.
+bool report_counter(uint64_t address, uint64_t* out) {
+    auto it = g_reports.find(address);
+    if (it != g_reports.end()) {
+        if (it->second == kReportUnknown) return false;
+        *out = it->second;
+        return true;
+    }
+    const PoolHit hit = pool_lookup(address);
+    if (!hit.pool || hit.pool->is_virtual || !hit.pool->base || hit.offset + 8 > hit.pool->size) return false;
+    std::memcpy(out, host_ptr(address), 8);
+    return true;
+}
+
+bool conditional_render_enabled(uint32_t mode, uint64_t address) {
+    uint64_t a = 0, b = 0;
+    if (!report_counter(address, &a) || !report_counter(address + 16, &b)) return true;
+    if (mode == NVN_CONDITIONAL_RENDER_MODE_RENDER_IF_EQUAL) return a == b;
+    if (mode == NVN_CONDITIONAL_RENDER_MODE_RENDER_IF_NOT_EQUAL) return a != b;
+    return true;
+}
+
 // ---- clears -------------------------------------------------------------------------------------------------------------------
 VkClearRect full_rect() {
     VkClearRect r = {};
@@ -1651,6 +1687,7 @@ VkClearRect full_rect() {
 
 void do_clear_color(const P_ClearColor& p) {
     if (g_trace) { char a[96]; TRACE("clear color rt%u mask %x kind %u %s", p.target, p.mask, p.kind, tex_desc(p.target < 8 ? S.color_tex[p.target].get() : nullptr, a, sizeof a)); }
+    if (!S.render_enable) return;   // render enable gates clears as it gates draws (yuzu DrawManager::Clear)
     if (p.target >= 8 || !S.color_tex[p.target]) return;
     if (p.mask == 0) return;
     if (!ensure_pass()) return;
@@ -1680,6 +1717,7 @@ void do_clear_color(const P_ClearColor& p) {
 
 void do_clear_depth_stencil(const P_ClearDepthStencil& p) {
     TRACE("clear depth/stencil d %g (mask %d) s %d (mask %x)", p.depth, p.depth_mask, p.stencil, p.stencil_mask);
+    if (!S.render_enable) return;
     if (!S.depth_tex) return;
     if (!ensure_pass()) return;
     VkClearAttachment ca = {};
@@ -1996,8 +2034,12 @@ void run_list(const CmdList& list, int depth) {
             case Op::SetPrimitiveRestart: { const auto& p = r.payload<P_PrimitiveRestart>(); S.prim_restart = p.enable != 0; S.restart_index = p.index; break; }
             case Op::SetPatchSize: case Op::SetTessLevels: note_unsupported("tessellation state"); break;
             case Op::SetRenderEnable:
-                if (r.size() >= sizeof(RecHeader) + sizeof(P_RenderEnableCond)) S.render_enable = true;   // conditional render: treated as visible
-                else S.render_enable = r.payload<P_U32>().v != 0;
+                if (r.size() >= sizeof(RecHeader) + sizeof(P_RenderEnableCond)) {
+                    const auto& p = r.payload<P_RenderEnableCond>();
+                    S.render_enable = conditional_render_enabled(p.mode, p.address);
+                } else {
+                    S.render_enable = r.payload<P_U32>().v != 0;
+                }
                 break;
             case Op::SetCoverageModulationTable: case Op::SetConservativeRaster: break;
             case Op::SetRenderTargets: {
@@ -2073,6 +2115,7 @@ void run_list(const CmdList& list, int depth) {
                     }
                     if (p.address) {
                         rep.counter = 0;
+                        g_reports[p.address] = kReportUnknown;   // the query result lands on the GPU
                         do_write_memory(p.address, &rep, sizeof rep);
                         BufRef b = resolve_buffer(p.address, sizeof rep);
                         if (b.ok && g_occ_last >= 0) {
@@ -2085,17 +2128,22 @@ void run_list(const CmdList& list, int depth) {
                 }
                 if (p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED || p.type == NVN_COUNTER_TYPE_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN) {
                     rep.counter = p.type == NVN_COUNTER_TYPE_PRIMITIVES_GENERATED ? g_prims_generated : g_prims_xfb;
+                    note_report(p.address, rep.counter);
                     if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                     break;
                 }
-                if (p.type != NVN_COUNTER_TYPE_TIMESTAMP) note_unsupported("statistics counters other than samples passed, primitives generated and feedback primitives written are reported as non-zero");
-                if (p.type == NVN_COUNTER_TYPE_TIMESTAMP) rep.counter = 0;
+                // TIMESTAMP_TOP is a timestamp too (taken when the command reaches the top of the pipe): its counter word is 0 like TIMESTAMP's
+                const bool stamp = p.type == NVN_COUNTER_TYPE_TIMESTAMP || p.type == NVN_COUNTER_TYPE_TIMESTAMP_TOP;
+                if (!stamp) note_unsupported("statistics counters other than samples passed, primitives generated and feedback primitives written are reported as non-zero");
+                if (stamp) rep.counter = 0;
+                note_report(p.address, rep.counter);
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
             }
             case Op::ReportValue: {
                 const auto& p = r.payload<P_ReportValue>();
                 struct { uint64_t counter, timestamp; } rep = {p.value, timestamp_ns()};
+                note_report(p.address, rep.counter);
                 if (p.address) do_write_memory(p.address, &rep, sizeof rep);
                 break;
             }
