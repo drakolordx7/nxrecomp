@@ -9,8 +9,12 @@
 // Switchbrew pages followed for the command tables: Network_Interface_services, Sockets_services, SSL_services, Friend_services,
 //   Parental_Control_services. The result codes are module | (description << 9) (services.h).
 //
+// [net] sockets = host (net_host.cpp) turns bsd into real Winsock sockets and lets sfdnsres answer GetHostByName / GetAddrInfo from
+// [net] hosts (then the PC's resolver with [net] dns = host). The default, off, leaves every answer below as it was.
+//
 // Each command that is answered logs once at Info with tag "net" (the first use per command). Process-wide state (client ids, the ldn
 // state, the ssl context count, the pki ids) lives in st(); network_reset() puts it back to the start-up value.
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <initializer_list>
@@ -23,6 +27,7 @@
 #include "nxrt/config.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "net_host.h"
 #include "services_internal.h"
 
 namespace nxrt::services {
@@ -392,6 +397,7 @@ std::shared_ptr<ipc::Service> make_bsd() {
             {200, "SetThreadCoreMask", K::Ok},
             {201, "GetThreadCoreMask", K::U32, 0},
         });
+        if (nethost::sockets_host()) nethost::install_bsd(s);   // the working set on real sockets; the rest stays offline
     });
 }
 
@@ -1101,20 +1107,169 @@ void write_text(const ipc::Buffer& out, const std::string& text) {
     buf_write(out, z.data(), z.size());
 }
 
-// The name a lookup asks for (input buffer n), logged once per distinct name: shows which servers a title wants.
-void note_lookup(const ipc::Request& req, const char* what) {
+// The host name of a lookup (input buffer 0).
+std::string lookup_name(const ipc::Request& req) {
     const ipc::Buffer b = req.in_buf(0);
-    if (!b.addr || !b.size) return;
+    if (!b.addr || !b.size) return {};
     const char* p = reinterpret_cast<const char*>(static_cast<uintptr_t>(b.addr));
-    std::string name(p, strnlen(p, static_cast<size_t>(b.size)));
-    const ipc::Buffer sv = req.in_buf(1);
+    return std::string(p, strnlen(p, static_cast<size_t>(b.size)));
+}
+
+// The name a lookup asks for (input buffer n), logged once per distinct name: shows which servers a title wants. `answer` ends the line;
+// `with_service` adds input buffer 1 (GetAddrInfo's service) to the name.
+void note_lookup(const ipc::Request& req, const char* what, const char* answer = "not resolved (offline)", bool with_service = true) {
+    std::string name = lookup_name(req);
+    if (name.empty()) return;
+    const ipc::Buffer sv = with_service ? req.in_buf(1) : ipc::Buffer{};
     if (sv.addr && sv.size) {
         const char* q = reinterpret_cast<const char*>(static_cast<uintptr_t>(sv.addr));
         const std::string service(q, strnlen(q, static_cast<size_t>(sv.size)));
         if (!service.empty()) name += ":" + service;
     }
     std::lock_guard<std::mutex> lk(st().mu);
-    if (st().seen.insert(std::string("lookup ") + name).second) NXLOG_I("net", "sfdnsres %s %s: not resolved (offline)", what, name.c_str());
+    if (st().seen.insert(std::string("lookup ") + name).second) NXLOG_I("net", "sfdnsres %s %s: %s", what, name.c_str(), answer);
+}
+
+// ---- sfdnsres with [net] sockets = host -----------------------------------------------------------------------------------------------
+// The serialized answers follow Ryujinx Sfdnsres/IResolver.cs (SerializeHostEntries, SerializeAddrInfos) and Types/AddrInfoSerialized.cs,
+// AddrInfoSerializedHeader.cs, AddrInfo4.cs; libnx runtime/resolver.c reads them back the same way.
+
+void put_be32(std::vector<uint8_t>& v, uint32_t x) {
+    for (int i = 3; i >= 0; --i) v.push_back(static_cast<uint8_t>(x >> (i * 8)));
+}
+void put_be16(std::vector<uint8_t>& v, uint16_t x) {
+    v.push_back(static_cast<uint8_t>(x >> 8));
+    v.push_back(static_cast<uint8_t>(x));
+}
+
+// hostent: h_name NUL, u32 BE alias count (0), u16 BE h_addrtype (AF_INET 2), u16 BE h_length (4), u32 BE address count (1), then each
+// address as a big-endian u32 of the in_addr value: its four bytes reversed (libnx: "lol Nintendo").
+std::vector<uint8_t> serialize_hostent(const std::string& name, const uint8_t ip[4]) {
+    std::vector<uint8_t> v(name.begin(), name.end());
+    v.push_back(0);
+    put_be32(v, 0);
+    put_be16(v, 2);
+    put_be16(v, 4);
+    put_be32(v, 1);
+    for (int i = 3; i >= 0; --i) v.push_back(ip[i]);
+    return v;
+}
+
+// addrinfo list: per entry a 24-byte big-endian header (magic 0xBEEFCAFE, flags, family 2, socktype, protocol, addrlen 16), the
+// sockaddr_in with its fields byte-swapped once more (sin_len 4, sin_family 2, port bytes little-endian, address bytes reversed), the
+// canonical name NUL; then a u32 0 sentinel.
+std::vector<uint8_t> serialize_addrinfo(const std::string& name, const uint8_t ip[4], uint16_t port, int32_t socktype, int32_t protocol) {
+    std::vector<uint8_t> v;
+    put_be32(v, 0xBEEFCAFEu);
+    put_be32(v, 0);
+    put_be32(v, 2);
+    put_be32(v, static_cast<uint32_t>(socktype));
+    put_be32(v, static_cast<uint32_t>(protocol));
+    put_be32(v, 16);
+    v.push_back(4);
+    v.push_back(2);
+    v.push_back(static_cast<uint8_t>(port));
+    v.push_back(static_cast<uint8_t>(port >> 8));
+    for (int i = 3; i >= 0; --i) v.push_back(ip[i]);
+    v.insert(v.end(), 8, uint8_t{0});
+    v.insert(v.end(), name.begin(), name.end());
+    v.push_back(0);
+    put_be32(v, 0);
+    return v;
+}
+
+uint32_t be32_at(const uint8_t* p) {
+    return (uint32_t{p[0]} << 24) | (uint32_t{p[1]} << 16) | (uint32_t{p[2]} << 8) | p[3];
+}
+
+std::string ip_text(const uint8_t ip[4]) {
+    return std::to_string(ip[0]) + "." + std::to_string(ip[1]) + "." + std::to_string(ip[2]) + "." + std::to_string(ip[3]);
+}
+
+// Resolves the lookup's name and logs the answer once per name. False: not found (the offline answer is then given).
+bool host_lookup(const ipc::Request& req, const char* what, bool with_service, uint8_t ip[4], std::string* name) {
+    *name = lookup_name(req);
+    const char* how = nullptr;
+    if (!nethost::resolve_ipv4(*name, ip, &how)) {
+        note_lookup(req, what, "not resolved (not in [net] hosts)", with_service);
+        return false;
+    }
+    const std::string answer = "resolved to " + ip_text(ip) + " (" + how + ")";
+    note_lookup(req, what, answer.c_str(), with_service);
+    return true;
+}
+
+// GetHostByNameRequest (2) / ...WithOptions (10): (h_errno, bsd_errno, size) / (size, h_errno, bsd_errno, 0).
+uint32_t host_gethostbyname(ipc::Request& req, ipc::Response& rsp, bool with_options) {
+    uint8_t ip[4];
+    std::string name;
+    if (!host_lookup(req, with_options ? "GetHostByNameRequestWithOptions" : "GetHostByNameRequest", false, ip, &name)) {
+        if (with_options) rsp.push(uint32_t{0});
+        rsp.push(static_cast<uint32_t>(kNetdbHostNotFound));
+        rsp.push(static_cast<uint32_t>(kBsdNetDown));
+        if (!with_options) rsp.push(uint32_t{0});
+        return 0;
+    }
+    const std::vector<uint8_t> he = serialize_hostent(name, ip);
+    const uint32_t size = static_cast<uint32_t>(buf_write(req.out_buf(0), he.data(), he.size()));
+    if (with_options) {
+        rsp.push(size);
+        rsp.push(uint32_t{0});
+        rsp.push(uint32_t{0});
+        rsp.push(uint32_t{0});
+    } else {
+        rsp.push(uint32_t{0});
+        rsp.push(uint32_t{0});
+        rsp.push(size);
+    }
+    return 0;
+}
+
+// GetAddrInfoRequest (6) / ...WithOptions (12): (bsd_errno, gai_error, size) / (size, gai_error, netdb_error, bsd_errno).
+uint32_t host_getaddrinfo(ipc::Request& req, ipc::Response& rsp, bool with_options) {
+    auto answer = [&](int32_t gai, uint32_t size) {
+        if (with_options) {
+            rsp.push(size);
+            rsp.push(gai);
+            rsp.push(uint32_t{0});
+            rsp.push(uint32_t{0});
+        } else {
+            rsp.push(uint32_t{0});
+            rsp.push(gai);
+            rsp.push(size);
+        }
+        return 0u;
+    };
+    uint8_t ip[4];
+    std::string name;
+    if (!host_lookup(req, with_options ? "GetAddrInfoRequestWithOptions" : "GetAddrInfoRequest", true, ip, &name)) return answer(kEaiNoName, 0);
+    // The service: a port number, empty, or http / https (Ryujinx takes numbers and empty; EAI_SERVICE -8 otherwise).
+    std::string service;
+    const ipc::Buffer sv = req.in_buf(1);
+    if (sv.addr && sv.size) {
+        const char* q = reinterpret_cast<const char*>(static_cast<uintptr_t>(sv.addr));
+        service.assign(q, strnlen(q, static_cast<size_t>(sv.size)));
+    }
+    uint16_t port = 0;
+    if (service == "http") {
+        port = 80;
+    } else if (service == "https") {
+        port = 443;
+    } else if (!service.empty()) {
+        char* end = nullptr;
+        const unsigned long n = std::strtoul(service.c_str(), &end, 10);
+        if (!end || *end || n > 65535) return answer(-8, 0);
+        port = static_cast<uint16_t>(n);
+    }
+    // Hints (one serialized addrinfo): socktype and protocol are echoed back when given.
+    int32_t socktype = 0, protocol = 0;
+    uint8_t h[24] = {};
+    if (buf_read(req.in_buf(2), h, sizeof h) == sizeof h && be32_at(h) == 0xBEEFCAFEu) {
+        socktype = static_cast<int32_t>(be32_at(h + 12));
+        protocol = static_cast<int32_t>(be32_at(h + 16));
+    }
+    const std::vector<uint8_t> ai = serialize_addrinfo(name, ip, port, socktype, protocol);
+    return answer(0, static_cast<uint32_t>(buf_write(req.out_buf(0), ai.data(), ai.size())));
 }
 
 std::shared_ptr<ipc::Service> make_resolver() {
@@ -1187,6 +1342,12 @@ std::shared_ptr<ipc::Service> make_resolver() {
             rsp.push(static_cast<uint32_t>(0));
             return 0;
         });
+        if (nethost::sockets_host()) {   // real answers from [net] hosts (then the PC's resolver with [net] dns = host)
+            s.add_cmd(2, "GetHostByNameRequest", [](ipc::Request& q, ipc::Response& r) { return host_gethostbyname(q, r, false); });
+            s.add_cmd(10, "GetHostByNameRequestWithOptions", [](ipc::Request& q, ipc::Response& r) { return host_gethostbyname(q, r, true); });
+            s.add_cmd(6, "GetAddrInfoRequest", [](ipc::Request& q, ipc::Response& r) { return host_getaddrinfo(q, r, false); });
+            s.add_cmd(12, "GetAddrInfoRequestWithOptions", [](ipc::Request& q, ipc::Response& r) { return host_getaddrinfo(q, r, true); });
+        }
     });
 }
 
@@ -1272,6 +1433,10 @@ std::shared_ptr<ipc::Service> make_notif() {
 void register_network() {
     const bool offline = config_get_bool("net", "offline", true);
     NXLOG_I("net", "network services: [net] offline=%s (no connection, no friends, no BCAT data in either mode)", offline ? "true" : "false");
+    if (nethost::sockets_host()) {
+        NXLOG_I("net", "[net] sockets=host: bsd on real sockets; hosts=\"%s\" dns=%s port_map=\"%s\"", config_get_str("net", "hosts", "").c_str(),
+                config_get_str("net", "dns", "hosts").c_str(), config_get_str("net", "port_map", "").c_str());
+    }
 
     for (const char* n : {"nifm:u", "nifm:a", "nifm:s"}) add(n, [] { return make_nifm_static(); });
     for (const char* n : {"bsd:u", "bsd:a", "bsd:s"}) add(n, [] { return make_bsd(); });
@@ -1299,6 +1464,7 @@ void network_reset() {
     s.next_pki_id = 1;
     s.ldn_state = kLdnStateNone;
     s.ssl_contexts = 0;
+    nethost::reset();
 }
 
 }  // namespace nxrt::services

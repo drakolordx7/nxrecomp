@@ -152,6 +152,10 @@ Rules:
 | `fatal` | `report_path` | unset (`<exe path without extension>_fatal.txt`) | `NXRT_FATAL_REPORT_PATH` | `src/services/logfault.cpp` | Fatal-error report file. Once the key is set, even to empty, its value is used. Empty: no file is written. |
 | `fatal` | `terminate` | `true` | `NXRT_FATAL_TERMINATE` | `src/services/logfault.cpp` | `true` ends the process with exit code 5 after a fatal report. `false` returns. |
 | `net` | `offline` | `true` | `NXRT_NET_OFFLINE` | `src/services/network.cpp` | `true`: no connection, no friends and no BCAT data (the start-up log line says so). |
+| `net` | `sockets` | `off` | `NXRT_NET_SOCKETS` | `src/services/net_host.cpp` | `off`: every bsd socket call answers "network down" (ENETDOWN) and sfdnsres finds no name. `host`: bsd runs on real Winsock sockets (Socket, Connect, Send/Recv, Poll/Select, Accept/Bind/Listen, options, Close ...) and sfdnsres answers GetHostByName / GetAddrInfo from `hosts` (and `dns`). nifm still reports no connection. |
+| `net` | `hosts` | empty | `NXRT_NET_HOSTS` | `src/services/net_host.cpp` | With `sockets = host`: names sfdnsres resolves, `name=ip;name2=ip;*.example.com=ip` (IPv4). `*.example.com` matches any name ending in `.example.com`; an exact name wins over a wildcard. `localhost` and dotted IPv4 literals always resolve. Each name a title looks up is logged once with its answer. |
+| `net` | `dns` | `hosts` | `NXRT_NET_DNS` | `src/services/net_host.cpp` | With `sockets = host`: `hosts` resolves only the names in `hosts` (anything else is "host not found", so a title never reaches the internet by accident). `host`: names not in `hosts` go to the PC's resolver. |
+| `net` | `port_map` | empty | `NXRT_NET_PORT_MAP` | `src/services/net_host.cpp` | With `sockets = host`: remote port rewrite applied in Connect and SendTo, `443=8443;80=8080`, so a local server need not use privileged or busy ports. The first connect of each socket is logged with the address and the mapping. |
 | `pl` | `font_dir` | empty | `NXRT_PL_FONT_DIR` | `src/services/pl.cpp` | Folder searched first for `DejaVuSans.ttf` and the shared font dumps. Empty: the search goes on to `fonts\` next to the exe, then `assets\fonts\` under the working directory, then the exe's folder. |
 | `play` | `controls` | `controls.ini` | `NXRT_PLAY_CONTROLS` | `src/gfx/play/play.cpp` | Settings file of play mode (controls, sensitivity, display); written with the factory settings when missing. |
 | `play` | `capture_mouse` | `true` | `NXRT_PLAY_CAPTURE_MOUSE` | `src/gfx/play/play.cpp` | Capture the pointer (relative mode) while the game is in play. |
@@ -419,6 +423,10 @@ terminate = true
 
 [net]
 offline = true
+sockets = off
+; hosts = game.example.com=127.0.0.1;*.example.net=127.0.0.1   (sockets = host only)
+dns = hosts
+; port_map = 443=8443;80=8080
 
 [pl]
 ; font_dir =  (empty: the default search folders)
