@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Small Horizon services of the title's Service Access Control list (S3c): csrng, ldr:ro, mm:u, hwopus, aoc:u, caps:u, caps:su,
-// mii:u, irs, nfc:user, nfc:mf:u, nfp:user, ectx:aw, pcm, banana, htc, htc:tenv, htcs.
+// mii:u, irs, nfc:user, nfc:mf:u, nfp:user, ectx:aw, pcm, banana, htc, htc:tenv, htcs, olsc:u.
 //
 // Adapted from ScarletNX src/nx/hle/services/misc.swipc, ldr.swipc and misc.c (GPL-3.0-or-later): the command ids and argument
 // layouts of csrng, mm:u, aoc:u, irs, mii:u, nfc/nfp, ectx:aw and ldr:ro, and the no-device result constants.
@@ -13,6 +13,7 @@
 // falls through to kStubService. Two services have no table in the sources read, so their commands do fall through: pcm, and the IUser
 // that nfc:mf:u hands out. "banana" is a StubService by design.
 #include <atomic>
+#include <map>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -49,6 +50,8 @@ constexpr uint32_t kNotSupported = res(11, 1);
 // against Switchbrew's listing, which stops before those modules.
 constexpr uint32_t kNfpNoDevice = res(115, 64);
 constexpr uint32_t kNfcNoDevice = res(127, 64);
+constexpr uint32_t kOlscNullArgument = res(179, 100);   // Ryubing Olsc/ResultCode.cs
+constexpr uint32_t kOlscNotInitialized = res(179, 101);
 // Mii: ScarletNX misc.c MII_NOT_FOUND / MII_INVALID_ARGUMENT (module 126 Mii). Not verified against Switchbrew.
 constexpr uint32_t kMiiNotFound = res(126, 4);
 constexpr uint32_t kMiiInvalidArgument = res(126, 1);
@@ -620,6 +623,44 @@ std::shared_ptr<Service> make_user_manager(const char* name, std::shared_ptr<Ser
 }
 std::shared_ptr<Service> make_mifare_user() { return make_iface("nn::nfc::mifare::detail::IUser", [](Service&) {}); }
 
+// ---- olsc:u -----------------------------------------------------------------------------------------------------------------------
+// IOlscServiceForApplication (10.0.0+), online save data backup, which is off: Ryubing Olsc/IOlscServiceForApplication.cs (MIT)
+// for the commands, results and the setting values (1 enabled, 2 not; Ryubing marks the values as not determined).
+std::shared_ptr<Service> make_olsc() {
+    struct Olsc {
+        std::mutex mu;
+        bool initialized = false;
+        std::map<std::pair<uint64_t, uint64_t>, bool> backup;
+    };
+    auto o = std::make_shared<Olsc>();
+    return make_iface("olsc:u", [o](Service& s) {
+        s.add_cmd(0, "Initialize", [o](Request&, Response&) -> uint32_t {
+            std::lock_guard<std::mutex> g(o->mu);
+            o->initialized = true;
+            NXLOG_D("olsc", "Initialize: online save data backup is not available");
+            return 0;
+        });
+        s.add_cmd(13, "GetSaveDataBackupSetting", [o](Request& req, Response& rsp) -> uint32_t {
+            const auto uid = std::make_pair(req.arg<uint64_t>(0), req.arg<uint64_t>(8));
+            std::lock_guard<std::mutex> g(o->mu);
+            if (!o->initialized) return kOlscNotInitialized;
+            if (uid.first == 0 && uid.second == 0) return kOlscNullArgument;
+            const auto it = o->backup.find(uid);
+            rsp.push<uint8_t>(it != o->backup.end() && it->second ? 1 : 2);
+            return 0;
+        });
+        s.add_cmd(14, "SetSaveDataBackupSettingEnabled", [o](Request& req, Response&) -> uint32_t {
+            const bool enabled = req.arg<uint64_t>(0) != 0;
+            const auto uid = std::make_pair(req.arg<uint64_t>(8), req.arg<uint64_t>(16));
+            std::lock_guard<std::mutex> g(o->mu);
+            if (!o->initialized) return kOlscNotInitialized;
+            if (uid.first == 0 && uid.second == 0) return kOlscNullArgument;
+            o->backup[uid] = enabled;
+            return 0;
+        });
+    });
+}
+
 // ---- ectx:aw ----------------------------------------------------------------------------------------------------------------------
 // Error-context writer: the registrar takes the context and drops it.
 std::shared_ptr<Service> make_ectx_registrar() {
@@ -701,6 +742,7 @@ void register_misc() {
     add("htc", [] { return make_tma("nn::tma::IHtcManager", htc_cmds()); });
     add("htc:tenv", [] { return make_tma("nn::htc::tenv::IServiceManager", htc_tenv_cmds()); });
     add("htcs", [] { return make_tma("nn::tma::IHtcsManager", htcs_cmds()); });
+    add("olsc:u", [] { return make_olsc(); });
 }
 
 // Process-wide state back to its start-up value: the clock requests, and the events (cleared).
