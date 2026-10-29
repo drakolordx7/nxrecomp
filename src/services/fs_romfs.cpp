@@ -20,6 +20,7 @@
 #include <system_error>
 #include <vector>
 
+#include "fs_mods.h"
 #include "nxrt/write_watch.h"
 
 namespace nxrt::services::fs {
@@ -99,6 +100,8 @@ struct Node {
     std::wstring host;           // host path to open
     bool is_dir = false;
     uint64_t size = 0;           // files only
+    std::shared_ptr<const std::vector<uint8_t>> mem;   // files: content generated in memory (the host path is then unused)
+    uint64_t src_off = 0;        // files: where the data starts inside the host file (non-zero for members of a mod's romfs.bin)
     std::vector<Node> kids;      // sorted by name bytes
     uint32_t entry = 0;          // offset of this entry in its table
     uint32_t parent = 0;         // entry offset of the parent directory (the root's is 0)
@@ -194,6 +197,8 @@ struct FileRec {
     std::wstring host;
     uint64_t size = 0;
     uint64_t image_off = 0;
+    uint64_t src_off = 0;       // offset of the data in the host file
+    std::shared_ptr<const std::vector<uint8_t>> mem;   // generated content instead of a host file
 };
 
 // Everything build() produces. Replaced as a whole.
@@ -208,8 +213,95 @@ struct Layout {
     std::map<std::string, uint32_t> by_path;
 };
 
+// ---- mods (fs_mods.h) --------------------------------------------------------------------------------------------------------------
+
+// Looks in the first `n` kids, which are sorted (the ones appended since are not yet).
+Node* find_kid(Node& d, const std::string& name, size_t n) {
+    auto last = d.kids.begin() + static_cast<std::ptrdiff_t>(n);
+    auto it = std::lower_bound(d.kids.begin(), last, name, [](const Node& k, const std::string& nm) { return k.name < nm; });
+    return it != last && it->name == name ? &*it : nullptr;
+}
+Node* find_kid(Node& d, const std::string& name) { return find_kid(d, name, d.kids.size()); }
+
+// The folder node of an image path ("/" is the root); null when a part is missing or is a file.
+Node* walk(Node& root, const std::string& path) {
+    Node* n = &root;
+    size_t i = 1;
+    while (n && i < path.size()) {
+        const size_t j = path.find('/', i);
+        n = find_kid(*n, path.substr(i, j == std::string::npos ? std::string::npos : j - i));
+        if (n && !n->is_dir) return nullptr;
+        i = j == std::string::npos ? path.size() : j + 1;
+    }
+    return n;
+}
+
+void erase_kid(Node& d, const Node* k) { d.kids.erase(d.kids.begin() + (k - d.kids.data())); }
+
+// Merges the mods into the scanned tree: the hidden entries go first, then every folder the mods provide gets its files (replacing the
+// game's file of the same name) and subfolders. Kids stay sorted by name bytes, which the tables need.
+bool apply_overlay(Node& root, const ModOverlay& ov, std::string& msg) {
+    for (const std::string& h : ov.hidden_paths()) {
+        const size_t cut = h.rfind('/');
+        Node* par = walk(root, cut == 0 ? std::string("/") : h.substr(0, cut));
+        if (!par) continue;
+        if (Node* k = find_kid(*par, h.substr(cut + 1))) erase_kid(*par, k);
+    }
+    for (const std::string& dp : ov.dirs_sorted()) {
+        Node* d = walk(root, dp);
+        if (!d) {
+            msg = "mod folder " + dp + " has no place in the RomFS tree";
+            return false;
+        }
+        const auto* kids = ov.children(dp);
+        if (!kids) continue;
+        bool added = false;
+        size_t sorted = d->kids.size();
+        for (const ModOverlay::Child& c : *kids) {
+            const std::string cp = dp == "/" ? "/" + c.name : dp + "/" + c.name;
+            Node* ex = find_kid(*d, c.name, sorted);
+            if (c.is_dir) {
+                if (ex && ex->is_dir) continue;
+                if (ex) {
+                    erase_kid(*d, ex);
+                    --sorted;
+                }
+                Node n;
+                n.name = c.name;
+                n.path = cp;
+                n.is_dir = true;
+                d->kids.push_back(std::move(n));
+                added = true;
+                continue;
+            }
+            const ModSource* src = ov.find_file(cp);
+            if (!src) continue;
+            if (ex && ex->is_dir) {
+                erase_kid(*d, ex);
+                --sorted;
+                ex = nullptr;
+            }
+            Node* f = ex;
+            if (!f) {
+                d->kids.emplace_back();
+                f = &d->kids.back();
+                f->name = c.name;
+                f->path = cp;
+                added = true;
+            }
+            f->is_dir = false;
+            f->host = long_path(src->host);
+            f->size = src->size;
+            f->src_off = src->offset;
+            f->mem = src->mem;
+        }
+        if (added) std::sort(d->kids.begin(), d->kids.end(), [](const Node& a, const Node& b) { return a.name < b.name; });
+    }
+    return true;
+}
+
 // Lays out the host folder: entries sorted by full path in each table, file data in that order, 16-byte aligned.
-bool make_layout(const std::string& host_dir, Layout& L, std::string* err) {
+bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const ModOverlay* mods) {
     std::string msg;
     std::wstring wdir;
     if (!to_wide(host_dir, wdir)) {
@@ -225,7 +317,7 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err) {
     Node root;
     root.is_dir = true;
     root.host = long_path(abs.wstring());
-    if (!scan(root, msg)) {
+    if (!scan(root, msg) || (mods && !apply_overlay(root, *mods, msg))) {
         if (err) *err = msg;
         return false;
     }
@@ -343,8 +435,8 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err) {
         const uint64_t img = kPartitionOfs + f->data;
         if (img > cursor) L.segs.push_back({cursor, img - cursor, Segment::Kind::kZero, 0, 0});
         const uint32_t idx = static_cast<uint32_t>(L.files.size());
-        L.files.push_back({f->host, f->size, img});
-        if (f->size > 0) L.segs.push_back({img, f->size, Segment::Kind::kFile, 0, idx});
+        L.files.push_back({f->host, f->size, img, f->src_off, f->mem});
+        if (f->size > 0) L.segs.push_back({img, f->size, Segment::Kind::kFile, f->src_off, idx});
         L.by_path[f->path] = idx;
         cursor = img + f->size;
         data_bytes += f->size;
@@ -413,6 +505,11 @@ struct RomfsImage::Impl {
 
     // Positioned reads (OVERLAPPED offset), so concurrent readers of one handle need no seek lock.
     bool read_host(uint32_t idx, uint64_t ofs, uint8_t* out, uint64_t n) const {
+        if (const auto& mem = l.files[idx].mem) {   // generated by a game module: nothing to open
+            if (ofs > mem->size() || n > mem->size() - ofs) return false;
+            if (n) std::memcpy(out, mem->data() + ofs, n);
+            return true;
+        }
         std::shared_ptr<HandleBox> box = acquire(idx);
         if (!box) return false;
         const mem::ww::OsWriteScope ws(out, n);   // ReadFile fails on a page the write tracker made read-only
@@ -435,9 +532,9 @@ struct RomfsImage::Impl {
 RomfsImage::RomfsImage() : p_(std::make_unique<Impl>()) {}
 RomfsImage::~RomfsImage() = default;
 
-bool RomfsImage::build(const std::string& host_dir, std::string* err) {
+bool RomfsImage::build(const std::string& host_dir, std::string* err, const ModOverlay* mods) {
     Layout fresh;
-    const bool ok = make_layout(host_dir, fresh, err);
+    const bool ok = make_layout(host_dir, fresh, err, mods);
     std::lock_guard<std::mutex> lk(p_->mu);
     p_->cache.clear();
     p_->l = ok ? std::move(fresh) : Layout{};

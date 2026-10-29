@@ -20,6 +20,8 @@
 
 namespace nxrt::services::fs {
 
+class ModOverlay;   // fs_mods.h
+
 // fs results (module 2: result = description << 9 | 2; https://switchbrew.org/wiki/Error_codes).
 namespace rc {
 constexpr uint32_t kPathNotFound = 0x202, kPathAlreadyExists = 0x402, kTargetLocked = 0xE02, kDirectoryNotEmpty = 0x1002;
@@ -73,6 +75,9 @@ public:
     uint32_t list_dir(const std::string& path, std::vector<DirItem>* out);   // sorted by name
     uint32_t file_times(const std::string& path, FileTimes* out);
     uint32_t commit();                                  // journalled volumes; a no-op for direct ones
+    // Read-only direct volumes (the loose RomFS folder): the mods (fs_mods.h) replace and add files, merge into listings and hide the
+    // entries their .stub markers name, so this view agrees with the RomFS image. Call before the volume is shared. Null: no mods.
+    void set_overlay(std::shared_ptr<const ModOverlay> mods);
     uint64_t used_bytes();                              // files in the visible tree
     uint64_t capacity() const { return capacity_; }
     void set_capacity(uint64_t c) { capacity_ = c; }

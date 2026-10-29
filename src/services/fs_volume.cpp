@@ -15,6 +15,7 @@
 #include <map>
 #include <sstream>
 
+#include "fs_mods.h"
 #include "nxrt/log.h"
 #include "nxrt/write_watch.h"
 
@@ -42,7 +43,8 @@ std::string parent_of(const std::string& path) {
 // Positioned I/O on a Win32 handle (several threads may call it at once).
 class HostFile final : public VFile {
 public:
-    HostFile(HANDLE h, uint32_t mode) : h_(h), mode_(mode) {}
+    HostFile(HANDLE h, uint32_t mode, bool windowed = false, uint64_t base = 0, uint64_t length = 0)
+        : h_(h), mode_(mode), windowed_(windowed), base_(base), length_(length) {}
     ~HostFile() override {
         if (h_ != INVALID_HANDLE_VALUE) CloseHandle(h_);
     }
@@ -50,13 +52,18 @@ public:
         *got = 0;
         if (offset < 0) return rc::kOutOfRange;
         if (!(mode_ & kModeRead)) return rc::kReadNotPermitted;
+        if (windowed_) {   // a member of a packed image: the window is [base_, base_ + length_) of the host file
+            if (static_cast<uint64_t>(offset) >= length_) return 0;
+            size = std::min<uint64_t>(size, length_ - static_cast<uint64_t>(offset));
+        }
         uint8_t* d = static_cast<uint8_t*>(dst);
         const mem::ww::OsWriteScope ws(d, size);   // ReadFile fails on a page the write tracker made read-only
         while (size) {
             const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(size, 0x40000000));
             OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(static_cast<uint64_t>(offset) & 0xFFFFFFFFu);
-            ov.OffsetHigh = static_cast<DWORD>(static_cast<uint64_t>(offset) >> 32);
+            const uint64_t at = static_cast<uint64_t>(offset) + base_;
+            ov.Offset = static_cast<DWORD>(at & 0xFFFFFFFFu);
+            ov.OffsetHigh = static_cast<DWORD>(at >> 32);
             DWORD n = 0;
             if (!ReadFile(h_, d, chunk, &n, &ov)) {
                 if (GetLastError() == ERROR_HANDLE_EOF) break;
@@ -102,6 +109,10 @@ public:
         return 0;
     }
     uint32_t get_size(int64_t* size) override {
+        if (windowed_) {
+            *size = static_cast<int64_t>(length_);
+            return 0;
+        }
         LARGE_INTEGER li;
         if (!GetFileSizeEx(h_, &li)) return rc::kGenericFailure;
         *size = li.QuadPart;
@@ -111,7 +122,35 @@ public:
 private:
     HANDLE h_;
     uint32_t mode_;
+    bool windowed_;
+    uint64_t base_, length_;
     std::mutex size_mu_;
+};
+
+// A read-only file whose content a game module generated in memory (fs_mods.h ModsIndexEdit::replace_file).
+class MemFile final : public VFile {
+public:
+    explicit MemFile(std::shared_ptr<const std::vector<uint8_t>> data) : data_(std::move(data)) {}
+    uint32_t read(int64_t offset, void* dst, uint64_t size, uint64_t* got) override {
+        *got = 0;
+        if (offset < 0) return rc::kOutOfRange;
+        const uint64_t off = static_cast<uint64_t>(offset);
+        if (off >= data_->size()) return 0;
+        const uint64_t n = std::min<uint64_t>(size, data_->size() - off);
+        std::memcpy(dst, data_->data() + off, static_cast<size_t>(n));
+        *got = n;
+        return 0;
+    }
+    uint32_t write(int64_t, const void*, uint64_t) override { return rc::kWriteNotPermitted; }
+    uint32_t flush() override { return 0; }
+    uint32_t set_size(int64_t) override { return rc::kWriteNotPermitted; }
+    uint32_t get_size(int64_t* size) override {
+        *size = static_cast<int64_t>(data_->size());
+        return 0;
+    }
+
+private:
+    std::shared_ptr<const std::vector<uint8_t>> data_;
 };
 
 HANDLE open_host(const stdfs::path& p, bool write, DWORD disposition) {
@@ -249,6 +288,7 @@ struct Volume::Impl {
     std::mutex mu;
     std::set<std::string> tomb;   // committed paths deleted since the last commit (journalled volumes)
     bool journal = false, ro = false, ok = false;
+    std::shared_ptr<const ModOverlay> mods;   // read-only direct volumes: the mods over the folder (set before the volume is shared)
 
     bool direct() const { return !journal; }
     stdfs::path cpath(const std::string& path) const { return root / u8(rel_of(path)); }
@@ -267,6 +307,9 @@ struct Volume::Impl {
     struct Found {
         bool exists = false, is_dir = false, in_work = false;
         stdfs::path host;
+        std::shared_ptr<const std::vector<uint8_t>> mem;   // generated content (no host file)
+        bool windowed = false;      // a member of a packed image: only [window_off, window_off + window_len) of `host` is the file
+        uint64_t window_off = 0, window_len = 0;
     };
     Found lookup(const std::string& path) const {
         Found f;
@@ -275,6 +318,23 @@ struct Volume::Impl {
             f.exists = f.is_dir = f.in_work = true;
             f.host = wpath(path);
             return f;
+        }
+        if (mods) {   // mod files win; folders the mods provide exist even where the game has none; hidden game entries are gone
+            if (const ModSource* m = mods->find_file(path)) {
+                f.exists = f.in_work = true;
+                f.host = stdfs::path(m->host);
+                f.windowed = true;
+                f.mem = m->mem;
+                f.window_off = m->offset;
+                f.window_len = m->size;
+                return f;
+            }
+            if (mods->is_dir(path)) {
+                f.exists = f.is_dir = f.in_work = true;
+                f.host = mods->base_dir_exists(path) && stdfs::exists(wpath(path), ec) ? wpath(path) : stdfs::path(*mods->dir_host(path));
+                return f;
+            }
+            if (mods->hidden(path)) return f;
         }
         const stdfs::path w = wpath(path);
         if (stdfs::exists(w, ec)) {
@@ -334,12 +394,15 @@ struct Volume::Impl {
         if (!f.exists || !f.is_dir) return rc::kPathNotFound;
         std::map<std::string, DirItem> m;
         std::error_code ec;
+        // The game's own folder is not there (hidden, or only with other capitalisation); the mods' entries still are.
+        const bool base_hidden = mods && (mods->hidden(path) || (mods->is_dir(path) && !mods->base_dir_exists(path)));
         auto scan = [&](const stdfs::path& dir, bool committed) {
             for (stdfs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
                 DirItem d;
                 d.name = to_u8(it->path().filename());
                 const std::string child = (path == "/" ? "" : path) + "/" + d.name;
                 if (committed && tomb.count(child)) continue;
+                if (mods && mods->hidden(child)) continue;
                 std::error_code e2;
                 d.is_dir = it->is_directory(e2);
                 d.size = d.is_dir ? 0 : static_cast<int64_t>(it->file_size(e2));
@@ -347,8 +410,23 @@ struct Volume::Impl {
                 m[d.name] = d;
             }
         };
-        if (stdfs::exists(wpath(path), ec)) scan(wpath(path), false);
+        if (!base_hidden && stdfs::exists(wpath(path), ec)) scan(wpath(path), false);
         if (journal && committed_visible(path)) scan(cpath(path), true);
+        if (mods) {
+            if (const auto* kids = mods->children(path)) {
+                for (const ModOverlay::Child& k : *kids) {
+                    DirItem d;
+                    d.name = k.name;
+                    d.is_dir = k.is_dir;
+                    if (!k.is_dir) {
+                        const ModSource* src = mods->find_file((path == "/" ? "" : path) + "/" + k.name);
+                        if (!src) continue;
+                        d.size = static_cast<int64_t>(src->size);
+                    }
+                    m[d.name] = d;   // the mod's entry replaces the game's of the same name
+                }
+            }
+        }
         out->clear();
         for (auto& kv : m) out->push_back(kv.second);
         std::sort(out->begin(), out->end(), [](const DirItem& a, const DirItem& b) { return a.name < b.name; });
@@ -561,6 +639,11 @@ uint32_t Volume::open_file(const std::string& path, uint32_t mode, std::shared_p
     if (!f.exists || f.is_dir) return rc::kPathNotFound;
     const bool write = (mode & (kModeWrite | kModeAppend)) != 0;
     if (write && read_only_) return rc::kReadOnlyFileSystem;
+    if (f.mem) {
+        if (write) return rc::kReadOnlyFileSystem;
+        *out = std::make_shared<MemFile>(f.mem);
+        return 0;
+    }
     stdfs::path host = f.host;
     if (write) {
         if (const uint32_t r = p_->materialize_file(path)) return r;
@@ -568,7 +651,7 @@ uint32_t Volume::open_file(const std::string& path, uint32_t mode, std::shared_p
     }
     HANDLE h = open_host(host, write, OPEN_EXISTING);
     if (h == INVALID_HANDLE_VALUE) return rc::kPathNotFound;
-    *out = std::make_shared<HostFile>(h, mode);
+    *out = std::make_shared<HostFile>(h, mode, f.windowed, f.window_off, f.window_len);
     return 0;
 }
 
@@ -581,6 +664,10 @@ uint32_t Volume::file_times(const std::string& path, FileTimes* out) {
     std::lock_guard<std::mutex> lk(p_->mu);
     const Impl::Found f = p_->lookup(path);
     if (!f.exists) return rc::kPathNotFound;
+    if (f.mem) {   // generated: no host file to ask
+        *out = FileTimes{};
+        return 0;
+    }
     WIN32_FILE_ATTRIBUTE_DATA d;
     if (!GetFileAttributesExW(f.host.c_str(), GetFileExInfoStandard, &d)) return rc::kGenericFailure;
     auto posix = [](const FILETIME& ft) {
@@ -597,6 +684,11 @@ uint32_t Volume::file_times(const std::string& path, FileTimes* out) {
 uint64_t Volume::used_bytes() {
     std::lock_guard<std::mutex> lk(p_->mu);
     return p_->used("/");
+}
+
+void Volume::set_overlay(std::shared_ptr<const ModOverlay> mods) {
+    if (journal_ || !read_only_) return;   // the mods only ever sit over the read-only RomFS folder
+    p_->mods = std::move(mods);
 }
 
 uint32_t Volume::commit() {

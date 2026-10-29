@@ -149,6 +149,9 @@ Rules:
 | `account` | `uid` | empty (`00000000000000014d50525265636f6d`) | `NXRT_ACCOUNT_UID` | `src/services/common.cpp` | Local user id as 32 hex digits. Anything that is not 32 hex digits keeps the default. |
 | `fs` | `romfs` | `game/romfs` | `NXRT_FS_ROMFS` | `src/services/common.cpp` | Host folder served as the game's RomFS, relative to the working directory. |
 | `fs` | `save_dir` | empty (`%APPDATA%\MPRRecomp\save`) | `NXRT_FS_SAVE_DIR` | `src/services/common.cpp` | Folder for save data. Empty: the APPDATA default. |
+| `mods` | `enabled` | `true` | `NXRT_MODS_ENABLED` | `src/services/fs_mods.cpp` | `false` loads no mods: the game's RomFS is served as it is. See `docs/MODS.md`. |
+| `mods` | `dir` | empty (`mods` next to the exe) | `NXRT_MODS_DIR` | `src/services/fs_mods.cpp` | Folder with the mods (RomFS overrides, LayeredFS style: `<mod>/romfs/...` and the Atmosphère, Ryujinx and Eden layouts). A relative path is taken from the exe's folder. A missing folder means no mods. |
+| `mods` | `ini` | empty (`mods.ini` next to the exe) | `NXRT_MODS_INI` | `src/services/fs_mods.cpp` | File with the mods in priority order (highest first) and their `on`/`off` flags. New mods are added to it, switched on, at the bottom. A relative path is taken from the exe's folder. |
 | `fatal` | `report_path` | unset (`<exe path without extension>_fatal.txt`) | `NXRT_FATAL_REPORT_PATH` | `src/services/logfault.cpp` | Fatal-error report file. Once the key is set, even to empty, its value is used. Empty: no file is written. |
 | `fatal` | `terminate` | `true` | `NXRT_FATAL_TERMINATE` | `src/services/logfault.cpp` | `true` ends the process with exit code 5 after a fatal report. `false` returns. |
 | `net` | `offline` | `true` | `NXRT_NET_OFFLINE` | `src/services/network.cpp` | `true`: no connection, no friends and no BCAT data (the start-up log line says so). |
@@ -412,6 +415,11 @@ nickname = Samus
 [fs]
 romfs = game/romfs
 ; save_dir =  (empty: %APPDATA%\MPRRecomp\save)
+
+[mods]
+enabled = true
+; dir =  (empty: the mods folder next to the exe)
+; ini =  (empty: mods.ini next to the exe)
 
 [fatal]
 ; report_path is not listed: once set, even empty, it replaces the default report file.
