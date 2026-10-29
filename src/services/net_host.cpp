@@ -843,6 +843,20 @@ void install_bsd(ipc::Service& s) {
         }
         s.add_cmd(id, name, [id, name, h = std::move(h)](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
             const int32_t a0 = req.arg<int32_t>(0);
+            if (id == 5 || id == 6) {   // Select / Poll may block: log the entry too, with the fd list for Poll
+                std::string fds;
+                const ipc::Buffer in = req.in_buf(0);
+                if (id == 6 && in.addr)
+                    for (int i = 0; i < a0 && i < 16 && static_cast<uint64_t>(i) * 8 + 8 <= in.size; ++i) {
+                        const uint8_t* e = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(in.addr)) + i * 8;
+                        int32_t fd;
+                        uint16_t ev;
+                        std::memcpy(&fd, e, 4);
+                        std::memcpy(&ev, e + 4, 2);
+                        fds += " " + std::to_string(fd) + ":0x" + std::to_string(ev);
+                    }
+                NXLOG_I("net", "bsd %u %s(%d, timeout %d)%s ...", id, name, a0, req.arg<int32_t>(4), fds.c_str());
+            }
             const uint32_t rc = h(req, rsp);
             int32_t w0 = 0, w1 = 0;
             if (rsp.out.size() >= 4) std::memcpy(&w0, rsp.out.data(), 4);
