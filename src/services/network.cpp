@@ -523,17 +523,76 @@ std::shared_ptr<ipc::Service> make_ssl_service() {
 }
 
 // =============================================================================================================================================
-// nim:eca: the shop (ECA) interface. Creation succeeds; the shop objects answer their creation commands, nothing needs the network.
+// nim:eca: the shop (ECA) interface. Creation succeeds; a shop request completes at once with a local answer, nothing needs the network.
 // =============================================================================================================================================
 
-std::shared_ptr<ipc::Service> make_shop_async() {
-    return make_iface("nn::ec::IShopServiceAsync", [](ipc::Service&) {});   // no command table is read yet: any command is unhandled
+// One shop request (nn::nim::detail::IShopServiceAsync, Switchbrew "NIM services"). The SDK (nn::ec::ShopServiceAccessor::Request)
+// calls Prepare(InArray<char> path, InArray<char> post data), then Request(), then waits on the event CreateAsyncInterface returned,
+// then GetSize(Out<u64>) and Read(Out<u64> read, u64 offset, OutBuffer); GetErrorCode(Out<nn::err::ErrorCode>) only after a failure.
+// There is no shop server: Request completes at once with a 200 answer whose body is [ec] shop_body (default "[]", an empty JSON list,
+// what the shop API gives for "no consumables / no items"). The SDK treats GetSize 0 as success, but games such as a game treat an
+// empty body as a failed request, so the default body is not empty.
+struct ShopAsync {
+    std::mutex mu;
+    ServiceEvent done;           // signalled when the request has completed
+    std::string path, body;
+};
+
+std::shared_ptr<ipc::Service> make_shop_async(std::shared_ptr<ShopAsync> a) {
+    return make_iface("nn::ec::IShopServiceAsync", [a](ipc::Service& s) {
+        cmd(s, "nim:eca", 0, "Cancel", [](ipc::Request&, ipc::Response&) -> uint32_t { return 0; });
+        cmd(s, "nim:eca", 1, "GetSize", [a](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+            std::lock_guard<std::mutex> lk(a->mu);
+            rsp.push<uint64_t>(a->body.size());
+            return 0;
+        });
+        cmd(s, "nim:eca", 2, "Read", [a](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            std::lock_guard<std::mutex> lk(a->mu);
+            const uint64_t off = req.arg<uint64_t>(0);
+            const ipc::Buffer out = req.out_buf(0);
+            uint64_t n = 0;
+            if (off < a->body.size() && out.addr) {
+                n = std::min<uint64_t>(out.size, a->body.size() - off);
+                std::memcpy(reinterpret_cast<void*>(out.addr), a->body.data() + off, n);
+            }
+            rsp.push<uint64_t>(n);
+            return 0;
+        });
+        cmd(s, "nim:eca", 3, "GetErrorCode", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+            rsp.push<uint64_t>(0);   // nn::err::ErrorCode {category, number}: no error
+            return 0;
+        });
+        cmd(s, "nim:eca", 4, "Request", [a](ipc::Request&, ipc::Response&) -> uint32_t {
+            {
+                std::lock_guard<std::mutex> lk(a->mu);
+                a->body = config_get_str("ec", "shop_body", "[]");
+                NXLOG_I("net", "nim:eca shop request %s: answered locally (%zu bytes)", a->path.c_str(), a->body.size());
+            }
+            a->done.signal();
+            return 0;
+        });
+        cmd(s, "nim:eca", 5, "Prepare", [a](ipc::Request& req, ipc::Response&) -> uint32_t {
+            const ipc::Buffer p = req.in_buf(0);
+            std::lock_guard<std::mutex> lk(a->mu);
+            a->path.clear();
+            if (p.addr && p.size) {
+                const char* c = reinterpret_cast<const char*>(p.addr);
+                a->path.assign(c, strnlen(c, static_cast<size_t>(p.size)));
+            }
+            a->body.clear();
+            a->done.clear();
+            return 0;
+        });
+    });
 }
 
 std::shared_ptr<ipc::Service> make_shop_accessor() {
     return make_iface("nn::ec::IShopServiceAccessor", [](ipc::Service& s) {
+        // CreateAsyncInterface(FixedParams {Uid, TimeSpan timeout, u8 method}) -> (handle<copy> event, IShopServiceAsync)
         cmd(s, "nim:eca", 0, "CreateAsyncInterface", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
-            rsp.push_object(make_shop_async());
+            auto a = std::make_shared<ShopAsync>();
+            rsp.out_copy.push_back(a->done.new_handle());
+            rsp.push_object(make_shop_async(a));
             return 0;
         });
     });
