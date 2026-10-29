@@ -429,13 +429,21 @@ int nvnTextureGetStorageSize(const NVNtexture* texture) {
     return t ? static_cast<int>(t->storage_size) : 0;
 }
 
-// Same host object, or the same storage address and size.
+// Same host object, or the same storage (address and size) with the same description and channel mapping. Layout libraries
+// (agl) rebuild a capture texture on the same storage with a new swizzle and replace its registered descriptor only when this
+// reports a difference; ignoring the swizzle kept the old mapping and drew those captures black (found by seedds/nxnative,
+// docs/reference/rendering.md).
 NVNboolean nvnTextureCompare(const NVNtexture* a, const NVNtexture* b) {
     Texture* x = tex_of(a);
     Texture* y = tex_of(b);
     if (!x || !y) return a == b ? 1 : 0;
     if (x == y) return 1;
-    return (x->mem && x->mem == y->mem && x->storage_size == y->storage_size) ? 1 : 0;
+    if (!x->mem || x->mem != y->mem || x->storage_size != y->storage_size) return 0;
+    const TextureBuilderInfo& p = x->b;
+    const TextureBuilderInfo& q = y->b;
+    return (p.format == q.format && p.target == q.target && p.width == q.width && p.height == q.height && p.depth == q.depth &&
+            p.levels == q.levels && p.samples == q.samples && p.depth_stencil_mode == q.depth_stencil_mode &&
+            std::equal(p.swizzle, p.swizzle + 4, q.swizzle)) ? 1 : 0;
 }
 
 uint64_t nvnTextureGetDebugID(const NVNtexture* texture) {
