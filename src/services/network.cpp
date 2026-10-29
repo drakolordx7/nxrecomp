@@ -14,6 +14,7 @@
 //
 // Each command that is answered logs once at Info with tag "net" (the first use per command). Process-wide state (client ids, the ldn
 // state, the ssl context count, the pki ids) lives in st(); network_reset() puts it back to the start-up value.
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
@@ -1283,6 +1284,36 @@ uint32_t host_getaddrinfo(ipc::Request& req, ipc::Response& rsp, bool with_optio
     return answer(0, static_cast<uint32_t>(buf_write(req.out_buf(0), ai.data(), ai.size())));
 }
 
+// GetNameInfoRequest (7) / ...WithOptions (13): numeric answers only (NI_NUMERICHOST style), offline or not. In: u32 flags,
+// u32 cancel handle, u64 pid; buffers: sockaddr in, host out, service out (13 adds an options buffer). Out (7, libnx sfdnsres.c):
+// u32 errno, s32 ret; 13's order is unchecked, so success answers all zeros (four words, whatever the order). RakNet's
+// SystemAddress::ToString uses this in IPv6 builds; without it the text is empty and connects go to 0.0.0.0.
+// The guest sockaddr: byte 1 family (2 IPv4: port at 2, address at 4; 28 IPv6: port at 2, address at 8).
+uint32_t name_info(ipc::Request& req, ipc::Response& rsp, bool with_options) {
+    uint8_t sa[28] = {};
+    const size_t n = buf_read(req.in_buf(0), sa, sizeof sa);
+    char host[64] = {}, serv[8] = {};
+    if (n >= 8 && sa[1] == 2) {
+        std::snprintf(host, sizeof host, "%u.%u.%u.%u", sa[4], sa[5], sa[6], sa[7]);
+    } else if (n >= 24 && sa[1] == 28) {
+        int o = 0;   // full form, eight hex groups (no :: shortening)
+        for (int g = 0; g < 8; ++g)
+            o += std::snprintf(host + o, sizeof host - o, g ? ":%x" : "%x", (unsigned{sa[8 + g * 2]} << 8) | sa[9 + g * 2]);
+    } else {
+        std::snprintf(host, sizeof host, "0.0.0.0");
+    }
+    std::snprintf(serv, sizeof serv, "%u", (unsigned{sa[2]} << 8) | sa[3]);
+    buf_write(req.out_buf(0), host, std::strlen(host) + 1);
+    if (req.out_buf(1).addr && req.out_buf(1).size) buf_write(req.out_buf(1), serv, std::strlen(serv) + 1);
+    {
+        std::lock_guard<std::mutex> lk(st().mu);
+        if (st().seen.insert(std::string("nameinfo ") + host).second)
+            NXLOG_I("net", "sfdnsres GetNameInfo%s: %s", with_options ? "RequestWithOptions" : "Request", host);
+    }
+    for (int i = 0; i < (with_options ? 4 : 2); ++i) rsp.push(uint32_t{0});
+    return 0;
+}
+
 std::shared_ptr<ipc::Service> make_resolver() {
     return make_iface("nn::socket::resolver::IResolver", [](ipc::Service& s) {
         // GetHostByNameRequest / GetHostByAddrRequest: (netdb_error, bsd_errno, size)
@@ -1353,6 +1384,8 @@ std::shared_ptr<ipc::Service> make_resolver() {
             rsp.push(static_cast<uint32_t>(0));
             return 0;
         });
+        s.add_cmd(7, "GetNameInfoRequest", [](ipc::Request& q, ipc::Response& r) { return name_info(q, r, false); });
+        s.add_cmd(13, "GetNameInfoRequestWithOptions", [](ipc::Request& q, ipc::Response& r) { return name_info(q, r, true); });
         if (nethost::sockets_host()) {   // real answers from [net] hosts (then the PC's resolver with [net] dns = host)
             s.add_cmd(2, "GetHostByNameRequest", [](ipc::Request& q, ipc::Response& r) { return host_gethostbyname(q, r, false); });
             s.add_cmd(10, "GetHostByNameRequestWithOptions", [](ipc::Request& q, ipc::Response& r) { return host_gethostbyname(q, r, true); });
