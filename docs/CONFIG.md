@@ -155,6 +155,7 @@ Rules:
 | `mods` | `ini` | empty (`mods.ini` next to the exe) | `NXRT_MODS_INI` | `src/services/fs_mods.cpp` | File with the mods in priority order (highest first) and their `on`/`off` flags. New mods are added to it, switched on, at the bottom. A relative path is taken from the exe's folder. |
 | `fatal` | `report_path` | unset (`<exe path without extension>_fatal.txt`) | `NXRT_FATAL_REPORT_PATH` | `src/services/logfault.cpp` | Fatal-error report file. Once the key is set, even to empty, its value is used. Empty: no file is written. |
 | `fatal` | `terminate` | `true` | `NXRT_FATAL_TERMINATE` | `src/services/logfault.cpp` | `true` ends the process with exit code 5 after a fatal report. `false` returns. |
+| `acc` | `network_account` | `false` | `NXRT_ACC_NETWORK_ACCOUNT` | `src/services/acc.cpp` | `true`: the user has a network service account: EnsureIdTokenCacheAsync succeeds and LoadIdTokenCache gives a stand-in token (not a valid Nintendo token; for titles talking to a local server). |
 | `net` | `offline` | `true` | `NXRT_NET_OFFLINE` | `src/services/network.cpp` | `true`: no connection, no friends and no BCAT data (the start-up log line says so). |
 <<<<<<< HEAD
 | `net` | `nifm_connected` | `false` | `NXRT_NET_NIFM_CONNECTED` | `src/services/network.cpp` | `true`: nifm reports a working Wi-Fi connection (request accepted, address 192.168.0.2, status connected) while sockets stay down; for titles that will not start without a connection. |

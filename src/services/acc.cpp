@@ -20,10 +20,12 @@
 // (0x407C), 124-100 ResultUserNotExist (0xC87C). Module 110 (nifm) 300 comes from ScarletNX's comment; Switchbrew's page does not
 // list it (checked), so that code is unconfirmed.
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <vector>
 
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
 #include "nxrt/services_api.h"
@@ -120,7 +122,13 @@ std::shared_ptr<ipc::Service> make_profile(const Uid& u) {
     });
 }
 
-// IAsyncContext: an operation that needs the network. It is done at once and failed, as nifm fails with no network (ScarletNX).
+// [acc] network_account (default false): the user has a Nintendo network service account. The id token request then succeeds and
+// LoadIdTokenCache hands out a stand-in token, for titles that need it before they use their own servers (a game starts its socket
+// manager only after the token is loaded). The token is not a valid Nintendo token: only a local server will take it.
+bool network_account() { return config_get_bool("acc", "network_account", false); }
+
+// IAsyncContext: an operation that needs the network. It is done at once and failed, as nifm fails with no network (ScarletNX); with
+// [acc] network_account it is done at once and succeeds.
 std::shared_ptr<ipc::Service> make_async_context() {
     auto done = std::make_shared<ServiceEvent>(true);
     return make_iface("IAsyncContext", [done](ipc::Service& s) {
@@ -133,7 +141,7 @@ std::shared_ptr<ipc::Service> make_async_context() {
             rsp.push<uint8_t>(1);
             return 0;
         });
-        s.add_cmd(3, "GetResult", [](ipc::Request&, ipc::Response&) -> uint32_t { return res(110, 300); });
+        s.add_cmd(3, "GetResult", [](ipc::Request&, ipc::Response&) -> uint32_t { return network_account() ? 0 : res(110, 300); });
     });
 }
 
@@ -149,6 +157,18 @@ std::shared_ptr<ipc::Service> make_manager(const Uid& u) {
         });
         s.add_cmd(2, "EnsureIdTokenCacheAsync", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
             rsp.push_object(make_async_context());
+            return 0;
+        });
+        // LoadIdTokenCache (only with [acc] network_account): a stand-in token as text in the output buffer, its length as a u32 (Ryujinx
+        // IManagerForApplication layout). Without the option the command stays unhandled, as before.
+        if (network_account()) s.add_cmd(3, "LoadIdTokenCache", [u](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            char tok[160];
+            const int n = std::snprintf(tok, sizeof tok, "eyJhbGciOiJub25lIn0.eyJzdWIiOiIlMDE2bGx4In0.%016llx",
+                                        static_cast<unsigned long long>(u.hi ^ u.lo));
+            const ipc::Buffer out = req.out_buf(0);
+            const uint32_t len = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(n), out.size));
+            if (out.addr && len) std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(out.addr)), tok, len);
+            rsp.push<uint32_t>(len);
             return 0;
         });
     });
