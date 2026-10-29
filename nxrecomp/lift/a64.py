@@ -193,7 +193,17 @@ class Fn:
         if bits(w, 30, 26) == 5:
             target = pc + sext(bits(w, 25, 0), 26) * 4
             if bits(w, 31, 31):
-                return 'c->x[30] = 0x%xULL; %s' % (pc + 4, self.env.call(target))
+                out = 'c->x[30] = 0x%xULL; %s' % (pc + 4, self.env.call(target))
+                # A bl whose next word is not an instruction (op0 0..3) never comes back to it: the callee returns past it
+                # (SDK rtld: `bl f; .word off` where f reads the word at x30, restores x30 and returns to the outer caller;
+                # SDK noreturn calls followed by udf). Return instead of running into the data word.
+                try:
+                    nxt = self.env.word(pc + 4)
+                except Exception:
+                    nxt = None
+                if nxt is not None and bits(nxt, 28, 25) <= 3:
+                    out += ' return;'
+                return out
             return self.jump(target)
         if bits(w, 31, 24) == 0x54:
             target = pc + sext(bits(w, 23, 5), 19) * 4
