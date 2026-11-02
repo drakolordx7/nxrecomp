@@ -250,6 +250,16 @@ void LowLatency::set_cap_fps(double fps) {
     if (enabled_) s.set_mode_locked();
 }
 
+// Longest the frame-boundary waits (frames_ahead, Reflex sleep) may hold the game's main thread. A render thread held up by texture uploads or
+// a driver sleep that overshoots must not turn into a 60 to 100 ms freeze of the simulation: past this the frame goes ahead and the queue
+// catches up. [latency] max_wait_ms; 0 = auto, three frame intervals at the frame cap and at least 20 ms.
+static uint32_t max_wait_ms(double cap_fps) {
+    static const int64_t cfg = config_get_int("latency", "max_wait_ms", 0);
+    if (cfg > 0) return static_cast<uint32_t>(std::min<int64_t>(cfg, 100));
+    const double ms = cap_fps > 0 ? 3000.0 / cap_fps : 0.0;
+    return static_cast<uint32_t>(std::clamp(ms, 20.0, 100.0));
+}
+
 void LowLatency::wait_in_flight() {
     if (!impl_->running()) return;
     Impl& s = *impl_;
@@ -260,7 +270,11 @@ void LowLatency::wait_in_flight() {
         // never be popped. Forget them instead of waiting 100 ms per frame.
         const uint64_t lp = s.last_present_ns.load(std::memory_order_relaxed);
         if (!lp || FrameLimiter::now_ns() - lp > 250000000ull) { s.pending.clear(); return; }
-        if (!s.cv.wait_for(lk, std::chrono::milliseconds(100), [&] { return s.pending.size() <= limit; })) s.pending.clear();
+        NXFT("lat.wait_inflight");
+        if (!s.cv.wait_for(lk, std::chrono::milliseconds(max_wait_ms(s.cap_fps)), [&] { return s.pending.size() <= limit; })) {
+            ft::mark("lat.inflight_timeout", static_cast<uint32_t>(s.pending.size()));
+            s.pending.clear();
+        }
     }
 }
 
@@ -281,10 +295,12 @@ void LowLatency::sim_begin() {
     wait_in_flight();      // frames_ahead: the simulation of a frame starts only when at most that many earlier frames are still on their way to the screen
     VkSwapchainKHR sc;
     bool ready;
+    uint32_t wait_cap_ms;
     {
         std::unique_lock<std::mutex> lk(s.mu);
         sc = s.swapchain;
         ready = s.mode_set;
+        wait_cap_ms = max_wait_ms(s.cap_fps);
     }
     if (s.reflex && sc && ready && s.live_on) {
         VkLatencySleepInfoNV si = {VK_STRUCTURE_TYPE_LATENCY_SLEEP_INFO_NV};
@@ -300,7 +316,8 @@ void LowLatency::sim_begin() {
             wi.semaphoreCount = 1;
             wi.pSemaphores = &s.sleep_sem;
             wi.pValues = &si.value;
-            vkWaitSemaphores(s.dev->device(), &wi, 100ull * 1000 * 1000);   // never longer than 100 ms, whatever the driver does
+            NXFT("lat.reflex_sleep");
+            vkWaitSemaphores(s.dev->device(), &wi, uint64_t{wait_cap_ms} * 1000 * 1000);   // never longer than max_wait_ms, whatever the driver does
         }
     } else if (s.antilag && s.live_on) {
         s.antilag_update(VK_ANTI_LAG_STAGE_INPUT_AMD, id);

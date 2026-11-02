@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,7 @@
 #include "nxrt/game.h"
 #include "play_display.h"
 #include "nxrt/kernel.h"
+#include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
@@ -233,8 +235,71 @@ struct G {
 
     // counters
     std::atomic<uint64_t> frames{0}, pi_calls{0}, aim_frames{0}, events{0}, counts{0};
+    std::atomic<double> aim_dx_sum{0}, aim_dy_sum{0};     // signed counts the aim applied (written on the main thread; the mouse feeder's log reads them)
     std::atomic<bool> thread_mismatch{false};
 };
+
+// ---- test aid: a scripted run's mouse counts as SDL motion events ([test] mouse_sdl_hz) ----------------------------------------------
+// A real mouse's events reach SDL's queue in real time, whatever the frame rate. With [test] mouse_sdl_hz > 0 the counts a script's `mouse`
+// step gives a frame are not handed to the aim directly: they go into a pending total that a thread drains at that rate, at most
+// [test] mouse_sdl_max counts per axis per event, through SDL_PushEvent (platform::push_test_motion). Long frames then meet the backlog a real
+// mouse would leave. One log line per burst (pending drained and quiet for 300 ms): totals pushed, refused by SDL, pumped by the platform and
+// applied by the aim, so counts in can be checked against counts out.
+struct SdlMouseFeeder {
+    std::mutex mu;
+    double pend_x = 0, pend_y = 0;
+    double max_counts = 64;
+    int hz = 0;
+    double pushed_x = 0, pushed_y = 0;
+    uint64_t pushed_n = 0, refused = 0;
+
+    void add(double dx, double dy) {
+        std::lock_guard<std::mutex> lk(mu);
+        pend_x += dx;
+        pend_y += dy;
+    }
+    void run(const G* st);
+};
+SdlMouseFeeder g_feeder;
+
+void SdlMouseFeeder::run(const G* st) {
+    const auto period = std::chrono::nanoseconds(1000000000ll / hz);
+    auto next = std::chrono::steady_clock::now();
+    uint64_t quiet_since = 0, now_ms = 0;
+    bool burst = false;
+    for (;;) {
+        next += period;
+        std::this_thread::sleep_until(next);
+        now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+        double tx = 0, ty = 0;
+        {
+            std::lock_guard<std::mutex> lk(mu);
+            tx = std::max(-max_counts, std::min(max_counts, pend_x));
+            ty = std::max(-max_counts, std::min(max_counts, pend_y));
+            pend_x -= tx;
+            pend_y -= ty;
+        }
+        if (tx != 0 || ty != 0) {
+            if (platform::push_test_motion(static_cast<float>(tx), static_cast<float>(ty))) {
+                pushed_x += tx;
+                pushed_y += ty;
+                ++pushed_n;
+            } else {
+                ++refused;
+            }
+            burst = true;
+            quiet_since = now_ms;
+        } else if (burst && now_ms - quiet_since > 300) {
+            burst = false;
+            double rx = 0, ry = 0;
+            uint64_t rn = 0;
+            platform::test_motion_received(&rx, &ry, &rn);
+            NXLOG_I(kTag, "test mouse: pushed %.0f %.0f in %llu events (refused %llu); pumped %.0f %.0f in %llu events; aim applied %.0f %.0f", pushed_x, pushed_y,
+                    static_cast<unsigned long long>(pushed_n), static_cast<unsigned long long>(refused), rx, ry, static_cast<unsigned long long>(rn),
+                    st->aim_dx_sum.load(std::memory_order_relaxed), st->aim_dy_sum.load(std::memory_order_relaxed));
+        }
+    }
+}
 
 SelfTestHost* selftest_host();      // defined after the settings page host
 
@@ -355,6 +420,7 @@ void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
         st.dirty = false;
     }
     nvn::backend_flush_caches();                    // the pipeline cache; this path does not shut the back end down
+    NXLOG_I(kTag, "audio at exit: %s", audio::stats_report().c_str());   // this path never closes the sink, which is where its counters are logged otherwise
     nxrt::log_flush();
     if (tt::enabled() && !tt::finished()) tt::end_run(code, verdict, message);     // writes result.json, then terminates
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
@@ -788,6 +854,8 @@ public:
     void aim_applied(double dx, double dy) override {
         G& st = g();
         st.aim_frames++;
+        st.aim_dx_sum.store(st.aim_dx_sum.load(std::memory_order_relaxed) + dx, std::memory_order_relaxed);
+        st.aim_dy_sum.store(st.aim_dy_sum.load(std::memory_order_relaxed) + dy, std::memory_order_relaxed);
         st.counts += static_cast<uint64_t>(std::fabs(dx) + std::fabs(dy));
     }
     double pitch_limit_deg() const override { return g().pitch_limit_deg; }
@@ -1026,7 +1094,15 @@ bool start(const StartOptions& opt) {
     st.source = std::shared_ptr<hid::InputSource>(st.source_owner.get(), [](hid::InputSource*) {});   // owned by G
     hid::set_input_source(st.source);
     hid::set_vibration_sink(&vib_sink, nullptr);
-    tt::set_mouse_sink(&input::mouse_delta_add);
+    if (const int hz = static_cast<int>(config_get_int("test", "mouse_sdl_hz", 0)); hz > 0 && st.window) {
+        g_feeder.hz = std::min(hz, 8000);
+        g_feeder.max_counts = std::max(1.0, config_get_double("test", "mouse_sdl_max", 64.0));
+        tt::set_mouse_sink([](double dx, double dy) { g_feeder.add(dx, dy); });
+        std::thread([p = &st] { g_feeder.run(p); }).detach();
+        NXLOG_I(kTag, "test: script mouse counts go through SDL's event queue, %d events/s, at most %.0f counts per event", g_feeder.hz, g_feeder.max_counts);
+    } else {
+        tt::set_mouse_sink(&input::mouse_delta_add);
+    }
     tt::set_key_sink(&key_sink);
     if (st.renderer) tt::set_screenshot_provider(&screenshot_provider, nullptr);
     if (const std::string script = config_get_str("play", "selftest", ""); !script.empty()) {
