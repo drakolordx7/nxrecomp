@@ -438,7 +438,7 @@ NXTEST(old_factory_lock_mode_moves_to_free_once) {
 NXTEST(one_bindings_section_drops_default_bindings) {
     Settings s;
     std::string err;
-    REQUIRE(parse_settings("[bindings.menu]\nReturn = confirm\n[meta]\ndefaults_rev = 2\n", &s, &err));
+    REQUIRE(parse_settings("[bindings.menu]\nReturn = confirm\n[meta]\ndefaults_rev = 4\n", &s, &err));
     CHECK_EQ(s.bindings.size(), 1u);
     CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
     CHECK(act_at(s, "W", Ctx::All) == Act::kCount);
@@ -447,7 +447,7 @@ NXTEST(one_bindings_section_drops_default_bindings) {
 NXTEST(binding_trigger_and_ms_parse) {
     Settings s;
     std::string err;
-    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 2\n", &s, &err));
+    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 4\n", &s, &err));
     REQUIRE_MSG(s.bindings.size() == 3u, "three bindings");
     CHECK(s.bindings[0].in == key_id(SDL_SCANCODE_LCTRL));
     CHECK(s.bindings[0].ctx == Ctx::Play);
@@ -622,7 +622,7 @@ NXTEST(unknown_keys_and_sections_warn) {
     Settings s;
     std::string err;
     std::vector<std::string> w;
-    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 2\n", &s, &err, &w));
+    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 4\n", &s, &err, &w));
     REQUIRE_MSG(w.size() == 2u, "two warnings");
     CHECK_EQ(w[0], std::string("line 2: unknown key 'bogus' in [mouse]"));
     CHECK_EQ(w[1], std::string("line 3: unknown section '[nosuch]'"));
@@ -1492,7 +1492,7 @@ NXTEST(file_without_bindings_gets_factory_bindings_at_current_revision) {
     std::string err;
     REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
     CHECK(!s.migrated);
-    CHECK_EQ(s.defaults_rev, 3);
+    CHECK_EQ(s.defaults_rev, 4);
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
 }
 

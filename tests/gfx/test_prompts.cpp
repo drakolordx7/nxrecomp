@@ -106,11 +106,11 @@ NXTEST(xbox_and_playstation_names_by_label_and_by_position) {
 
 NXTEST(keyboard_style_follows_the_bindings_of_the_context) {
     const Settings s = default_settings();
-    // menu: confirm = Return, back = Escape; gameplay: jump (B) = Space, morph (Y) = Left Ctrl, fire (ZR) = left mouse button
+    // menu: confirm = Return, back = Escape; gameplay: jump (B) = Space, morph (Y) = Left Shift, fire (ZR) = left mouse button
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::A), std::string("kbm/return"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::B), std::string("kbm/escape"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::B), std::string("kbm/space"));
-    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::Y), std::string("kbm/left ctrl"));
+    CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::Y), std::string("kbm/left shift"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::ZR), std::string("kbm/mouse1"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Play, Icon::BPressed), std::string("kbm/space_pressed"));
     CHECK_EQ(name_of(s, PromptStyle::Keyboard, Ctx::Menu, Icon::L), std::string("kbm/q"));
