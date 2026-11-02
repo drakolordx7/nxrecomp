@@ -476,7 +476,7 @@ NXTEST(data_source_channel_remap_round_trip) {
 // without the 1/32768 scale that the resampler applies. Target sample rate equals the source rate, pitch 1.
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Two PCM16 mono buffers, A = 6 samples (end of buffer 0, not end of work), B = 4 samples (end of work).
+// Two PCM16 mono buffers, A = 6 samples (end of buffer 0, the stream goes on), B = 4 samples (the stream ends here).
 // Trace (C# DataSourceHelper.cs 61-252): sampleCount 10, buffer 0 fully decoded (y 0..6), MarkEnd (consumed 1, index 1),
 // buffer 1 decoded (y 6..10), MarkEnd (consumed 2, index 2), IsEndOfStream -> playedSampleCount reset to 0.
 NXTEST(data_source_pcm16_sequence_skip_pitch) {

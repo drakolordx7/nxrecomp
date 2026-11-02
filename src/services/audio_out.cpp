@@ -94,7 +94,7 @@ uint32_t pick_out_channels(uint32_t asked) { return asked == 6 ? 6 : 2; }
 uint32_t pick_in_channels(uint32_t asked) { return asked == 1 || asked == 4 || asked == 6 ? asked : 2; }
 
 // ---- host sink ------------------------------------------------------------------------------------------------------------
-// One sink for every stream: it is opened on the first start with the work's rate and channel count, and opened again when
+// One sink for every stream: it is opened on the first start with the rate and channel count of that stream, and opened again when
 // a stream asks for another format or the active sink was replaced (nxrt::audio::set_sink).
 struct HostSink {
     std::mutex mu;                                   // guards the fields below and every call into the sink
@@ -161,7 +161,7 @@ public:
 
     Dir dir() const { return dir_; }
 
-    // Guest commands. Each takes the work's locks itself.
+    // Guest commands. Each takes the locks of its stream itself.
     uint32_t start();
     uint32_t stop();
     bool flush();
