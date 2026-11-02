@@ -11,7 +11,7 @@ Two places hold shaders, both zlib-wrapped NVN GLSLC output ("program sets"):
    data = u8 0, u32 N (flags in the high bits), u32 kind, u32 zlibLen, zlib stream, then a trailer
           (u32 stageCount, u32 1, ... per-stage offsets and the control section size).
 2. every pak MTRL asset (reader version 168): zlib body (META footer chunk) = 'EXPT' blob that embeds the same records
-   (u8 0, u32 N, u32 kind in {0x11, 0x19, 0x08}, u32 zlibLen, zlib work); found by pattern, validated by decompression.
+   (u8 0, u32 N, u32 kind in {0x11, 0x19, 0x08}, u32 zlibLen, zlib data); found by pattern, validated by decompression.
 
 The zlib output is the NVN program layout: stageCount code blocks (0x100-aligned, each starts 0x12345678 and has the SPH
 at +0x30) followed by stageCount control sections (magic 0x98761234, +0x704 = code block size). The control section is
