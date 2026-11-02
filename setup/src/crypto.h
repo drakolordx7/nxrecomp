@@ -21,7 +21,7 @@ private:
 };
 
 // AES-128-CTR in place. `counter` is the first 16-byte counter block; the whole block is a big-endian integer that is
-// incremented once per 16 bytes. len may be any size (a partial last block uses the first bytes of the key work).
+// incremented once per 16 bytes. len may be any size (a partial last block uses the first bytes of the key stream block).
 void aes_ctr_crypt(const u8 key[16], const u8 counter[16], void* data, size_t len);
 
 // Nintendo's AES-128-XTS: standard XTS (two keys, GF(2^128) tweak update) except that the sector number is written into the
