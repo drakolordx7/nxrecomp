@@ -22,8 +22,8 @@ void nvnVertexAttribStateSetFormat(NVNvertexAttribState* s, NVNformat format, pt
     const uint32_t keep = rd32(s) & 0x1f00u;   // the stream index
     wr32(s, keep | (static_cast<uint32_t>(format) & 0xffu) | (static_cast<uint32_t>(relative_offset) << 14));
 }
-void nvnVertexAttribStateSetStreamIndex(NVNvertexAttribState* s, int work) {
-    wr32(s, (rd32(s) & ~0x1f00u) | ((static_cast<uint32_t>(stream) & 31u) << 8));
+void nvnVertexAttribStateSetStreamIndex(NVNvertexAttribState* s, int index) {
+    wr32(s, (rd32(s) & ~0x1f00u) | ((static_cast<uint32_t>(index) & 31u) << 8));
 }
 void nvnVertexAttribStateGetFormat(const NVNvertexAttribState* s, NVNformat* format, ptrdiff_t* relative_offset) {
     const uint32_t w = rd32(s);

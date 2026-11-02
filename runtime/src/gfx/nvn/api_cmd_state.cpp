@@ -4,7 +4,7 @@
 // render thread applies the records at submit time.
 //
 // Rules of this family:
-//   * State objects (blend, channel mask, colour, multisample, polygon, depth/stencil, vertex attribute and work) are copied
+//   * State objects (blend, channel mask, colour, multisample, polygon, depth/stencil, vertex attribute, vertex stream state) are copied
 //     by value: the record keeps the raw bytes of the guest object at the time of the call, because the game reuses its
 //     objects right after. The replay decodes them with the decode() overloads of nvn_decoded.h.
 //   * Host objects in a payload (Program, TexturePool, SamplerPool, Texture) are held (CmdList::hold), so they stay alive while

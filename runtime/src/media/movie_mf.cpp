@@ -452,7 +452,7 @@ bool ext_open(Ext* e, unsigned char* data, size_t size) {
     return true;
 }
 
-// Sets the work's output type to NV12 / PCM16 (decoded samples) and reads back the real geometry.
+// Sets the output type of the stream to NV12 / PCM16 (decoded samples) and reads back the real geometry.
 int ext_select_locked(Ext* e, int i, bool on) {
     if (!e->rd || i < 0 || i >= static_cast<int>(e->tr.size())) return ST_INVALID;
     Track& t = e->tr[static_cast<size_t>(i)];
