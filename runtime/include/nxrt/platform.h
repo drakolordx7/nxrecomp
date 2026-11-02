@@ -48,6 +48,12 @@ bool relative_mouse();
 void set_cursor_visible(bool on);             // the OS cursor over the window (not in relative mode, which hides it); no-op without a window
 bool relative_mouse_is_raw();                 // true when the system-scale hint is off (the unaccelerated setup)
 
+// Test aid ([test] mouse_sdl_hz): pushes one SDL_EVENT_MOUSE_MOTION with these relative counts into SDL's own event queue (any thread).
+// pump_events() treats such an event as relative motion even when the window has no focus (a scripted run), so it reaches the aim the way a
+// real mouse's events do. False when SDL refused the event (queue full). test_motion_received(): counts of those events pumped so far.
+bool push_test_motion(float dx, float dy);
+void test_motion_received(double* dx, double* dy, uint64_t* events);
+
 // Polled gamepad state (play mode): what SDL's gamepad layer reports for one open pad. SDL normalises every controller to the Xbox
 // layout by position (SOUTH is the bottom face button), whatever is printed on it.
 struct GamepadRaw {

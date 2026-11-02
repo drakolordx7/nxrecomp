@@ -438,7 +438,7 @@ NXTEST(old_factory_lock_mode_moves_to_free_once) {
 NXTEST(one_bindings_section_drops_default_bindings) {
     Settings s;
     std::string err;
-    REQUIRE(parse_settings("[bindings.menu]\nReturn = confirm\n[meta]\ndefaults_rev = 2\n", &s, &err));
+    REQUIRE(parse_settings("[bindings.menu]\nReturn = confirm\n[meta]\ndefaults_rev = 4\n", &s, &err));
     CHECK_EQ(s.bindings.size(), 1u);
     CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
     CHECK(act_at(s, "W", Ctx::All) == Act::kCount);
@@ -447,7 +447,7 @@ NXTEST(one_bindings_section_drops_default_bindings) {
 NXTEST(binding_trigger_and_ms_parse) {
     Settings s;
     std::string err;
-    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 2\n", &s, &err));
+    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 4\n", &s, &err));
     REQUIRE_MSG(s.bindings.size() == 3u, "three bindings");
     CHECK(s.bindings[0].in == key_id(SDL_SCANCODE_LCTRL));
     CHECK(s.bindings[0].ctx == Ctx::Play);
@@ -622,7 +622,7 @@ NXTEST(unknown_keys_and_sections_warn) {
     Settings s;
     std::string err;
     std::vector<std::string> w;
-    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 2\n", &s, &err, &w));
+    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 4\n", &s, &err, &w));
     REQUIRE_MSG(w.size() == 2u, "two warnings");
     CHECK_EQ(w[0], std::string("line 2: unknown key 'bogus' in [mouse]"));
     CHECK_EQ(w[1], std::string("line 3: unknown section '[nosuch]'"));
@@ -1427,7 +1427,8 @@ NXTEST(old_file_gets_new_factory_binding_on_map) {
     std::string err;
     REQUIRE_MSG(parse_settings("[bindings.map]\nReturn = confirm\n", &s, &err), err);
     CHECK(s.migrated);
-    CHECK_EQ(s.defaults_rev, 3);
+    CHECK_EQ(s.defaults_rev, 4);
+    CHECK(act_at(s, "Left Shift", Ctx::All) == Act::AltForm);   // rev 4: morph ball on Shift
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
     CHECK(act_at(s, "Return", Ctx::Map) == Act::Confirm);   // the file's own binding is kept
     CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 2);
@@ -1445,20 +1446,20 @@ NXTEST(old_file_keeps_users_own_key_on_map) {
 NXTEST(file_at_current_revision_is_not_migrated) {
     Settings s;
     std::string err;
-    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 3\n[bindings.map]\nReturn = confirm\n", &s, &err), err);
+    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 4\n[bindings.map]\nReturn = confirm\n", &s, &err), err);
     CHECK(!s.migrated);
-    CHECK_EQ(s.defaults_rev, 3);
+    CHECK_EQ(s.defaults_rev, 4);
     CHECK(act_at(s, "X", Ctx::Map) == Act::kCount);   // the user removed X: it stays removed
 }
 
 NXTEST(format_round_trip_keeps_defaults_rev) {
     const Settings s = default_settings();
     const std::string text = format_settings(s);
-    CHECK(text.find("[meta]\ndefaults_rev = 3\n") != std::string::npos);
+    CHECK(text.find("[meta]\ndefaults_rev = 4\n") != std::string::npos);
     Settings back;
     std::string err;
     REQUIRE_MSG(parse_settings(text, &back, &err), err);
-    CHECK_EQ(back.defaults_rev, 3);
+    CHECK_EQ(back.defaults_rev, 4);
     CHECK(!back.migrated);
     CHECK(same_settings(s, back));
 }
@@ -1467,9 +1468,10 @@ NXTEST(factory_text_is_at_current_revision) {
     Settings s;
     std::string err;
     REQUIRE_MSG(parse_settings(default_settings_text(), &s, &err), err);
-    CHECK_EQ(s.defaults_rev, 3);
+    CHECK_EQ(s.defaults_rev, 4);
     CHECK(!s.migrated);
-    CHECK_EQ(default_settings().defaults_rev, 3);
+    CHECK_EQ(default_settings().defaults_rev, 4);
+    CHECK(act_at(default_settings(), "Left Shift", Ctx::All) == Act::AltForm);
     CHECK(act_at(default_settings(), "X", Ctx::Map) == Act::BtnX);
 }
 
@@ -1490,7 +1492,7 @@ NXTEST(file_without_bindings_gets_factory_bindings_at_current_revision) {
     std::string err;
     REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
     CHECK(!s.migrated);
-    CHECK_EQ(s.defaults_rev, 3);
+    CHECK_EQ(s.defaults_rev, 4);
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
 }
 

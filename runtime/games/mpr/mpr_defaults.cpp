@@ -20,7 +20,7 @@ const char* settings_text() {
 [meta]
 # The factory-defaults revision this file was written with. A file with bindings and an older revision gets the newer factory bindings
 # added where the key is still unbound (docs/CONFIG.md). Do not change it by hand.
-defaults_rev = 3
+defaults_rev = 4
 
 [mouse]
 # Radians per mouse count (raw, unaccelerated). The settings page shows the same value on the Source engine scale
@@ -167,6 +167,7 @@ Mouse3 = lock_on
 F = missile
 Q = lock_on
 Space = jump
+Left Shift = morph
 Left Ctrl = morph
 C = morph
 Left Alt = free_look
@@ -207,6 +208,7 @@ PageUp = btn_l
 PageDown = btn_r
 WheelUp = dpad_up
 WheelDown = dpad_down
+Left Shift = none
 Left Ctrl = none
 C = none
 F = none
@@ -254,9 +256,11 @@ Mouse2 = none
 }
 
 // Factory bindings that an older controls.ini does not have (append new ones with the next revision and bump kDefaultsRev).
-constexpr int kDefaultsRev = 3;
+constexpr int kDefaultsRev = 4;
 const GameDefaultAddition kAdditions[] = {
     {2, Ctx::Map, "X", Act::BtnX},   // the map's Key / Legend button (its footer shows X)
+    {4, Ctx::All, "Left Shift", Act::AltForm},   // morph ball on Shift (playtest: sprint-like key)
+    {4, Ctx::Menu, "Left Shift", Act::None},
 };
 // Factory values a later revision changed; a file still on the old factory value moves to the new one once.
 const GameDefaultChange kChanges[] = {

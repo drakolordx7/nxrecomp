@@ -32,6 +32,9 @@ constexpr uint64_t kFnComponentById = 0xb082fc;            // CStateManagerObjec
 constexpr uint64_t kFnWidgetCastToPtr = 0x88ae38;          // CUIWidgetGOC::CastToPtr(CGameObjectComponent*)
 constexpr uint64_t kFnMenuBeforeThink = 0x888608;          // CUIMenuGOC::BeforeThink(CStateManager&, float): x0 menu, x1 state manager; runs the widgets' ProcessInput
 constexpr uint64_t kMenuFocus = 213, kMenuCount = 192, kMenuIds = 200;   // CUIMenuGOC: has the focus; widget count and array of component ids
+constexpr uint64_t kFnFindSelected = 0x8892e0;             // CUIMenuGOC::FindSelectedWidget(CStateManager&): id of the selected widget (state 4), found by walking the links from the menu's first widget
+constexpr uint64_t kFnQueueSetState = 0x88c994;            // CUIWidgetGOC::QueueSetStateAction(CStateManager&, target id, sender id, EUIWidgetState)
+constexpr uint64_t kGotInvalidId = 0x2112870;              // pointer to the invalid CValueVersionId (u32)
 constexpr uint64_t kFnTextPaneCastToPtr = 0x85dfe4;        // CTextPaneGOC::CastToPtr(CGameObjectComponent*)
 constexpr uint64_t kFnTextPaneBounds = 0x861b98;           // CTextPaneGOC::GetBounds(CAABox&): the pane's box in UI units
 constexpr uint64_t kFnRenderCastToPtr = 0x80a030;          // CRenderGOC::CastToPtr(CGameObjectComponent*)
@@ -97,6 +100,7 @@ struct State {
     uint32_t focus_cooldown = 0;              // frames before the pointer may ask again to move between two lists (A / B)
     uint64_t chosen = 0;                      // the widget a click goes to
     uint64_t hover_w = 0;                     // the widget a hover selects (an arrow button's row label)
+    uint64_t hover_menu = 0;                  // the menu hover_w belongs to
     bool over_value_goc = false;              // the pointer is over an option's arrow buttons: the wheel steps the value                      // the widget the pointer means this tick (set by the menu hook)
     uint32_t capable = 0;                     // widgets with a usable box seen while a click was pending: a screen without any takes the click as a plain confirm
     int log = 0;                             // NXRT_MENUMOUSE_LOG: 1 = the widgets the pointer hits, 2 = every widget it looks at
@@ -112,11 +116,12 @@ State& S() {
 thread_local bool t_in_widget = false;
 
 // Calls a guest function from inside a hook: the registers are saved and restored, x0 comes back.
-uint64_t call_guest(::Ctx* c, uint64_t fn, uint64_t a0, uint64_t a1 = 0, uint64_t a2 = 0) {
+uint64_t call_guest(::Ctx* c, uint64_t fn, uint64_t a0, uint64_t a1 = 0, uint64_t a2 = 0, uint64_t a3 = 0) {
     ::Ctx saved = *c;
     c->x[0] = a0;
     c->x[1] = a1;
     c->x[2] = a2;
+    c->x[3] = a3;
     dispatch_call(c, S().base + fn);
     const uint64_t r = c->x[0];
     *c = saved;
@@ -248,6 +253,7 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
     s.hover_w = 0;
     if (!s.snap.active || !s.snap.inside) return 0;
     const uint64_t menu = c->x[0], sm = c->x[1];
+    s.hover_menu = menu;
     uint8_t focus = 0;
     int32_t n = 0;
     uint64_t ids = 0;
@@ -406,6 +412,35 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
     return 0;
 }
 
+// The menu applies a deferred selection by setting the new widget to selected (4) and the one CUIMenuGOC::FindSelectedWidget names back to idle (1).
+// That routine walks the down / up links from the menu's first widget, and on the save slot screen it does not reach the selected slot (it answers
+// the invalid id), so the old slot kept its highlight and every slot the pointer passed over stayed lit. When the game's answer is invalid, the other
+// selected rows of the menu (select widgets in state 4) are set back to idle here, the same message the menu would have queued.
+void deselect_others(::Ctx* c, uint64_t w, uint32_t id, uint64_t sm) {
+    State& s = S();
+    if (!s.hover_menu) return;
+    uint64_t got = 0;
+    uint32_t invalid = 0;
+    if (!play::guest_read(s.base + kGotInvalidId, &got, 8) || !got || !play::guest_read(got, &invalid, 4)) return;
+    const uint32_t found = static_cast<uint32_t>(call_guest(c, kFnFindSelected, s.hover_menu, sm));
+    if (s.log) NXLOG_I(kTag, "hover selects %08x: the menu's selected widget is %08x%s", id, found, found == invalid ? " (none found: the other selected rows are cleared)" : "");
+    if (found != invalid) return;
+    int32_t n = 0;
+    uint64_t ids = 0;
+    if (!play::guest_read(s.hover_menu + kMenuCount, &n, 4) || !play::guest_read(s.hover_menu + kMenuIds, &ids, 8) || !ids) return;
+    for (int32_t i = 0; i < n && i < 64; ++i) {
+        uint32_t cid = 0;
+        if (!play::guest_read(ids + 4ull * i, &cid, 4)) continue;
+        const uint64_t comp = call_guest(c, kFnComponentById, sm + 0x30, cid);
+        const uint64_t o = comp ? call_guest(c, kFnWidgetCastToPtr, comp) : 0;
+        if (!o || o == w) continue;
+        const WidgetInfo oi = widget_info(o);
+        if (oi.state != 4 || (oi.touch_mode != 1 && oi.touch_mode != 2)) continue;
+        call_guest(c, kFnQueueSetState, sm, oi.id, id, 1);
+        if (s.log) NXLOG_I(kTag, "  %08x was still selected: set back to idle", oi.id);
+    }
+}
+
 uint64_t pointer_widget(::Ctx* c, uint64_t w, uint64_t sm) {
     State& s = S();
     const WidgetInfo wi = widget_info(w);
@@ -439,6 +474,7 @@ uint64_t pointer_widget(::Ctx* c, uint64_t w, uint64_t sm) {
     if (s.hover_now && w == s.hover_w && wi.state != 4 && (wi.touch_mode == 1 || wi.touch_mode == 2)) {
         // what a touch on a select-only widget does: this widget is the next selection; the menu applies it after the widgets have run
         play::guest_write(w + kWDeferred, &wi.id, 4);
+        deselect_others(c, w, wi.id, sm);
         s.hovers++;
         return 4;
     }

@@ -84,7 +84,7 @@ public:
             },
             margin_text);
         f.checkbox(
-            L"Steady view (gun sway and walking bob move only the gun)", [](const Settings& s) { return !s.camera.gun_drives_view; },
+            L"Steady camera (walking bob and gun sway don't shake the view)", [](const Settings& s) { return !s.camera.gun_drives_view; },
             [](Settings& s, bool v) { s.camera.gun_drives_view = !v; });
 
         f.heading(L"Mouse");

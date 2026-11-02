@@ -59,8 +59,8 @@ bool mpr_mouse_tab(int where, Settings& edit) {
             changed = true;
         }
         ImGui::EndDisabled();
-        bool steady = !edit.camera.gun_drives_view;   // shown inverted: "Steady view" on = gun_drives_view 0
-        if (ImGui::Checkbox("Steady view (gun sway and walking bob move only the gun)", &steady)) { edit.camera.gun_drives_view = !steady; changed = true; }
+        bool steady = !edit.camera.gun_drives_view;   // shown inverted: "Steady camera" on = gun_drives_view 0
+        if (ImGui::Checkbox("Steady camera (walking bob and gun sway don't shake the view)", &steady)) { edit.camera.gun_drives_view = !steady; changed = true; }
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextDisabled("On: the view follows only the mouse and the stick, and the idle drift, walking bob and landing dip move the gun on screen instead. Off (the game's own): the arm cannon is fixed to the view, so those movements move the whole view.");
         ImGui::PopTextWrapPos();

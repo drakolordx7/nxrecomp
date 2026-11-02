@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -24,6 +25,11 @@ constexpr Uint64 kFullscreenWaitMs = 2000;
 bool g_inited = false;
 bool g_quit = false;
 SDL_Window* g_window = nullptr;
+
+// Motion events pushed by push_test_motion carry this mouse id (not a real device's: SDL numbers mice from 1 up, touch and pen use -1, -2).
+constexpr SDL_MouseID kTestMouseId = 0x7E570001u;
+std::atomic<double> g_test_rx{0}, g_test_ry{0};      // counts of test motion events pumped (written by the event thread only)
+std::atomic<uint64_t> g_test_events{0};
 
 struct OpenPad {
     SDL_JoystickID id;
@@ -218,7 +224,13 @@ void translate(const SDL_Event& ev) {
         }
 
         case SDL_EVENT_MOUSE_MOTION: {
-            const bool rel = relative_mouse();
+            const bool test = ev.motion.which == kTestMouseId;
+            const bool rel = test || relative_mouse();
+            if (test) {
+                g_test_rx.store(g_test_rx.load() + ev.motion.xrel);
+                g_test_ry.store(g_test_ry.load() + ev.motion.yrel);
+                g_test_events.fetch_add(1);
+            }
             const float d = pixel_density();
             input::Event e = make_event(input::EventType::MouseMotion, ts);
             e.flags = static_cast<uint8_t>(rel ? input::kFlagRelative : 0);
@@ -496,6 +508,24 @@ bool relative_mouse_is_raw() {
 }
 
 // ---- events -------------------------------------------------------------------------------------------------------
+
+bool push_test_motion(float dx, float dy) {
+    if (!g_inited) return false;
+    SDL_Event ev{};
+    ev.type = SDL_EVENT_MOUSE_MOTION;
+    ev.motion.timestamp = SDL_GetTicksNS();
+    ev.motion.windowID = g_window ? SDL_GetWindowID(g_window) : 0;
+    ev.motion.which = kTestMouseId;
+    ev.motion.xrel = dx;
+    ev.motion.yrel = dy;
+    return SDL_PushEvent(&ev);
+}
+
+void test_motion_received(double* dx, double* dy, uint64_t* events) {
+    if (dx) *dx = g_test_rx.load();
+    if (dy) *dy = g_test_ry.load();
+    if (events) *events = g_test_events.load();
+}
 
 int pump_events(bool wait, int timeout_ms) {
     if (!g_inited) return 0;

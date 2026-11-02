@@ -20,6 +20,7 @@ std::mutex gSinkMutex;
 std::shared_ptr<::nxrt::audio::AudioSink> gOpenSink;
 uint32_t gOpenRate = 0;
 uint32_t gOpenChannels = 0;
+uint64_t gFramesSinceReport = 0;   // frames written since the last periodic counters line (a minute of audio)
 
 }  // namespace
 
@@ -80,6 +81,13 @@ void HostAudioDevice::AppendBuffer(Span<const int16_t> data, uint32_t channelCou
     }
 
     sink->write(out.data(), static_cast<uint32_t>(frames));
+
+    // The sink logs its counters when it closes, which a process that is ended (window closed, killed) never reaches: a line per minute of audio too.
+    gFramesSinceReport += frames;
+    if (gFramesSinceReport >= static_cast<uint64_t>(_sampleRate) * 60) {
+        gFramesSinceReport = 0;
+        NXLOG_I("audio", "%s", ::nxrt::audio::format_stats(sink->name(), sink->stats()).c_str());
+    }
 }
 
 int64_t HostAudioDevice::GetQueuedNanoseconds() {
