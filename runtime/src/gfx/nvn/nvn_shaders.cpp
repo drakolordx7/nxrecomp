@@ -12,7 +12,7 @@
 #include "nvn_shaders.h"
 #include "nvn_settings.h"
 #include "nvn_debug.h"
-#include "spirv_module.h"
+#include "nxrt/game/spirv_module.h"
 
 #include <windows.h>
 

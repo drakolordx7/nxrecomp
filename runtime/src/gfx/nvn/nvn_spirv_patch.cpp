@@ -5,7 +5,7 @@
 #include <cstring>
 #include <map>
 
-#include "spirv_module.h"
+#include "nxrt/game/spirv_module.h"
 
 using namespace nxrt::spirv;   // the shared walker, opcodes and enumerants
 

@@ -13,6 +13,8 @@
 
 #include "imgui.h"
 #include "nxrt/frame_limiter.h"
+#include "nxrt/game.h"
+#include "nxrt/game_render.h"
 #include "nxrt/extras.h"
 #include "nxrt/input_source.h"
 #include "nxrt/lowlat.h"
@@ -652,8 +654,12 @@ void upscale_group(Page& p) {
 
     if (slider("Sharpness", &u.sharpness, 0.0, 1.0, "%.2f")) mark(p);
     tip("How much FSR 1 sharpens the upscaled picture; 1 is the sharpest.");
-    if (ImGui::SliderInt("Scene resolution##upscale_scene", &u.scene_scale, 25, 100, "%d%%")) mark(p);
-    tip("Renders the 3D scene at this percent of the output size per side; the game scales it up and keeps the HUD and the post effects at full size. 100 turns it off. Applies live.");
+    // Only a game with a scene-scale hook (nxrt/game_render.h) can render its scene smaller; without one the slider would do nothing.
+    const game::GameRender* gr = game::info().render;
+    if (gr && gr->scene_scale) {
+        if (ImGui::SliderInt("Scene resolution##upscale_scene", &u.scene_scale, 25, 100, "%d%%")) mark(p);
+        tip("Renders the 3D scene at this percent of the output size per side; the game scales it up and keeps the HUD and the post effects at full size. 100 turns it off. Applies live.");
+    }
     ImGui::TextDisabled("Or render everything below the window size with Display > Render scale (restart); FSR 1 then fills the rest.");
 }
 

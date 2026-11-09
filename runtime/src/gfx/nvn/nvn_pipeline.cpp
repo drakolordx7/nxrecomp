@@ -3,7 +3,7 @@
 // VkPipelineCache persists between runs ([nvn] pipeline_cache, default "pipeline_cache.bin").
 #include "nvn_pipeline.h"
 #include "nvn_settings.h"
-#include "spirv_module.h"
+#include "nxrt/game/spirv_module.h"
 
 #include <atomic>
 #include <chrono>

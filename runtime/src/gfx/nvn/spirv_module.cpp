@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPIR-V module walker (spirv_module.h).
-#include "spirv_module.h"
+#include "nxrt/game/spirv_module.h"
 
 namespace nxrt::spirv {
 
