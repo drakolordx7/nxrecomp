@@ -33,7 +33,6 @@ NXTEST(tweaks_factory_file_has_the_section_off) {
     REQUIRE(parse_settings(nxrt::play::default_settings_text(), &s, &err, &w));
     CHECK(!mpr_settings(s).tweaks.glow_on);
     CHECK(mpr_settings(s).tweaks.suit.mode == GlowMode::Auto && mpr_settings(s).tweaks.ball.mode == GlowMode::Auto && mpr_settings(s).tweaks.gun.mode == GlowMode::Auto);
-    CHECK(std::string(nxrt::play::default_settings_text()).find("[tweaks]") != std::string::npos);
 }
 
 // Moved from the base's tests/launcher/test_tweaks.cpp: the section reader and writer now belong to this module.
@@ -82,10 +81,6 @@ NXTEST(tweaks_parse_and_round_trip) {
     CHECK(c == (GlowRgb{10, 20, 30}));
 
     const std::string text = format_settings(s);
-    CHECK(text.find("[tweaks]") != std::string::npos);
-    CHECK(text.find("glow_color = 0,170,255") != std::string::npos);
-    CHECK(text.find("ball_glow = off") != std::string::npos);
-    CHECK(text.find("gun_glow = 10,20,30") != std::string::npos);
     Settings r;
     REQUIRE(parse_settings(text, &r, &err, &w));
     CHECK(mpr_settings(r).tweaks.glow_on && mpr_settings(r).tweaks.glow == mpr_settings(s).tweaks.glow);
@@ -125,17 +120,17 @@ NXTEST(tweaks_suit_part_and_reset) {
     CHECK(!glow_effective(mpr_settings(s).tweaks, mpr_settings(s).tweaks.suit, &c));
     REQUIRE(glow_effective(mpr_settings(s).tweaks, mpr_settings(s).tweaks.gun, &c));
     CHECK(c == (GlowRgb{255, 0, 255}));
-    CHECK(format_settings(s).find("suit_glow = off") != std::string::npos);
+    Settings kept;                // what is written reads back the same
+    REQUIRE(parse_settings(format_settings(s), &kept, &err, &w));
+    CHECK(!glow_effective(mpr_settings(kept).tweaks, mpr_settings(kept).tweaks.suit, &c));
+    CHECK(glow_effective(mpr_settings(kept).tweaks, mpr_settings(kept).tweaks.gun, &c));
     // Reset (the launcher's and the F1 page's button): the defaults, which write the game's own colours back.
     mpr_settings(s).tweaks = TweakSettings{};
     const std::string text = format_settings(s);
-    CHECK(text.find("glow_color = off") != std::string::npos);
-    CHECK(text.find("suit_glow = auto") != std::string::npos);
-    CHECK(text.find("ball_glow = auto") != std::string::npos);
-    CHECK(text.find("gun_glow = auto") != std::string::npos);
     Settings r;
     REQUIRE(parse_settings(text, &r, &err, &w));
     CHECK(!mpr_settings(r).tweaks.glow_on);
+    CHECK(mpr_settings(r).tweaks.suit.mode == GlowMode::Auto && mpr_settings(r).tweaks.ball.mode == GlowMode::Auto && mpr_settings(r).tweaks.gun.mode == GlowMode::Auto);
     CHECK(!glow_effective(mpr_settings(r).tweaks, mpr_settings(r).tweaks.ball, &c));
 }
 

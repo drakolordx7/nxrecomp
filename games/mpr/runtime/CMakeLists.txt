@@ -60,7 +60,7 @@ if(NXRT_BUILD_TESTS)
         # path scenes, the pipeline caches, the SPIR-V patches, the tone-map patch. The harness (tests/gfx/nvn_app.h) is the base's.
         file(GLOB _mpr_gfx_tests CONFIGURE_DEPENDS "${_mpr}/tests/*.cpp")
         set(_mpr_gfx_incs "${_mpr}/tests" "${_rt}/tests/gfx" ${NXRT_GAME_MPR_TEST_INCLUDES})
-        set(_mpr_gfx_defs NXRT_GFX_TEST_DATA_DIR="${_rt}/tests/data/gfx")
+        set(_mpr_gfx_defs NXRT_GFX_TEST_DATA_DIR="${_rt}/tests/data/gfx" NXRT_SOURCE_DIR="${_rt}")
         if(DEFINED NXRT_BC7_REF_DIR AND EXISTS "${NXRT_BC7_REF_DIR}/bc7decomp_ref.cpp")   # the ASTC scene's reference decoder (base cmake/gfx.cmake)
             list(APPEND _mpr_gfx_tests "${NXRT_BC7_REF_DIR}/bc7decomp_ref.cpp")
             list(APPEND _mpr_gfx_incs "${NXRT_BC7_REF_DIR}")

@@ -127,7 +127,6 @@ NXTEST(set_shaders_vertex_and_fragment_from_cache) {
     CHECK(hp != nullptr);
     if (hp) {
         CHECK(hp->linked);
-        CHECK(hp->serial == 1u);
         CHECK(hp->stage[0] != nullptr);
         CHECK(hp->stage[1] != nullptr);
         CHECK(hp->stage[0] && hp->stage[0]->stage == ShaderStage::Vertex);

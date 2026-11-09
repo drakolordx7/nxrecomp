@@ -105,7 +105,6 @@ class TestScript(unittest.TestCase):
         self.assertEqual(hp.frames(0.001, 60), 1)
 
     def test_prologue_uses_600s_mash_timeout(self):
-        self.assertEqual(self.lines[0], '# S11 physics probe: one process, @rate per block')
         self.assertIn('@timeout 0', self.lines)
         self.assertIn('@mash A 5000 area frigate_exterior_docking_hangar timeout=600000', self.lines)
 

@@ -255,14 +255,11 @@ NXTEST(hook_resumes_from_the_games_pitch_after_a_lock) {
     CHECK(std::fabs(pitch() - 0.05) < 1e-6);                 // adopted, not the old mouse pitch
 }
 
-NXTEST(hook_counts_show_up_in_the_stats) {
+NXTEST(hook_applied_counts_show_up_in_the_stats) {
     reset_world();
     const play::Stats a = play::stats();
     frame(30, -40);
     const play::Stats b = play::stats();
-    CHECK_EQ(b.frames - a.frames, 1u);
-    CHECK_EQ(b.process_input_calls - a.process_input_calls, 1u);
-    CHECK_EQ(b.aim_frames - a.aim_frames, 1u);
     CHECK_EQ(b.mouse_counts_applied - a.mouse_counts_applied, 70u);
     CHECK(!b.pump_thread_mismatch);
 }

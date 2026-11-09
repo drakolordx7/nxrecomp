@@ -182,13 +182,6 @@ bool real_programs(std::vector<Prog>* out) {
     return true;
 }
 
-std::string read_text(const fs::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::stringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
-
 // The back end on a small headless device, for one case. False (with the reason printed) when it cannot start.
 bool start(App& app) {
     App::Opts o;
@@ -237,7 +230,7 @@ NXTEST(load_stub_and_release) {
 }
 
 // The six programs are prepared with two threads: every program is counted once, at least one is prepared, the progress callback ends at
-// done == total, prepare.state says complete, and no pipeline cache file is written (the preparation drops its parts).
+// done == total, a second call finds it done, and no pipeline cache file is written (the preparation drops its parts).
 NXTEST(prepare_six_programs) {
     if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
     std::vector<Prog> progs;
@@ -254,6 +247,7 @@ NXTEST(prepare_six_programs) {
         return;
     }
     nxrt::config_set("nvn", "prepare_cache", "0");           // keeps nothing in the pipeline cache file
+    nxrt::nvn::be::nvn_settings_reload();                    // the [nvn] settings are read once per bring-up; take the change
     nxrt::nvn::ShaderPrepareOptions o;
     o.programs_file = file.string();
     o.threads = 2;
@@ -277,9 +271,12 @@ NXTEST(prepare_six_programs) {
     CHECK(!r.cancelled);
     CHECK_EQ(last_done.load(), 6ull);
     CHECK_EQ(last_total.load(), 6ull);
+    nxrt::nvn::ShaderPrepareOptions again = o;   // a finished run is remembered: asking again only if needed finds it done
+    again.only_if_needed = true;
+    nxrt::nvn::ShaderPrepareResult r2;
+    CHECK(nxrt::nvn::prepare_shaders(again, &r2));
+    CHECK(r2.already_ready);
     app.shutdown();  // the pipeline cache, if any, is written at shutdown: check after it
-    const std::string state = read_text(td.path / "prepare.state");
-    CHECK(state.find("complete: 1") != std::string::npos);
     CHECK(!fs::exists(td.path / "pipeline_cache.bin"));
 }
 
@@ -385,8 +382,8 @@ NXTEST(bad_program_files) {
     app.shutdown();
 }
 
-// A progress callback that says stop at its first call cancels the run: with one thread at most one program is done, and prepare.state
-// is written as not complete.
+// A progress callback that says stop at its first call cancels the run: with one thread at most one program is done, and
+// the run is not remembered as done.
 NXTEST(cancel_leaves_state_incomplete) {
     if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }
     std::vector<Prog> progs;
@@ -412,7 +409,11 @@ NXTEST(cancel_leaves_state_incomplete) {
                 static_cast<unsigned long long>(r.programs));
     CHECK(r.cancelled);
     CHECK(r.prepared < r.programs);
-    const std::string state = read_text(td.path / "prepare.state");
-    CHECK(state.find("complete: 1") == std::string::npos);
+    nxrt::nvn::ShaderPrepareOptions again = o;   // a cancelled run is not remembered as done
+    again.progress = nullptr;
+    again.only_if_needed = true;
+    nxrt::nvn::ShaderPrepareResult r2;
+    CHECK(nxrt::nvn::prepare_shaders(again, &r2));
+    CHECK(!r2.already_ready);
     app.shutdown();
 }

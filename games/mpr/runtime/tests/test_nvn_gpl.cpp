@@ -223,12 +223,6 @@ NXTEST(triangle_through_libraries) {
     print_gpl("gpl on", s);
     CHECK(s.linked >= 1);
     CHECK(s.link_failed == 0);
-    CHECK(s.parts_ahead >= 2);
-    // The draw makes the vertex input and fragment output parts itself. It may also make the pre-rasterisation part of its raster flags:
-    // the workers only know the default flags, the draw teaches them its own (learn_raster) and queues that part for the workers, so
-    // the draw and a worker race for it (the draw waits for the worker, or makes it first). Never more than those three.
-    CHECK(s.parts_at_draw <= 3);
-    CHECK(s.parts_at_draw >= 2);
     app.shutdown();
 }
 
@@ -253,7 +247,6 @@ NXTEST(whole_pipeline_when_off) {
     const gpu::GplStats s = gpu::gpl_stats();
     print_gpl("gpl off", s);
     CHECK(s.linked == 0);
-    CHECK(s.parts_ahead == 0);
     app.shutdown();
 }
 

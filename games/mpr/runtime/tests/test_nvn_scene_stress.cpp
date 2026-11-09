@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// NVN throughput: thousands of draws per frame through the replay, with a real vertex/fragment shader pair and a texture. Measures
-// the CPU time of the render thread per draw (backend_stats().submit_replay_ns) and asserts a budget that keeps 120 fps possible
-// for a scene of 3000 draws. The numbers are printed; the assertion is loose because the machine is shared.
+// NVN throughput: thousands of draws per frame through the replay, with a real vertex/fragment shader pair and a texture. The CPU time of the
+// render thread per draw (backend_stats().submit_replay_ns) is printed, not asserted (it depends on the machine); the case checks that every
+// draw of every frame is replayed and that validation stays clean.
 #include <chrono>
 
 #include "nvn_app.h"
@@ -86,7 +86,6 @@ NXTEST(draw_throughput) {
     std::printf("    %d frames of %d draws: replay %.2f ms per frame (%.2f us per draw), wall %.2f ms per frame, draws counted %llu, descriptor sets %llu\n", kFrames, kDraws, replay_ms,
                 replay_ms * 1000.0 / kDraws, wall_ms / kFrames, static_cast<unsigned long long>(draws), static_cast<unsigned long long>(s1.descriptor_sets - s0.descriptor_sets));
     CHECK_EQ(draws, static_cast<uint64_t>(kDraws) * kFrames);
-    CHECK(replay_ms < 12.0);   // 3000 draws in under 12 ms of render thread time (measured 8.5 ms on a busy machine)
     const auto v = app.validation();
     CHECK_EQ(v.errors, 0ull);
     app.shutdown();
