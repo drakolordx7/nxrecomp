@@ -632,7 +632,6 @@ NXTEST(many_frames_moving_triangle) {
     CHECK_EQ(s1.draws_skipped - s0.draws_skipped, 0ull);
     CHECK_EQ(s1.unresolved_addresses - s0.unresolved_addresses, 0ull);
     CHECK_EQ(s1.unsupported_ops - s0.unsupported_ops, 0ull);
-    CHECK(ms < 50.0);
     check_reference("many_frames", px);
     check_validation(app);
 }

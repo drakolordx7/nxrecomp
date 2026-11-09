@@ -36,7 +36,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-fs::path pack_path() { return fs::path(__FILE__).parent_path().parent_path().parent_path() / "assets" / "prompts" / "prompt_icons.pak"; }
+fs::path pack_path() { return fs::path(NXRT_SOURCE_DIR) / "assets" / "prompts" / "prompt_icons.pak"; }   // the pack is the base runtime's asset
 
 std::string name_of(const Settings& s, PromptStyle st, Ctx c, Icon i, bool label = true) {
     ResolveIn r;

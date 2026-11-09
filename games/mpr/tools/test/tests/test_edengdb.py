@@ -352,14 +352,9 @@ class MemoryTests(EdenClientTestCase):
         self.assertIsNone(self.g.try_read(0x90000000, 8))
         self.assertIsNone(self.g.try_read(0x70002FF8, 0x10))
 
-    
     def test_short_memory_reply_is_not_silently_accepted(self):
-        # BUG (edengdb.read, lines 93-103): read() never checks the length of an 'm' reply.
-        # RSP allows a short reply, so read() returns fewer bytes than asked with no error.
-        # read_state() then unpacks the short data and fails with struct.error, which try_read()
-        # does not catch.
         # RSP allows an 'm' reply to carry fewer bytes than asked for. read() must then either
-        # return the full length or raise GdbError. It currently returns the short data.
+        # return the full length or raise GdbError, never hand back short data.
         stub = FakeStub()
         stub.short_reply = True
         stub.map(0x70000000, bytes(range(16)))
@@ -473,12 +468,9 @@ class TraceTests(EdenClientTestCase):
         self.assertIn(bp, self.stub.requests)
         self.assertNotIn(BASE + edengdb.FN_UPDATE, self.stub.breakpoints)
 
-    
     def test_trace_leaves_connection_in_sync(self):
-        # BUG (edengdb.trace, lines 276-281): after the last frame the loop has already issued
-        # cont(), so the game is running with the breakpoint still set. The following
-        # clear_bp() then sends z0 while a stop may be in flight: it reads that T05 as its reply,
-        # and the real 'OK' is left unread in the socket. Every later reply is then off by one.
+        # After the last frame the breakpoint is cleared before the game continues, so no stop
+        # reply is left unread and the next request gets its own reply.
         self._run_trace()
         self.assertEqual(self.g.send("qOffsets"), "TextSeg=804ca000;DataSeg=804ca000")
 

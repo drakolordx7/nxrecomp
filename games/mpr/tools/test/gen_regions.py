@@ -25,7 +25,7 @@ def _project_root():
     return here.parents[2].as_posix()
 
 
-_REFS = Path(_project_root()).parents[1] / "refs" / "mp1r-practice-mod"   # NX/refs / "src" / "program"
+_REFS = Path(_project_root()).parents[1] / "refs" / "mp1r-practice-mod" / "src" / "program"   # NX/refs/...
 DEFAULT_REGIONS = _REFS / "RegionEntries.h"
 DEFAULT_WARP = _REFS / "WarpMenu.cpp"
 DEFAULT_OUT = Path(__file__).resolve().parent / "regions.tsv"

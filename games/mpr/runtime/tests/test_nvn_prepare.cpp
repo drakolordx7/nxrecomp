@@ -254,6 +254,7 @@ NXTEST(prepare_six_programs) {
         return;
     }
     nxrt::config_set("nvn", "prepare_cache", "0");           // keeps nothing in the pipeline cache file
+    nxrt::nvn::be::nvn_settings_reload();                    // the [nvn] settings are read once per bring-up; take the change
     nxrt::nvn::ShaderPrepareOptions o;
     o.programs_file = file.string();
     o.threads = 2;
