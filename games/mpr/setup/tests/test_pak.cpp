@@ -289,7 +289,7 @@ int main() {
     synthetic_tests();
 
     const char* env_romfs = std::getenv("NXS_ROMFS");
-    const fs::path romfs = (env_romfs && *env_romfs) ? fs::path(env_romfs) : nxs_test::project_fs_path("game/romfs");
+    const fs::path romfs = (env_romfs && *env_romfs) ? fs::path(env_romfs) : fs::path(nxs_test::game_path("game/romfs"));
     if (!fs::is_directory(romfs)) {
         std::printf("SKIP: the game romfs was not found at \"%s\" (set NXS_ROMFS). Steps 1-3 were not run.\n",
                     romfs.string().c_str());
@@ -341,7 +341,7 @@ int main() {
 
     // ---- step 2: TXTR headers against the reference table
     const char* env_tsv = std::getenv("NXS_TXTR_TSV");
-    const std::string tsv = (env_tsv && *env_tsv) ? env_tsv : nxs_test::project_path("work/survey/textures/txtr_all.tsv");
+    const std::string tsv = (env_tsv && *env_tsv) ? env_tsv : nxs_test::game_path("work/survey/textures/txtr_all.tsv");
     std::map<std::string, std::vector<TableRow>> table;
     size_t table_rows = 0;
     read_table(tsv, table, table_rows);

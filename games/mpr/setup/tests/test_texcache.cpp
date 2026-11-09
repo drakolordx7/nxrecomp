@@ -990,7 +990,7 @@ int mkrefs(const std::string& romfs, const std::string& cache, const std::string
 }
 
 int main(int argc, char** argv) {
-    const std::string romfs = env_or("NXS_ROMFS", nxs_test::project_path("game/romfs"));
+    const std::string romfs = env_or("NXS_ROMFS", nxs_test::game_path("game/romfs"));
     if (argc >= 2 && std::string(argv[1]) == "planonly")
         return planonly(argc >= 3 ? std::string(argv[2]) : romfs);
     if (argc >= 6 && std::string(argv[1]) == "mkrefs")
@@ -1005,7 +1005,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    const std::string nvn_h = env_or("NXS_NVN_H", nxs_test::project_path("runtime/src/gfx/nvn/third_party/nvn/nvn.h"));
+    const std::string nvn_h = env_or("NXS_NVN_H", nxs_test::base_path("runtime/src/gfx/nvn/third_party/nvn/nvn.h"));
     const fs::path scratch(widen(env_or("NXS_TEXCACHE_SCRATCH",
                                         (fs::temp_directory_path() / "nxs_test_texcache").string())));
     try {
