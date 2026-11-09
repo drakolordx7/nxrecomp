@@ -12,16 +12,23 @@ from unittest import mock
 
 import make_release as mr
 
-ROOT = 'mpr-test-windows-x64'
+ROOT = 'demo-test-windows-x64'
 MANIFEST = mr.MANIFEST
 EXPECTED = sorted([
-    'mpr.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll',
-    'mpr_setup.exe', 'mpr_setup_cli.exe', 'mpr_launcher.exe', 'shader_cache.mprshc', 'README.txt', 'HELP.txt', 'controls.ini',
+    'demo.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll',
+    'demo_setup.exe', 'demo_setup_cli.exe', 'demo_launcher.exe', 'shader_cache.demoshc', 'README.txt', 'HELP.txt', 'controls.ini',
     'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
 TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None), 'launcher': (0, None)}
-EXE_REL = 'game-build/build/relpkg/mpr.exe'
+EXE_REL = 'game-build/build/relpkg/demo.exe'
+GAME_JSON = (b'{"id": "demo", "files": {"exe": "demo.exe", "setup": "demo_setup.exe", "setup_cli": "demo_setup_cli.exe", '
+             b'"launcher": "demo_launcher.exe", "game_ini": "demo.ini", "shader_pack": "shader_cache.demoshc"}, '
+             b'"release": {"prefix": "demo", "setup_glob": "demo_setup*.exe"}}')   # the fake repo is also the game folder (--game)
+_GAME_DIR = tempfile.mkdtemp(prefix='demo-release-game-')   # the fixture manifest, for the tests that call the audit directly
+with open(os.path.join(_GAME_DIR, 'game.json'), 'wb') as _f:
+    _f.write(GAME_JSON)
+mr.set_game(_GAME_DIR)
 LOCAL_PATH = b'D:' + b'/AI/x'   # a developer-machine path as the audit sees it (spelled in two pieces so the source holds no such path)
 
 
@@ -37,16 +44,17 @@ def make_fake_repo(root):
         write(os.path.join(root, *rel.split('/')), data)
 
     w('LICENSE', b'GNU GENERAL PUBLIC LICENSE, fake text for the test\n')
-    w(EXE_REL, b'MZ' + b'\x90' * 64 + b'fake mpr')
-    w('game-build/build/relpkg/mpr.pdb', b'PDB fake, must never ship')
-    w('game-build/build/relpkg/mpr.map', b'MAP fake, must never ship')
+    w('game.json', GAME_JSON)
+    w(EXE_REL, b'MZ' + b'\x90' * 64 + b'fake demo')
+    w('game-build/build/relpkg/demo.pdb', b'PDB fake, must never ship')
+    w('game-build/build/relpkg/demo.map', b'MAP fake, must never ship')
     for n in ('astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll'):
         w('game-build/build/relpkg/' + n, b'MZ fake dll')
-    w('tools/setup/build/release/bin/mpr_setup.exe', b'MZ fake setup')
-    w('tools/setup/build/release/bin/mpr_setup_cli.exe', b'MZ fake setup cli')
-    w('game-build/build/relpkg/mpr_launcher.exe', b'MZ fake launcher')
+    w('tools/setup/build/release/bin/demo_setup.exe', b'MZ fake setup')
+    w('tools/setup/build/release/bin/demo_setup_cli.exe', b'MZ fake setup cli')
+    w('game-build/build/relpkg/demo_launcher.exe', b'MZ fake launcher')
     w('tools/setup/build/release/bin/astc2bc7.exe', b'MZ tool that must not ship')
-    w('work/setup_test/shader_cache.mprshc', mr.PACK_MAGIC + b'\x00' * 1024)
+    w('work/setup_test/shader_cache.demoshc', mr.PACK_MAGIC + b'\x00' * 1024)
     w('tools/release/templates/README.txt', b'readme\n')
     w('tools/release/templates/HELP.txt', b'help\n')
     w('tools/release/templates/THIRD_PARTY_NOTICES.txt', b'notices\n')
@@ -114,14 +122,14 @@ def make_pe(imports=(), delay=()):
 
 class BuildTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix='mpr-release-test-')
+        self.tmp = tempfile.mkdtemp(prefix='demo-release-test-')
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.repo = make_fake_repo(os.path.join(self.tmp, 'repo'))
         self.out = os.path.join(self.tmp, 'out')
         self.prompts = make_fake_prompts(os.path.join(self.tmp, 'prompts'))
 
     def run_build(self, extra=(), repo=None, out=None, hook=None, real_sizes=False, prompts=None, size_rules=None):
-        argv = ['--repo', repo or self.repo, '--out', out or self.out, '--version', 'test',
+        argv = ['--game', repo or self.repo, '--repo', repo or self.repo, '--out', out or self.out, '--version', 'test',
                 '--prompts-dir', prompts or self.prompts] + list(extra)
         buf = io.StringIO()
         if size_rules is None:
@@ -136,7 +144,7 @@ class BuildTests(unittest.TestCase):
         """Names of release outputs left in out (must be empty after a refusal)."""
         if not os.path.isdir(out):
             return []
-        return sorted(n for n in os.listdir(out) if n.startswith('mpr-'))
+        return sorted(n for n in os.listdir(out) if n.startswith('demo-'))
 
     def test_clean_build_passes_and_zip_holds_exactly_the_manifest_files(self):
         code, log = self.run_build()
@@ -169,7 +177,7 @@ class BuildTests(unittest.TestCase):
         base = ROOT + '-noshaders'
         with zipfile.ZipFile(os.path.join(self.out, base + '.zip')) as z:
             names = z.namelist()
-        self.assertEqual(names, sorted(base + '/' + r for r in EXPECTED if r != 'shader_cache.mprshc'))
+        self.assertEqual(names, sorted(base + '/' + r for r in EXPECTED if r != 'shader_cache.demoshc'))
 
     CASES = [
         ('key file name', 'tools/release/licenses/prod.keys', b'not really keys', 'prod.keys'),
@@ -216,15 +224,15 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(code, 0, log)
 
     def test_pack_with_other_name_is_refused(self):
-        other = os.path.join(self.repo, 'work', 'setup_test', 'other.mprshc')
-        shutil.copyfile(os.path.join(self.repo, 'work', 'setup_test', 'shader_cache.mprshc'), other)
+        other = os.path.join(self.repo, 'work', 'setup_test', 'other.demoshc')
+        shutil.copyfile(os.path.join(self.repo, 'work', 'setup_test', 'shader_cache.demoshc'), other)
         code, log = self.run_build(['--shader-pack', other])
         self.assertEqual(code, 3, log)
-        self.assertIn('shader_cache.mprshc', log)
+        self.assertIn('shader_cache.demoshc', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_pack_with_wrong_magic_is_refused(self):
-        pack = os.path.join(self.repo, 'work', 'setup_test', 'shader_cache.mprshc')
+        pack = os.path.join(self.repo, 'work', 'setup_test', 'shader_cache.demoshc')
         write(pack, b'XXXXXXXX' + b'\x00' * 1024)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
@@ -235,14 +243,14 @@ class BuildTests(unittest.TestCase):
         write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
-        self.assertIn('paths: mpr.exe contains', log)
+        self.assertIn('paths: demo.exe contains', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_local_path_in_exe_only_warns_with_allow_local_paths(self):
         write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build(['--allow-local-paths'])
         self.assertEqual(code, 0, log)
-        self.assertIn('mpr.exe contains', log)
+        self.assertIn('demo.exe contains', log)
         self.assertNotIn('paths: ', log)
         self.assertNotIn('REFUSED', log)
         self.assertIn('RELEASE OK', log)
@@ -251,21 +259,21 @@ class BuildTests(unittest.TestCase):
         write(os.path.join(self.repo, *EXE_REL.split('/')), b'MZ' + b'build at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build(['--strict-paths'])
         self.assertEqual(code, 3, log)
-        self.assertIn('paths: mpr.exe contains', log)
+        self.assertIn('paths: demo.exe contains', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_local_path_in_launcher_is_refused_by_default(self):
-        write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'),
+        write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'demo_launcher.exe'),
               b'MZ' + b'launcher built at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
-        self.assertIn('paths: mpr_launcher.exe contains', log)
+        self.assertIn('paths: demo_launcher.exe contains', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_real_size_rules_refuse_small_exe(self):
         code, log = self.run_build(real_sizes=True)
         self.assertEqual(code, 3, log)
-        self.assertIn('mpr.exe is', log)
+        self.assertIn('demo.exe is', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_dll_count_other_than_three_is_a_usage_error(self):
@@ -274,34 +282,34 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(code, 2, log)
         self.assertEqual(self.leftovers(self.out), [])
 
-    def test_launcher_ships_beside_mpr_exe_and_in_the_zip(self):
+    def test_launcher_ships_beside_demo_exe_and_in_the_zip(self):
         code, log = self.run_build()
         self.assertEqual(code, 0, log)
-        src = os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe')
-        self.assertTrue(os.path.isfile(os.path.join(self.out, ROOT, 'mpr_launcher.exe')))
+        src = os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'demo_launcher.exe')
+        self.assertTrue(os.path.isfile(os.path.join(self.out, ROOT, 'demo_launcher.exe')))
         with zipfile.ZipFile(os.path.join(self.out, ROOT + '.zip')) as z:
-            self.assertIn(ROOT + '/mpr_launcher.exe', z.namelist())
-            self.assertEqual(z.read(ROOT + '/mpr_launcher.exe'), read_bytes(src))
+            self.assertIn(ROOT + '/demo_launcher.exe', z.namelist())
+            self.assertEqual(z.read(ROOT + '/demo_launcher.exe'), read_bytes(src))
 
     def test_missing_launcher_is_a_usage_error(self):
-        os.remove(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'))
+        os.remove(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'demo_launcher.exe'))
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
-        self.assertIn('mpr_launcher.exe not found', log)
+        self.assertIn('demo_launcher.exe not found', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_launcher_importing_vcruntime_is_refused(self):
-        write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'mpr_launcher.exe'),
+        write(os.path.join(self.repo, 'game-build', 'build', 'relpkg', 'demo_launcher.exe'),
               make_pe(['kernel32.dll', 'vcruntime140.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
-        self.assertIn('crt-import: mpr_launcher.exe imports vcruntime140.dll', log)
+        self.assertIn('crt-import: demo_launcher.exe imports vcruntime140.dll', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_launcher_below_size_minimum_is_refused(self):
         code, log = self.run_build(size_rules=dict(TINY_RULES, launcher=(100 * mr.KIB, 40 * mr.MIB)))
         self.assertEqual(code, 3, log)
-        self.assertIn('size: mpr_launcher.exe is', log)
+        self.assertIn('size: demo_launcher.exe is', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_missing_notices_is_a_usage_error(self):
@@ -371,14 +379,14 @@ class BuildTests(unittest.TestCase):
         write(os.path.join(self.repo, *EXE_REL.split('/')), make_pe(['kernel32.dll', 'vcruntime140.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
-        self.assertIn('crt-import: mpr.exe imports vcruntime140.dll', log)
+        self.assertIn('crt-import: demo.exe imports vcruntime140.dll', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_exe_importing_ucrt_api_set_is_refused(self):
         write(os.path.join(self.repo, *EXE_REL.split('/')), make_pe(['api-ms-win-crt-runtime-l1-1-0.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
-        self.assertIn('crt-import: mpr.exe imports api-ms-win-crt-runtime-l1-1-0.dll', log)
+        self.assertIn('crt-import: demo.exe imports api-ms-win-crt-runtime-l1-1-0.dll', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_dll_with_crt_delay_import_is_refused(self):
@@ -404,10 +412,10 @@ class BuildTests(unittest.TestCase):
 class LauncherSizeRuleTests(unittest.TestCase):
     def test_launcher_size_limits_are_the_shipped_rule(self):
         self.assertEqual(mr.SIZE_RULES['launcher'], (100 * mr.KIB, 40 * mr.MIB))
-        self.assertIn('outside the allowed', mr.size_problem('mpr_launcher.exe', 100 * mr.KIB - 1))
-        self.assertIsNone(mr.size_problem('mpr_launcher.exe', 100 * mr.KIB))
-        self.assertIsNone(mr.size_problem('mpr_launcher.exe', 40 * mr.MIB))
-        self.assertIn('outside the allowed', mr.size_problem('mpr_launcher.exe', 40 * mr.MIB + 1))
+        self.assertIn('outside the allowed', mr.size_problem('demo_launcher.exe', 100 * mr.KIB - 1))
+        self.assertIsNone(mr.size_problem('demo_launcher.exe', 100 * mr.KIB))
+        self.assertIsNone(mr.size_problem('demo_launcher.exe', 40 * mr.MIB))
+        self.assertIn('outside the allowed', mr.size_problem('demo_launcher.exe', 40 * mr.MIB + 1))
 
 
 class PeImportTests(unittest.TestCase):
@@ -427,17 +435,17 @@ class PeImportTests(unittest.TestCase):
         self.assertEqual(mr.pe_imports(make_pe([])), [])
 
     def test_zip_side_audit_refuses_crt_import_once_per_dll(self):
-        tmp = tempfile.mkdtemp(prefix='mpr-crt-zip-')
+        tmp = tempfile.mkdtemp(prefix='demo-crt-zip-')
         self.addCleanup(shutil.rmtree, tmp, True)
         zpath = os.path.join(tmp, 'release.zip')
         with zipfile.ZipFile(zpath, 'w') as z:
-            z.writestr(ROOT + '/mpr.exe', make_pe(['vcruntime140.dll', 'msvcp140.dll'], delay=['vcruntime140.dll']))
+            z.writestr(ROOT + '/demo.exe', make_pe(['vcruntime140.dll', 'msvcp140.dll'], delay=['vcruntime140.dll']))
         with zipfile.ZipFile(zpath) as z, mock.patch.dict(mr.SIZE_RULES, TINY_RULES):
             zip_problems = []
-            a = mr.audit_files(mr.zip_refs(z, ROOT, zip_problems), {'mpr.exe'}, {})
+            a = mr.audit_files(mr.zip_refs(z, ROOT, zip_problems), {'demo.exe'}, {})
         self.assertEqual(zip_problems, [])
-        self.assertEqual(a.problems, ['crt-import: mpr.exe imports vcruntime140.dll',
-                                      'crt-import: mpr.exe imports msvcp140.dll'])
+        self.assertEqual(a.problems, ['crt-import: demo.exe imports vcruntime140.dll',
+                                      'crt-import: demo.exe imports msvcp140.dll'])
 
 
 if __name__ == '__main__':

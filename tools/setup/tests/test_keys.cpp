@@ -158,7 +158,7 @@ void test_parser() {
     text += "empty_value =\n";                                        // empty value : skipped
     text += "=novalue\n";                                             // empty name : skipped
     text += "  ; indented comment\n";
-    text += "010012101468C000000000000000000B = " + up(tk_val) + "\n";   // title key line
+    text += "0100000000F1C000000000000000000B = " + up(tk_val) + "\n";   // title key line
     text += "last_one = " + up(last);                                  // no trailing newline
 
     const std::string path = temp_path("parser.keys");
@@ -182,7 +182,7 @@ void test_parser() {
     CHECK(ks.titlekek(0) == titlekek00);                   // explicit titlekek_00, parsed from upper-case hex
 
     std::array<u8, 16> rid{};
-    CHECK(hex_decode("010012101468c000000000000000000b", rid.data(), rid.size()));
+    CHECK(hex_decode("0100000000f1c000000000000000000b", rid.data(), rid.size()));
     Key128 found{};
     CHECK(ks.title_key(rid, found));
     CHECK(found == tk_val);
@@ -424,11 +424,11 @@ void test_real_data() {
         std::printf("real title.keys: %s\n", titles.describe().c_str());
         CHECK_EQ(titles.title_key_count(), static_cast<size_t>(19));
         std::array<u8, 16> rid{};
-        CHECK(hex_decode("010012101468c000000000000000000b", rid.data(), rid.size()));
+        CHECK(hex_decode("0100000000f1c000000000000000000b", rid.data(), rid.size()));
         Key128 tk{};
         const bool found = titles.title_key(rid, tk);
         // this dump carries its ticket in the NSP, so its rights id is not expected in title.keys
-        std::printf("rights id 010012101468c000000000000000000b: %s (not required)\n", found ? "found" : "not found");
+        std::printf("rights id 0100000000f1c000000000000000000b: %s (not required)\n", found ? "found" : "not found");
         // A rights id that is in this title.keys (its name is listed in the file) proves the lookup itself.
         std::array<u8, 16> rid2{};
         CHECK(hex_decode("01006a800016e8000000000000000007", rid2.data(), rid2.size()));

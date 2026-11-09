@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The game this setup tool is built for: which dump it accepts and what the files it writes are called. One definition per game in
-// src/games/<id>.cpp, picked by the CMake cache variable MPRS_GAME (runtime/docs/GAME_BOUNDARY.md). The rest of the tool reads these
-// values instead of naming a title.
+// The game this setup tool is built for: which dump it accepts and what the files it writes are called. Generated from the game's
+// manifest games/<id>/game.json (src/game_profile.cpp; the CMake cache variable NX_GAME_DIR names the game folder). The rest of the tool
+// reads these values instead of naming a title.
 #pragma once
 
 namespace mprs {
@@ -26,7 +26,7 @@ struct GameProfile {
     const GameBuild* builds = nullptr;
 };
 
-const GameProfile& game();     // src/games/<MPRS_GAME>.cpp
+const GameProfile& game();     // src/game_profile.cpp
 
 // True when the profile lists its supported releases (GameProfile::builds); such a game may need an update.
 inline bool game_lists_builds() { return game().builds && game().builds[0].build_id; }

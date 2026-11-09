@@ -75,8 +75,8 @@ constexpr COLORREF kRed = RGB(0xB3, 0x1B, 0x1B);
 constexpr COLORREF kGray = RGB(0x5F, 0x5F, 0x5F);
 
 constexpr wchar_t kClassName[] = L"MprSetupWindow";
-#ifndef MPR_VERSION
-#define MPR_VERSION "dev"
+#ifndef MPRS_VERSION
+#define MPRS_VERSION "dev"
 #endif
 constexpr wchar_t kDumpHint[] =
     L"Pick your own game dump (.nsp, .xci, .nsz or .xcz), or drag it onto this window. Pick the update and DLC files with it if you have them.";
@@ -565,7 +565,7 @@ int App::run() {
 
     // Created at a placeholder size; WM_CREATE reads the window's own DPI, then the real size is set from that DPI.
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    const std::wstring title = widen(mprs::game().product) + L" - Setup  " + (std::isdigit(static_cast<unsigned char>(MPR_VERSION[0])) ? L"v" : L"") + widen(MPR_VERSION);
+    const std::wstring title = widen(mprs::game().product) + L" - Setup  " + (std::isdigit(static_cast<unsigned char>(MPRS_VERSION[0])) ? L"v" : L"") + widen(MPRS_VERSION);
     CreateWindowExW(0, kClassName, title.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, hinst_, this);
     if (!hwnd_) return static_cast<int>(Fail::Generic);
     // The DPI at WM_CREATE can still be the placeholder; the window's DPI is only settled once it is placed.

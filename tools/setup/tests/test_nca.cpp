@@ -30,7 +30,7 @@ using mprs_test::SynthSection;
 
 namespace {
 
-constexpr uint64_t kProgramId = 0x010012101468C000ull;
+constexpr uint64_t kProgramId = 0x0100000000F1C000ull;
 const char* const kBuildId = "0123456789ABCDEF0123456789ABCDEF01234567";
 
 struct Outcome {

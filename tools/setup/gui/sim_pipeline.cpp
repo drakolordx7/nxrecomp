@@ -138,8 +138,8 @@ InputSummary inspect_input(const SetupOptions& o) {
     std::this_thread::sleep_for(1s);
     InputSummary s;
     s.container = container_for(first_input(o));
-    s.title_id = "010012101468C000";
-    s.build_id = "67C9CA1428222752F951021464A7B3597EB98FEC";
+    s.title_id = game().title_id;
+    s.build_id = game().build_id;
     s.romfs_bytes = kRomfsBytes;
     s.exefs_bytes = kExefsBytes;
     s.romfs_files = 2817;
@@ -150,7 +150,7 @@ InputSummary inspect_input(const SetupOptions& o) {
 
     if (file_name_has(first_input(o), L"bad")) {
         s.supported = false;
-        s.problem = "This dump is the wrong game (title 0100ABCDEF000000). Choose the Metroid Prime Remastered dump.";
+        s.problem = std::string("This dump is the wrong game (title 0100ABCDEF000000). Choose the ") + game().title + " dump.";
     } else if (s.disk_free && s.disk_free < s.disk_needed) {
         s.supported = false;
         s.problem = "Not enough free space on this drive for the game folder. Choose another install folder.";

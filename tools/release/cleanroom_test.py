@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Clean-room check of a release zip: extract it into a fresh folder, run the setup tool from there with a real dump and keys,
-start mpr.exe headless from a different working directory and confirm the game reaches the title screen.
+start the game exe headless from a different working directory and confirm the game reaches the title screen.
 
-  python -I cleanroom_test.py --zip work/release_out/mpr-<ver>-windows-x64.zip --dump <game.nsp> --keys <prod.keys>
+  python -I cleanroom_test.py --game <game dir> --zip work/release_out/<prefix>-<ver>-windows-x64.zip --dump <game.nsp> --keys <prod.keys>
         [--dest work/release_test] [--seconds 90] [--shot-at 40] [--quality 3] [--skip-setup]
 
 What it checks (exit 0 only when all hold):
   1. the zip extracts and holds no game data or keys (the same audit rules as make_release.py: no exefs/romfs/bc7_cache/keys)
-  2. mpr_setup_cli.exe finishes with exit code 0 and prints its timing; setup.log is kept
-  3. mpr.exe, started from another directory with its full path, picks up the game folder by itself (log says so), reaches the
+  2. the setup CLI (<id>_setup_cli.exe) finishes with exit code 0 and prints its timing; setup.log is kept
+  3. the game exe, started from another directory with its full path, picks up the game folder by itself (log says so), reaches the
      title screen (the log shows the title-screen marker below and a presented-frame count above a minimum) and writes shot_*.png
   4. it exits cleanly on its own at --seconds (the --max-seconds deadline, exit code 124 is the runtime's deadline exit and is accepted)
-The screenshot stays in the extracted folder as shot_<n>.png; its path is printed.
+File names come from the game's manifest (game.json `files`). The screenshot stays in the extracted folder as shot_<n>.png; its path is printed.
 """
 import argparse
+import json
 import os
 import re
 import shutil
@@ -34,6 +35,8 @@ def run(cmd, **kw):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--game", default=os.environ.get("NX_GAME_DIR"), required=not os.environ.get("NX_GAME_DIR"),
+                    help="game folder with the manifest game.json (default NX_GAME_DIR)")
     ap.add_argument("--zip", required=True)
     ap.add_argument("--dump", required=True)
     ap.add_argument("--keys", required=True)
@@ -45,6 +48,8 @@ def main(argv=None):
     ap.add_argument("--min-presents", type=int, default=600)
     a = ap.parse_args(argv)
 
+    files = json.loads((Path(a.game) / "game.json").read_text(encoding="utf-8"))["files"]
+    exe_name, log_name, ini_name = files["exe"], files["log"], files["game_ini"]
     zpath = Path(a.zip)
     name = zpath.stem
     dest = Path(a.dest) / name
@@ -61,8 +66,8 @@ def main(argv=None):
                 return 1
             z.extractall(dest)
         print(f"extracted {len(names)} entries to {top}")
-    exe = top / "mpr.exe"
-    setup = top / "mpr_setup_cli.exe"
+    exe = top / exe_name
+    setup = top / files["setup_cli"]
     for f in (exe, setup):
         if not f.exists():
             print("FAIL: missing", f)
@@ -77,14 +82,14 @@ def main(argv=None):
         print(f"setup exit {r.returncode}, {time.time() - t0:.0f} s wall")
         if r.returncode != 0:
             return 1
-        for need in ("exefs/main", "exefs/rtld", "romfs", "bc7_cache", "mpr.ini", "setup.log"):
+        for need in ("exefs/main", "exefs/rtld", "romfs", "bc7_cache", ini_name, "setup.log"):
             if not (top / need).exists():
                 print("FAIL: setup did not produce", need)
                 return 1
         # the release must not have been changed by setup except for the files it makes
-        print((top / "mpr.ini").read_text())
+        print((top / ini_name).read_text())
 
-    for stale in list(top.glob("shot_*.png")) + [top / "mpr.log"]:
+    for stale in list(top.glob("shot_*.png")) + [top / log_name]:
         if stale.exists():
             stale.unlink()
     env = dict(os.environ)
@@ -94,10 +99,10 @@ def main(argv=None):
     cmd = [str(exe), "--headless", "--max-seconds", str(a.seconds)]
     t0 = time.time()
     r = run(cmd, cwd=str(other), env=env, timeout=a.seconds + 120)
-    print(f"mpr.exe exit {r.returncode} after {time.time() - t0:.0f} s (started from {other})")
-    log = top / "mpr.log"
+    print(f"{exe_name} exit {r.returncode} after {time.time() - t0:.0f} s (started from {other})")
+    log = top / log_name
     if not log.exists():
-        print("FAIL: no mpr.log in the game folder: the exe did not use it as its working folder")
+        print(f"FAIL: no {log_name} in the game folder: the exe did not use it as its working folder")
         return 1
     text = log.read_text(errors="replace")
     ok = True

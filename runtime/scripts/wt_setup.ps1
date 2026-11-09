@@ -1,14 +1,12 @@
-# Make a sibling git worktree of this checkout on a new branch and configure its build (graphics shell off: fast, no network).
-#   pwsh scripts\wt_setup.ps1 svc-time          -> ..\svc-time on branch svc-time, build dir build\release configured
-# The recompiler ABI header is read from the recomp include folder two levels up (ABI 3).
-param([Parameter(Mandatory = $true)][string]$Name, [string]$AbiInclude = "")
+# Make a git worktree of this base checkout on a new branch and configure its runtime build (graphics shell off: fast, no network).
+#   pwsh runtime\scripts\wt_setup.ps1 svc-time          -> <NX>\wt\base-svc-time on branch svc-time, build <NX>\build\base-svc-time\runtime\release
+param([Parameter(Mandatory = $true)][string]$Name)
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$parent = Split-Path -Parent $root
-if (-not $AbiInclude) { $AbiInclude = Join-Path (Split-Path -Parent $parent) "recomp\include" }
-$dir = Join-Path $parent $Name
-git -C $root worktree add -b $Name $dir HEAD
-$bd = Join-Path $dir "build\release"
-$cfg = "cmake -S `"$dir`" -B `"$bd`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DNXRT_BUILD_GFX=OFF -DNXRT_BUILD_LIFT_TESTS=OFF -DNXRT_RECOMP_INCLUDE=`"$AbiInclude`""
-cmd /c "call `"$(Join-Path $dir 'scripts\env.cmd')`" && $cfg"
+. (Join-Path $PSScriptRoot "proj.ps1")
+if (-not $nx) { throw "no NX folder above $base (set NX_ROOT)" }
+$dir = Join-Path $nx "wt\base-$Name"
+git -C $base worktree add -b $Name $dir HEAD
+$bd = Join-Path $nx "build\base-$Name\runtime\release"
+$cfg = "cmake -S `"$dir\runtime`" -B `"$bd`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DNXRT_BUILD_GFX=OFF -DNXRT_BUILD_LIFT_TESTS=OFF"
+cmd /c "call `"$(Join-Path $dir 'runtime\scripts\env.cmd')`" && $cfg"
 exit $LASTEXITCODE

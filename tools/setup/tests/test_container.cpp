@@ -24,8 +24,8 @@ using mprs_test::SynthKeys;
 
 namespace {
 
-constexpr uint64_t kProgramId = 0x010012101468C000ull;
-const char* const kTitleId = "010012101468C000";
+constexpr uint64_t kProgramId = 0x0100000000F1C000ull;
+const char* const kTitleId = "0100000000F1C000";
 const char* const kBuildId = "0123456789ABCDEF0123456789ABCDEF01234567";
 
 struct Outcome {

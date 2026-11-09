@@ -5,8 +5,8 @@
 [CmdletBinding(PositionalBinding = $false)]
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Groups = @(), [switch]$All, [switch]$NoBuild, [string]$Config = "Release")
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $PSScriptRoot
-$bd = Join-Path $root ("build\" + $Config.ToLower())
+. (Join-Path $PSScriptRoot "proj.ps1")
+$bd = $rtbuild
 if (-not $NoBuild) {
     cmd /c "call `"$(Join-Path $PSScriptRoot 'env.cmd')`" && cmake --build `"$bd`" --target nxrt_tests"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

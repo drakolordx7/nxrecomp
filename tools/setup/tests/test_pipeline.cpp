@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // End-to-end tests of inspect_input and run_setup (src/pipeline.cpp) on synthetic dumps from tests/synth_nca.cpp.
 // Every case writes its dump, keys and output under a scratch folder in the temp directory, removed at the end of the case.
+#include <cstdlib>
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -38,8 +39,9 @@ using mprs_test::SynthSection;
 
 namespace {
 
-constexpr uint64_t kProgramId = 0x010012101468C000ull;
-const char* const kTitleId = "010012101468C000";
+// The program of the game the tool is built for (src/game.h): the pipeline accepts only that title.
+const char* const kTitleId = game().title_id;
+const uint64_t kProgramId = std::strtoull(kTitleId, nullptr, 16);
 const char* const kBuildId = "0123456789ABCDEF0123456789ABCDEF01234567";
 const char* const kOtherBuildId = "FEDCBA9876543210FEDCBA9876543210FEDCBA98";
 
@@ -188,8 +190,8 @@ std::string make_damaged_dump(const std::string& dir, const SynthFiles& files, c
     sp.key_generation = 11;
     sp.sections = {SynthSection{1, 3, mprs_test::synth_exefs(kBuildId)}, SynthSection{0, 3, mprs_test::synth_romfs(files)}};
     sp.corrupt = {c};
-    SynthFiles entries = {{"010012101468C000.nca", mprs_test::synth_nca(sp)},
-                          {"010012101468C000.cnmt.nca", mprs_test::synth_cnmt_nca(kProgramId, 0)}};
+    SynthFiles entries = {{std::string(kTitleId) + ".nca", mprs_test::synth_nca(sp)},
+                          {std::string(kTitleId) + ".cnmt.nca", mprs_test::synth_cnmt_nca(kProgramId, 0)}};
     const std::string path = (fs::path(dir) / "game.nsp").string();
     write_bytes(path, mprs_test::synth_nsp(entries));
     keys_out = mprs_test::write_synth_keys_file(dir);
@@ -375,7 +377,7 @@ void check_installed(const std::string& out, const std::string& build_id, const 
     }
     CHECK_EQ(count_files((root / "romfs").string()), files.size());
     for (const auto& [rel, bytes] : files) CHECK(same_bytes((root / "romfs" / rel).string(), bytes));
-    const std::vector<uint8_t> ini = read_bytes((root / "mpr.ini").string());
+    const std::vector<uint8_t> ini = read_bytes((root / game().game_ini).string());
     CHECK(has(as_text(ini), "bc7_quality = 3"));
     CHECK(has(as_text(ini), "; Written by " MPRS_EXE_NAME));
     CHECK(fs::is_regular_file(root / "setup_state.tsv"));
@@ -646,14 +648,14 @@ void case_shader_cache() {
     for (const char* spv : {"0123456789abcdef.spv", "00004b0d6e7742b4.spv", "fedcba9876543210.spv"})
         CHECK(same_bytes((spirv / spv).string(), read_bytes((fs::path(src) / spv).string())));
     CHECK_EQ(count_files(spirv.string()), size_t(4));   // results.tsv + 3 .spv (the manifest is not installed)
-    CHECK(has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache = shader_cache/spirv"));
+    CHECK(has(as_text(read_bytes((fs::path(out) / game().game_ini).string())), "shader_cache = shader_cache/spirv"));
 
-    // Without a shader cache: no line in mpr.ini, no shader folder.
+    // Without a shader cache: no line in the game ini, no shader folder.
     const std::string out2 = s.path("out_noshaders");
     SetupOptions plain = base_opts(d.path, d.keys_file_path, d.build_id, out2);
     const RunResult rr2 = run(plain, *std::make_unique<RecordingReporter>());
     CHECK(!rr2.out.threw);
-    CHECK(!has(as_text(read_bytes((fs::path(out2) / "mpr.ini").string())), "shader_cache ="));
+    CHECK(!has(as_text(read_bytes((fs::path(out2) / game().game_ini).string())), "shader_cache ="));
     CHECK(!fs::exists(fs::path(out2) / "shader_cache"));
 }
 
@@ -662,7 +664,7 @@ void case_shader_pack_file() {
     Scratch s("shaderpack");
     const SynthFiles files = romfs_files();
     const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
-    const std::string pack = s.path("shader_cache.mprshc");
+    const std::string pack = s.path(game().shader_pack);
     write_bytes(pack, make_shader_pack_bytes());
 
     const std::string out = s.path("out");
@@ -677,7 +679,7 @@ void case_shader_pack_file() {
     const fs::path spirv = fs::path(out) / "shader_cache" / "spirv";
     for (const auto& item : shader_files()) CHECK(same_bytes((spirv / item.first).string(), item.second));
     CHECK_EQ(count_files(spirv.string()), size_t(4));   // results.tsv + 3 .spv
-    CHECK(has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache = shader_cache/spirv"));
+    CHECK(has(as_text(read_bytes((fs::path(out) / game().game_ini).string())), "shader_cache = shader_cache/spirv"));
 }
 
 // ---- case 7c: no shader pack and no --no-shaders: setup stops before the extraction, with the message -----------------------
@@ -687,7 +689,7 @@ void case_no_shader_pack() {
     const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, s.path("out"));
     o.allow_no_shaders = false;
-    expect_refusal(o, Fail::Input, "shader_cache.mprshc");
+    expect_refusal(o, Fail::Input, game().shader_pack);
 }
 
 // ---- case 7d: --no-shaders installs without shaders and says so --------------------------------------------------------------
@@ -702,7 +704,7 @@ void case_no_shaders_flag() {
     const RunResult rr = run(o, rec);
     CHECK(!rr.out.threw);
     CHECK(distinct_runs(rec.begins) == kOrderNoTextures);
-    CHECK(!has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache ="));
+    CHECK(!has(as_text(read_bytes((fs::path(out) / game().game_ini).string())), "shader_cache ="));
     CHECK(!fs::exists(fs::path(out) / "shader_cache"));
 }
 
@@ -718,7 +720,7 @@ void case_existing_shader_install() {
     first.shader_cache_src = make_shader_folder(s.path("shaders"));
     CHECK(!run(first, *std::make_unique<RecordingReporter>()).out.threw);
 
-    // Second run: no pack at all, and the shaders from the first run must be kept (and stay in mpr.ini).
+    // Second run: no pack at all, and the shaders from the first run must be kept (and stay in the game ini).
     SetupOptions again = base_opts(d.path, d.keys_file_path, d.build_id, out);
     again.allow_no_shaders = false;
     RecordingReporter rec;
@@ -727,10 +729,10 @@ void case_existing_shader_install() {
     CHECK(distinct_runs(rec.begins) == kOrderNoTextures);
     const fs::path spirv = fs::path(out) / "shader_cache" / "spirv";
     CHECK_EQ(count_files(spirv.string()), size_t(4));
-    CHECK(has(as_text(read_bytes((fs::path(out) / "mpr.ini").string())), "shader_cache = shader_cache/spirv"));
+    CHECK(has(as_text(read_bytes((fs::path(out) / game().game_ini).string())), "shader_cache = shader_cache/spirv"));
 }
 
-// ---- case 8: a hand-edited mpr.ini is left alone ----------------------------------------------------------------------------
+// ---- case 8: a hand-edited game ini is left alone ----------------------------------------------------------------------------
 void case_ini_protection() {
     Scratch s("ini");
     const SynthFiles files = romfs_files();
@@ -739,7 +741,7 @@ void case_ini_protection() {
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
     CHECK(!run(o, *std::make_unique<RecordingReporter>()).out.threw);
 
-    const std::string ini = (fs::path(out) / "mpr.ini").string();
+    const std::string ini = (fs::path(out) / game().game_ini).string();
     const std::vector<uint8_t> hand = to_bytes("[nvn]\nbc7_quality = 5\n# my own edits\n");
     write_bytes(ini, hand);
 

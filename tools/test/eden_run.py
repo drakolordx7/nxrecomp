@@ -32,7 +32,7 @@ import edengdb  # noqa: E402
 import edeninput  # noqa: E402
 
 DEFAULT_NSP = os.environ.get("MPR_DUMP", "")   # your own .nsp; or pass --nsp
-VK_SDK = r"C:\VulkanSDK\1.4.363.0\Bin"
+VK_SDK = os.path.join(os.environ.get("VULKAN_SDK", ""), "Bin")   # the Vulkan SDK installer sets VULKAN_SDK
 
 
 def convert_loop(frames_dir, out_dir, stop, index, scale=None):

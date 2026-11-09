@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real-data BC7 quality check for tools/setup (ASTC -> BC7 as setup does it) on the game's own textures.
 
-Runs mpr_texq (tools/setup/tools/texq.cpp) over every ASTC texture of an extracted RomFS (level 0, layer 0): ASTC decode ->
+Runs nx_texq (tools/setup/tools/texq.cpp) over every ASTC texture of an extracted RomFS (level 0, layer 0): ASTC decode ->
 BC7 at the setup quality -> reference BC7 decode (bc7enc_rdo bc7decomp_ref) -> PSNR and SSIM against the ASTC decode. Prints
 min / mean PSNR RGB, min PSNR alpha and min / mean SSIM per texture class, optionally next to the first-version converter
 (--baseline: opaque blocks without mode 6 and without channel rotation), and checks the floors below per texture.
@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-TEXQ = ROOT / "tools/setup/build/release/bin/mpr_texq.exe"
+TEXQ = ROOT / "tools/setup/build/release/bin/nx_texq.exe"
 
 FLOOR_RGB, FLOOR_ALPHA, FLOOR_SSIM = 33.0, 32.0, 0.95
 EXACT_ALPHA = 99.0   # texq reports 99.0 dB when the MSE is exactly zero
@@ -91,7 +91,7 @@ def main():
     ap.add_argument("--baseline", action="store_true", help="also measure the first-version converter (opaque: no mode 6, no rotation)")
     ap.add_argument("--out", default=str(ROOT / "work/texq"))
     ap.add_argument("--threads", type=int, default=0)
-    ap.add_argument("--tsv", help="use an existing mpr_texq TSV instead of running it (columns q<N> and q<N>l)")
+    ap.add_argument("--tsv", help="use an existing nx_texq TSV instead of running it (columns q<N> and q<N>l)")
     ap.add_argument("--texq", default=str(TEXQ))
     a = ap.parse_args()
 
@@ -100,7 +100,7 @@ def main():
     tsv = Path(a.tsv) if a.tsv else Path(a.out) / f"quality_{cfg}.tsv"
     if not a.tsv:
         if not Path(a.texq).exists():
-            print(f"FAIL: {a.texq} not found (pwsh tools\\setup\\scripts\\build.ps1 -Target mpr_texq)")
+            print(f"FAIL: {a.texq} not found (pwsh tools\\setup\\scripts\\build.ps1 -Target nx_texq)")
             return 2
         Path(a.out).mkdir(parents=True, exist_ok=True)
         cmd = [a.texq, "--romfs", a.romfs, "--configs", cfg + ("," + base if a.baseline else ""), "--stride", str(a.stride),

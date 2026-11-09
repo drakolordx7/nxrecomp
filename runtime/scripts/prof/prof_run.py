@@ -1,13 +1,13 @@
 """Run mpr.exe in a window for a fixed time with the frame trace on, then print the report.
 
-  python prof_run.py --exe game-build\\build\\display\\mpr.exe --cap 120 --seconds 40 --tag base120 [--vsync] [--env K=V ...] [--ini-extra "[sec]\\nkey=v"]
+  NX_GAME=<id> python prof_run.py [--exe <game exe>] --cap 120 --seconds 40 --tag base120 [--vsync] [--env K=V ...] [--ini-extra "[sec]\\nkey=v"]
 
 Runs in work\\run_prof_<tag> (its own controls.ini with the requested cap), shares work\\run\\bc7_cache. Output: work\\prof\\<tag>.trace,
 <tag>.json (the numbers) and the report on stdout. Needs the game folder at <project root>\\game (romfs) as boot.py does.
 """
 import argparse, ctypes, os, re, shutil, subprocess, sys, threading, time
 
-from project_root import project_root
+from project_root import game_exe, project_root
 ROOT = project_root()
 sys.path.insert(0, os.path.dirname(__file__))
 import ftrace_report
@@ -37,7 +37,7 @@ class CpuLoad:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--exe', default=os.path.join(ROOT, 'game-build', 'build', 'display', 'mpr.exe'))
+    ap.add_argument('--exe', default=game_exe())
     ap.add_argument('--cap', type=int, default=60)
     ap.add_argument('--seconds', type=int, default=40)
     ap.add_argument('--skip', type=float, default=10)

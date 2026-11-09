@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarise a mpr_texq TSV: min/mean PSNR RGB, PSNR A and SSIM per texture class and configuration, plus the worst files.
+"""Summarise a nx_texq TSV: min/mean PSNR RGB, PSNR A and SSIM per texture class and configuration, plus the worst files.
 usage: texq_report.py file.tsv [--worst N] [--cfg NAME]"""
 import sys, argparse
 import numpy as np

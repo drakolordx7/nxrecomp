@@ -9,6 +9,7 @@
 #include "check.h"
 #include "container.h"
 #include "fileio.h"
+#include "game.h"
 #include "log.h"
 
 using namespace mprs;
@@ -36,8 +37,8 @@ static int run() {
     auto c = open_container(dump);
     std::printf("container %s, %zu NCAs, %zu common tickets\n", c->kind.c_str(), c->ncas.size(), c->tickets.common.size());
     CHECK_EQ(c->kind, std::string("NSP"));
-    DumpTitle t = find_program(*c, keys, "010012101468C000");
-    CHECK_EQ(t.title_id, 0x010012101468C000ull);
+    DumpTitle t = find_program(*c, keys, game().title_id);
+    CHECK_EQ(t.title_id, std::strtoull(game().title_id, nullptr, 16));
     CHECK(t.have_version);
     CHECK_EQ(t.title_version, 0u);
     std::printf("program NCA: key generation %d, rights id %s\n", t.program->key_generation(), t.program->has_rights_id() ? "yes" : "no");
@@ -54,7 +55,7 @@ static int run() {
     if (m) {
         NsoInfo ni = nso_read_info(*exefs->open_file(*m));
         std::printf("main build id %s\n", ni.build_id().c_str());
-        CHECK_EQ(ni.build_id(), std::string("67C9CA1428222752F951021464A7B3597EB98FEC"));
+        CHECK_EQ(ni.build_id(), std::string(game().build_id));
     }
     auto img = t.program->open_romfs_image(1);
     auto rom = Romfs::open(img);

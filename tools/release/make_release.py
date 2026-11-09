@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Build the Windows x64 release of mpr: a release folder and a zip of it, audited before and after the zip is written.
+"""Build the Windows x64 release of one game (--game DIR, its manifest game.json names every file): a release folder and a zip of it, audited before and after the zip is written.
 
-    python tools/release/make_release.py [--out DIR] [--version V] [--no-shader-pack] [--allow-local-paths]
+    python tools/release/make_release.py --game DIR [--out DIR] [--version V] [--no-shader-pack] [--allow-local-paths]
                                          [--deny-hash-dir DIR ...] [--repo DIR] [--exe F] [--setup-bin DIR]
                                          [--shader-pack F] [--templates DIR] [--controls F] [--license F] [--notices F]
                                          [--prompts-dir DIR] [--launcher F]
 
 Output, in --out (default <repo>/work/release_out):
-    mpr-<version>-windows-x64/              the release folder
-    mpr-<version>-windows-x64.zip           the same folder zipped: one top-level folder, sorted entries, fixed timestamps
-    mpr-<version>-windows-x64.manifest.txt  the audit table and totals (written only on success)
-    mpr-<version>-windows-x64.zip.sha256    the zip's SHA-256 in the usual "<hash>  <name>" form
+    <prefix>-<version>-windows-x64/              the release folder
+    <prefix>-<version>-windows-x64.zip           the same folder zipped: one top-level folder, sorted entries, fixed timestamps
+    <prefix>-<version>-windows-x64.manifest.txt  the audit table and totals (written only on success)
+    <prefix>-<version>-windows-x64.zip.sha256    the zip's SHA-256 in the usual "<hash>  <name>" form
 Without the shader pack the folder and the zip get the suffix -noshaders.
 The prompt icon pack prompts/prompt_icons.pak and its licence prompts/LICENSE-Kenney-InputPrompts.txt are required,
 read from --prompts-dir (default <repo>/runtime/assets/prompts).
-The launcher mpr_launcher.exe is read from --launcher (default: next to --exe) and ships in the release root beside
-mpr.exe and the setup tools (mpr_setup.exe, mpr_setup_cli.exe).
+The launcher (<id>_launcher.exe) is read from --launcher (default: next to --exe) and ships in the release root beside
+the game exe and the setup tools (<id>_setup.exe, <id>_setup_cli.exe). Names are those in game.json `files`.
 
 Exit codes: 0 built and audited; 1 an I/O error; 2 a missing input or a bad option; 3 refused by the audit.
-A refused or failed build leaves none of its output behind. The .pdb and .map beside mpr.exe are never copied.
+A refused or failed build leaves none of its output behind. The .pdb and .map beside the game exe are never copied.
 The audit also refuses a shipped .exe or .dll that imports the dynamic MSVC or UCRT runtime (see CRT_PREFIXES).
 """
 import argparse
@@ -41,21 +41,14 @@ GIB = 1024 * MIB
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# The game this release is for: its program and file names, from games/<id>.json (MPR_RELEASE_GAME, default mpr).
-GAME_ID = os.environ.get('MPR_RELEASE_GAME') or 'mpr'
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'games', GAME_ID + '.json'), encoding='utf-8') as _f:
-    GAME = json.load(_f)
-
-RELEASE_PREFIX = GAME['release_prefix']          # <prefix>-<version>-windows-x64
-EXE_NAME = GAME['exe']
-SETUP_EXES = tuple(GAME['setup_exes'])
-SETUP_GLOB = GAME['setup_glob']
-LAUNCHER_NAME = GAME['launcher']                # starts the game; sits beside the game exe, built with the runtime
-GAME_INI = GAME['game_ini']
+# The game this release is for: its program and file names, from its manifest games/<id>/game.json (`files` and `release`), named
+# by --game DIR or NX_GAME_DIR. set_game() fills the names below.
+GAME = None
+RELEASE_PREFIX = EXE_NAME = SETUP_GLOB = LAUNCHER_NAME = GAME_INI = PACK_NAME = None   # <prefix>-<version>-windows-x64; the launcher
+SETUP_EXES = ()                                                                        # sits beside the game exe, built with the runtime
 DLL_GLOB = 'astcdec-*-shared.dll'
 DLL_COUNT = 3
-PACK_NAME = GAME['shader_pack']
-PACK_MAGIC = GAME['shader_pack_magic'].encode('ascii')
+PACK_MAGIC = b'MPRSHC01'                         # shader pack header (tools/setup/src/shadercache.h), the same for every game
 PROMPT_FILES = ('prompt_icons.pak', 'LICENSE-Kenney-InputPrompts.txt')   # required, shipped as prompts/<name>
 PROMPT_PACK = 'prompts/prompt_icons.pak'        # the only .pak the audit allows, by exact release path
 PROMPT_MAGIC = b'MPIP'                          # header of the prompt icon pack (scripts/build_prompt_pack.py)
@@ -100,7 +93,26 @@ KEY_TEXT = [
     (rb'(?i)master_key_00', 'master_key_00'),
     (rb'-----BEGIN', '-----BEGIN'),
 ]
-LEAK_FILES = (EXE_NAME, LAUNCHER_NAME) + SETUP_EXES
+LEAK_FILES = ()
+
+
+def set_game(game_dir):
+    """Read the game's manifest (<game_dir>/game.json) into the names above."""
+    global GAME, RELEASE_PREFIX, EXE_NAME, SETUP_EXES, SETUP_GLOB, LAUNCHER_NAME, GAME_INI, PACK_NAME, LEAK_FILES
+    path = os.path.join(game_dir, 'game.json')
+    if not os.path.isfile(path):
+        raise UsageError('game manifest not found: %s (--game names a game folder)' % path)
+    with open(path, encoding='utf-8') as f:
+        GAME = json.load(f)
+    files, rel = GAME['files'], GAME['release']
+    RELEASE_PREFIX = rel['prefix']
+    SETUP_GLOB = rel['setup_glob']
+    EXE_NAME = files['exe']
+    SETUP_EXES = (files['setup'], files['setup_cli'])
+    LAUNCHER_NAME = files['launcher']
+    GAME_INI = files['game_ini']
+    PACK_NAME = files['shader_pack']
+    LEAK_FILES = (EXE_NAME, LAUNCHER_NAME) + SETUP_EXES
 def _leak_patterns():
     # This machine's own paths and user name must never end up in a release: the checkout's parent folders, the
     # Windows user name and anything listed in MPR_LEAK_PATTERNS (comma separated).
@@ -163,14 +175,15 @@ def default_version(repo):
 
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--game', default=os.environ.get('NX_GAME_DIR'), help='game folder with the manifest game.json (default NX_GAME_DIR)')
     ap.add_argument('--repo', default=REPO, help='repository root; every default path below is relative to it')
     ap.add_argument('--out', help='output folder (default <repo>/work/release_out)')
     ap.add_argument('--version', help='version in the names (default: today plus git describe --always --dirty)')
-    ap.add_argument('--exe', help='mpr.exe of the package build (default <repo>/game-build/build/relpkg/mpr.exe, made by game-build/scripts/build.ps1 -Release); the astcdec DLLs come from its folder')
-    ap.add_argument('--launcher', help='mpr_launcher.exe (default: mpr_launcher.exe in the folder of --exe)')
-    ap.add_argument('--setup-bin', help='folder with mpr_setup.exe and mpr_setup_cli.exe (default <repo>/tools/setup/build/release/bin)')
-    ap.add_argument('--shader-pack', help='translated shader pack, copied as shader_cache.mprshc '
-                                          '(default <repo>/work/setup_test/shader_cache.mprshc)')
+    ap.add_argument('--exe', help='the game exe of the package build (default <repo>/game-build/build/relpkg/<exe>, made by game-build/scripts/build.ps1 -Release); the astcdec DLLs come from its folder')
+    ap.add_argument('--launcher', help='the launcher exe (default: the one in the folder of --exe)')
+    ap.add_argument('--setup-bin', help='folder with the setup exes (default <repo>/tools/setup/build/release/bin)')
+    ap.add_argument('--shader-pack', help='translated shader pack, copied under the shader_pack name of game.json '
+                                          '(default <repo>/work/setup_test/<shader_pack>)')
     ap.add_argument('--no-shader-pack', action='store_true', help='build the slim variant without the shader pack (-noshaders)')
     ap.add_argument('--templates', help='templates folder (default <repo>/tools/release/templates)')
     ap.add_argument('--controls', help='controls file shipped as controls.ini (default templates/controls.ini when present)')
@@ -187,6 +200,9 @@ def parse_args(argv):
 
 
 def resolve(o):
+    if not o.game:
+        raise UsageError('no game: pass --game DIR (or set NX_GAME_DIR)')
+    set_game(os.path.abspath(o.game))
     o.repo = os.path.abspath(o.repo)
 
     def under_repo(*parts):
