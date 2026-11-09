@@ -1,5 +1,4 @@
 #version 450
-// Test-scene vertex shader: one quad from gl_VertexIndex (triangle strip), rotated and placed by push constants.
 layout(push_constant) uniform PC {
     vec2 center;      // NDC
     vec2 half_size;   // in units of half the window height

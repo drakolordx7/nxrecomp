@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// SPIR-V rewrites (declarations in nvn_spirv_patch.h).
 #include "nvn_spirv_patch.h"
 
 #include <cstring>
@@ -7,7 +6,7 @@
 
 #include "nxrt/game/spirv_module.h"
 
-using namespace nxrt::spirv;   // the shared walker, opcodes and enumerants
+using namespace nxrt::spirv;
 
 namespace nxrt::nvn::be::gpu {
 
@@ -40,7 +39,7 @@ bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOut
         if (n.op == OpVariable && n.len >= 4 && in[n.at + 3] == ScOutput) output_vars[in[n.at + 2]] = in[n.at + 1];
     for (const SpvOutputSlot& s : slots)
         for (const auto& kv : output_location)
-            if (output_vars.count(kv.first) && kv.second == s.location) return false;   // already declared (as a single variable)
+            if (output_vars.count(kv.first) && kv.second == s.location) return false;
 
     std::vector<uint32_t> decos, decls, new_vars;
     auto scalar_id = [&](SpvScalar t) -> uint32_t {
@@ -177,7 +176,6 @@ bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, 
             if (is_captured(w[3])) whole[w[3]] = true;
         }
     }
-    // the captured variables in Location order, each narrowed to the components that are stored
     std::map<uint32_t, uint32_t> by_location;   // Location -> variable id
     for (const auto& kv : output_ptr_type)
         if (location.count(kv.first)) by_location[location[kv.first]] = kv.first;
@@ -330,7 +328,6 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
         if (n.op != OpVariable || n.len < 4 || !location.count(w[2])) continue;
         (w[3] == ScInput ? input_var : output_var)[location[w[2]]] = w[2];
     }
-    // every slot: an Input array [3] of vec4 and the Output variable spirv_add_outputs made
     std::vector<std::pair<uint32_t, uint32_t>> copies;   // (input var, output var)
     for (const SpvOutputSlot& s : slots) {
         if (!input_var.count(s.location) || !output_var.count(s.location)) return false;

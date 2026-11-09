@@ -78,7 +78,6 @@ bool tex_edit_level(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t
 void tex_edit_note(const Texture& t);   // the texture was given edited data (uploaded again when the answers change)
 int tex_edit_quality();                 // [nvn] tex_edit_quality, bc7e preset 0..6 (default 1)
 
-// Fast 64-bit hash of a byte range (xxHash64-style mix). Used for the cache key.
 uint64_t hash_bytes(const void* data, size_t size);
 
 // Cache file of a key: <[nvn] bc7_cache dir>/<first 2 hex digits>/<16 hex digits>.bc7. Empty when the cache is disabled.

@@ -42,7 +42,6 @@ uint32_t next_texture_id(const NVNdevice* device) {
     return g_texture_id.fetch_add(1);
 }
 
-// The level and layer a view selects; the texture's first level and layer when the view names none. False when out of range.
 bool select_level_layer(const TexLayout& L, const NVNtextureView* view, uint32_t& level, uint32_t& layer) {
     int lvl = 0, lay = 0;
     if (view) {
@@ -56,19 +55,17 @@ bool select_level_layer(const TexLayout& L, const NVNtextureView* view, uint32_t
     return true;
 }
 
-// Bytes of one layer of a pitch-linear texture.
 uint64_t linear_layer_bytes(const TextureBuilderInfo& b, const TexLayout& L) {
     const uint64_t rows = div_up(static_cast<uint64_t>(b.height), L.fmt->block_h);
     const uint64_t depth = b.target == NVN_TEXTURE_TARGET_3D ? static_cast<uint64_t>(b.depth) : 1;
     return L.pitch * rows * depth;
 }
 
-// What a texel call works on: the texture, its layout, and the level and layer the view selects.
 struct Target {
     Texture* t = nullptr;
     TexLayout L;
     uint32_t level = 0, layer = 0;
-    bool ok = false;   // false: no storage, unknown layout or a view out of range (the call does nothing)
+    bool ok = false;
     bool is3d() const { return t && t->b.target == NVN_TEXTURE_TARGET_3D; }
 };
 
@@ -100,13 +97,11 @@ bool region_ok(const Target& r, const NVNcopyRegion& g) {
     return true;
 }
 
-// Tight rows and images of the region in the caller's data: whole blocks, rows padded to nothing.
 void tight_strides(const Target& r, const NVNcopyRegion& g, int64_t& row, int64_t& image) {
     row = static_cast<int64_t>(div_up(g.width, r.L.fmt->block_w)) * r.L.fmt->bytes;
     image = row * static_cast<int64_t>(div_up(g.height, r.L.fmt->block_h));
 }
 
-// ---- block-linear texel copies: untile the level, move the region's rows, tile the level back ----------------------------
 void write_block_linear(const Target& r, const NVNcopyRegion& g, const uint8_t* src, int64_t row, int64_t image) {
     const tegra::LevelLayout& lv = r.L.layout.levels[r.level];
     const uint32_t bw = r.L.fmt->block_w, bh = r.L.fmt->block_h, bpb = r.L.fmt->bytes;
@@ -146,7 +141,6 @@ void read_block_linear(const Target& r, const NVNcopyRegion& g, uint8_t* dst, in
         }
 }
 
-// ---- pitch-linear texel copies: rows are stored as they are -------------------------------------------------------------
 void write_linear(const Target& r, const NVNcopyRegion& g, const uint8_t* src, int64_t row, int64_t image) {
     const TextureBuilderInfo& b = r.t->b;
     const uint64_t bpb = r.L.fmt->bytes, pitch = r.L.pitch;
@@ -189,19 +183,18 @@ void write_texels(const Target& r, const NVNcopyRegion& g, const uint8_t* src, i
 }
 
 void read_texels(const Target& r, const NVNcopyRegion& g, uint8_t* dst, int64_t row, int64_t image) {
-    gpu::download_texture(r.t);   // false: no GPU image to read back, the storage is read as it is
+    gpu::download_texture(r.t);
     if (r.L.block_linear) read_block_linear(r, g, dst, row, image);
     else read_linear(r, g, dst, row, image);
 }
 
-// ---- entry points ---------------------------------------------------------------------------------------------------------
 NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* builder) {
     if (!texture || !builder) return 0;
     const TextureBuilderInfo info = decode(builder);
     const TexLayout L = be::compute_texture_layout(info);
     if (!L.valid) return 0;
     MemoryPool* pool = be::host_of<MemoryPool>(info.pool);
-    if (!pool) return 0;                                     // no pool, or a pool that is not ours
+    if (!pool) return 0;
     if (!pool->is_virtual && (info.offset < 0 || static_cast<uint64_t>(info.offset) + L.storage_size > pool->size)) return 0;
 
     Texture* t = new Texture();
@@ -221,15 +214,15 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
     t->layers = L.layers;
     t->id = next_texture_id(info.device);
     g_textures_created.add(1);
-    const bool was_live = tex_of(texture) != nullptr;        // initialized over a live texture: replaced, not added
+    const bool was_live = tex_of(texture) != nullptr;
 
-    if (Texture* old = tex_of(texture)) {                    // initialized twice: the old one goes
+    if (Texture* old = tex_of(texture)) {
         be::texture_registry_remove(old);
         be::texture_registry_remove_virtual(old);
         old->destroyed.store(true);
         gpu::release_texture_gpu(old);
     }
-    be::bind_guest(texture, t);                              // the guest object takes the one reference of t
+    be::bind_guest(texture, t);
     if (!was_live) g_textures.add(1);
     be::texture_registry_add(t);
     be::texture_registry_add_virtual(t);
@@ -253,12 +246,12 @@ void nvnTextureFinalize(NVNtexture* texture) {
 
 void nvnTextureSetDebugLabel(NVNtexture* texture, const char* label) {
     (void)texture;
-    (void)label;   // be::Texture has no label field; the label is dropped
+    (void)label;
 }
 
 size_t nvnTextureGetZCullStorageSize(const NVNtexture* texture) {
     (void)texture;
-    return 0;   // no ZCull storage in this back end
+    return 0;
 }
 
 NVNstorageClass nvnTextureGetStorageClass(const NVNtexture* texture) {
@@ -454,7 +447,6 @@ uint64_t nvnTextureGetDebugID(const NVNtexture* texture) {
     return t ? t->id : 0;
 }
 
-// ---- builder queries that need the layout (the rest of the builder is in api_texture_builder.cpp) -----------------------
 size_t nvnTextureBuilderGetStorageSize(const NVNtextureBuilder* builder) {
     if (!builder) return 0;
     const TexLayout L = be::compute_texture_layout(decode(builder));

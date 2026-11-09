@@ -66,7 +66,6 @@ uint64_t handle_register(Ref<CmdList> list) {
     list->handle = h;
     std::lock_guard<std::mutex> lk(g_mu);
     if (list->mem_end > list->mem_start) {
-        // drop every older list whose region overlaps this one
         auto it = g_regions.lower_bound(list->mem_start);
         if (it != g_regions.begin()) {
             auto prev = std::prev(it);

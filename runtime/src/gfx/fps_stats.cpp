@@ -17,13 +17,12 @@ void FpsStats::reset() {
 }
 
 void FpsStats::push(double now_s, double dt_ms) {
-    if (count_ == kMaxFrames) {          // full: drop the oldest frame
+    if (count_ == kMaxFrames) {
         head_ = (head_ + 1) % kMaxFrames;
         --count_;
     }
     ring_[(head_ + count_) % kMaxFrames] = {now_s, dt_ms};
     ++count_;
-    // frames are in time order: drop the ones older than the long window from the front
     while (count_ > 0 && ring_[head_].t < now_s - kLongWindowS) {
         head_ = (head_ + 1) % kMaxFrames;
         --count_;
@@ -32,7 +31,7 @@ void FpsStats::push(double now_s, double dt_ms) {
 
 FpsStats::Snapshot FpsStats::snapshot(double now_s) const {
     Snapshot s;
-    std::vector<double> dts;   // frame times of the last 5 s
+    std::vector<double> dts;
     dts.reserve(count_);
     double sum_short = 0, max_short = 0;
     std::size_t n_short = 0;
@@ -46,14 +45,13 @@ FpsStats::Snapshot FpsStats::snapshot(double now_s) const {
             ++n_short;
         }
     }
-    if (n_short < 2) return s;   // not valid yet
+    if (n_short < 2) return s;
 
     s.valid = true;
     s.avg_ms = sum_short / static_cast<double>(n_short);
     s.fps = s.avg_ms > 0 ? 1000.0 / s.avg_ms : 0.0;
     s.max_ms = max_short;
 
-    // the slowest 1 % (at least one frame): their mean frame time gives the low
     std::sort(dts.begin(), dts.end(), std::greater<double>());
     const std::size_t k = std::max<std::size_t>(1, dts.size() / 100);
     double sum_slow = 0;

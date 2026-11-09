@@ -23,7 +23,6 @@ inline void wr64(void* p, uint64_t v) { std::memcpy(p, &v, 8); }
 inline uint8_t rdb(const void* p, size_t off) { return static_cast<const uint8_t*>(p)[off]; }
 inline void wrb(void* p, size_t off, uint8_t v) { static_cast<uint8_t*>(p)[off] = v; }
 
-// A field of `width` bits at `shift` in a word.
 inline uint64_t get_bits(uint64_t w, unsigned shift, unsigned width) { return (w >> shift) & ((uint64_t{1} << width) - 1); }
 inline uint64_t set_bits(uint64_t w, unsigned shift, unsigned width, uint64_t v) {
     const uint64_t mask = (uint64_t{1} << width) - 1;
@@ -38,7 +37,6 @@ inline bool writes_front(NVNface f) { return (static_cast<unsigned>(f) & kFront)
 inline bool writes_back(NVNface f) { return (static_cast<unsigned>(f) & kBack) != 0; }
 inline unsigned read_index(NVNface f) { return (writes_back(f) && !writes_front(f)) ? 1u : 0u; }
 
-// ---- depth-stencil state (smo layout, see the file header)
 constexpr uint64_t kDsDefaults = 0x1111118822ull;   // smo ds_defaults
 inline unsigned stencil_func_shift(unsigned face) { return 8u + 4u * face; }
 inline unsigned stencil_op_shift(unsigned face) { return 16u + 12u * face; }
@@ -91,7 +89,6 @@ void nvnDepthStencilStateGetStencilOp(const NVNdepthStencilState* s, NVNface fac
     if (depth_pass) *depth_pass = static_cast<NVNstencilOp>(static_cast<int>((ops >> 8) & 15u));
 }
 
-// ---- polygon state (four bytes)
 constexpr size_t kPolyCull = 0, kPolyFront = 1, kPolyMode = 2, kPolyOffset = 3;
 static_assert(4 <= sizeof(NVNpolygonState), "polygon layout fits the NVN object");
 
@@ -114,13 +111,11 @@ NVNpolygonOffsetEnable nvnPolygonStateGetPolygonOffsetEnables(const NVNpolygonSt
     return static_cast<NVNpolygonOffsetEnable>(rdb(s, kPolyOffset));
 }
 
-// ---- multisample state (0x18 bytes)
 constexpr size_t kMsEnable = 0, kMsA2C = 1, kMsA2CDither = 2, kMsFlags = 3, kMsSamples = 4, kMsRasterSamples = 5;
 constexpr size_t kMsLocations = 8;
 constexpr unsigned kMsLocationCount = 16;
 static_assert(kMsLocations + kMsLocationCount <= sizeof(NVNmultisampleState), "multisample layout fits the NVN object");
 
-// bits of the flags byte
 constexpr unsigned kFlagC2C = 0, kFlagLocations = 1, kFlagGrid = 2, kFlagCovMod = 3, kFlagC2COut = 5;
 
 inline unsigned get_flag(const void* s, unsigned shift, unsigned width) {
@@ -244,7 +239,6 @@ MultisampleInfo decode(const NVNmultisampleState* s) {
 }
 
 void register_api_depth_poly_ms() {
-    // depth-stencil state
     NVN_REG(nvnDepthStencilStateSetDefaults);
     NVN_REG(nvnDepthStencilStateSetDepthTestEnable);
     NVN_REG(nvnDepthStencilStateSetDepthWriteEnable);
@@ -258,7 +252,6 @@ void register_api_depth_poly_ms() {
     NVN_REG(nvnDepthStencilStateGetStencilTestEnable);
     NVN_REG(nvnDepthStencilStateGetStencilFunc);
     NVN_REG(nvnDepthStencilStateGetStencilOp);
-    // polygon state
     NVN_REG(nvnPolygonStateSetDefaults);
     NVN_REG(nvnPolygonStateSetCullFace);
     NVN_REG(nvnPolygonStateSetFrontFace);
@@ -268,7 +261,6 @@ void register_api_depth_poly_ms() {
     NVN_REG(nvnPolygonStateGetFrontFace);
     NVN_REG(nvnPolygonStateGetPolygonMode);
     NVN_REG(nvnPolygonStateGetPolygonOffsetEnables);
-    // multisample state
     NVN_REG(nvnMultisampleStateSetDefaults);
     NVN_REG(nvnMultisampleStateSetMultisampleEnable);
     NVN_REG(nvnMultisampleStateSetSamples);

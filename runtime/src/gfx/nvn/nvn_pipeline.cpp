@@ -90,7 +90,7 @@ std::atomic<bool> g_cache_ready{false};
 
 void ensure_cache() {
     if (g_cache_ready.load(std::memory_order_acquire)) return;
-    std::lock_guard<std::mutex> lk(g_cache_mu);       // the prewarm workers and the render thread may get here together
+    std::lock_guard<std::mutex> lk(g_cache_mu);
     if (g_cache_tried) return;
     g_cache_tried = true;
     g_cache_path = nvn_settings().pipeline_cache;
@@ -130,7 +130,6 @@ void save_cache() {
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, nullptr) != VK_SUCCESS || !n) return;
     std::vector<char> data(n);
     if (vkGetPipelineCacheData(vkdev(), g_cache, &n, data.data()) != VK_SUCCESS) return;
-    // written to a temporary file and renamed, so a process that ends in the middle of it leaves the old cache intact
     const std::string tmp = g_cache_path + ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
@@ -180,8 +179,8 @@ static VkShaderModule create_module(const std::vector<uint32_t>& words, const ch
         std::vector<spirv::Inst> insts;
         spirv::split(w, insts);                                               // a malformed tail is left as it is
         for (const spirv::Inst& n : insts) {
-            if (n.op == spirv::OpCapability && n.len >= 2 && w[n.at + 1] == 10) cap_at = n.at;              // OpCapability Float64
-            if (n.op == spirv::OpTypeFloat && n.len >= 3 && w[n.at + 2] == 64) uses64 = true;              // OpTypeFloat 64
+            if (n.op == spirv::OpCapability && n.len >= 2 && w[n.at + 1] == 10) cap_at = n.at;
+            if (n.op == spirv::OpTypeFloat && n.len >= 3 && w[n.at + 2] == 64) uses64 = true;
         }
         if (cap_at && !uses64) {
             fixed = w;
@@ -368,7 +367,7 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
         }
     }
     std::vector<VkDescriptorSetLayoutBinding> lbs[4];
-    std::string sig;                                   // the descriptors of the program, as bytes: the key of the shared layout
+    std::string sig;
     for (int set = 0; set < 4; ++set) {
         for (const BindingDesc& d : pl.bindings) {
             if (d.set != static_cast<uint32_t>(set)) continue;
@@ -411,7 +410,6 @@ const ProgLayout* prog_layout(const ShaderInfo* const stages[6]) {
 }
 
 std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key) {
-    // vertex inputs the shader declares as floats but the game feeds with integer attributes (key formats UINT / SINT)
     std::vector<SpvIntSlot> int_slots;
     if (key.stage[0] && !key.xfb)
         for (uint32_t k = 0; k < key.attr_count && k < 16; ++k) {
@@ -431,12 +429,11 @@ std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key) {
 
 bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
     *out = StageModules{};
-    // the stage that feeds the fragment shader gets outputs for the varyings the fragment shader reads and it does not write
     const int feeder = key.stage[2] ? 2 : 0;
     const std::vector<SpvIntSlot> int_slots = key_int_slots(key);
     for (int i = 0; i < 3; ++i) {
         if (!key.stage[i]) continue;
-        if (key.xfb && i != 0) continue;     // stream-out draws run the vertex stage only
+        if (key.xfb && i != 0) continue;
         if (key.xfb) {
             VkShaderModule m = xfb_variant(key.stage[0]).first;
             if (!m) return false;
@@ -500,7 +497,6 @@ VkPipeline build_graphics_pipeline(const GraphicsKey& key, const ProgLayout& lay
         ++ns;
     }
 
-    // vertex input
     VkVertexInputBindingDescription vb[16];
     VkVertexInputAttributeDescription va[16];
     uint32_t nvb = 0, nva = 0;
@@ -610,19 +606,19 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
             if (e.up && e.up->state.load(std::memory_order_acquire) != 0) gpl_take_upgrade(e.second, e.up);
             return e.second;
         }
-    g_gfx_keys.add(1);                           // every path below adds one entry to the bucket
+    g_gfx_keys.add(1);
     prewarm_init();
     VkPipeline pipe = VK_NULL_HANDLE;
-    if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
+    if (prewarm_take(key, &pipe)) {
         ++g_pipeline_count;
         bucket.push_back({key, pipe, nullptr});
         return pipe;
     }
     std::shared_ptr<PipeUpgrade> up;
-    pipe = gpl_link(key, layout, &up);           // linked from shader parts compiled ahead (null: not eligible or a part failed)
+    pipe = gpl_link(key, layout, &up);
     if (pipe) {
         ++g_pipeline_count;
-        prewarm_record(key);                     // the next run builds the whole pipeline ahead of the draw
+        prewarm_record(key);
         bucket.push_back({key, pipe, up});
         return pipe;
     }
@@ -661,7 +657,7 @@ VkPipeline compute_pipeline(const ShaderInfo* cs, const ProgLayout& layout) {
     g_new_since_save.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    g_compute[k] = pipe;                         // new key: the lookup above missed
+    g_compute[k] = pipe;
     g_compute_keys.add(1);
     return pipe;
 }
@@ -724,17 +720,17 @@ void pipeline_shutdown() {
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket) {
             if (e.second) vkDestroyPipeline(d, e.second, nullptr);
-            if (e.up && e.up->state.load() == 1 && e.up->pipe) vkDestroyPipeline(d, e.up->pipe, nullptr);     // built and never taken
+            if (e.up && e.up->state.load() == 1 && e.up->pipe) vkDestroyPipeline(d, e.up->pipe, nullptr);
         }
     g_gfx.clear();
     g_gfx_keys.sub(g_gfx_keys.get());
-    gpl_shutdown();                              // the parts the pipelines were linked from
+    gpl_shutdown();
     for (auto& [k, p] : g_compute)
         if (p) vkDestroyPipeline(d, p, nullptr);
     g_compute.clear();
     g_compute_keys.sub(g_compute_keys.get());
     g_layouts.clear();
-    for (auto& [k, l] : g_shared_layouts) {          // the handles in g_layouts were copies of these
+    for (auto& [k, l] : g_shared_layouts) {
         if (l.layout) vkDestroyPipelineLayout(d, l.layout, nullptr);
         for (VkDescriptorSetLayout s : l.sets)
             if (s) vkDestroyDescriptorSetLayout(d, s, nullptr);

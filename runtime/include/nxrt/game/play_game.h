@@ -24,8 +24,8 @@ namespace nxrt::play {
 class GameHost {
 public:
     virtual ~GameHost() = default;
-    virtual const Settings& settings() const = 0;                 // the settings in force
-    virtual bool action_active(Act a, uint64_t now_ns) const = 0;  // a binding of the action is held
+    virtual const Settings& settings() const = 0;
+    virtual bool action_active(Act a, uint64_t now_ns) const = 0;
     // The right stick as the game gets it (dead zone, invert and sensitivity applied), -1..1, + = right and up.
     virtual void right_stick(float* x, float* y) const = 0;
     // A pad is looking up or down right now (the right stick's vertical axis off centre, or the gyro turning about the pad's pitch axis).
@@ -34,7 +34,7 @@ public:
     // The game's per-tick player-input function was entered (the game is in play: the context detection and Stats count it). Returns the mouse
     // counts gathered since the last frame boundary on the first call after it (pumping the window's events once more first), zero after that.
     virtual void input_tick(double* dx, double* dy) = 0;
-    virtual void aim_applied(double dx, double dy) = 0;           // Stats: the aim used these counts
+    virtual void aim_applied(double dx, double dy) = 0;
     virtual double pitch_limit_deg() const = 0;                   // [play] pitch_limit_deg
     virtual bool log_status() const = 0;                          // [play] log_status
 };

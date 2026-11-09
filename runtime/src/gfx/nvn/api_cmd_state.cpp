@@ -28,7 +28,6 @@ namespace {
 
 CommandBuffer* cb_of(NVNcommandBuffer* c) { return host_of<CommandBuffer>(c); }
 
-// Runs fn(list) with the command buffer locked, but only while a list is being recorded.
 template <class F>
 void with_rec(NVNcommandBuffer* c, F&& fn) {
     CommandBuffer* cb = cb_of(c);
@@ -38,7 +37,6 @@ void with_rec(NVNcommandBuffer* c, F&& fn) {
     fn(*cb->rec);
 }
 
-// The raw bytes of a state object, as the record keeps them.
 template <class S>
 P_RawState raw_state(const S* s) {
     static_assert(sizeof(S) <= 0x18, "state objects fit the record payload");
@@ -65,7 +63,6 @@ void emit_f32(NVNcommandBuffer* c, Op op, float v) {
     with_rec(c, [&](CmdList& l) { l.emit(op, p); });
 }
 
-// Buffer bindings: kind and stage, then `count` ranges (address, size) as blob.
 void emit_buffers(NVNcommandBuffer* c, uint32_t kind, uint32_t stage, int first, int count, const NVNbufferRange* ranges) {
     if (count <= 0 || !ranges) return;
     const P_BindBuffers p{kind, stage, static_cast<uint32_t>(first), static_cast<uint32_t>(count)};
@@ -78,7 +75,6 @@ void emit_buffer(NVNcommandBuffer* c, uint32_t kind, uint32_t stage, int index, 
     emit_buffers(c, kind, stage, index, 1, &r);
 }
 
-// Texture or image handles: stage, first slot, then the 64-bit handles as blob.
 void emit_handles(NVNcommandBuffer* c, Op op, NVNshaderStage stage, int first, int count, const uint64_t* handles) {
     if (count <= 0 || !handles) return;
     const P_BindTextures p{static_cast<uint32_t>(stage), static_cast<uint32_t>(first), static_cast<uint32_t>(count), 0};
@@ -92,14 +88,12 @@ void emit_handles(NVNcommandBuffer* c, Op op, NVNshaderStage stage, int first, i
     });
 }
 
-// Fills a render target entry: the texture (or null) and its view when one was given.
 void set_view(TargetRef& t, const NVNtextureView* v) {
     if (!v) return;
     t.view = decode(v);
     t.has_view = 1;
 }
 
-// ---- state objects: the raw bytes are recorded by value -------------------------------------------------------------------
 void nvnCommandBufferBindBlendState(NVNcommandBuffer* c, const NVNblendState* s) { record_state(c, Op::BindBlend, s); }
 void nvnCommandBufferBindChannelMaskState(NVNcommandBuffer* c, const NVNchannelMaskState* s) { record_state(c, Op::BindChannelMask, s); }
 void nvnCommandBufferBindColorState(NVNcommandBuffer* c, const NVNcolorState* s) { record_state(c, Op::BindColor, s); }
@@ -131,7 +125,6 @@ void nvnCommandBufferBindProgram(NVNcommandBuffer* c, const NVNprogram* program,
     with_rec(c, [&](CmdList& l) { l.hold(prog); l.emit(Op::BindProgram, p); });
 }
 
-// ---- vertex, uniform, storage and transform feedback buffers ----------------------------------------------------------------
 void nvnCommandBufferBindVertexBuffer(NVNcommandBuffer* c, int index, NVNbufferAddress addr, size_t size) {
     emit_buffer(c, kBufVertex, 0, index, addr, size);
 }
@@ -157,7 +150,6 @@ void nvnCommandBufferBindTransformFeedbackBuffers(NVNcommandBuffer* c, int first
     emit_buffers(c, kBufXfb, 0, first, count, ranges);
 }
 
-// ---- textures and images ------------------------------------------------------------------------------------------------------
 void nvnCommandBufferBindTexture(NVNcommandBuffer* c, NVNshaderStage stage, int slot, NVNtextureHandle h) {
     emit_handles(c, Op::BindTextures, stage, slot, 1, &h);
 }
@@ -206,7 +198,6 @@ void nvnCommandBufferSetSamplerPool(NVNcommandBuffer* c, const NVNsamplerPool* p
     with_rec(c, [&](CmdList& l) { l.hold(sp); l.emit(Op::SetSamplerPool, p); });
 }
 
-// ---- viewports, scissors, depth ranges ----------------------------------------------------------------------------------------
 void nvnCommandBufferSetViewport(NVNcommandBuffer* c, int x, int y, int w, int h) {
     const float r[4] = {static_cast<float>(x), static_cast<float>(y), static_cast<float>(w), static_cast<float>(h)};
     const P_Rects p{0, 1};
@@ -218,7 +209,7 @@ void nvnCommandBufferSetViewports(NVNcommandBuffer* c, int first, int count, con
     const uint32_t bytes = static_cast<uint32_t>(count) * 16u;
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetViewports, p, rects, bytes); });
 }
-void nvnCommandBufferSetViewportSwizzles(NVNcommandBuffer*, int, int, const NVNviewportSwizzle*) {}   // not recorded
+void nvnCommandBufferSetViewportSwizzles(NVNcommandBuffer*, int, int, const NVNviewportSwizzle*) {}
 
 void nvnCommandBufferSetScissor(NVNcommandBuffer* c, int x, int y, int w, int h) {
     const int32_t r[4] = {x, y, w, h};
@@ -248,7 +239,6 @@ void nvnCommandBufferSetDepthBounds(NVNcommandBuffer* c, NVNboolean enable, floa
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetDepthBounds, p); });
 }
 
-// ---- stencil ------------------------------------------------------------------------------------------------------------------
 void stencil(NVNcommandBuffer* c, uint32_t what, NVNface face, int value) {
     const P_Stencil p{what, static_cast<uint32_t>(face), static_cast<uint32_t>(value), 0};
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetStencil, p); });
@@ -257,7 +247,6 @@ void nvnCommandBufferSetStencilRef(NVNcommandBuffer* c, NVNface face, int ref) {
 void nvnCommandBufferSetStencilValueMask(NVNcommandBuffer* c, NVNface face, int mask) { stencil(c, 1, face, mask); }
 void nvnCommandBufferSetStencilMask(NVNcommandBuffer* c, NVNface face, int mask) { stencil(c, 2, face, mask); }
 
-// ---- fixed-function values ----------------------------------------------------------------------------------------------------
 void nvnCommandBufferSetBlendColor(NVNcommandBuffer* c, const float* rgba) {
     if (!rgba) return;
     P_BlendColor p{};
@@ -279,8 +268,8 @@ void nvnCommandBufferSetDepthClamp(NVNcommandBuffer* c, NVNboolean enable) { emi
 void nvnCommandBufferSetConservativeRasterEnable(NVNcommandBuffer* c, NVNboolean enable) {
     emit_u32(c, Op::SetConservativeRaster, static_cast<uint32_t>(enable));
 }
-void nvnCommandBufferSetConservativeRasterDilate(NVNcommandBuffer*, float) {}     // not recorded
-void nvnCommandBufferSetSubpixelPrecisionBias(NVNcommandBuffer*, int, int) {}     // not recorded
+void nvnCommandBufferSetConservativeRasterDilate(NVNcommandBuffer*, float) {}
+void nvnCommandBufferSetSubpixelPrecisionBias(NVNcommandBuffer*, int, int) {}
 void nvnCommandBufferSetPrimitiveRestart(NVNcommandBuffer* c, NVNboolean enable, int index) {
     const P_PrimitiveRestart p{static_cast<uint32_t>(enable), static_cast<uint32_t>(index)};
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetPrimitiveRestart, p); });
@@ -304,7 +293,6 @@ void nvnCommandBufferSetOuterTessellationLevels(NVNcommandBuffer* c, const float
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetTessLevels, p); });
 }
 
-// ---- render enable --------------------------------------------------------------------------------------------------------------
 void nvnCommandBufferSetRenderEnable(NVNcommandBuffer* c, NVNboolean enable) { emit_u32(c, Op::SetRenderEnable, static_cast<uint32_t>(enable)); }
 // Conditional render shares Op::SetRenderEnable; its payload is 16 bytes, the plain one 8, so the replay tells them apart.
 void nvnCommandBufferSetRenderEnableConditional(NVNcommandBuffer* c, NVNconditionalRenderMode mode, NVNbufferAddress address) {
@@ -312,11 +300,10 @@ void nvnCommandBufferSetRenderEnableConditional(NVNcommandBuffer* c, NVNconditio
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetRenderEnable, p); });
 }
 
-// ---- render targets and coverage ------------------------------------------------------------------------------------------------
 void nvnCommandBufferSetRenderTargets(NVNcommandBuffer* c, int count, const NVNtexture* const* colors, const NVNtextureView* const* views,
                                       const NVNtexture* depth, const NVNtextureView* depth_view) {
     P_RenderTargets p;
-    std::memset(&p, 0, sizeof p);   // every entry (and every padding word) is deterministic
+    std::memset(&p, 0, sizeof p);
     p.count = static_cast<uint32_t>(std::clamp(count, 0, 8));
     for (uint32_t i = 0; i < p.count; ++i) {
         TargetRef& t = p.color[i];
@@ -338,7 +325,6 @@ void nvnCommandBufferBindCoverageModulationTable(NVNcommandBuffer* c, const floa
     with_rec(c, [&](CmdList& l) { l.emit(Op::SetCoverageModulationTable, unused, table, static_cast<uint32_t>(16 * sizeof(float))); });
 }
 
-// ---- accepted and not recorded ----------------------------------------------------------------------------------------------------
 void nvnCommandBufferSetShaderScratchMemory(NVNcommandBuffer*, const NVNmemoryPool*, ptrdiff_t, size_t) {}
 void nvnCommandBufferSetProgramSubroutines(NVNcommandBuffer*, NVNprogram*, NVNshaderStage, const int, const int, const int*) {}
 void nvnCommandBufferSetTiledCacheAction(NVNcommandBuffer*, NVNtiledCacheAction) {}

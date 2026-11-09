@@ -27,12 +27,11 @@ constexpr COLORREF kAmber = RGB(0x8A, 0x5A, 0x00);
 struct Env {
     HINSTANCE inst = nullptr;
     int dpi = 96;
-    HFONT font = nullptr;   // regular
-    HFONT bold = nullptr;   // semi-bold
+    HFONT font = nullptr;
+    HFONT bold = nullptr;
     int S(int px) const { return MulDiv(px, dpi, 96); }
 };
 
-// What a page may ask of the window that holds it.
 class Host {
 public:
     virtual ~Host() = default;
@@ -169,7 +168,6 @@ bool capture_input(HWND owner, const Env& env, const std::wstring& what, nxrt::p
 // the player cancelled (Escape or closed it). Without a controller it says so and keeps waiting for one.
 bool capture_pad_button(HWND owner, const Env& env, int* out_source);
 
-// Message-box helpers with the launcher's title.
 int message(HWND owner, const std::wstring& text, UINT type = MB_OK | MB_ICONINFORMATION);
 std::wstring input_label(const nxrt::play::InputId& id);   // the player-facing name of an input ("Left Ctrl", "Left mouse button", "Wheel up")
 

@@ -31,7 +31,7 @@ enum SourceMask : uint8_t {
 
 struct Entry {
     const char* name;
-    char ret;              // return class
+    char ret;
     const char* args;      // argument classes, "" for none, "?" for unknown
     uint8_t sources;       // SourceMask bits
 };
@@ -42,14 +42,12 @@ struct StructSize {
     uint8_t sources;
 };
 
-// ---- the table --------------------------------------------------------------------------------------------------------
 size_t entry_count();
 const Entry& entry_at(size_t index);
 int entry_index(const char* name);                 // -1 when the name is not an NVN entry point
 const StructSize* struct_sizes(size_t* count);     // NVN object sizes (NVNdevice 0x3000, NVNtexture 0xC0, ...); the registered game's own sizes replace the generated ones
 uint32_t struct_size(const char* name);            // 0 when unknown
 
-// ---- installation -----------------------------------------------------------------------------------------------------
 // Registers the HLE thunks: `nvnBootstrapLoader`, `nvnDeviceGetProcAddress` and a logging stub for every other entry point.
 // Idempotent. The module loader then resolves a guest import of any of these names to its thunk.
 void install();
@@ -60,14 +58,12 @@ void set_unknown_policy(UnknownPolicy p);
 // Guest address of the thunk for a name (what nvnBootstrapLoader returns); 0 for a null answer.
 uint64_t proc_address(const char* name);
 
-// ---- implementing entry points ----------------------------------------------------------------------------------------
 // Replaces the stub of an entry point by a real handler (called with the guest registers like any HLE function; read the
 // arguments from x0.. / v0.., write the result to x0 / v0). False when the name is not in the table.
 bool register_impl(const char* name, HleFn fn);
 bool is_implemented(const char* name);
 size_t implemented_count();
 
-// ---- reporting --------------------------------------------------------------------------------------------------------
 struct CallStat {
     const Entry* entry;
     uint64_t calls;
@@ -77,8 +73,6 @@ uint64_t entry_calls(size_t index);                // calls of the entry so far 
 uint64_t stub_calls_total();                       // calls that reached a logging stub
 size_t stubs_called_distinct();                    // distinct entry points that were called while still stubs
 std::vector<CallStat> called_entries();            // every entry with at least one call, most called first
-// How many calls of each stub are logged at Info before it goes quiet ([nvn] log_first_calls, default 3); all calls are
-// logged at Trace.
 // Formats the arguments of a call as the stub logs them, e.g. "p=0x7a00001000 i=7 l=0x40". For tests and tools.
 std::string describe_args(const Entry& e, const ::Ctx* c);
 void reset_counters();                             // tests

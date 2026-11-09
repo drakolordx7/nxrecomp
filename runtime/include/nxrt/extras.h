@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Display extras (S14): HDR output, upscaling and low-latency modes.
-//
 // Everything here is off by default except HDR "auto" (HDR is used when the display and Windows offer it). The settings are read once at
 // start-up from the play-mode settings file (controls.ini, sections [hdr] [upscale] [latency]) with the game's ini / environment overrides,
 // and the live part can be changed from the F1 page. The pieces:
@@ -15,7 +13,6 @@
 
 namespace nxrt::extras {
 
-// ---- settings --------------------------------------------------------------------------------------------------------------------
 enum class HdrMode : uint8_t { Off = 0, Auto, On };            // Auto: HDR when the display offers it. On: the HDR scene pipeline even without an HDR display
 enum class HdrFormat : uint8_t { Auto = 0, Hdr10, ScRgb };     // swapchain flavour (Auto: HDR10 when offered, else scRGB)
 
@@ -59,13 +56,12 @@ UpscaleMode upscale_mode();
 float upscale_sharpness();
 int upscale_scene_scale();          // percent, 100 = off (the game is told through GameRender::scene_scale; without that hook the value has no effect)
 
-// ---- HDR runtime state ---------------------------------------------------------------------------------------------------------
 enum class OutputKind : uint8_t { Sdr8 = 0, Hdr10, ScRgb };
 const char* output_kind_name(OutputKind k);
 
 struct HdrState {
     bool scene_hdr = false;          // the game runs the HDR scene pipeline: float window / post targets, patched tone-map shader and curve
-    OutputKind output = OutputKind::Sdr8;   // what the swapchain carries
+    OutputKind output = OutputKind::Sdr8;
     float paper_white_nits = 203;
     float peak_nits = 1000;
     float peak_ratio = 1;            // asymptote of the extended shoulder, in paper-white units (1 = the game's own SDR curve)

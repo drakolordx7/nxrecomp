@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HDR overlay composite (overlay_composite.h).
 #include "extras/overlay_composite.h"
 
 #include <algorithm>
@@ -178,7 +177,6 @@ VkPipeline OverlayComposite::pipeline(VkFormat fmt) {
     rs.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo ms = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    // premultiplied-alpha "over" of the encoded colour onto the swapchain: colour SRC_ALPHA / ONE_MINUS_SRC_ALPHA, alpha ONE / ONE_MINUS_SRC_ALPHA
     VkPipelineColorBlendAttachmentState cba = {};
     cba.blendEnable = VK_TRUE;
     cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
@@ -239,7 +237,6 @@ void OverlayComposite::composite(VkCommandBuffer cb, VkImageView dst_view, VkFor
     VkPipeline pipe = pipeline(dst_format);
     if (!pipe) return;
 
-    // the overlay rendered into the target: make it readable by the fragment shader
     image_barrier(cb, target_.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                   VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);

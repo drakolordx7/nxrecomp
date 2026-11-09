@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Low-latency modes (include/nxrt/lowlat.h): NVIDIA Reflex (VK_NV_low_latency2) and AMD Anti-Lag 2 (VK_AMD_anti_lag).
 #include "nxrt/lowlat.h"
 
 #include <algorithm>
@@ -34,7 +33,6 @@ struct LowLatency::Impl {
     LatencySettings cfg;
     VkSwapchainLatencyCreateInfoNV sci = {VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV};
 
-    // swapchain and sleep mode
     std::mutex mu;
     std::condition_variable cv;               // notified by present_begin: a frame left the in-flight queue
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
@@ -43,7 +41,6 @@ struct LowLatency::Impl {
     VkSemaphore sleep_sem = VK_NULL_HANDLE;
     uint64_t sleep_value = 0;
 
-    // frame ids: sim_begin takes the next, sim_end queues it, present_begin pops the oldest
     std::atomic<uint64_t> sim_id{0};
     std::deque<uint64_t> pending;            // ids simulated and not yet presented (guarded by mu)
     std::atomic<uint64_t> last_present_ns{0};  // when the last present started: the in-flight wait is skipped while nothing is being presented
@@ -52,7 +49,6 @@ struct LowLatency::Impl {
     uint64_t last_present_id = 0;
     bool submit_marked = false;               // RENDERSUBMIT_START was set for the frame in progress
 
-    // measurement
     std::atomic<uint64_t> input_ns_for[64] = {};   // id % 64 -> time of INPUT_SAMPLE
     std::atomic<uint64_t> frames{0};
     double sleep_ms_avg = 0, in2present_ema = 0, in2gpu_ema = 0, sim2present_ema = 0;
@@ -106,7 +102,7 @@ struct LowLatency::Impl {
     void poll_reports() {
         if (!reflex || !swapchain || !mode_set) return;
         const uint64_t t = now_us();
-        if (t - last_report_us < 200000) return;       // five polls a second are plenty
+        if (t - last_report_us < 200000) return;
         last_report_us = t;
         VkGetLatencyMarkerInfoNV gi = {VK_STRUCTURE_TYPE_GET_LATENCY_MARKER_INFO_NV};
         gi.timingCount = 0;
@@ -183,7 +179,7 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
         const double ab_s = nvn::be::nvn_debug().latency_ab_toggle_s;
         const uint64_t now = FrameLimiter::now_ns();
         s.ab.reset(ab_s > 0 ? static_cast<uint64_t>(ab_s * 1e9) : 0, now);
-        s.ab.entered(now);   // window 0 (on) is the current one
+        s.ab.entered(now);
     }
     s.active = enabled_ || s.paced || s.cfg.log_timings;
     NXLOG_I(kTag, "frame pacing: %s (frames_ahead %d)", pace_in_main() ? "limiter at the frame boundary" : "limiter in the present call", s.cfg.frames_ahead);
@@ -290,7 +286,7 @@ void LowLatency::sim_begin() {
     const uint64_t id = s.sim_id.fetch_add(1) + 1;
     const uint64_t t0 = FrameLimiter::now_ns();
     uint64_t ab_w = 0;
-    if (s.ab.active() && s.ab.entered(t0, &ab_w)) {       // A/B test mode: a new window flips the mode, forget the averages
+    if (s.ab.active() && s.ab.entered(t0, &ab_w)) {
         std::lock_guard<std::mutex> ql(s.dev->queue_mutex());
         std::lock_guard<std::mutex> lk(s.mu);
         s.live_on = (ab_w & 1) == 0;
@@ -298,7 +294,7 @@ void LowLatency::sim_begin() {
         s.have_ema = s.have_gpu_ema = false;
         s.set_mode_locked();
     }
-    wait_in_flight();      // frames_ahead: the simulation of a frame starts only when at most that many earlier frames are still on their way to the screen
+    wait_in_flight();
     VkSwapchainKHR sc;
     bool ready;
     uint32_t wait_cap_ms;
@@ -338,7 +334,7 @@ void LowLatency::sim_begin() {
             if (auto fn = g_backlog_fn.load()) ft::mark("lat.gpuq", static_cast<uint32_t>(fn()));
             ft::mark("lat.sim", static_cast<uint32_t>(id));
         }
-        s.pending.push_back(id);               // in flight until the present that shows it
+        s.pending.push_back(id);
         while (s.pending.size() > 16) s.pending.pop_front();
     }
     s.frames++;

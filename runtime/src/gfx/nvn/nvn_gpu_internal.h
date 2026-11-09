@@ -53,7 +53,6 @@ uint64_t run_frame_sync(const std::function<void(struct Frame&)>& fn);
 bool init_for_test(gfx::Device& dev, gfx::Renderer* renderer = nullptr);
 void shutdown_for_test();
 
-// ---- the recording context of one submission ---------------------------------------------------------------------------
 struct UploadAlloc {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceSize offset = 0;
@@ -92,7 +91,6 @@ uint64_t current_serial();        // the serial of the submission being recorded
 bool gpass_on();
 void gpass_stamp(Frame& f, const char* label, uint32_t arg = 0);
 
-// ---- barriers ---------------------------------------------------------------------------------------------------------------
 void image_barrier(VkCommandBuffer cb, VkImage image, VkImageLayout from, VkImageLayout to, VkImageAspectFlags aspect,
                    uint32_t base_level, uint32_t level_count, uint32_t base_layer, uint32_t layer_count);
 // All commands before, all commands after, all memory (used after passes, dispatches, copies and fills).
@@ -101,7 +99,6 @@ void memory_barrier(VkCommandBuffer cb);
 // all memory. Set by the replay for each submission; any thread may record image barriers, so it is an atomic.
 void set_narrow_barriers(bool on);
 
-// ---- pools ---------------------------------------------------------------------------------------------------------------
 struct BufRef {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceSize offset = 0;
@@ -114,7 +111,7 @@ BufRef resolve_buffer(uint64_t gpu_address, uint64_t size);
 VkBuffer dummy_buffer();
 // The last 32 bytes of the dummy buffer hold the default of an unset vertex attribute: float (0,0,0,1) and integer (0,0,0,1).
 constexpr VkDeviceSize kDummyAttrFloatOffset = 65504, kDummyAttrIntOffset = 65520;
-uint64_t pool_imports();          // statistics
+uint64_t pool_imports();
 // Called from destroy_pool_gpu on the render thread.
 void pool_gpu_destroy(PoolGpu* p);
 void pool_shutdown();             // destroys every imported pool still alive and the dummy buffer (device idle)
@@ -131,7 +128,6 @@ bool note_gpu_write(uint64_t gpu_address, uint64_t size, int use);
 void mirror_begin_submit(Frame& f, bool on);
 void mirror_destroy(PoolGpu* p);
 
-// ---- textures --------------------------------------------------------------------------------------------------------------
 // What a binding site needs to see of a texture.
 struct ViewRequest {
     VkImageViewType type = VK_IMAGE_VIEW_TYPE_2D;     // the shader's image dimension (from the SPIR-V binding)
@@ -182,7 +178,6 @@ VkImageView dummy_view(VkImageViewType type, bool depth_compare);
 VkSampler dummy_sampler();
 // Sampler for the NVN sampler state (cached forever). Never null.
 VkSampler sampler_for(const SamplerInfo& s);
-// Buffer <-> image copies with the NVN conventions (used by the replay for CopyBufferToTexture etc.).
 // Debug: the content of level 0 / layer 0 of a texture the GPU has written, as a PNG (HDR values squashed with x / (1 + x), integer
 // formats show their low bytes as colour) and its per-channel statistics. Render thread; waits for the GPU. False: not dumpable.
 bool dump_texture(Texture* t, const std::string& png_path, std::string* stats);
@@ -199,7 +194,6 @@ void tex_shutdown();              // frees samplers and dummy resources (device 
 struct TexStats { uint64_t images = 0, uploads = 0, upload_bytes = 0, transcodes = 0, failed = 0; };
 TexStats tex_stats();
 
-// ---- replay (nvn_replay.cpp) ----------------------------------------------------------------------------------------------
 // Called by nvn_gpu.cpp inside a submission: begin_submit resets per-submit tracking, replay_lists interprets the lists in
 // order (state persists across lists and submissions), end_submit ends the open render pass and emits the closing barrier.
 void replay_begin_submit(Frame& f);
@@ -208,7 +202,6 @@ void replay_end_submit(Frame& f);
 void replay_request_trace();      // trace the next whole presented frame (any thread)
 void replay_shutdown();           // destroys pipelines and layouts (render thread, device idle)
 
-// ---- shared facts (nvn_gpu.cpp) ----------------------------------------------------------------------------------------
 int window_origin_mode();
 int depth_mode();
 gfx::Renderer* renderer();
@@ -219,7 +212,6 @@ bool keep_aspect();
 // After a traced frame ([nvn] trace_frame): dumps the targets it drew to (PNG next to the log: trace_<texture id>_<format>.png) and logs their statistics.
 void trace_dump_targets();
 
-// ---- present -----------------------------------------------------------------------------------------------------------
 void present_on_render_thread(Window* w, int index);
 
 }  // namespace nxrt::nvn::be::gpu

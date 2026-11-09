@@ -31,7 +31,7 @@ public:
 private:
     struct Entry { std::string name; uint32_t off; };
     std::vector<uint8_t> data_;
-    std::vector<Entry> index_;                                       // sorted by name
+    std::vector<Entry> index_;
     uint32_t w_ = 0, h_ = 0;
     std::string err_;
 };
@@ -53,7 +53,7 @@ struct PromptInputs {
 // asks the graphics back end to upload the icon textures again when an answer changed. `s` is read only when the keyboard style shows.
 void prompts_update(const Settings& s, const PromptInputs& in);
 PromptStyle prompts_effective_style();                  // the style that shows now (never Auto)
-const char* prompts_effective_name();                   // its name for the settings page
+const char* prompts_effective_name();
 std::string prompts_icon_name(Icon i);                  // the pack entry in use for a game icon ("" = the game's own)
 void prompts_reset();                                   // tests: drop all state and the hook
 

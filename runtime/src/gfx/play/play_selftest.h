@@ -58,7 +58,6 @@ private:
     std::vector<Step> steps_;
     size_t next_ = 0;
     int wait_ = 0;
-    // measure state
     bool measuring_ = false;
     uint64_t m_start_ns_ = 0, m_frames0_ = 0, m_len_ns_ = 0;
     double last_fps_ = 0;

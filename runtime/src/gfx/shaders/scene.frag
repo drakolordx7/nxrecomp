@@ -1,5 +1,4 @@
 #version 450
-// Test-scene fragment shader: one texture, explicit level of detail.
 layout(set = 0, binding = 0) uniform sampler2D tex;
 layout(push_constant) uniform PC {
     vec2 center;

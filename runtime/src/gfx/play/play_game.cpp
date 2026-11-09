@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode's half of the game boundary: see play_game.h.
 #include "nxrt/game/play_game.h"
 
 #include "nxrt/game.h"

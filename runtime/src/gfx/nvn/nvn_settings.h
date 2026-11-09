@@ -16,11 +16,9 @@ namespace nxrt::nvn::be {
 enum class NvnUpgrade : uint8_t { Off, Whole, Lto };   // [nvn] gpl_upgrade: off / whole (default) / lto
 
 struct NvnSettings {
-    // front end
     int64_t log_first_calls = 3;        // log_first_calls: the first calls of each entry point that are logged
     bool unknown_null = false;          // unknown = null: unknown entry points resolve to null instead of a logging stub
     std::string shader_cache;           // shader_cache: the translated-shader folder (empty: ./shader_cache/spirv, then next to the exe)
-    // pipelines
     std::string pipeline_cache = "pipeline_cache.bin";
     bool prewarm = true;
     std::string pipeline_keys = "pipeline_keys.bin";
@@ -33,12 +31,10 @@ struct NvnSettings {
     bool compile_eco = true;
     bool prepare_cache = true;
     bool compile_note = true;           // the overlay's "compiling shaders" note (passed to the overlay by the pipeline libraries, nvn_gpl.cpp)
-    // memory pools
     bool pool_view = true, pool_prefetch = true;
     bool pool_mirror = true;            // pool_mirror: on / off (play default: controls.ini [display] fast_gpu_memory)
     int64_t pool_mirror_mb = -1;        // -1: not set (the cap follows the card's video memory)
     bool tracked_barriers = true;       // pass_barriers: tracked / full (play default: controls.ini [display] fewer_gpu_waits)
-    // textures
     std::string bc7_cache = "bc7_cache";
     bool bc7_quality_set = false;       // bc7_quality given (else nvn_texdata.cpp's default)
     int64_t bc7_quality = 0;

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Input event queue, raw mouse accumulator and gamepad info table (declarations in include/nxrt/input.h).
 // Every container is guarded by its own mutex: the platform thread pushes, any thread may drain or read.
 #include "nxrt/input.h"
 
@@ -11,7 +10,6 @@
 namespace nxrt::input {
 namespace {
 
-// Fixed ring. head is the index of the oldest event, count the number of queued events.
 struct Queue {
     std::mutex mu;
     Event ring[kQueueCapacity];
@@ -36,11 +34,9 @@ PadTable g_pads;
 
 }  // namespace
 
-// ---- queue ------------------------------------------------------------------------------------------------------------
-
 void queue_push(const Event& e) {
     std::lock_guard<std::mutex> lk(g_queue.mu);
-    if (g_queue.count == kQueueCapacity) {  // full: the oldest event makes room
+    if (g_queue.count == kQueueCapacity) {
         g_queue.head = (g_queue.head + 1) % kQueueCapacity;
         --g_queue.count;
         ++g_queue.dropped;
@@ -92,8 +88,6 @@ void queue_clear() {
     g_queue.pushed = 0;
 }
 
-// ---- raw mouse accumulator ------------------------------------------------------------------------------------------
-
 void mouse_delta_add(double dx, double dy) {
     std::lock_guard<std::mutex> lk(g_delta.mu);
     g_delta.sum.dx += dx;
@@ -112,8 +106,6 @@ MouseDelta mouse_delta_peek() {
     std::lock_guard<std::mutex> lk(g_delta.mu);
     return g_delta.sum;
 }
-
-// ---- gamepads -----------------------------------------------------------------------------------------------------
 
 size_t gamepad_count() {
     std::lock_guard<std::mutex> lk(g_pads.mu);

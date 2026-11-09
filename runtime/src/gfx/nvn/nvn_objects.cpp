@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Guest/host object binding and the memory pool registry (GPU address -> pool).
 #include <algorithm>
 #include <map>
 #include <shared_mutex>
@@ -29,7 +28,7 @@ void unbind_guest(void* guest) {
 
 namespace {
 std::shared_mutex g_pool_mu;
-std::map<uint64_t, MemoryPool*> g_pools;   // gpu_base -> pool
+std::map<uint64_t, MemoryPool*> g_pools;
 
 // Gauge (nxrt/gauge.h). The callback takes g_pool_mu; it is removed before the map is destroyed.
 struct PoolGauges {

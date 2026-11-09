@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Settings and runtime state of the display extras (include/nxrt/extras.h).
 #include "nxrt/extras.h"
 
 #include <algorithm>
@@ -119,7 +118,7 @@ UpscaleMode upscale_mode() {
 float upscale_sharpness() { return g_upscale_sharp.load(std::memory_order_relaxed); }
 
 int upscale_scene_scale() {
-    upscale_mode();      // reads the settings once
+    upscale_mode();
     return g_scene_scale.load(std::memory_order_relaxed);
 }
 
@@ -134,7 +133,7 @@ HdrState hdr_state() {
 }
 
 void hdr_set_state(const HdrState& s) {
-    std::lock_guard<std::mutex> lk(g_mu);   // one writer at a time
+    std::lock_guard<std::mutex> lk(g_mu);
     const uint32_t a = g_seq.load(std::memory_order_relaxed);
     g_seq.store(a + 1, std::memory_order_relaxed);
     std::atomic_thread_fence(std::memory_order_release);

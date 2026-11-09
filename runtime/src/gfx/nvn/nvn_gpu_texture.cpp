@@ -42,13 +42,12 @@
 
 namespace nxrt::nvn::be {
 
-// The Vulkan side of a texture: Texture::gpu points to it (created by gpu::tex_gpu, freed by gpu::tex_destroy).
 static std::mutex g_live_mu;
 static std::set<struct TexGpu*> g_live_set;
 
 struct TexGpu {
     bool promoted = false;                              // HDR scene pipeline: an 8-bit sRGB render target kept as RGBA16F (src/gfx/extras/hdr_nvn.h)
-    gfx::Image img;                                     // the image; created without a view (views are cached below)
+    gfx::Image img;
     const FormatInfo* fmt = nullptr;
     VkFormat format = VK_FORMAT_UNDEFINED;              // the image format: the NVN one, its fallback, or BC7 for ASTC
     VkImageType type = VK_IMAGE_TYPE_2D;
@@ -57,11 +56,11 @@ struct TexGpu {
     VkImageUsageFlags usage = 0;
     VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT;
     VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;   // tracked layout (the same for every level and layer)
-    bool failed = false;                                // no image: the texture is not usable on the GPU (logged once)
+    bool failed = false;
     bool transcoded = false;                            // ASTC stored as BC7
     bool mutable_fmt = false;                           // sRGB and UNORM views of the image are allowed
-    bool cube = false;                                  // created with CUBE_COMPATIBLE
-    bool depth = false;                                 // depth and/or stencil aspect
+    bool cube = false;
+    bool depth = false;
     bool uploaded = false;                              // the image holds the storage's content (or the black fallback)
     bool gpu_written = false;                           // rendered by the GPU since the CPU last wrote the storage
     std::map<std::array<uint32_t, 12>, VkImageView> views;
@@ -81,7 +80,6 @@ std::atomic<uint64_t> g_live_images{0};
 nxrt::GaugeCounter g_gauge_textures_live("nvn.textures_live");               // TexGpu objects alive (g_live_set)
 nxrt::GaugeCounter g_gauge_texture_snapshots("nvn.texture_snapshots");       // debug snapshots kept (g_snaps; the list never shrinks)
 
-// Logs a message only the first time its key is seen (render thread only).
 bool first_time(const std::string& key) {
     static std::set<std::string> seen;
     return seen.insert(key).second;
@@ -89,7 +87,6 @@ bool first_time(const std::string& key) {
 
 uint64_t div_up(uint64_t a, uint64_t b) { return (a + b - 1) / b; }
 
-// ---- formats -------------------------------------------------------------------------------------------------------------
 bool is_block_format(VkFormat f) {
     return (f >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && f <= VK_FORMAT_BC7_SRGB_BLOCK) ||
            (f >= VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK && f <= VK_FORMAT_EAC_R11G11_SNORM_BLOCK) ||
@@ -135,7 +132,7 @@ VkFormat srgb_partner(VkFormat f) {
     }
     if (f >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && f <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) {
         const int base = static_cast<int>(VK_FORMAT_ASTC_4x4_UNORM_BLOCK);
-        return static_cast<VkFormat>(((static_cast<int>(f) - base) ^ 1) + base);   // the ASTC UNORM/SRGB pairs are consecutive
+        return static_cast<VkFormat>(((static_cast<int>(f) - base) ^ 1) + base);
     }
     return VK_FORMAT_UNDEFINED;
 }
@@ -168,7 +165,6 @@ VkFormat sint_alias(VkFormat f) {
 }
 bool bit_alias_class(VkFormat f) { return float_alias(f) != VK_FORMAT_UNDEFINED || uint_alias(f) != VK_FORMAT_UNDEFINED; }
 
-// Same image family: the format itself, its sRGB / UNORM partner, or a raw-bit alias of the same size, on a mutable image.
 bool format_view_ok(const TexGpu& g, VkFormat fmt) {
     if (fmt == g.format) return true;
     if (!g.mutable_fmt) return false;
@@ -202,13 +198,12 @@ VkImageAspectFlags aspect_bits(const FormatInfo* f) {
     }
 }
 
-// ---- shapes --------------------------------------------------------------------------------------------------------------
 struct Shape {
     VkImageType type = VK_IMAGE_TYPE_2D;
     VkExtent3D base = {1, 1, 1};
     uint32_t levels = 1, layers = 1;
     bool cube = false;
-    uint32_t samples = 1;                      // multisampled render target / resolve source
+    uint32_t samples = 1;
 };
 
 Shape shape_of(const Texture& t) {
@@ -260,7 +255,6 @@ VkImageCreateFlags base_flags(const Shape& s, VkFormat fmt) {
     return f;
 }
 
-// ---- creation -------------------------------------------------------------------------------------------------------------
 // Makes the image of t (or the failed marker when no format works). Stores the result in t->gpu, which is never null afterwards.
 TexGpu* create_texture_gpu(Texture* t) {
     auto* g = new TexGpu();
@@ -289,7 +283,7 @@ TexGpu* create_texture_gpu(Texture* t) {
     // A disk cache entry that is not BC7 (RGBA8 for a texture BC7 cannot reproduce, BC5 for a two-channel normal map) makes the image in the
     // entry's format; prepare_texture is then told the image's format and delivers the entry's data (docs/S4f.md).
     VkFormat entry = VK_FORMAT_UNDEFINED;
-    if (to_bc7 && !texprep::peek_entry_format(t, entry)) entry = cache_entry_format(*t);   // the background job already found the cache entry
+    if (to_bc7 && !texprep::peek_entry_format(t, entry)) entry = cache_entry_format(*t);
     const VkFormat want = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? entry : bc7_format) : g->fmt->vk;
     const VkFormat alt = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? bc7_format : VK_FORMAT_UNDEFINED) : g->fmt->vk_fallback;
 
@@ -320,7 +314,6 @@ TexGpu* create_texture_gpu(Texture* t) {
     g->aspect = aspect_bits(g->fmt);
     g->depth = (g->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) != 0;
 
-    // Required usage is sampling. Each optional usage is kept only when the GPU accepts the image with it.
     const VkImageCreateFlags flags = base_flags(s, chosen);
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
     const auto add = [&](VkImageUsageFlags bit) {
@@ -349,7 +342,6 @@ TexGpu* create_texture_gpu(Texture* t) {
     return g;
 }
 
-// The texture's image, created on first use. Null when the texture has no usable image (the failure is counted and logged once).
 TexGpu* tex_or_null(Texture* t) {
     if (!t || !active()) return nullptr;
     if (t->gpu) return t->gpu->failed ? nullptr : t->gpu;
@@ -371,7 +363,6 @@ TexGpu* tex_or_null(Texture* t) {
     return g->failed ? nullptr : g;
 }
 
-// ---- barriers and copies ----------------------------------------------------------------------------------------------------
 void move_layout(Frame& f, TexGpu& g, VkImageLayout to) {
     if (g.layout == to) return;
     // A 3D image created with 2D_ARRAY_COMPATIBLE: without maintenance9 the layer range of a barrier means all depth slices.
@@ -380,7 +371,6 @@ void move_layout(Frame& f, TexGpu& g, VkImageLayout to) {
     g.layout = to;
 }
 
-// Copies buffer regions (already offset to the staging buffer) into every level of the image, then leaves it readable by shaders.
 void copy_regions_to_image(Frame& f, TexGpu& g, VkBuffer buf, const std::vector<VkBufferImageCopy>& regions) {
     move_layout(f, g, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     vkCmdCopyBufferToImage(f.cb, buf, g.img.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
@@ -425,8 +415,6 @@ void fill_zero(Frame& f, TexGpu& g) {
     move_layout(f, g, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
-// ---- views ----------------------------------------------------------------------------------------------------------------
-// The view with these fields, created once and cached on the image.
 VkImageView view_for(TexGpu& g, VkImageViewType type, uint32_t base_level, uint32_t level_count, uint32_t base_layer, uint32_t layer_count,
                      VkFormat fmt, VkImageAspectFlags aspect, const VkComponentMapping& swz) {
     const std::array<uint32_t, 12> key = {static_cast<uint32_t>(type), base_level, level_count, base_layer, layer_count,
@@ -473,7 +461,6 @@ VkImageView bad_view(const Texture& t, const char* what) {
 
 const VkComponentMapping kIdentity = {};
 
-// Dummy views: 1x1 (x1) textures of each view type, black (or depth 1.0), made the first time they are asked for.
 struct Dummy {
     gfx::Image img;
     VkImageView view = VK_NULL_HANDLE;
@@ -485,7 +472,7 @@ constexpr VkImageViewType kDummyTypes[6] = {VK_IMAGE_VIEW_TYPE_1D, VK_IMAGE_VIEW
 int dummy_index(VkImageViewType type) {
     for (int i = 0; i < 6; ++i)
         if (kDummyTypes[i] == type) return i;
-    return 1;   // anything else: a 2D dummy
+    return 1;
 }
 
 struct Shared {
@@ -493,7 +480,7 @@ struct Shared {
     VkSampler dummy_sampler = VK_NULL_HANDLE;
     Dummy color[6];
     Dummy depth[6];
-    std::map<std::pair<int, int>, Dummy> storage;   // (view type, format): GENERAL-layout 1x1 storage images
+    std::map<std::pair<int, int>, Dummy> storage;
 };
 Shared g_sh;
 
@@ -554,7 +541,6 @@ bool make_dummy(Dummy& d, VkImageViewType type, bool depth) {
     return true;
 }
 
-// ---- samplers -------------------------------------------------------------------------------------------------------------
 uint64_t sampler_hash(const SamplerInfo& s) {
     uint64_t h = 1469598103934665603ull;
     auto mix = [&h](uint64_t v) {
@@ -592,7 +578,6 @@ VkSamplerAddressMode wrap_mode(int nvn_wrap) {
     return m;
 }
 
-// Without custom border colours: the nearest of transparent black, opaque black and opaque white.
 VkBorderColor standard_border(const SamplerInfo& s) {
     float c[4];
     for (int k = 0; k < 4; ++k) {
@@ -649,7 +634,6 @@ VkSampler create_sampler(const SamplerInfo& s) {
     if (s.reduction != NVN_SAMPLER_REDUCTION_AVERAGE)
         note_unsupported("sampler reduction (min/max filtering): not enabled on the device, ignored");
     if (ft.custom_border_color) {
-        // The border words are stored as the game gave them: float bits, or int / uint bits (border_kind).
         if (s.border_kind == 0) {
             ci.borderColor = VK_BORDER_COLOR_FLOAT_CUSTOM_EXT;
             std::memcpy(cbc.customBorderColor.float32, s.border_color, sizeof(float) * 4);
@@ -674,7 +658,6 @@ VkSampler create_sampler(const SamplerInfo& s) {
 }  // namespace
 
 namespace {
-// ---- CPU writes without a flush --------------------------------------------------------------------------------------------
 // A texture in a CPU_UNCACHED pool is coherent on the console: the game writes it and the GPU sees the bytes without FlushMappedRange.
 // ACNH's text renderer rasterizes the glyphs it needs into such a texture (an R8 2048x4096 glyph cache) as new characters come up; an
 // image uploaded once kept the old glyph set and every later new glyph drew as nothing. The storage pages of an uploaded coherent texture
@@ -706,7 +689,6 @@ void tex_ww_arm(const Texture& t, const TexGpu& g) {
 
 }  // namespace
 
-// ---- texture interface (gpu::*, internal.h) -----------------------------------------------------------------------------
 TexGpu* tex_gpu(Texture* t) { return tex_or_null(t); }
 
 void tex_poll_cpu_writes() {
@@ -718,7 +700,7 @@ void tex_poll_cpu_writes() {
     const uint64_t base = mem::ww::region_base(g_tex_ww);
     for (size_t i = 0; i < g_tex_ww_pages.size();) {
         size_t j = i + 1;
-        while (j < g_tex_ww_pages.size() && g_tex_ww_pages[j] <= g_tex_ww_pages[j - 1] + 1) ++j;   // a run of written pages: one call
+        while (j < g_tex_ww_pages.size() && g_tex_ww_pages[j] <= g_tex_ww_pages[j - 1] + 1) ++j;
         textures_cpu_wrote(reinterpret_cast<const void*>(base + (g_tex_ww_pages[i] << 12)), (g_tex_ww_pages[j - 1] - g_tex_ww_pages[i] + 1) << 12);
         i = j;
     }
@@ -728,10 +710,10 @@ void tex_ensure_current(Texture* t, Frame& f) {
     NXFT_MIN("tex.ensure", 30000);
     TexGpu* g = tex_or_null(t);
     if (!g || g->depth) return;
-    if (t->b.samples > 1 || target_is_multisample(t->b.target)) return;   // multisampled images are only ever rendered
+    if (t->b.samples > 1 || target_is_multisample(t->b.target)) return;
     const bool dirty = t->cpu_dirty.load();
-    if (g->uploaded && !dirty) return;           // the image already holds the storage's content
-    if (g->gpu_written && !dirty) return;        // the GPU rendered it and the CPU did not write since
+    if (g->uploaded && !dirty) return;
+    if (g->gpu_written && !dirty) return;
     if (g->promoted) {                           // a float16 render target of the HDR scene: nothing in memory matches its format
         t->cpu_dirty.exchange(false);
         if (!g->uploaded) fill_zero(f, *g);
@@ -755,11 +737,11 @@ void tex_ensure_current(Texture* t, Frame& f) {
     bool ok = false;
     bool from_job = false;
     const uint64_t t_prep0 = ft::now_ns();
-    gfx::Buffer staged;                        // a big background result comes with its upload buffer already filled
-    if (texprep::take(t, prep, &staged)) {     // prepared in the background from the current storage content (nvn_texprep.h)
+    gfx::Buffer staged;
+    if (texprep::take(t, prep, &staged)) {
         if (prep.format == g->format) {
             ok = from_job = true;
-        } else {                               // another image format than the one it was made for (a fallback format): prepare it again
+        } else {
             prep = PreparedTexture();
             if (staged) device().destroy_buffer(staged);
             staged = gfx::Buffer{};
@@ -796,7 +778,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
     const uint64_t bytes = staged ? staged.size : prep.data.size();
     UploadAlloc st = staged ? f.adopt_staging(staged) : f.staging(bytes);
     if (!st) {
-        t->cpu_dirty.store(true);                // try again next time
+        t->cpu_dirty.store(true);
         return;
     }
     if (!staged) std::memcpy(st.ptr, prep.data.data(), static_cast<size_t>(bytes));
@@ -832,7 +814,7 @@ void tex_mark_gpu_written(Texture* t) {
     TexGpu* g = tex_or_null(t);
     if (!g) return;
     g->gpu_written = true;
-    t->cpu_dirty.store(false);                   // the GPU data is the newer one until the CPU writes again
+    t->cpu_dirty.store(false);
 }
 
 VkImage tex_image(Texture* t) {
@@ -934,7 +916,6 @@ VkImageLayout tex_sampled_layout(Texture* t) {
 VkImageView tex_present_view(Texture* t) {
     TexGpu* g = tex_or_null(t);
     if (!g) return VK_NULL_HANDLE;
-    // The UNORM alias of an sRGB image; the plain view when the image cannot be viewed as UNORM.
     const VkFormat fmt = (g->mutable_fmt && is_srgb(g->format)) ? srgb_partner(g->format) : g->format;
     return view_for(*g, VK_IMAGE_VIEW_TYPE_2D, 0, 1, 0, 1, fmt, g->aspect, kIdentity);
 }
@@ -1034,10 +1015,10 @@ VkSampler sampler_for(const SamplerInfo& game_sampler) {
 
 void tex_destroy(TexGpu* g) {
     if (!g) return;
-    if (--g->refs > 0) return;   // another texture object over the same storage still uses the image
+    if (--g->refs > 0) return;
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
-        if (!g_live_set.erase(g)) return;   // already destroyed by tex_shutdown
+        if (!g_live_set.erase(g)) return;
     }
     g_gauge_textures_live.sub(1);
     for (auto& kv : g->views) { vkDestroyImageView(vkdev(), kv.second, nullptr); vk_gauge_image_views().sub(1); }
@@ -1060,7 +1041,7 @@ TexStats tex_stats() {
 // Frees every cached object this module made (samplers, dummy views and images). Render thread, device idle, no texture alive:
 // called by the tests before shutdown_for_test (the back end's teardown does not call it yet).
 void tex_shutdown() {
-    texprep::release_staging();       // upload buffers of finished background results belong to the device that is going away
+    texprep::release_staging();
     std::vector<TexGpu*> left;
     {
         std::lock_guard<std::mutex> lk(g_live_mu);
@@ -1105,12 +1086,11 @@ float small_float(uint32_t bits, int mant_bits) {   // unsigned 11 / 10 bit floa
 }
 uint8_t to8(float v, bool hdr) {
     if (!(v == v)) return 255;
-    if (hdr) v = v / (1.0f + v);          // display of a high dynamic range value
+    if (hdr) v = v / (1.0f + v);
     return static_cast<uint8_t>(std::min(1.0f, std::max(0.0f, v)) * 255.0f + 0.5f);
 }
 }  // namespace
 
-// The decode of a dump: texel bytes of a level to RGBA8 (saved as a PNG when path is not empty) plus per-channel statistics.
 static bool convert_png_impl(const uint8_t* src, VkFormat f, VkExtent3D e, uint32_t bpp, VkImageAspectFlags aspect, const std::string& path, std::string* stats) {
     std::vector<uint8_t> rgba(static_cast<size_t>(e.width) * e.height * 4, 255);
     double sum[4] = {0, 0, 0, 0};
@@ -1203,7 +1183,7 @@ int snapshot_record(Texture* t, Frame& fr) {
     s.bpp = dump_bpp(g->format, &s.aspect);
     if (!s.bpp) return -1;
     const VkExtent3D full = level_extent(g->base, 0);
-    const uint32_t slices = g->type == VK_IMAGE_TYPE_3D ? full.depth : 1;   // a 3D texture: all slices, stacked into one tall image
+    const uint32_t slices = g->type == VK_IMAGE_TYPE_3D ? full.depth : 1;
     s.e = {full.width, full.height * slices, 1};
     const uint64_t size = static_cast<uint64_t>(s.e.width) * s.e.height * s.bpp;
     if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &s.buf, "nvn snapshot") != VK_SUCCESS) return -1;
@@ -1227,7 +1207,6 @@ int snapshot_record_raw(Texture* t, Frame& fr) {
     if (g->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && g->format <= VK_FORMAT_BC7_SRGB_BLOCK)
         bytes = (g->format <= VK_FORMAT_BC1_RGBA_SRGB_BLOCK || g->format == VK_FORMAT_BC4_UNORM_BLOCK || g->format == VK_FORMAT_BC4_SNORM_BLOCK) ? 8 : 16;
     if (!bytes) return -1;
-    // every level, tight, level after level with all layers: the layout prepare_texture produces for block formats
     std::vector<VkBufferImageCopy> regions;
     uint64_t size = 0;
     for (uint32_t l = 0; l < g->levels; ++l) {
@@ -1364,7 +1343,7 @@ bool download_texture(Texture* t) {
     if (!L.valid || !L.block_linear) return false;
     const uint64_t size = L.layout.linear_size;
 
-    finish();   // earlier submissions must be done before the copy reads the image
+    finish();
     gfx::Buffer rb;
     run_frame_sync([&](Frame& f) {
         if (device().create_buffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, gfx::MemoryUse::Readback, &rb, "nvn texture readback") != VK_SUCCESS)

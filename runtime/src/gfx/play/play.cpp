@@ -79,7 +79,6 @@ struct Touch {
 
 struct G;
 
-// ---- the hid input source ------------------------------------------------------------------------------------------------------------
 class PlaySource : public hid::InputSource {
 public:
     explicit PlaySource(Engine* e) : engine_(e) {}
@@ -164,9 +163,7 @@ private:
     Touch touch_;
 };
 
-// ---- the state ------------------------------------------------------------------------------------------------------------------------
 struct G {
-    // settings
     std::mutex mu;                       // guards settings (written on the main thread, copied by the page on the presenting thread) and pending
     Settings settings;
     Settings pending;
@@ -186,13 +183,12 @@ struct G {
 
     std::thread::id pump_thread;
     uint64_t base = 0;                   // set by load: [play] game_base, default mem::kMainBase
-    uint32_t hook_update = 0;            // the frame boundary (the game's GamePlay::frame_update)
+    uint32_t hook_update = 0;
     bool capture_mouse = true, quit_on_close = true, log_status = false;
     bool pointer_draw = false;         // [play] pointer_draw: the menu pointer is also drawn into the frame (screenshots show it); a test aid
     bool late_sample = true;           // pump the window's events again right before the mouse counts are taken (S11: the counts are as new as ProcessInput)
     double pitch_limit_deg = 0;
 
-    // frame state (main thread)
     uint64_t update_seq = 0, aim_seq = 0;
     std::atomic<uint64_t> last_pi_ns{0};
     std::atomic<uint64_t> last_pi_frame{0};       // value of `frames` at the last ProcessInput (the game is playing while it keeps being called)
@@ -205,28 +201,23 @@ struct G {
     uint64_t last_status_ns = 0;
     bool warned_thread = false;
 
-    // button prompts: the device the player used last (Auto style) and a counter that changes with the bindings
     LastDevice last_dev = LastDevice::None;
     int last_pad_kind = 0;
     uint64_t settings_epoch = 1;
 
-    // pads
     uint64_t last_rumble_ns = 0;
     uint16_t rumble_lo = 0, rumble_hi = 0;
 
-    // present mode requested by the page, applied on the presenting thread
     std::atomic<int> want_present{-1};
 
     // vibration from the game (hid thread) -> pads (main thread)
     std::atomic<float> vib[2][2] = {};   // [hand][low, high] amplitude
 
-    // rebinding
     std::atomic<int> capture_state{0};   // 0 idle, 1 waiting for an input
     std::mutex cap_mu;
     bool cap_have = false;
     InputId cap_id;
 
-    // live status
     mutable std::mutex st_mu;
     LiveStatus live;
     uint64_t fps_last_frames = 0, fps_last_ns = 0;
@@ -234,13 +225,11 @@ struct G {
 
     SelfTest selftest;
 
-    // counters
     std::atomic<uint64_t> frames{0}, pi_calls{0}, aim_frames{0}, events{0}, counts{0};
     std::atomic<double> aim_dx_sum{0}, aim_dy_sum{0};     // signed counts the aim applied (written on the main thread; the mouse feeder's log reads them)
     std::atomic<bool> thread_mismatch{false};
 };
 
-// ---- test aid: a scripted run's mouse counts as SDL motion events ([test] mouse_sdl_hz) ----------------------------------------------
 // A real mouse's events reach SDL's queue in real time, whatever the frame rate. With [test] mouse_sdl_hz > 0 the counts a script's `mouse`
 // step gives a frame are not handed to the aim directly: they go into a pending total that a thread drains at that rate, at most
 // [test] mouse_sdl_max counts per axis per event, through SDL_PushEvent (platform::push_test_motion). Long frames then meet the backlog a real
@@ -302,7 +291,7 @@ void SdlMouseFeeder::run(const G* st) {
     }
 }
 
-SelfTestHost* selftest_host();      // defined after the settings page host
+SelfTestHost* selftest_host();
 
 G& g() {
     static G inst;
@@ -337,7 +326,6 @@ void apply_frame_cap(const Settings& s) {
     extras::lowlat_note_cap(cap);     // Reflex / Anti-Lag pace to the same cap (remembered for a renderer that is created later)
 }
 
-// ---- hooks ----------------------------------------------------------------------------------------------------------------------------
 void pre_frame(void*) {
     // On the presenting thread, before the frame: the one place a present-mode change cannot collide with a frame in flight.
     G& st = g();
@@ -377,7 +365,7 @@ bool key_sink(const char* name, bool down) {
             e.u.button.clicks = 1;
             break;
         case InKind::Wheel:
-            if (!down) return true;      // a notch has no release
+            if (!down) return true;
             e.type = input::EventType::MouseWheel;
             e.u.wheel.dy = static_cast<float>(id.code);
             break;
@@ -465,9 +453,8 @@ void toggle_fullscreen() {
     st.dirty = true;
 }
 
-void toggle_fps_counter();       // defined after the settings page host
+void toggle_fps_counter();
 
-// Tells the overlay how the frame rate counter should look (the overlay draws it; nothing happens while it is off).
 void apply_fps_counter(const FpsSettings& f) {
     G& st = g();
     if (!st.overlay) return;
@@ -489,7 +476,6 @@ void handle_event(const input::Event& e, uint64_t now) {
     G& st = g();
     using input::EventType;
     st.events++;
-    // rebinding capture comes first: the page asked for the next input
     if (st.capture_state.load() == 1) {
         InputId id;
         bool got = false, cancel = false;
@@ -509,7 +495,7 @@ void handle_event(const input::Event& e, uint64_t now) {
             return;
         }
         if (cancel) { st.capture_state.store(0); return; }
-        if (e.type == EventType::KeyDown || e.type == EventType::KeyUp) return;    // nothing reaches the game while capturing
+        if (e.type == EventType::KeyDown || e.type == EventType::KeyUp) return;
     }
     // The frame rate counter hotkey: flips the counter and never reaches the game (press, repeat and release).
     if (st.overlay && (e.type == EventType::KeyDown || e.type == EventType::KeyUp) && st.settings.fps.key.kind == InKind::Key &&
@@ -554,7 +540,6 @@ void handle_event(const input::Event& e, uint64_t now) {
                 st.engine->pulse(dy > 0 ? Act::BtnR : Act::BtnL, now, 160);
                 break;
             }
-            // over a slider's track in a menu the wheel steps the value (right is more) instead of moving the selection
             if (dy != 0 && st.settings.mouse.menu_cursor && mm::pointer().enabled() && game_menu_over_value()) {
                 st.engine->pulse(dy > 0 ? Act::DpadRight : Act::DpadLeft, now);
                 break;
@@ -594,7 +579,6 @@ void handle_event(const input::Event& e, uint64_t now) {
     }
 }
 
-// Reads every open pad, merges them (buttons OR, the stick with the larger deflection wins) and publishes the result to the source.
 void poll_pads(uint64_t now) {
     G& st = g();
     PadFrame pf;
@@ -615,7 +599,7 @@ void poll_pads(uint64_t now) {
         if (!platform::gamepad_poll(infos[i].id, &raw)) continue;
         hid::NpadInput tmp;
         map_pad(raw, st.settings.pad, &tmp);
-        {   // a pressed button or a stick well off centre makes this the pad the prompts follow
+        {
             auto off_centre = [](hid::StickValue v) { return static_cast<int64_t>(v.x) * v.x + static_cast<int64_t>(v.y) * v.y > 20000ll * 20000ll; };
             if (tmp.buttons != 0 || off_centre(tmp.left) || off_centre(tmp.right)) {
                 st.last_dev = LastDevice::Pad;
@@ -659,7 +643,6 @@ int update_hook(::Ctx*, uint64_t, void*) {
         if (!(ll && ll->paces_frames())) { NXFT("limiter.main"); st.limiter.begin_frame_nohook(); }
         extras::pace_boundary_done();
     }
-    // low latency (S14): the sleep that lets the frame start as late as the GPU allows, then the input sample marker; the events are pumped right after
     if (extras::LowLatency* ll = extras::lowlat()) {
         ll->sim_begin();
         ll->input_sample();
@@ -676,7 +659,6 @@ int update_hook(::Ctx*, uint64_t, void*) {
     }
     if (st.window && on_pump_thread) platform::pump_events();
 
-    // settings queued by the page
     {
         std::unique_lock<std::mutex> lk(st.mu);
         if (st.have_pending) {
@@ -704,7 +686,6 @@ int update_hook(::Ctx*, uint64_t, void*) {
         }
     }
 
-    // events
     input::Event buf[128];
     for (;;) {
         const size_t got = input::queue_drain(buf, 128);
@@ -716,7 +697,6 @@ int update_hook(::Ctx*, uint64_t, void*) {
     if (gp && gp->frame_begin) gp->frame_begin();
     if (st.engine) st.engine->frame_tick();
 
-    // what the game is doing: the context, the cycle hint, the pointer
     const uint64_t pi = st.last_pi_ns.load();
     // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
     // can take 100 ms or more per frame under load) must not read as a menu.
@@ -741,7 +721,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
     else ctx = gf.play_ctx;
     st.engine->set_context(ctx, now);
 
-    {   // button prompts: the style that shows, and the icon textures behind it
+    {
         PromptInputs pin;
         pin.requested = st.settings.prompts.style;
         pin.label_abxy = st.settings.pad.label_abxy;
@@ -763,10 +743,10 @@ int update_hook(::Ctx*, uint64_t, void*) {
                           st.capture_state.load() == 0;
         if (want != platform::relative_mouse()) {
             platform::set_relative_mouse(want);
-            if (want) input::mouse_delta_take();      // nothing that piled up before the capture
+            if (want) input::mouse_delta_take();
         }
     }
-    {   // the map: dragging with the left button rotates it (the left stick), with the middle button moves it (the right stick); the speed is the pointer's speed
+    {
         static float px = 0, py = 0;
         static uint64_t last_ns = 0;
         static bool have = false;
@@ -776,7 +756,6 @@ int update_hook(::Ctx*, uint64_t, void*) {
         if (on_map && have && (pp.held() || pp.mid_held())) {
             int ww = 1, wh = 1;
             platform::pixel_size(&ww, &wh);
-            // the stick follows the pointer's speed: a full stick is a drag of 0.8 window heights per second, whatever the frame rate
             const float dt = std::max(1e-3f, static_cast<float>(now - last_ns) / 1e9f);
             const float k = 1.f / (0.8f * static_cast<float>(std::max(1, wh)) * dt);
             const float dx = std::max(-1.f, std::min(1.f, (pp.x() - px) * k)), dy = std::max(-1.f, std::min(1.f, (pp.y() - py) * k));
@@ -789,7 +768,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
         have = true;
         st.engine->set_aux_sticks(lx, ly, rx, ry);
     }
-    {   // the mouse as a pointer in the menus (S28): the cursor, and the snapshot the widget hooks read this frame
+    {
         mm::Pointer& ptr = mm::pointer();
         ptr.set_enabled(st.settings.mouse.menu_cursor);
         // (a scripted run has no focus: the test tooling drives the pointer with synthetic events)
@@ -822,7 +801,6 @@ int update_hook(::Ctx*, uint64_t, void*) {
     return 0;
 }
 
-// ---- what the game module gets from play mode (play_game.h GameHost) ----------------------------------------------------------------------
 class GameHostImpl : public GameHost {
 public:
     const Settings& settings() const override { return g().settings; }
@@ -840,7 +818,7 @@ public:
         st.last_pi_frame.store(st.frames.load());
         st.pi_calls++;
         *dx = *dy = 0;
-        if (st.update_seq != st.aim_seq) {                // the first input tick since the frame boundary takes the mouse counts
+        if (st.update_seq != st.aim_seq) {
             st.aim_seq = st.update_seq;
             // Late sample: the frame boundary pumped the events at the start of the frame update; the tick that reaches the input function is a little
             // later (the whole update body runs first). Pump again so the counts include whatever the mouse did in between. Main thread only, like the
@@ -864,7 +842,6 @@ public:
 };
 GameHostImpl g_game_host;
 
-// ---- the settings page host -----------------------------------------------------------------------------------------------------------
 class Host : public UiHost {
 public:
     Settings settings() const override { G& st = g(); std::lock_guard<std::mutex> lk(st.mu); return st.have_pending ? st.pending : st.settings; }
@@ -935,7 +912,6 @@ void toggle_fps_counter() {
     g_host.apply(s);
 }
 
-// The self-test's window onto play mode: the same entry points the settings page uses.
 class SelfTestHostImpl : public SelfTestHost {
 public:
     bool set(const std::string& key, const std::string& value) override {
@@ -982,7 +958,6 @@ SelfTestHost* selftest_host() {
 
 }  // namespace
 
-// ---- public API ---------------------------------------------------------------------------------------------------------------------------
 bool load() {
     G& st = g();
     if (st.loaded) return st.load_ok;
@@ -1059,13 +1034,13 @@ bool start(const StartOptions& opt) {
     st.renderer = opt.renderer;
     st.device = opt.device;
     st.window = opt.window && platform::has_window();
-    apply_frame_cap(st.settings);                      // the display's refresh rate is known now (vsync cap)
+    apply_frame_cap(st.settings);
     kernel::sched_set_process_priority(st.window);     // a person is playing: keep the frame out of the background load
     st.pump_thread = std::this_thread::get_id();
     st.engine = std::make_unique<Engine>(st.settings);
     st.engine->set_context(Ctx::Menu, now_ns());
     st.source_owner = std::make_unique<PlaySource>(st.engine.get());
-    st.source = std::shared_ptr<hid::InputSource>(st.source_owner.get(), [](hid::InputSource*) {});   // owned by G
+    st.source = std::shared_ptr<hid::InputSource>(st.source_owner.get(), [](hid::InputSource*) {});
     hid::set_input_source(st.source);
     hid::set_vibration_sink(&vib_sink, nullptr);
     if (const int hz = static_cast<int>(config_get_int("test", "mouse_sdl_hz", 0)); hz > 0 && st.window) {
@@ -1112,12 +1087,12 @@ bool start(const StartOptions& opt) {
     if (st.window && st.settings.display.window_mode != "windowed") set_window_mode(st.settings.display.window_mode);
 
     const GamePlay* gp = game_play();
-    {   // display options: the internal resolution comes from the window as it is now (after the window mode change above)
+    {
         int ww = 1600, wh = 900;
         if (st.window) platform::pixel_size(&ww, &wh);
         if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
         display_tuning(st.settings.display);
-        if (gp && gp->install_render) gp->install_render(st.base, st.settings.display, ww, wh);   // the game's display options, tone curve
+        if (gp && gp->install_render) gp->install_render(st.base, st.settings.display, ww, wh);
     }
     // the frame boundary, then the game's input, camera, lock-on and menu hooks (hooks of one address run in registration order)
     if (gp && gp->frame_update) st.hook_update = hook_add_entry(st.base + gp->frame_update, &update_hook);

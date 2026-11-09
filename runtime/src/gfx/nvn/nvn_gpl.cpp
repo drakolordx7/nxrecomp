@@ -115,7 +115,6 @@ uint64_t g_logged_sig = 0;
 int g_fail_streak = 0;
 int g_running = 0;                         // jobs being built by the workers right now
 
-// Tells the overlay how much shader work is waiting (queued + running). Caller holds g_mu.
 void publish_backlog_locked() { nxrt::gfx::set_shader_backlog(static_cast<int>(g_hot_q.size() + g_cold_q.size() + g_up_q.size()) + g_running + g_up_running); }
 
 thread_local const GraphicsKey* t_link_key = nullptr;      // the draw being linked on this thread, for the log line of a slow part
@@ -149,7 +148,6 @@ std::string bytes_of(char tag, const T& v) {
     return s;
 }
 
-// ---- keys: plain zero-initialised structs, compared as bytes ----------------------------------------------------------------------
 struct PreKey { uint64_t vs, gs, layout; uint8_t poly, clamp, neg, pad; uint32_t pad2; };
 struct FsKey { uint64_t fs, layout; };
 struct ViKey { uint32_t count; uint32_t pad; KeyAttr attr[16]; uint8_t instance[16]; uint8_t topology; uint8_t pad2[7]; };
@@ -200,7 +198,6 @@ std::string fo_key(const GraphicsKey& key) {
     return bytes_of('O', k);
 }
 
-// ---- the four builders ------------------------------------------------------------------------------------------------------------
 VkPipeline create_part(VkGraphicsPipelineCreateInfo& gi, const char* what) {
     gi.flags |= VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
     if (g_retain) gi.flags |= VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT;
@@ -366,7 +363,6 @@ void boost_thread(void*) {}
 void* self_handle() { return nullptr; }
 #endif
 
-// ---- the part cache -------------------------------------------------------------------------------------------------------------
 // The part for `key`: from the cache, from a build in flight (waits for it) or built here. `render` = called by a draw (counted apart from
 // the workers' builds). A part that failed to build is cached as null so it is not retried at every draw.
 VkPipeline get_part(const std::string& key, bool render, const std::function<VkPipeline()>& build) {
@@ -404,7 +400,7 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
         p = build();
     }
     const double ms = ms_since(t0);
-    if (e.boosted.load()) set_compile_thread_priority();                 // a draw lent this thread its speed: back to the background settings
+    if (e.boosted.load()) set_compile_thread_priority();
     if (p && g_discard.load(std::memory_order_relaxed)) {
         if (ms < 2.0) g_prep_fast.fetch_add(1, std::memory_order_relaxed);
         vkDestroyPipeline(vkdev(), p, nullptr);
@@ -413,7 +409,7 @@ VkPipeline get_part(const std::string& key, bool render, const std::function<VkP
     lk.lock();
     e.pipe = p;
     e.state = 2;
-    if (render && ms > 8.0 && key[0] != 'V' && key[0] != 'O' && t_link_key) {      // g_mu is held here
+    if (render && ms > 8.0 && key[0] != 'V' && key[0] != 'O' && t_link_key) {
         const std::array<const ShaderInfo*, 3> prog = {t_link_key->stage[0], t_link_key->stage[1], t_link_key->stage[2]};
         std::string act, pred;
         for (const SpvIntSlot& sl : key_int_slots(*t_link_key)) act += " " + std::to_string(sl.location) + (sl.is_signed ? "s" : "u");
@@ -569,7 +565,7 @@ void init_once() {
     g_cold = cfg.gpl_cold;
     g_up_mode = cfg.gpl_upgrade == NvnUpgrade::Off ? UpMode::Off : cfg.gpl_upgrade == NvnUpgrade::Lto ? UpMode::Lto : UpMode::Whole;
     g_retain = g_lto || g_up_mode == UpMode::Lto;
-    nxrt::gfx::set_compile_note(cfg.compile_note);   // the overlay shows the backlog these threads publish
+    nxrt::gfx::set_compile_note(cfg.compile_note);
     g_on.store(g_enabled, std::memory_order_release);
     if (!g_enabled) {
         NXLOG_I(kTag, "pipeline libraries off (%s)", device().features().graphics_pipeline_library ? "[nvn] gpl is false" : "the GPU or driver does not support them");
@@ -663,7 +659,7 @@ void gpl_program(const ShaderInfo* const stages[6], bool covered) {
     std::array<const ShaderInfo*, 3> prog = {stages[0], stages[1], stages[2]};
     std::lock_guard<std::mutex> lk(g_mu);
     if (g_stop) return;
-    if (covered) {                      // the key file has pipelines for it: the prewarm builds those whole
+    if (covered) {
         g_covered.insert(prog);
         return;
     }
@@ -689,7 +685,6 @@ void gpl_program_bound(const ShaderInfo* const stages[6]) {
 
 VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout, std::shared_ptr<PipeUpgrade>* up) {
     if (!gpl_active()) return VK_NULL_HANDLE;
-    // stream-out and tessellated draws, and anything without both a vertex and a fragment shader, are built whole
     if (!key.stage[0] || !key.stage[1] || key.xfb || key.patch_control_points) return VK_NULL_HANDLE;
     NXFT("pipe.link");
     const auto t0 = Clock::now();
@@ -815,7 +810,6 @@ void gpl_stop() {
     for (auto& t : ups) t.join();
 }
 
-// ---- shader preparation ----------------------------------------------------------------------------------------------------------
 namespace {
 struct ProgHashes { uint64_t vs, fs, gs; };
 
@@ -908,7 +902,7 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
     g_prepare_cache.store(nvn_settings().prepare_cache);
     g_discard.store(true);
     const auto t0 = Clock::now();
-    constexpr size_t kBatch = 192;                       // programs per batch; the shader modules and SPIR-V of a batch are released after it
+    constexpr size_t kBatch = 192;
     std::atomic<uint64_t> done{0}, prepared{0}, missing{0}, failed{0}, parts{0};
     std::atomic<bool> cancel{false};
     std::mutex progress_mu;
@@ -970,7 +964,6 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
         for (int t = 1; t < threads; ++t) pool.emplace_back(work);
         work();
         for (auto& t : pool) t.join();
-        // between batches nothing is creating pipelines: drop the batch's modules, parts and SPIR-V
         module_cache_clear();
         {
             std::lock_guard<std::mutex> lk(g_mu);

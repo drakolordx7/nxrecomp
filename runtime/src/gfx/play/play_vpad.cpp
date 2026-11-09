@@ -161,7 +161,6 @@ bool vpad_attach(const KindId& k) {
     return true;
 }
 
-// Splits on spaces, dropping empty tokens.
 std::vector<std::string> vpad_split(const char* s) {
     std::vector<std::string> out;
     std::string cur;

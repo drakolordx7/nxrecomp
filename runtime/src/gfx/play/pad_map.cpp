@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode pad mapping: SDL gamepad state to the Switch pad state. Pure functions, see pad_map.h for the rules.
 #include "play/pad_map.h"
 
 #include <algorithm>
@@ -35,10 +34,8 @@ constexpr ButtonMap kOtherButtons[] = {
     {kSdlDpadLeft, PadSrc::DpadLeft, hid::kBtnLeft},        {kSdlDpadRight, PadSrc::DpadRight, hid::kBtnRight},
 };
 
-// SDL stick axis (-32768..32767) to -1..1.
 double norm_axis(int16_t v) { return std::clamp(v / 32768.0, -1.0, 1.0); }
 
-// -1..1 to the hid range, rounded and clamped.
 int32_t to_stick(double v) {
     const long r = std::lround(v * 32767.0);
     return static_cast<int32_t>(std::clamp(r, -32767L, 32767L));
@@ -47,7 +44,7 @@ int32_t to_stick(double v) {
 // Radial dead zone. x, y are -1..1 (hid y up = +). dz is already clamped to 0..0.9.
 hid::StickValue stick(double x, double y, double dz) {
     const double len = std::sqrt(x * x + y * y);
-    if (len > 1.0) {  // square corners: pull back onto the unit circle so the result never exceeds full deflection
+    if (len > 1.0) {
         x /= len;
         y /= len;
     }
@@ -57,7 +54,6 @@ hid::StickValue stick(double x, double y, double dz) {
     return {to_stick(x * s), to_stick(y * s)};
 }
 
-// Rumble amplitude 0..1 times the scale, clamped, to a motor value 0..65535.
 uint16_t motor(float amp, double scale) {
     double v = std::clamp(static_cast<double>(amp), 0.0, 1.0) * scale;
     if (!(v > 0.0)) return 0;
@@ -69,7 +65,6 @@ uint16_t motor(float amp, double scale) {
 
 void map_pad(const platform::GamepadRaw& raw, const PadSettings& cfg, hid::NpadInput* out) {
     uint64_t bits = 0;
-    // A pressed source adds its remap, or its built-in buttons when it has none (kPadDefault).
     auto press = [&](PadSrc src, uint64_t builtin) {
         const uint64_t remap = cfg.remap[static_cast<int>(src)];
         bits |= remap == kPadDefault ? builtin : remap;
@@ -78,7 +73,6 @@ void map_pad(const platform::GamepadRaw& raw, const PadSettings& cfg, hid::NpadI
     for (int pos = 0; pos < 4; ++pos) {
         if (!(raw.buttons & (1u << pos))) continue;
         const uint8_t label = raw.face_label[pos];
-        // An out-of-range label has no meaning; fall back to the position.
         const bool by_label = cfg.label_abxy && label < 4;
         press(static_cast<PadSrc>(pos), hid::btn(by_label ? kLabelBtn[label] : kPosBtn[pos]));
     }

@@ -46,7 +46,6 @@ int nvn_stage_of(ShaderStage s) {
     }
 }
 
-// The 16 hex digits of a shader hash as a number. 0 if the text is not hex.
 uint64_t parse_hash(const std::string& hex) {
     uint64_t v = 0;
     for (char ch : hex) {
@@ -60,7 +59,6 @@ uint64_t parse_hash(const std::string& hex) {
     return v;
 }
 
-// True the first time a key is seen: the log line of a missing shader is written once per hash.
 bool first_report(const std::string& key) {
     static std::mutex mu;
     static std::set<std::string> seen;
@@ -68,7 +66,6 @@ bool first_report(const std::string& key) {
     return seen.insert(key).second;
 }
 
-// The key of a block the cache could not load: its hash when the control section is sane, else the control address.
 std::string missing_key(const uint8_t* code, const uint8_t* control) {
     const ShaderControl c = read_control(control);
     if (c.valid && c.code_size != 0 && c.code_size <= kMaxLogHashBytes) return shader_hash(code, c.code_size);
@@ -87,9 +84,9 @@ void report_missing(const uint8_t* code, const uint8_t* control) {
 }
 
 NVNboolean nvnProgramInitialize(NVNprogram* program, NVNdevice* device) {
-    (void)device;   // the program needs no device state of its own
+    (void)device;
     if (!program) return 0;
-    const bool was_live = host_of<Program>(program) != nullptr;   // initialised over a live program: replaced, not added
+    const bool was_live = host_of<Program>(program) != nullptr;
     bind_guest(program, new Program());
     if (!was_live) g_programs.add(1);
     return 1;
@@ -118,7 +115,7 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     if (count > 0 && !shaders) return 0;
 
     bool all_found = true;
-    bool addresses_ok = true;     // every stage had a code and a control address (the block is just not in the cache)
+    bool addresses_ok = true;
     for (int k = 0; k < count; ++k) {
         const uint8_t* code = host_ptr(shaders[k].data);
         const uint8_t* control = static_cast<const uint8_t*>(shaders[k].control);
@@ -147,7 +144,6 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     return (all_found || addresses_ok) ? 1 : 0;
 }
 
-// The Ext entry: NVNshaderData plus one more word (see the header comment).
 struct ShaderDataExt {
     NVNshaderData base;
     uint64_t extra;

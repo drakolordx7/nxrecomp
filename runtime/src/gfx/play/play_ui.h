@@ -11,20 +11,20 @@
 namespace nxrt::play {
 
 struct LiveStatus {
-    Ctx ctx = Ctx::Menu;               // the context the engine is in now
+    Ctx ctx = Ctx::Menu;
     const char* aim = "";              // why the mouse aim is on or off ("aim on", "locked on", "not in game" ...)
-    bool mouse_captured = false;       // the pointer is captured (relative mode)
-    int pads = 0;                      // open gamepads
-    std::string pad_name;              // the first one
+    bool mouse_captured = false;
+    int pads = 0;
+    std::string pad_name;
     bool pad_gyro = false, pad_rumble = false;
     const char* prompt_now = "";       // the button prompt style shown right now ("xbox" when Auto follows an Xbox pad); the Controller tab shows it under Auto
     double fps = 0;                    // presented frames per second (measured over the last second)
     const char* present_mode = "";     // "fifo" "mailbox" "immediate" ...
     const char* window_mode = "";      // "windowed" "borderless" "exclusive" (what the window is, not what the settings ask)
-    float refresh_hz = 0;              // refresh rate of the display the window is on
-    int width = 0, height = 0;         // window size in pixels
+    float refresh_hz = 0;
+    int width = 0, height = 0;
     EngineOut out;                     // what the keyboard and mouse press on the Switch pad right now
-    double pitch_deg = 0;              // the aim's pitch
+    double pitch_deg = 0;
     uint64_t input_calls = 0;          // the game's per-tick player-input calls seen (GameHost::input_tick; 0: the game has not reached gameplay)
 };
 
@@ -32,7 +32,7 @@ class UiHost {
 public:
     virtual ~UiHost() = default;
     virtual Settings settings() const = 0;               // the settings in force (a copy)
-    virtual Settings factory() const = 0;                // the factory settings
+    virtual Settings factory() const = 0;
     // Queues new settings: the game's main thread applies them at its next frame (bindings, sensitivity, window mode, vsync, frame cap)
     // and writes them to the settings file. Cheap to call; the page calls it when the user changes something (not every frame).
     virtual void apply(const Settings& s) = 0;

@@ -20,7 +20,6 @@ namespace {
 constexpr uint32_t kMaxUniformUpdate = 65536;
 constexpr uint32_t kNoIndexType = 0xFFFFFFFFu;     // P_DrawIndirect::type for DrawArrays
 
-// A payload with every byte zero (the padding of a record is then deterministic).
 template <class P>
 P zeroed() {
     P p;
@@ -53,10 +52,8 @@ void set_region(const NVNcopyRegion* r, P_CopyRegion& out, uint32_t& has) {
     out.d = r->depth;
 }
 
-// Four 32-bit words of a colour (float, int or uint bit patterns, copied as they are).
 void color_words(const void* src, uint32_t out[4]) { std::memcpy(out, src, 4 * sizeof(uint32_t)); }
 
-// DrawTexture regions: four floats x0, y0, x1, y1 (a null region reads as zeros).
 void region_floats(const NVNdrawTextureRegion* r, float out[4]) {
     if (r) std::memcpy(out, r, 4 * sizeof(float));
     else std::memset(out, 0, 4 * sizeof(float));
@@ -68,7 +65,6 @@ void tf_unsupported() {
     if (!logged.exchange(true)) NXLOG_W("nvn", "transform feedback is not supported: its commands are ignored");
 }
 
-// ---- draws -----------------------------------------------------------------------------------------------------------------
 void nvnCommandBufferDrawArrays(NVNcommandBuffer* cmd, NVNdrawPrimitive mode, int first, int count) {
     std::unique_lock<std::mutex> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
@@ -213,7 +209,6 @@ void nvnCommandBufferMultiDrawElementsIndirectCount(NVNcommandBuffer* cmd, NVNdr
     cb->rec->draw_count++;
 }
 
-// ---- transform feedback (not supported) -------------------------------------------------------------------------------------
 void nvnCommandBufferDrawTransformFeedback(NVNcommandBuffer*, NVNdrawPrimitive, NVNbufferAddress) { tf_unsupported(); }
 void record_xfb(NVNcommandBuffer* cmd, Op op, NVNbufferAddress control) {
     std::unique_lock<std::mutex> lk;
@@ -228,7 +223,6 @@ void nvnCommandBufferEndTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddres
 void nvnCommandBufferPauseTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddress control) { record_xfb(cmd, Op::PauseXfb, control); }
 void nvnCommandBufferResumeTransformFeedback(NVNcommandBuffer* cmd, NVNbufferAddress control) { record_xfb(cmd, Op::ResumeXfb, control); }
 
-// ---- clears ------------------------------------------------------------------------------------------------------------------
 // kind: 0 float, 1 int, 2 uint (the colour words are the bit patterns of the four values).
 void record_clear_color(NVNcommandBuffer* cmd, int index, const void* color, int mask, uint32_t kind) {
     if (!color) return;
@@ -304,7 +298,6 @@ void nvnCommandBufferClearBuffer(NVNcommandBuffer* cmd, NVNbufferAddress address
     cb->rec->emit(Op::ClearBuffer, p);
 }
 
-// ---- copies ------------------------------------------------------------------------------------------------------------------
 void nvnCommandBufferCopyBufferToBuffer(NVNcommandBuffer* cmd, NVNbufferAddress src, NVNbufferAddress dst, size_t size, int flags) {
     std::unique_lock<std::mutex> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
@@ -374,7 +367,6 @@ void nvnCommandBufferCopyTextureToTexture(NVNcommandBuffer* cmd, const NVNtextur
     cb->rec->emit(Op::CopyTextureToTexture, p);
 }
 
-// ---- downsample --------------------------------------------------------------------------------------------------------------
 // Tiled and plain downsample share one record (P_Downsample has no field that tells them apart).
 void record_downsample(NVNcommandBuffer* cmd, const NVNtexture* src, const NVNtextureView* srcView, const NVNtexture* dst, const NVNtextureView* dstView, bool with_views) {
     Texture* s = host_of<Texture>(src);
@@ -409,7 +401,6 @@ void nvnCommandBufferTiledDownsampleTextureView(NVNcommandBuffer* cmd, const NVN
     record_downsample(cmd, src, srcView, dst, dstView, true);
 }
 
-// ---- uniform buffer update ----------------------------------------------------------------------------------------------------
 // The data is copied into the record (blob), so the game may reuse its source right away. Sizes above 64 KiB are clamped.
 void nvnCommandBufferUpdateUniformBuffer(NVNcommandBuffer* cmd, NVNbufferAddress address, size_t bufferSize, ptrdiff_t offset, size_t size, const void* data) {
     if (!data) return;
@@ -429,7 +420,6 @@ void nvnCommandBufferUpdateUniformBuffer(NVNcommandBuffer* cmd, NVNbufferAddress
     cb->rec->emit(Op::UpdateUniformBuffer, p, data, n);
 }
 
-// ---- counters and values -------------------------------------------------------------------------------------------------------
 void nvnCommandBufferReportCounter(NVNcommandBuffer* cmd, NVNcounterType type, NVNbufferAddress address) {
     std::unique_lock<std::mutex> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
@@ -460,7 +450,6 @@ void nvnCommandBufferReportValue(NVNcommandBuffer* cmd, uint32_t value, NVNbuffe
     cb->rec->emit(Op::ReportValue, p);
 }
 
-// ---- barriers, fences, events --------------------------------------------------------------------------------------------------
 void nvnCommandBufferBarrier(NVNcommandBuffer* cmd, int bits) {
     std::unique_lock<std::mutex> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
@@ -472,7 +461,7 @@ void nvnCommandBufferBarrier(NVNcommandBuffer* cmd, int bits) {
 
 void nvnCommandBufferFenceSync(NVNcommandBuffer* cmd, NVNsync* sync, NVNsyncCondition condition, int flags) {
     Sync* s = host_of<Sync>(sync);
-    if (!s) return;   // the game has not initialised this sync object
+    if (!s) return;
     std::unique_lock<std::mutex> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
     if (!cb) return;
@@ -526,7 +515,6 @@ void nvnCommandBufferWaitEvent(NVNcommandBuffer* cmd, const NVNevent* event, NVN
     cb->rec->emit(Op::WaitEvent, p);
 }
 
-// ---- compute, DrawTexture, discards ---------------------------------------------------------------------------------------------
 void nvnCommandBufferDispatchCompute(NVNcommandBuffer* cmd, int x, int y, int z) {
     std::unique_lock<std::mutex> lk;
     CommandBuffer* cb = begin_record(cmd, lk);
@@ -582,7 +570,6 @@ void nvnCommandBufferResolveDepthBuffer(NVNcommandBuffer* cmd) {
     cb->rec->emit_empty(Op::ResolveDepth);
 }
 
-// ---- debug and ZCull: accepted, nothing recorded -------------------------------------------------------------------------------
 void nvnCommandBufferSaveZCullData(NVNcommandBuffer*, NVNbufferAddress, size_t) {}
 void nvnCommandBufferRestoreZCullData(NVNcommandBuffer*, NVNbufferAddress, size_t) {}
 void nvnCommandBufferPushDebugGroupStatic(NVNcommandBuffer*, uint32_t, const char*) {}

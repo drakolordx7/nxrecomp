@@ -49,7 +49,6 @@ constexpr size_t kBuilderBlock = 8;   // the builder's device pointer comes firs
 static_assert(sizeof(NVNdevice*) <= kBuilderBlock, "device pointer fits before the block");
 static_assert(kBuilderBlock + sizeof(SamplerData) <= sizeof(NVNsamplerBuilder), "builder layout fits the NVN object");
 
-// Where the block of each object lives. Guest memory has byte alignment, so the block is always moved with memcpy.
 uint8_t* block(NVNsampler* s) { return reinterpret_cast<uint8_t*>(s); }
 const uint8_t* block(const NVNsampler* s) { return reinterpret_cast<const uint8_t*>(s); }
 uint8_t* block(NVNsamplerBuilder* b) { return reinterpret_cast<uint8_t*>(b) + kBuilderBlock; }
@@ -67,9 +66,8 @@ template <class O, class F> void edit_params(O* o, F f) {
     write_params(o, d);
 }
 
-// The NVN default for every parameter (SetDefaults).
 SamplerData default_params() {
-    SamplerData d{};   // zero, including the pad bytes
+    SamplerData d{};
     d.min = NVN_MIN_FILTER_LINEAR;
     d.mag = NVN_MAG_FILTER_LINEAR;
     d.ws = d.wt = d.wr = NVN_WRAP_MODE_CLAMP_TO_EDGE;
@@ -84,7 +82,6 @@ SamplerData default_params() {
     return d;
 }
 
-// ---- shared bodies: the builder and the sampler entry points call the same code on their own block ------------------------
 template <class O> void set_defaults(O* o) { write_params(o, default_params()); }
 
 template <class O> void set_minmag(O* o, NVNminFilter mn, NVNmagFilter mg) {
@@ -159,7 +156,6 @@ template <class O> NVNsamplerReduction get_reduction(const O* o) {
 template <class O> void set_lodsnap(O* o, float v) { edit_params(o, [&](SamplerData& d) { d.lod_snap = v; }); }
 template <class O> float get_lodsnap(const O* o) { return read_params(o).lod_snap; }
 
-// Decoded view of a parameter block: every field is filled from the bytes, so a zero block decodes to all zero values.
 SamplerInfo to_info(const SamplerData& d) {
     SamplerInfo i;
     i.min_filter = d.min;
@@ -189,7 +185,6 @@ inline bool same_bits(float a, float b) {
 
 }  // namespace
 
-// ---- decode ----------------------------------------------------------------------------------------------------------------
 SamplerInfo decode(const NVNsamplerBuilder* b) {
     return to_info(b ? read_params(b) : SamplerData{});
 }
@@ -212,7 +207,6 @@ bool SamplerInfo::operator==(const SamplerInfo& o) const {
 
 namespace {
 
-// ---- builder entry points ----------------------------------------------------------------------------------------------------
 void nvnSamplerBuilderSetDevice(NVNsamplerBuilder* b, NVNdevice* device) { std::memcpy(b, &device, sizeof device); }
 NVNdevice* nvnSamplerBuilderGetDevice(const NVNsamplerBuilder* b) {
     NVNdevice* device = nullptr;
@@ -244,7 +238,6 @@ float nvnSamplerBuilderGetMaxAnisotropy(const NVNsamplerBuilder* b) { return get
 NVNsamplerReduction nvnSamplerBuilderGetReductionFilter(const NVNsamplerBuilder* b) { return get_reduction(b); }
 float nvnSamplerBuilderGetLodSnap(const NVNsamplerBuilder* b) { return get_lodsnap(b); }
 
-// ---- sampler entry points ----------------------------------------------------------------------------------------------------
 NVNboolean nvnSamplerInitialize(NVNsampler* s, const NVNsamplerBuilder* b) {
     if (!s || !b) return 0;
     write_params(s, read_params(b));
@@ -252,11 +245,11 @@ NVNboolean nvnSamplerInitialize(NVNsampler* s, const NVNsamplerBuilder* b) {
     g_live.insert(reinterpret_cast<uintptr_t>(s));
     return 1;
 }
-void nvnSamplerFinalize(NVNsampler* s) {                               // nothing host-side to release; the live count drops
+void nvnSamplerFinalize(NVNsampler* s) {
     std::lock_guard<std::mutex> lk(g_live_mu);
     g_live.erase(reinterpret_cast<uintptr_t>(s));
 }
-void nvnSamplerSetDebugLabel(NVNsampler* s, const char* label) {}      // labels are not kept
+void nvnSamplerSetDebugLabel(NVNsampler* s, const char* label) {}
 
 void nvnSamplerGetMinMagFilter(const NVNsampler* s, NVNminFilter* mn, NVNmagFilter* mg) { get_minmag(s, mn, mg); }
 void nvnSamplerGetWrapMode(const NVNsampler* s, NVNwrapMode* a, NVNwrapMode* t, NVNwrapMode* r) { get_wrap(s, a, t, r); }
@@ -270,7 +263,7 @@ float nvnSamplerGetMaxAnisotropy(const NVNsampler* s) { return get_aniso(s); }
 NVNsamplerReduction nvnSamplerGetReductionFilter(const NVNsampler* s) { return get_reduction(s); }
 NVNboolean nvnSamplerCompare(const NVNsampler* a, const NVNsampler* b) {
     if (!a || !b) return 0;
-    return decode(a) == decode(b) ? 1 : 0;   // the decoded state: every field, floats bit for bit
+    return decode(a) == decode(b) ? 1 : 0;
 }
 uint64_t nvnSamplerGetDebugID(const NVNsampler* s) { return 0; }
 

@@ -57,14 +57,13 @@ inline const ColorLayout* color(const NVNcolorState* s) { return reinterpret_cas
 inline uint32_t rd32(const void* p) { uint32_t v; std::memcpy(&v, p, 4); return v; }
 inline void wr32(void* p, uint32_t v) { std::memcpy(p, &v, 4); }
 
-// ---- NVNblendState -----------------------------------------------------------------------------------------------------------
 void nvnBlendStateSetDefaults(NVNblendState* s) {
     BlendLayout d{};
     d.flags = kPremultBit;
-    d.func[0] = static_cast<uint8_t>(NVN_BLEND_FUNC_ONE);    // src RGB
-    d.func[1] = static_cast<uint8_t>(NVN_BLEND_FUNC_ZERO);   // dst RGB
-    d.func[2] = static_cast<uint8_t>(NVN_BLEND_FUNC_ONE);    // src alpha
-    d.func[3] = static_cast<uint8_t>(NVN_BLEND_FUNC_ZERO);   // dst alpha
+    d.func[0] = static_cast<uint8_t>(NVN_BLEND_FUNC_ONE);
+    d.func[1] = static_cast<uint8_t>(NVN_BLEND_FUNC_ZERO);
+    d.func[2] = static_cast<uint8_t>(NVN_BLEND_FUNC_ONE);
+    d.func[3] = static_cast<uint8_t>(NVN_BLEND_FUNC_ZERO);
     d.eq[0] = static_cast<uint8_t>(NVN_BLEND_EQUATION_ADD);
     d.eq[1] = static_cast<uint8_t>(NVN_BLEND_EQUATION_ADD);
     d.adv_mode = static_cast<uint8_t>(NVN_BLEND_ADVANCED_MODE_NONE);
@@ -130,7 +129,6 @@ NVNboolean nvnBlendStateGetAdvancedNormalizedDst(const NVNblendState* s) {
     return static_cast<NVNboolean>((blend(s)->flags & kNormDstBit) ? 1 : 0);
 }
 
-// ---- NVNcolorState -----------------------------------------------------------------------------------------------------------
 void nvnColorStateSetDefaults(NVNcolorState* s) {
     ColorLayout d{};
     d.logic_op = static_cast<uint8_t>(NVN_LOGIC_OP_COPY);
@@ -152,7 +150,6 @@ NVNboolean nvnColorStateGetBlendEnable(const NVNcolorState* s, int target) {
 NVNlogicOp nvnColorStateGetLogicOp(const NVNcolorState* s) { return static_cast<NVNlogicOp>(color(s)->logic_op); }
 NVNalphaFunc nvnColorStateGetAlphaTest(const NVNcolorState* s) { return static_cast<NVNalphaFunc>(color(s)->alpha_test); }
 
-// ---- NVNchannelMaskState -----------------------------------------------------------------------------------------------------
 void nvnChannelMaskStateSetDefaults(NVNchannelMaskState* s) { wr32(s, 0xffffffffu); }
 void nvnChannelMaskStateSetChannelMask(NVNchannelMaskState* s, int target, NVNboolean r, NVNboolean g, NVNboolean b,
                                        NVNboolean a) {
@@ -172,7 +169,6 @@ void nvnChannelMaskStateGetChannelMask(const NVNchannelMaskState* s, int target,
 
 }  // namespace
 
-// ---- decode() ----------------------------------------------------------------------------------------------------------------
 BlendInfo decode(const NVNblendState* s) {
     const BlendLayout* b = blend(s);
     BlendInfo i;

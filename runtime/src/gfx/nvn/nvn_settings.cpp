@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// [nvn] settings (nvn_settings.h): the one reader of the section's ini keys and environment variables.
 #include "nvn_settings.h"
 
 #include <algorithm>

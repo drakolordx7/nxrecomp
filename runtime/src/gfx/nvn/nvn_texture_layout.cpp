@@ -79,7 +79,6 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     if (!out.fmt) return out;
     if (b.width <= 0 || b.height <= 0) return out;
 
-    // ---- shape from the target -------------------------------------------------------------------------------------------
     uint32_t w = static_cast<uint32_t>(b.width), h = static_cast<uint32_t>(b.height), d = 1, layers = 1;
     bool is3d = false, multisample = false;
     const uint32_t depth_field = b.depth > 0 ? static_cast<uint32_t>(b.depth) : 0;
@@ -123,9 +122,8 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
             return out;
     }
 
-    // ---- levels and samples ----------------------------------------------------------------------------------------------
     const uint32_t maxdim = is3d ? std::max({w, h, d}) : std::max(w, h);
-    uint32_t top = 1;                                  // floor(log2(maxdim)) + 1
+    uint32_t top = 1;
     while ((maxdim >> top) != 0) ++top;
     const uint32_t levels = multisample ? 1 : std::min<uint32_t>(static_cast<uint32_t>(std::max(1, b.levels)), top);
     const uint64_t samples = static_cast<uint64_t>(std::max(1, b.samples));
@@ -135,11 +133,10 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     out.levels = levels;
     out.layers = layers;
 
-    // ---- pitch-linear ----------------------------------------------------------------------------------------------------
     out.block_linear = (b.flags & NVN_TEXTURE_FLAGS_LINEAR) == 0;
     if (!out.block_linear) {
         if (b.stride < 0 || (b.stride > 0 && static_cast<uint64_t>(b.stride) < blocks_x * bpb)) return out;
-        out.levels = 1;   // pitch-linear textures have a single level
+        out.levels = 1;
         out.pitch = b.stride > 0 ? static_cast<uint64_t>(b.stride) : align_up(blocks_x * bpb, 32);
         out.storage_size = out.pitch * blocks_y * d * layers * samples;
         out.alignment = 0x1000;
@@ -147,7 +144,6 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
         return out;
     }
 
-    // ---- block-linear ----------------------------------------------------------------------------------------------------
     tegra::TextureDesc& ds = out.desc;
     ds.width = w;
     ds.height = h;
@@ -157,7 +153,7 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     ds.block_w = bw;
     ds.block_h = bh;
     ds.bytes_per_block = bpb;
-    ds.linear_stride_align = 1;   // tight rows in the scratch buffers of the texel access
+    ds.linear_stride_align = 1;
     int tile[3] = {0, 0, 0};
     if (is3d && (b.flags & NVN_TEXTURE_FLAGS_SPARSE) && sparse_tile_shape(b.target, out.fmt, tile) && tile[2] <= 16 && tile[1] / static_cast<int>(bh) >= 8) {
         // A sparse volume is cut into 64 KiB tiles; a tile is whole GOB blocks, so the block shape is the tile's: rows of GOBs of its height, as deep

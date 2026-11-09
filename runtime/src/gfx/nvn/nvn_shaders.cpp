@@ -32,8 +32,6 @@
 
 namespace nxrt::nvn::be {
 
-// ---- SHA-1 ----------------------------------------------------------------------------------------------------------
-
 namespace {
 
 inline uint32_t rol(uint32_t x, int n) { return (x << n) | (x >> (32 - n)); }
@@ -107,8 +105,6 @@ std::string sha1_hex(const void* data, size_t size) {
 
 std::string shader_hash(const uint8_t* code, uint32_t size) { return sha1_hex(code, size).substr(0, 16); }
 
-// ---- control section ------------------------------------------------------------------------------------------------
-
 ShaderControl read_control(const uint8_t* control) {
     ShaderControl c;
     c.valid = rd32(control) == kShaderControlMagic;
@@ -122,8 +118,6 @@ ShaderControl read_control(const uint8_t* control) {
     return c;
 }
 
-// ---- support buffer -------------------------------------------------------------------------------------------------
-
 SupportBuffer support_buffer_defaults() {
     SupportBuffer sb;
     std::memset(&sb, 0, sizeof sb);
@@ -132,7 +126,7 @@ SupportBuffer support_buffer_defaults() {
 }
 
 void support_buffer_set_viewport(SupportBuffer& sb, float width, float height, bool transform_disabled) {
-    const float scale = 1.0f;  // no resolution scaling
+    const float scale = 1.0f;
     sb.viewport_inverse[0] = width != 0 ? scale * 2.0f / width : 0.0f;
     sb.viewport_inverse[1] = height != 0 ? scale * 2.0f / height : 0.0f;
     sb.viewport_inverse[2] = 1.0f;
@@ -143,11 +137,9 @@ void support_buffer_set_viewport(SupportBuffer& sb, float width, float height, b
     sb.viewport_size[3] = 0.0f;
 }
 
-// ---- SPIR-V reflection (from nvn_spirv_reflect.cpp) -----------------------------------------------------------------
-
 namespace {
 
-using namespace nxrt::spirv;   // the shared walker, opcodes and enumerants (spirv_module.h)
+using namespace nxrt::spirv;
 
 struct Decorations {
     int set = -1, binding = -1, location = -1, component = 0, builtin = -1;
@@ -249,7 +241,7 @@ void derive_meaning(DescriptorBinding& b, ShaderStage stage) {
     if (b.type == DescriptorType::StorageBuffer) {
         if (n.size() > 1 && n[0] == 's' && parse_uint(n.substr(1), 10, v)) m.sb_slot = v;
         else if (b.set == 1) m.sb_slot = int(b.binding) - stage_slot(stage) * 16;
-        m.source = NvnSource::Unknown;  // until apply_harness gives the c[0] offset
+        m.source = NvnSource::Unknown;
         return;
     }
     // Textures and images: "<t|i|s>[type]_tcb_<hex>[_fmt]" or "<t|i|s>[type]_cb<k>_<hex>[_fmt]".
@@ -487,8 +479,6 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
     return true;
 }
 
-// ---- harness records ------------------------------------------------------------------------------------------------
-
 bool parse_harness_resources(std::string_view text, std::vector<HarnessResource>& out) {
     out.clear();
     while (!text.empty()) {
@@ -558,7 +548,7 @@ size_t parse_results_tsv(std::string_view text, std::unordered_map<std::string, 
             if (tab == std::string_view::npos) break;
             start = tab + 1;
         }
-        if (resources_col < 0) {  // header line names the columns
+        if (resources_col < 0) {
             for (size_t i = 0; i < cols.size(); i++)
                 if (cols[i] == "resources") resources_col = int(i);
             if (resources_col < 0) return 0;
@@ -594,7 +584,7 @@ bool apply_harness(ShaderReflection& refl, const std::vector<HarnessResource>& r
             if (b->nvn.word < 0) set_texture_handle(b->nvn, r.kind == HarnessResource::Image, r.bank, r.word);
             break;
         case HarnessResource::Uniform:
-            break;  // name and binding already say it
+            break;
         }
     }
     return ok;
@@ -641,8 +631,6 @@ std::string describe_like_harness(const ShaderReflection& refl) {
     }
     return out;
 }
-
-// ---- one stage ------------------------------------------------------------------------------------------------------
 
 bool make_shader_info(const uint8_t* code, const uint8_t* control, std::vector<uint32_t> spirv,
                       const std::string* resources, ShaderInfo& out, std::string* error) {
@@ -698,8 +686,6 @@ const char* source_name(NvnSource s) {
     }
 }
 
-// ---- the runtime cache ----------------------------------------------------------------------------------------------
-
 namespace {
 
 bool read_file(const std::string& path, std::string& out) {
@@ -711,7 +697,6 @@ bool read_file(const std::string& path, std::string& out) {
     return true;
 }
 
-// Tab-separated column `col` (0-based) of one line; empty if the line has fewer columns.
 std::string column_text(std::string_view line, int col) {
     size_t start = 0;
     for (int i = 0; i < col; i++) {
@@ -787,7 +772,7 @@ const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control)
             NXLOG_W("nvn", "shader control %p: bad section (code size %#x)", (const void*)control, c.code_size);
         return nullptr;
     }
-    std::string hash = shader_hash(code, c.code_size);  // a pass over the block: outside the lock
+    std::string hash = shader_hash(code, c.code_size);
     std::lock_guard lk(lock_);
     if (!open_) {   // no cache at all: every block is missing, and still goes to [nvn] dump_missing
         dump_missing_block(hash, code, control, c.code_size);
@@ -851,7 +836,7 @@ const ShaderInfo* ShaderCache::load_locked(const std::string& hash, const uint8_
     std::vector<uint32_t> words(bytes.size() / 4);
     std::memcpy(words.data(), bytes.data(), bytes.size());
 
-    std::string record;  // the resources column of this block's results.tsv line, parsed only now
+    std::string record;
     const std::string* record_ptr = nullptr;
     if (auto it = lines_.find(hash); it != lines_.end()) {
         record = column_text(std::string_view(results_.data() + it->second.first, it->second.second), resources_col_);
@@ -894,7 +879,7 @@ const ShaderInfo* ShaderCache::load_stub(const std::string& hash) {
     }
     std::vector<uint32_t> words(bytes.size() / 4);
     std::memcpy(words.data(), bytes.data(), bytes.size());
-    if (existing) {                         // the words were dropped: put them back (the reflection is kept)
+    if (existing) {
         std::lock_guard lk(lock_);
         if (existing->spirv.empty()) existing->spirv = std::move(words);
         return existing;
@@ -952,7 +937,6 @@ bool ShaderCache::is_open() const {
 
 const std::string& ShaderCache::dir() const { return dir_; }
 
-// The folder of the running executable, or "" when it cannot be read.
 static std::string exe_folder() {
     char buf[MAX_PATH];
     const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
@@ -981,10 +965,9 @@ ShaderCache& shader_cache() {
     std::call_once(once, [] {
         const std::string configured = nvn_settings().shader_cache;
         if (!configured.empty()) {
-            cache.open(configured);  // logs its own failure
+            cache.open(configured);
             return;
         }
-        // The working directory first, then the folder of the executable.
         std::vector<std::string> candidates = {"./shader_cache/spirv"};
         if (std::string exe = exe_folder(); !exe.empty()) candidates.push_back(exe + "/shader_cache/spirv");
         for (const std::string& dir : candidates) {

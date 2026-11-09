@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Typed entry points for the NVN back end (S4d).
 //
 // An NVN function is written as an ordinary C++ function with the types of the NVN C header (third_party/nvn/nvn.h):
 //
@@ -28,7 +27,6 @@
 
 namespace nxrt::nvn::abi {
 
-// ---- argument classes ---------------------------------------------------------------------------------------------------
 template <class T>
 constexpr char class_of() {
     using U = std::remove_cv_t<T>;
@@ -48,7 +46,6 @@ constexpr bool classes_compatible(char table, char impl) {
     return norm(table) == norm(impl);
 }
 
-// ---- reading the guest registers --------------------------------------------------------------------------------------
 struct ArgReader {
     ::Ctx* c;
     int ni = 0, nf = 0, nstack = 0;
@@ -119,7 +116,6 @@ inline void write_result(::Ctx* c, R v) {
     }
 }
 
-// ---- the thunk ---------------------------------------------------------------------------------------------------------
 template <auto Fn>
 struct Thunk;
 
@@ -147,7 +143,6 @@ void reset_mismatches();
 
 #define NVN_REG(fn) ::nxrt::nvn::abi::register_checked(#fn, &::nxrt::nvn::abi::Thunk<&fn>::call, ::nxrt::nvn::abi::Thunk<&fn>::kRet, ::nxrt::nvn::abi::Thunk<&fn>::kArgs)
 
-// ---- calling a thunk from C++ (tests, and host-side callers that behave like a game) -----------------------------------
 template <class Sig>
 class Caller;
 

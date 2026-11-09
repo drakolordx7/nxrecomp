@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Button prompts (S17): see prompts.h.
 //
 // Pack file layout (scripts/build_prompt_pack.py), little endian: 24-byte header (magic "MPIP", version 1, count, width, height,
 // reserved), `count` directory entries of 48 bytes (char name[40], u32 offset, u32 size) sorted by name, then the RGBA8 pixel blocks.
@@ -53,7 +52,6 @@ bool read_file(const std::filesystem::path& p, std::vector<uint8_t>& out) {
 }
 }  // namespace
 
-// ---- the icon pack ---------------------------------------------------------------------------------------------------------------
 bool IconPack::load_memory(std::vector<uint8_t> bytes) {
     data_.clear();
     index_.clear();
@@ -102,25 +100,21 @@ uint64_t prompt_hash(const void* data, size_t size) {
     return h;
 }
 
-// ---- state -----------------------------------------------------------------------------------------------------------------------
 namespace {
 
 struct State {
     std::mutex mu;
     bool hook_set = false;
     int sub = 0;                     // the texture upload subscription (nxrt/tex_upload.h)
-    // pack
     bool pack_tried = false;
     IconPack pack;
     // identity of the game's icon textures: (size of the tiled buffer, hash of it) -> icon
     bool ids_tried = false;
     std::map<std::pair<size_t, uint64_t>, Icon> ids;
     std::vector<size_t> id_sizes;
-    // answers
     std::string names[kIconCount];
     bool any_name = false;
     PromptStyle effective = PromptStyle::Switch;
-    // the inputs of the last update
     bool have_inputs = false;
     PromptInputs last_in;
     PromptStyle last_eff = PromptStyle::Switch;

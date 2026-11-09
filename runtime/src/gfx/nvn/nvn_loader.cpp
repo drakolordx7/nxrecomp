@@ -72,7 +72,6 @@ UnknownPolicy unknown_policy() {
 
 unsigned long long u64(uint64_t v) { return static_cast<unsigned long long>(v); }
 
-// The logging stub, shared by every entry point: the thunk's name says which one was called.
 void stub_handler(::Ctx* c) {
     const char* name = hle_current_name();
     const int idx = name ? entry_index(name) : -1;
@@ -118,7 +117,6 @@ void device_get_proc_address(::Ctx* c) {
 
 }  // namespace
 
-// ---- table ------------------------------------------------------------------------------------------------------------
 size_t entry_count() { return kEntryCount; }
 
 const Entry& entry_at(size_t index) { return g_entries[index < kEntryCount ? index : 0]; }
@@ -170,7 +168,6 @@ uint32_t struct_size(const char* name) {
     return 0;
 }
 
-// ---- installation -----------------------------------------------------------------------------------------------------
 void install() {
     std::lock_guard<std::mutex> lk(g_install_mu);
     if (g_installed.load()) return;
@@ -180,7 +177,6 @@ void install() {
         else if (!std::strcmp(name, "nvnDeviceGetProcAddress")) hle_register(name, device_get_proc_address);
         else hle_register(name, stub_handler);
     }
-    // These two are real implementations from the start.
     g_impl[entry_index("nvnBootstrapLoader")] = true;
     g_impl[entry_index("nvnDeviceGetProcAddress")] = true;
     g_installed.store(true);
@@ -221,7 +217,6 @@ size_t implemented_count() {
     return n;
 }
 
-// ---- reporting --------------------------------------------------------------------------------------------------------
 uint64_t entry_calls(size_t index) { return index < kEntryCount ? g_calls[index].load() : 0; }
 uint64_t stub_calls_total() { return g_stub_calls.load(); }
 

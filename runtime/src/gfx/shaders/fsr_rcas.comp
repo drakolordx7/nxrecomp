@@ -11,7 +11,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform texture2D u_src;                       // the EASU output, read with texelFetch
 layout(set = 0, binding = 1, rgba16f) writeonly uniform image2D u_dst;
 layout(push_constant) uniform PushConstants {
-    uvec4 con;    // fsr1_rcas_consts() output
+    uvec4 con;
     vec4 opt;     // x: 1 = scene-linear HDR (compress/expand), 0 = [0,1]; y, z: output width, height; w: pre-scale k (0 = 1)
 } pc;
 
@@ -39,7 +39,7 @@ void FsrRcasInputF(inout FfxFloat32 r, inout FfxFloat32 g, inout FfxFloat32 b) {
 #include "fsr1/ffx_fsr1.h"
 
 void CurrFilter(uvec2 pos) {
-    if (any(greaterThanEqual(pos, uvec2(pc.opt.yz)))) return;   // outside the output
+    if (any(greaterThanEqual(pos, uvec2(pc.opt.yz)))) return;
     vec3 c;
     FsrRcasF(c.r, c.g, c.b, pos, pc.con);
     if (linear_in()) c = expand3(c);

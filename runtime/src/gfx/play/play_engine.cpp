@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode binding engine, see play_engine.h for the rules.
 #include "play_engine.h"
 
 #include <algorithm>
@@ -74,7 +73,6 @@ std::vector<std::array<int, 3>> Engine::effective_sig(Ctx c, const InputId& id) 
 
 void Engine::set_settings(const Settings& s, uint64_t now) {
     std::lock_guard<std::mutex> lk(mu_);
-    // inputs whose effective bindings change are consumed until released
     std::map<InputId, std::vector<std::array<int, 3>>> before;
     for (auto& kv : in_)
         if (kv.second.held) before[kv.first] = effective_sig(ctx_, kv.first);
@@ -94,14 +92,14 @@ Settings Engine::settings() const {
 void Engine::set_context(Ctx c, uint64_t now) {
     std::lock_guard<std::mutex> lk(mu_);
     if (c == ctx_ || c == Ctx::All) return;
-    step(now);   // edges up to now belong to the old context
+    step(now);
     for (auto& kv : in_) {
         if (!kv.second.held) continue;
         if (effective_sig(ctx_, kv.first) != effective_sig(c, kv.first)) kv.second.consumed = true;
     }
     ctx_ = c;
     rebuild();
-    for (BindRt& r : rt_) r.prev = false;   // the new context starts with a clean edge state
+    for (BindRt& r : rt_) r.prev = false;
     for (int b : cur_) rt_[b].prev = binding_active(b, now);   // already-held inputs do not fire an edge on entry
 }
 

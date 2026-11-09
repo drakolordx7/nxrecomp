@@ -85,7 +85,6 @@ struct Overlay::Impl {
     struct Panel { std::string title; std::function<void()> fn; };
     std::vector<Panel> panels;
 
-    // menu state applied by apply_pending()
     bool want_mode = false;
     PresentMode new_mode = PresentMode::Fifo;
     bool want_fullscreen = false;
@@ -110,7 +109,7 @@ struct Overlay::Impl {
     std::chrono::steady_clock::time_point counter_prev{};
     FpsStats stats;
     double text_s = -1e9;                 // time of the last text refresh, seconds (far past: refresh at once)
-    FpsStats::Snapshot snap;              // the snapshot taken at text_s
+    FpsStats::Snapshot snap;
     std::string counter_lines[4];
     int counter_n = 0;
 
@@ -228,7 +227,6 @@ std::unique_ptr<Overlay> Overlay::create(const Context& ctx, std::string* error)
     s.ctx = ctx;
     s.color_format = ctx.renderer->format();
     if (ctx.renderer->output_kind() != extras::OutputKind::Sdr8) {
-        // HDR swapchain: ImGui draws into an RGBA8 target that the composite maps onto the swapchain (see draw)
         if (s.composite.init(*ctx.device)) {
             s.hdr = true;
             s.color_format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -419,7 +417,7 @@ void Overlay::apply_window_pending() {
 }
 
 void Overlay::Impl::refresh_counter_text(double now_s) {
-    if (now_s - text_s < 0.25) return;    // the text is rebuilt at most every 250 ms
+    if (now_s - text_s < 0.25) return;
     text_s = now_s;
     snap = stats.snapshot(now_s);
     const int detail = counter_detail.load(std::memory_order_relaxed);
@@ -522,7 +520,7 @@ void Overlay::draw(const FrameInfo& f) {
         return;
     }
     if (counter_on) {
-        if (!s.counter_was_on) {          // just switched on: start from an empty history
+        if (!s.counter_was_on) {
             s.counter_was_on = true;
             s.counter_have_prev = false;
             s.stats.reset();
@@ -559,7 +557,7 @@ void Overlay::draw(const FrameInfo& f) {
     if (s.visible) s.build_ui();
     if (show_counter) s.draw_counter(f, now_s);
     if (note_on) s.draw_note(f);
-    if (ptr_on) {   // a plain arrow, white with a dark outline, sized with the frame height
+    if (ptr_on) {
         const float k = std::max(1.f, static_cast<float>(f.extent.height) / 720.f);
         const float x = s.ptr_x.load(std::memory_order_relaxed), y = s.ptr_y.load(std::memory_order_relaxed);
         const ImVec2 pts[7] = {{0, 0}, {0, 16 * k}, {4 * k, 12.5f * k}, {7.5f * k, 19 * k}, {10 * k, 18 * k}, {6.5f * k, 11.5f * k}, {12 * k, 11.5f * k}};
@@ -571,7 +569,6 @@ void Overlay::draw(const FrameInfo& f) {
     }
     ImGui::Render();
 
-    // one dynamic-rendering pass that draws the ImGui draw data into view
     auto render_into = [&](VkImageView view, VkAttachmentLoadOp load) {
         VkRenderingAttachmentInfo att = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         att.imageView = view;

@@ -26,13 +26,11 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 
-// Writes text into a fixed buffer, always NUL-terminated.
 template <size_t N>
 void put(char (&dst)[N], const char* text) {
     std::snprintf(dst, N, "%s", text);
 }
 
-// Narrows a wide name (device names are ASCII in practice; anything else becomes '?'). Stops at NUL or max_len.
 template <size_t N>
 void narrow(const wchar_t* src, size_t max_len, char (&dst)[N]) {
     size_t i = 0;
@@ -40,7 +38,6 @@ void narrow(const wchar_t* src, size_t max_len, char (&dst)[N]) {
     dst[i] = '\0';
 }
 
-// Finds the active CCD path whose source GDI device name equals gdi_name. Returns its target adapter id and target id.
 bool find_active_target(const wchar_t* gdi_name, LUID* adapter, UINT32* target_id, char* note, size_t cap) {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
@@ -86,7 +83,6 @@ bool find_active_target(const wchar_t* gdi_name, LUID* adapter, UINT32* target_i
     return false;
 }
 
-// Reads the advanced-colour flags and the SDR white level (in nits) for the monitor's active CCD target.
 bool read_ccd(const wchar_t* gdi_name, bool* adv_supported, bool* adv_enabled, float* sdr_white_nits, char* note, size_t cap) {
     LUID adapter{};
     UINT32 target_id = 0;
@@ -121,7 +117,6 @@ bool read_ccd(const wchar_t* gdi_name, bool* adv_supported, bool* adv_enabled, f
     return true;
 }
 
-// Finds the DXGI output for hmon (a fresh factory each call, so no cached state) and reads its luminance and colour space.
 bool read_dxgi(HMONITOR hmon, DisplayHdrInfo* out, DXGI_COLOR_SPACE_TYPE* color_space, char* note, size_t cap) {
     ComPtr<IDXGIFactory1> factory;
     HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
@@ -169,7 +164,6 @@ bool run(void* hwnd, DisplayHdrInfo* out) {
     }
     narrow(info.szDevice, CCHDEVICENAME, out->monitor);
 
-    // Both sources are read even if one fails, so the fields that were found are kept.
     bool adv_supported = false, adv_enabled = false;
     char ccd_note[48] = {};
     const bool ccd_ok = read_ccd(info.szDevice, &adv_supported, &adv_enabled, &out->sdr_white_nits, ccd_note, sizeof ccd_note);
@@ -181,7 +175,6 @@ bool run(void* hwnd, DisplayHdrInfo* out) {
     out->valid = ccd_ok && dxgi_ok;
     out->hdr_enabled = out->valid && adv_supported && adv_enabled && color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
 
-    // The notes are short enough for how[96] (two notes of at most 47 characters plus a separator).
     std::snprintf(out->how, sizeof out->how, "%s; %s", ccd_note, dxgi_note);
     return true;
 }

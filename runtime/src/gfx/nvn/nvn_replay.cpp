@@ -73,7 +73,6 @@ struct GState {
     uint32_t sample_mask = 0xffffffff;
     bool rasterizer_discard = false, depth_clamp = false, prim_restart = false, render_enable = true;
     uint32_t restart_index = 0;
-    // render targets
     uint32_t ncolor = 0;
     Ref<Texture> color_tex[8];
     TextureViewInfo color_view[8];
@@ -115,13 +114,13 @@ Pass P;
 // the same layout, and every command other than a pass or a layout change, get a full barrier first (end_pass).
 struct PendingWrite { Ref<Texture> tex; VkImageLayout layout; };
 std::vector<PendingWrite> g_pending;
-bool g_tracked = false;         // this submission uses tracked barriers
-bool g_pass_unsafe = false;     // a draw of the open pass may write memory other than its attachments
-bool g_prog_writes = false;     // the bound program has storage buffer or storage image bindings
+bool g_tracked = false;
+bool g_pass_unsafe = false;
+bool g_prog_writes = false;
 bool g_mirror_stale = false;    // a GPU write made pages of a pool copy stale while a draw was being set up: bind again at the next draw
 
-uint32_t g_pass_draws = 0;      // draws recorded in the open pass (GPU pass profiler)
-uint64_t g_pass_verts = 0;      // vertices (indices for indexed draws) times instances of those draws
+uint32_t g_pass_draws = 0;
+uint64_t g_pass_verts = 0;
 Frame* F = nullptr;
 std::unordered_map<uint64_t, VkDescriptorSet> g_set_cache;
 VkPipeline g_bound_pipeline = VK_NULL_HANDLE;
@@ -177,8 +176,8 @@ bool g_vb_bound_in_cb = false;        // vkCmdBindVertexBuffers2 was called in t
 // [nvn] trace_frame = N (NXRT_NVN_TRACE_FRAME): every draw, clear, copy and dispatch of the frame that is presented as number N is logged
 // at Info ("trace ..." lines): programs, render targets, sampled textures, blend and depth state. For finding out what a frame does.
 bool g_xfb_active = false;
-bool g_pipe_xfb = false;             // the bound pipeline is a stream-out variant
-bool g_xfb_began = false;            // vkCmdBeginTransformFeedbackEXT is in effect in the open pass
+bool g_pipe_xfb = false;
+bool g_xfb_began = false;
 bool g_xfb_have_counter = false;     // a counter buffer holds the bytes written so far: the next begin continues after them
 gfx::Buffer g_xfb_counter;
 // Primitive counters (NVN_COUNTER_TYPE_PRIMITIVES_GENERATED = 13, TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN = 14): counted on the CPU by every
@@ -191,15 +190,15 @@ uint64_t g_prims_generated = 0, g_prims_xfb = 0;
 // address the replay never wrote (the game's own memory) is read from the pool.
 constexpr uint64_t kReportUnknown = ~0ull;
 std::unordered_map<uint64_t, uint64_t> g_reports;
-nxrt::GaugeCounter g_gauge_pipeline_binds("nvn.cnt.pipeline_binds");   // graphics pipeline binds (cumulative)
-VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries (counters 13 and 14)
+nxrt::GaugeCounter g_gauge_pipeline_binds("nvn.cnt.pipeline_binds");
+VkQueryPool g_xq_pool = VK_NULL_HANDLE;
 bool g_trace = false;
 struct TraceSnap { int index; int draw; std::string name; std::string desc; };
 std::vector<TraceSnap> g_trace_snaps;
-std::vector<Texture*> g_trace_sampled;       // textures sampled by the last traced draw
+std::vector<Texture*> g_trace_sampled;
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
-std::vector<int64_t> g_trace_extra;   // more frames to trace
+std::vector<int64_t> g_trace_extra;
 // [nvn] trace_after_fs (nvn_debug.h): the frame after the first one that draws with a fragment shader of this hash prefix is traced
 // (a frame number is not stable from run to run: the load times differ).
 
@@ -236,7 +235,6 @@ void log_once(const char* key, const char* msg) {
     if (seen.emplace(key, true).second) NXLOG_W(kTag, "%s", msg);
 }
 
-// ---- helpers ----------------------------------------------------------------------------------------------------------------
 VkFormat scaled_for(VkFormat f) {
     switch (f) {
         case VK_FORMAT_R8_UINT: return VK_FORMAT_R8_USCALED;
@@ -274,7 +272,6 @@ VkImageViewType view_type_for(const DescriptorBinding& b) {
     }
 }
 
-// ---- passes ----------------------------------------------------------------------------------------------------------------
 // Ends transform feedback in the open pass, remembering the bytes written in the counter buffer (a pass break must not restart the buffer).
 void xfb_end_in_pass() {
     if (!g_xfb_began) return;
@@ -346,7 +343,7 @@ Target make_target(Texture* t, const TextureViewInfo& v, bool has_view) {
             tg.layer = static_cast<uint32_t>(v.min_layer);
             tg.layers = std::max(1, v.num_layers);
         }
-        else if (t && t->layers > 1 && t->b.target != NVN_TEXTURE_TARGET_3D) tg.layers = t->layers;   // a view without layers
+        else if (t && t->layers > 1 && t->b.target != NVN_TEXTURE_TARGET_3D) tg.layers = t->layers;
         if (v.has_format) {
             const FormatInfo* fi = format_info(v.format);
             if (fi && fi->vk != VK_FORMAT_UNDEFINED) tg.view_format = fi->vk;
@@ -366,7 +363,6 @@ bool targets_match() {
     return P.depth == make_target(S.depth_tex.get(), S.depth_view, S.depth_has_view);
 }
 
-// Starts a pass on the current render targets if none is open for them. False when there is nothing to render to.
 bool ensure_pass(bool depth_ro = false) {
     if (P.open && targets_match() && P.depth_ro == depth_ro) return true;
     end_pass(true);
@@ -436,7 +432,7 @@ bool ensure_pass(bool depth_ro = false) {
             any = true;
         }
     }
-    if (!any && g_xfb_active && device().features().transform_feedback) {   // a stream-out pass without attachments
+    if (!any && g_xfb_active && device().features().transform_feedback) {
         extent = {1, 1};
         any = true;
     }
@@ -446,7 +442,7 @@ bool ensure_pass(bool depth_ro = false) {
     if (P.samples == 0) P.samples = 1;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, extent};
-    uint32_t layer_count = UINT32_MAX;     // layered rendering: the layers every attachment has in common
+    uint32_t layer_count = UINT32_MAX;
     for (uint32_t i = 0; i < S.ncolor; ++i)
         if (colors[i].imageView) layer_count = std::min(layer_count, std::max<uint32_t>(1, P.color[i].layers));
     if (have_depth) layer_count = std::min(layer_count, std::max<uint32_t>(1, P.depth.layers));
@@ -468,7 +464,6 @@ bool ensure_pass(bool depth_ro = false) {
     return true;
 }
 
-// ---- viewport conversion -------------------------------------------------------------------------------------------------
 VkRect2D scissor_rect(const int32_t* r) {
     int32_t x = r[0], y = r[1], w = r[2], h = r[3];
     if (x < 0) { w += x; x = 0; }
@@ -498,7 +493,6 @@ void set_viewports_and_scissors() {
     vkCmdSetScissorWithCount(cb, nvp, sc);
 }
 
-// ---- descriptor sets ---------------------------------------------------------------------------------------------------------
 struct TexResolved {
     Texture* tex = nullptr;
     TextureViewInfo view;
@@ -508,7 +502,6 @@ struct TexResolved {
 };
 
 uint32_t read_handle_word(int stage, int bank, int word) {
-    // a texture handle the game wrote into uniform block (bank - 3)
     const int ub = bank - 3;
     if (ub < 0 || ub >= 16) return 0;
     const GState::Bind& b = S.ubo[stage][ub];
@@ -580,7 +573,6 @@ ViewRequest make_request(const DescriptorBinding& b, const TexResolved& r) {
     return q;
 }
 
-// The image a draw reads or writes through an image binding (nvnCommandBufferBindImage): the handle is a texture pool id.
 TexResolved resolve_image(const BindingDesc& d) {
     TexResolved r;
     const DescriptorBinding& b = d.shader->refl.bindings[d.index];
@@ -655,7 +647,7 @@ Texture* feedback_clone(Texture* t) {
     Ref<Texture>& c = fe.tex;
     g_fb_clone_n.store(static_cast<int64_t>(g_fb_clone.size()), std::memory_order_relaxed);
     if (c && (c->b.width != t->b.width || c->b.height != t->b.height || c->b.depth != t->b.depth || c->fmt != t->fmt || c->levels != t->levels || c->layers != t->layers))
-        c = Ref<Texture>();                                 // the game made another texture at this address
+        c = Ref<Texture>();
     if (!c) {
         Texture* n = new Texture();
         n->b = t->b;
@@ -722,7 +714,7 @@ void prepare_textures(const ProgLayout& pl) {
         TexResolved r = resolve_texture(d);
         if (!r.tex) continue;
         if (!tex_gpu(r.tex)) continue;
-        if (shares_image(r.tex, S.depth_tex.get()) || is_color_feedback(r.tex)) continue;   // owned by the pass
+        if (shares_image(r.tex, S.depth_tex.get()) || is_color_feedback(r.tex)) continue;
         if (r.tex->cpu_dirty.load() || tex_layout(r.tex) != tex_sampled_layout(r.tex)) {
             need.push_back(r.tex);
             if (r.tex->cpu_dirty.load() && ft::on()) ft::mark(b.nvn.source == NvnSource::SamplerBinding ? "tx.dirty_bind" : "tx.dirty_uniform", r.tex->id);
@@ -851,7 +843,6 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                         if (br.ok && (br.offset % align) == 0) {
                             bi = {br.buffer, br.offset, std::min<VkDeviceSize>({bind.size ? bind.size : 65536, br.avail, 65536})};
                         } else if (br.ok) {
-                            // unaligned binding: copy into the upload ring
                             const VkDeviceSize n = std::min<VkDeviceSize>(bind.size ? bind.size : 65536, 65536);
                             UploadAlloc u = F->upload(n, std::max<VkDeviceSize>(align, 256));
                             if (u) {
@@ -868,7 +859,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                         const GState::Bind& bind = S.ssbo[d.nvn_stage][slot];
                         BufRef br = resolve_buffer(bind.addr, bind.size);
                         bi = {br.buffer, br.offset, std::min<VkDeviceSize>(bind.size ? bind.size : br.avail, br.avail)};
-                        if (br.ok) gpu_wrote(bind.addr, bi.range, kWriteStorage);      // a storage buffer may be written by the shader
+                        if (br.ok) gpu_wrote(bind.addr, bi.range, kWriteStorage);
                     }
                     break;
                 }
@@ -894,7 +885,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
             TexResolved r = resolve_texture(d);
             if (r.tex) {
                 const auto fb = g_fb_use.find(r.tex);
-                if (fb != g_fb_use.end()) r.tex = fb->second;      // a feedback draw samples the copy made before it
+                if (fb != g_fb_use.end()) r.tex = fb->second;
             }
             if (r.tex && tex_gpu(r.tex) && !is_color_feedback(r.tex)) {
                 VkImageView v = tex_sampled_view(r.tex, make_request(b, r));
@@ -902,7 +893,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
                     ii.imageView = v;
                     ii.imageLayout = tex_sampled_layout(r.tex);
                     if (r.has_sampler) ii.sampler = sampler_for(r.smp);
-                    if (r.tex == g_su_tex && g_su_view) {            // the upscaled scene replaces the small one for this draw (S14)
+                    if (r.tex == g_su_tex && g_su_view) {
                         ii.imageView = g_su_view;
                         ii.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
                     }
@@ -910,7 +901,7 @@ VkDescriptorSet build_set(const ProgLayout& pl, uint32_t set) {
             } else if (r.tex && is_color_feedback(r.tex)) {
                 log_once("color-feedback", "a texture is sampled while it is a colour attachment of the pass: the dummy texture is bound");
                 static int reported = 0;
-                if (reported < 40) {   // which draw: the texture, the attachment's subresource, the sampled view, the shaders (S4g)
+                if (reported < 40) {
                     ++reported;
                     char tb[96];
                     uint32_t lvl = 0, lay = 0, nlay = 0;
@@ -969,7 +960,6 @@ void bind_sets(const ProgLayout& pl, VkPipelineBindPoint bp) {
     }
 }
 
-// ---- draws -------------------------------------------------------------------------------------------------------------------
 bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
     std::memset(&key, 0, sizeof key);
     key.stage[0] = S.stage[kVertex];
@@ -1029,9 +1019,8 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
         }
     }
     key.color_count = P.ncolor;
-    if (!P.ncolor && S.stage[kFragment] && !S.stage[kFragment]->refl.outputs.empty()) key.no_out = 1;   // a depth-only pass: no outputs
+    if (!P.ncolor && S.stage[kFragment] && !S.stage[kFragment]->refl.outputs.empty()) key.no_out = 1;
     if (!key.no_out && device().features().dynamic_rendering_unused_attachments) {
-        // the fragment shader may write outputs the pass has no attachment for: they are listed as unused (format UNDEFINED)
         if (const ShaderInfo* fs = S.stage[kFragment])
             for (const ShaderIo& o : fs->refl.outputs)
                 for (uint32_t e = 0; e < (o.array ? o.array : 1); ++e)
@@ -1134,7 +1123,6 @@ void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, i
     if (dirty & kDynBlend) vkCmdSetBlendConstants(cb, S.blend_color);
 }
 
-// Prepares everything a draw needs and binds it. False: skip the draw.
 // [nvn] trace_min_sec = 250: trace_after_fs only starts that many seconds after the first draw (the scene to look at comes late).
 bool trigger_time_ok() {
     static const auto start = std::chrono::steady_clock::now();
@@ -1159,7 +1147,7 @@ void scene_upscale_for_draw(const ProgLayout& pl) {
         TexResolved r = resolve_texture(d);
         if (!r.tex || !tex_gpu(r.tex) || shares_image(r.tex, S.depth_tex.get())) continue;
         const VkExtent3D se = tex_extent(r.tex, 0);
-        if (se.width >= te.width && se.height >= te.height) return;          // nothing to enlarge
+        if (se.width >= te.width && se.height >= te.height) return;
         extras::Fsr1Spatial* su = extras::scene_upscaler(&device());
         if (!su) return;
         end_pass();                                                           // compute work cannot run inside a render pass
@@ -1230,7 +1218,6 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         for (uint32_t i = 0; i < key.attr_count; ++i) g_key_binding[i] = key.attr[i].binding;
     }
     if (!g_pipe) return false;
-    // a draw inside a stream-out section that has no stream-out variant and nothing to render to has no effect
     if (g_xfb_active && !g_pipe_xfb && !P.ncolor && !S.depth_tex) return false;
     if (g_trace) {
         char a[96], b[96], c[96];
@@ -1251,7 +1238,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         if (S.color.blend_enable_mask)
             TRACE("    blend rt0 rgb %d,%d,%d a %d,%d,%d (nvn enums src,dst,eq)", S.blend[0].src_rgb, S.blend[0].dst_rgb, S.blend[0].eq_rgb, S.blend[0].src_a, S.blend[0].dst_a, S.blend[0].eq_a);
         for (int stg = kVertex; stg <= kFragment; ++stg)
-        for (uint32_t slot = 0; slot < 16; ++slot) {    // the first words of every uniform block bound to the vertex and the fragment stage
+        for (uint32_t slot = 0; slot < 16; ++slot) {
             const GState::Bind& ub = S.ubo[stg][slot];
             if (!ub.addr) continue;
             BufRef ur = resolve_buffer(ub.addr, std::min<uint64_t>(ub.size, 256));
@@ -1406,7 +1393,6 @@ void do_draw_arrays(const P_DrawArrays& p) {
         TRACE("    vertices %u instances %u first %u", p.count, p.instance_count, p.first);
         vkCmdDraw(F->cb, p.count, std::max<uint32_t>(1, p.instance_count), p.first, p.base_instance);
     } else {
-        // QUADS / QUAD_STRIP / POLYGON / LINE_LOOP: generate an index buffer
         std::vector<uint32_t> idx;
         const uint32_t n = p.count;
         switch (conv) {
@@ -1442,7 +1428,7 @@ void do_draw_elements(const P_DrawElements& p) {
     count_primitives(p.mode, p.count, p.instance_count);
     VkPrimitiveTopology topo;
     if (!begin_draw(static_cast<int>(p.mode), true, static_cast<int>(p.type), &topo)) { counters().draws_skipped.fetch_add(1); return; }
-    if (g_trace) {   // the indices and the first attributes of the first vertices
+    if (g_trace) {
         const uint32_t isz0 = index_size_bytes(static_cast<int>(p.type));
         const uint8_t* ix = host_ptr(p.index_address);
         TRACE("    indexed: count %u type %d instances %u base_vertex %d base_instance %u index address %llx", p.count, static_cast<int>(p.type), p.instance_count, static_cast<int>(p.base_vertex),
@@ -1463,7 +1449,7 @@ void do_draw_elements(const P_DrawElements& p) {
             TRACE("      index %u:%s", v, a.c_str());
         }
     }
-    if (g_trace) {   // bounds of the first attributes over all indices of the draw (half and float formats decoded), to see what part of a texture a mesh maps
+    if (g_trace) {
         const uint32_t isz1 = index_size_bytes(static_cast<int>(p.type));
         const uint8_t* ix = host_ptr(p.index_address);
         if (ix && p.count) {
@@ -1501,7 +1487,6 @@ void do_draw_elements(const P_DrawElements& p) {
     const PrimConversion conv = prim_conversion(static_cast<int>(p.mode));
     const uint8_t* src = host_ptr(p.index_address);
     if (conv != PrimConversion::None || isz == 1) {
-        // widen to 32 bit and/or convert the primitive
         std::vector<uint32_t> in(p.count);
         for (uint32_t i = 0; i < p.count; ++i) {
             uint32_t v = 0;
@@ -1598,14 +1583,12 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     counters().dispatches.fetch_add(1, std::memory_order_relaxed);
 }
 
-// ---- conditional render ---------------------------------------------------------------------------------------------------------
 void note_report(uint64_t address, uint64_t counter) {
     if (!address) return;
-    if (g_reports.size() > 65536) g_reports.clear();   // bounded: a forgotten address reads from memory again
+    if (g_reports.size() > 65536) g_reports.clear();
     g_reports[address] = counter;
 }
 
-// The counter word at a report address; false when it is not known before the GPU runs.
 bool report_counter(uint64_t address, uint64_t* out) {
     auto it = g_reports.find(address);
     if (it != g_reports.end()) {
@@ -1627,7 +1610,6 @@ bool conditional_render_enabled(uint32_t mode, uint64_t address) {
     return true;
 }
 
-// ---- clears -------------------------------------------------------------------------------------------------------------------
 VkClearRect full_rect() {
     VkClearRect r = {};
     r.rect = S.nsc ? scissor_rect(S.sc[0]) : VkRect2D{{0, 0}, P.extent};
@@ -1696,7 +1678,6 @@ void do_clear_depth_stencil(const P_ClearDepthStencil& p) {
     counters().clears.fetch_add(1, std::memory_order_relaxed);
 }
 
-// ---- copies ------------------------------------------------------------------------------------------------------------------
 struct SubRes { uint32_t level = 0, layer = 0, layers = 1; };
 SubRes sub_of(const TextureViewInfo& v, bool has_view) {
     SubRes s;
@@ -1846,7 +1827,6 @@ void do_downsample(const P_Downsample& p) {
 }
 
 void do_write_memory(uint64_t gpu_addr, const void* data, uint32_t size) {
-    // a GPU-ordered write of up to 64 KiB into pool memory (UpdateUniformBuffer, counters, events)
     end_pass();
     memory_barrier(F->cb);
     BufRef b = resolve_buffer(gpu_addr, size);
@@ -1856,7 +1836,6 @@ void do_write_memory(uint64_t gpu_addr, const void* data, uint32_t size) {
     memory_barrier(F->cb);
 }
 
-// ---- the interpreter ----------------------------------------------------------------------------------------------------------
 void apply_bind_program(const P_BindProgram& p) {
     for (int st = 0; st < 6; ++st)
         if (p.stages & (1u << st)) S.stage[st] = p.program ? p.program->stage[st] : nullptr;
@@ -2066,7 +2045,7 @@ void run_list(const CmdList& list, int depth) {
                     }
                     if (p.address) {
                         rep.counter = 0;
-                        g_reports[p.address] = kReportUnknown;   // the query result lands on the GPU
+                        g_reports[p.address] = kReportUnknown;
                         do_write_memory(p.address, &rep, sizeof rep);
                         BufRef b = resolve_buffer(p.address, sizeof rep);
                         if (b.ok && g_occ_last >= 0) {
@@ -2186,7 +2165,7 @@ void run_list(const CmdList& list, int depth) {
 void replay_begin_submit(Frame& f) {
     F = &f;
     tex_poll_cpu_writes();
-    if (extras::LowLatency* ll = extras::lowlat()) ll->submit_begin();     // RENDERSUBMIT_START of the frame (S14)
+    if (extras::LowLatency* ll = extras::lowlat()) ll->submit_begin();
     if (debug_on()) {
         const NvnDebug& dbg = nvn_debug();
         if (g_trace_frame == -2) {   // [nvn] trace_frame = "6050" or "6050,9300": every listed presented frame is traced (the first one is the main one)
@@ -2207,7 +2186,7 @@ void replay_begin_submit(Frame& f) {
             g_trace_frame = static_cast<int64_t>(counters().presents.load());
         }
     }
-    if (g_trace_req.exchange(false)) g_trace_frame = static_cast<int64_t>(counters().presents.load()) + 1;   // armed from a script (@shot nvntrace_*)
+    if (g_trace_req.exchange(false)) g_trace_frame = static_cast<int64_t>(counters().presents.load()) + 1;
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     for (int64_t e : g_trace_extra) g_trace |= static_cast<int64_t>(counters().presents.load()) == e;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }

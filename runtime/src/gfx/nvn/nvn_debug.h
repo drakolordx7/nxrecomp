@@ -12,7 +12,6 @@ namespace nxrt::nvn::be {
 struct Texture;
 
 struct NvnDebug {
-    // frame trace (nvn_replay.cpp): every draw, clear, copy and dispatch of the chosen frames is logged ("nvn.trace" lines)
     std::vector<int64_t> trace_frames;        // [nvn] trace_frame = "6050,9300": presented frames to trace (the first is the main one)
     std::string trace_after_fs;               // trace_after_fs = hash prefix: trace the frame after the first draw with this fragment shader
     double trace_min_sec = 0;                 // trace_min_sec: trace_after_fs only counts that long after the first draw
@@ -21,7 +20,6 @@ struct NvnDebug {
     std::vector<std::string> trace_snap_fs;   // trace_snap_fs = "f77f9d,e72811": ... and after every draw with these fragment shaders
     bool trace_snap_sampled = false;          // trace_snap_sampled = 1: a snapshot also copies the textures that draw samples
     std::string trace_dump_tex;               // trace_dump_tex = DIR: the sampled textures of a traced frame, prepared and as the GPU holds them
-    // texture events (nvn_texture_registry.cpp): trace_tex_events = 1 logs every texture, "WxLxM" only width W with L layers and M levels
     bool tex_events = false;
     uint32_t tex_events_w = 0, tex_events_layers = 0, tex_events_levels = 0;   // 0: any
     std::string skip_fs_file;                 // skip_fs_file = FILE: draws to leave out (debug_skip_draw)
@@ -32,7 +30,6 @@ struct NvnDebug {
     std::string dump_astc;                    // dump_astc = DIR: level 0 of ASTC textures as tight blocks (nvn_texdata.cpp) ...
     int64_t dump_astc_w = 0;                  // dump_astc_w: ... of this width only (0: any)
     bool tex_prep_log = false;                // tex_prep_log = 1: one line per texture upload with where its data came from
-    // A/B windows (ab_windows.h): 0 = off
     int64_t gpl_ab_pause = 0;                 // [nvn] gpl_ab_pause = N presents: the pipeline compile threads rest in even windows
     int64_t gpuperf_ab = 0;                   // [nvn] gpuperf_ab = N presents: pool copies and tracked barriers off in even windows
     double latency_ab_toggle_s = 0;           // [latency] ab_toggle_s = seconds: the low-latency mode flips every window

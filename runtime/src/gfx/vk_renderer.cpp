@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Renderer (declarations in include/nxrt/gfx.h): swapchain or offscreen image ring, present modes, frames in flight, GPU
-// timestamps, resize and minimise handling, screenshots, overlay hook.
 #include <SDL3/SDL_iostream.h>
 #include <SDL3/SDL_surface.h>
 
@@ -28,7 +26,7 @@ namespace nxrt::gfx {
 namespace {
 constexpr const char* kTag = "gfx";
 
-struct ImageState {   // a barrier helper description
+struct ImageState {
     VkImageLayout layout;
     VkPipelineStageFlags2 stage;
     VkAccessFlags2 access;
@@ -59,7 +57,6 @@ const ImageState kPresent = {VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_
 
 }  // namespace
 
-// ---- names ------------------------------------------------------------------------------------------------------------
 const char* present_mode_name(PresentMode m) {
     switch (m) {
         case PresentMode::Fifo: return "fifo";
@@ -89,7 +86,6 @@ VkPresentModeKHR to_vk(PresentMode m) {
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-// ---- PNG helpers ------------------------------------------------------------------------------------------------------
 bool save_png_rgba(const std::string& path, const uint8_t* rgba, uint32_t w, uint32_t h) {
     SDL_Surface* s = SDL_CreateSurfaceFrom(static_cast<int>(w), static_cast<int>(h), SDL_PIXELFORMAT_RGBA32, const_cast<uint8_t*>(rgba),
                                            static_cast<int>(w * 4));
@@ -138,7 +134,6 @@ ImageDiff compare_rgba(const uint8_t* a, uint32_t aw, uint32_t ah, const uint8_t
     return d;
 }
 
-// ---- renderer ---------------------------------------------------------------------------------------------------------
 struct Renderer::Impl {
     Device* dev = nullptr;
     RendererDesc desc;
@@ -150,7 +145,6 @@ struct Renderer::Impl {
 
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_B8G8R8A8_UNORM;
-    // display extras (S14)
     extras::OutputKind wanted = extras::OutputKind::Sdr8;     // what the settings and the surface asked for at creation
     extras::OutputKind kind = extras::OutputKind::Sdr8;       // what the swapchain in use carries
     VkColorSpaceKHR color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
@@ -184,7 +178,6 @@ struct Renderer::Impl {
 
     std::function<void(const FrameInfo&)> overlay;
 
-    // pending capture
     // set by the thread that asks for a screenshot, read by end_frame and by capture_pending() (overlay, presenting thread)
     std::atomic<bool> cap_pending{false};
     std::string cap_path;
@@ -234,7 +227,6 @@ struct Renderer::Impl {
 
     VkDevice vk() const { return dev->device(); }
 
-    // -- present mode resolution
     PresentMode resolve(PresentMode want) const {
         if (headless) return want;
         auto has = [&](PresentMode m) { return std::find(supported_modes.begin(), supported_modes.end(), to_vk(m)) != supported_modes.end(); };
@@ -247,7 +239,6 @@ struct Renderer::Impl {
         return PresentMode::Fifo;
     }
 
-    // Records the swapchain flavour in use; publishes the change.
     void set_kind(extras::OutputKind k, VkColorSpaceKHR cs, VkFormat f) {
         const bool changed = k != kind || f != format || cs != color_space;
         kind = k;
@@ -262,7 +253,6 @@ struct Renderer::Impl {
         }
     }
 
-    // HDR decision (S14): from [hdr] and what the surface offers. Publishes the HdrState (scene_hdr, levels, peak ratio).
     void decide_output() {
         const extras::Settings es = extras::settings();
         extras::HdrState hs;
@@ -385,7 +375,7 @@ struct Renderer::Impl {
         vkGetPhysicalDeviceSurfaceFormatsKHR(pd, surf, &n, fmts.data());
         VkSurfaceFormatKHR chosen = fmts.empty() ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR} : fmts[0];
         extras::OutputKind got = extras::OutputKind::Sdr8;
-        if (wanted != extras::OutputKind::Sdr8) {     // HDR: the first of the wanted flavour, then the other one, then SDR
+        if (wanted != extras::OutputKind::Sdr8) {
             auto find = [&](VkFormat f, VkColorSpaceKHR cs) {
                 for (auto& x : fmts) if (x.format == f && x.colorSpace == cs) { chosen = x; return true; }
                 return false;
@@ -407,7 +397,7 @@ struct Renderer::Impl {
         VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
         capture_supported = (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
         if (capture_supported) usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-        {   // the swapchain format goes through the same check as every image
+        {
             ImageDesc id;
             id.format = chosen.format;
             id.usage = usage;
@@ -549,7 +539,7 @@ struct Renderer::Impl {
             if (s.queries) { vkDestroyQueryPool(vk(), s.queries, nullptr); vk_gauge_query_pools().sub(1); }
             if (s.acquire) { vkDestroySemaphore(vk(), s.acquire, nullptr); vk_gauge_semaphores().sub(1); }
             if (s.fence) { vkDestroyFence(vk(), s.fence, nullptr); vk_gauge_fences().sub(1); }
-            if (s.pool) {   // frees its command buffer
+            if (s.pool) {
                 vkDestroyCommandPool(vk(), s.pool, nullptr);
                 vk_gauge_command_pools().sub(1);
                 if (s.cmd) vk_gauge_command_buffers().sub(1);
@@ -642,7 +632,7 @@ bool Renderer::begin_frame(FrameInfo* out) {
             return false;
         }
         if (r == VK_SUBOPTIMAL_KHR) {
-            s.dirty = true;     // finish this frame, rebuild before the next
+            s.dirty = true;
             s.st.out_of_date++;
         } else if (r != VK_SUCCESS) {
             NXLOG_E(kTag, "vkAcquireNextImageKHR failed (%d)", static_cast<int>(r));
@@ -848,7 +838,7 @@ bool Renderer::set_present_mode(PresentMode m) {
     s.requested = m;
     int pw = static_cast<int>(s.headless_w), ph = static_cast<int>(s.headless_h);
     if (!s.headless) platform::pixel_size(&pw, &ph);
-    if (!s.headless && (pw == 0 || ph == 0)) {   // minimised: applied when the window is back
+    if (!s.headless && (pw == 0 || ph == 0)) {
         s.dirty = true;
         return true;
     }

@@ -46,15 +46,12 @@ nxrt::GaugeCounter g_sampler_pools("nvn.sampler_pools");
 nxrt::GaugeCounter g_texture_handles("nvn.texture_handles");   // texture ids registered in live texture pools
 nxrt::GaugeCounter g_sampler_handles("nvn.sampler_handles");   // sampler ids registered in live sampler pools
 
-// Logs a message the first time this call site hits it.
 #define NVN_WARN_ONCE(...)                                                  \
     do {                                                                    \
         static std::atomic<bool> warned{false};                             \
         if (!warned.exchange(true)) NXLOG_W(kTag, __VA_ARGS__);             \
     } while (0)
 
-// ---- helpers -----------------------------------------------------------------------------------------------------------------
-// The part of [offset, offset + size) that lies inside a range of `total` bytes: its length (0 when none) and its start.
 uint64_t clip_range(ptrdiff_t offset, uint64_t size, uint64_t total, uint64_t& start) {
     if (offset < 0) return 0;
     const uint64_t off = static_cast<uint64_t>(offset);
@@ -63,14 +60,12 @@ uint64_t clip_range(ptrdiff_t offset, uint64_t size, uint64_t total, uint64_t& s
     return std::min<uint64_t>(size, total - off);
 }
 
-// Synthetic GPU range for a virtual pool: 64 KiB aligned start, length rounded up to 64 KiB.
 uint64_t alloc_virtual_range(uint64_t size) {
     static std::atomic<uint64_t> next{kVirtualBase};
     const uint64_t len = (size + kVirtualAlign - 1) & ~(kVirtualAlign - 1);
     return next.fetch_add(len);
 }
 
-// Takes a pool out of the registry and marks it dead (Finalize, and re-initialisation over a live pool).
 void retire_pool(MemoryPool* p) {
     g_memory_pools.sub(1);
     g_memory_pool_bytes.sub(static_cast<int64_t>(p->size));
@@ -79,7 +74,6 @@ void retire_pool(MemoryPool* p) {
     p->dead.store(true);
 }
 
-// The guest pointer of the memory pool a texture or sampler pool was initialised with (byte 16 of the guest object).
 uint64_t owner_slot_get(const void* guest) {
     uint64_t v = 0;
     std::memcpy(&v, static_cast<const uint8_t*>(guest) + sizeof(GuestHeader), sizeof v);
@@ -89,7 +83,6 @@ void owner_slot_set(void* guest, uint64_t v) {
     std::memcpy(static_cast<uint8_t*>(guest) + sizeof(GuestHeader), &v, sizeof v);
 }
 
-// A texture or sampler pool gives back its reference on the memory pool (Finalize, re-initialisation).
 template <class P>
 void drop_pool_ref(P* p) {
     if (p->mem) {
@@ -98,7 +91,6 @@ void drop_pool_ref(P* p) {
     }
 }
 
-// A texture or sampler pool leaves the live set (Finalize, or Initialize over it): the handles it registered leave with it.
 void texture_pool_gone(const TexturePool* tp) {
     int64_t used = 0;
     for (const TexturePool::Entry& e : tp->entries) used += e.used ? 1 : 0;
@@ -112,10 +104,8 @@ void sampler_pool_gone(const SamplerPool* sp) {
     g_sampler_pools.sub(1);
 }
 
-// The memory pool behind a guest NVNmemoryPool (null when the object is not a live pool of ours).
 MemoryPool* pool_of_guest(const void* guest) { return host_of<MemoryPool>(guest); }
 
-// ---- buffers (plain data in the guest NVNbuffer) -------------------------------------------------------------------------
 bool buffer_load(const void* guest, BufferData& d) {
     if (!guest) return false;
     std::memcpy(&d, guest, sizeof d);
@@ -134,7 +124,6 @@ uint8_t* buffer_host(const BufferData& d) {
     return p->base + (d.address - p->gpu_base);
 }
 
-// ---- memory pools ---------------------------------------------------------------------------------------------------------------
 NVNboolean nvnMemoryPoolInitialize(NVNmemoryPool* pool, const NVNmemoryPoolBuilder* builder) {
     if (!pool || !builder) return 0;
     const MemoryPoolBuilderInfo info = decode(builder);
@@ -230,7 +219,6 @@ NVNboolean nvnMemoryPoolMapVirtual(NVNmemoryPool* pool, int count, const NVNmapp
         }
         {
             std::lock_guard<std::mutex> lk(vp->vmu);
-            // the new mapping replaces whatever covered its range
             std::vector<MemoryPool::VirtualMap> kept;
             for (MemoryPool::VirtualMap& m : vp->vmaps) {
                 const uint64_t m0 = m.voff, m1 = m.voff + m.size;
@@ -263,7 +251,6 @@ NVNmemoryPoolFlags nvnMemoryPoolGetFlags(const NVNmemoryPool* pool) {
     return static_cast<NVNmemoryPoolFlags>(p ? p->flags : 0);
 }
 
-// ---- buffers ------------------------------------------------------------------------------------------------------------------
 NVNboolean nvnBufferInitialize(NVNbuffer* buffer, const NVNbufferBuilder* builder) {
     if (!buffer || !builder) return 0;
     const BufferBuilderInfo info = decode(builder);
@@ -277,7 +264,7 @@ NVNboolean nvnBufferInitialize(NVNbuffer* buffer, const NVNbufferBuilder* builde
         return 0;
     }
     BufferData prev{};
-    const bool was_live = buffer_load(buffer, prev);     // initialised over a live buffer: replaced, not added
+    const bool was_live = buffer_load(buffer, prev);
     BufferData d{};
     d.address = pool->gpu_base + off;
     d.size = info.size;
@@ -344,7 +331,6 @@ uint64_t nvnBufferGetDebugID(const NVNbuffer* buffer) {
     return buffer_load(buffer, d) ? (d.address & 0xffffffffull) : 0;
 }
 
-// ---- texture pools ---------------------------------------------------------------------------------------------------------
 NVNboolean nvnTexturePoolInitialize(NVNtexturePool* pool, const NVNmemoryPool* memory, ptrdiff_t offset, int count) {
     if (!pool) return 0;
     MemoryPool* mem = pool_of_guest(memory);
@@ -358,7 +344,7 @@ NVNboolean nvnTexturePoolInitialize(NVNtexturePool* pool, const NVNmemoryPool* m
     }
     auto* tp = new TexturePool();
     tp->mem = mem;
-    mem->ref();                                 // released by Finalize (or re-initialisation)
+    mem->ref();
     tp->offset = offset;
     tp->count = count;
     tp->entries.resize(static_cast<size_t>(count));
@@ -423,7 +409,6 @@ int nvnTexturePoolGetSize(const NVNtexturePool* pool) {
     return tp ? tp->count : 0;
 }
 
-// ---- sampler pools ----------------------------------------------------------------------------------------------------------
 NVNboolean nvnSamplerPoolInitialize(NVNsamplerPool* pool, const NVNmemoryPool* memory, ptrdiff_t offset, int count) {
     if (!pool) return 0;
     MemoryPool* mem = pool_of_guest(memory);
@@ -437,7 +422,7 @@ NVNboolean nvnSamplerPoolInitialize(NVNsamplerPool* pool, const NVNmemoryPool* m
     }
     auto* sp = new SamplerPool();
     sp->mem = mem;
-    mem->ref();                                 // released by Finalize (or re-initialisation)
+    mem->ref();
     sp->offset = offset;
     sp->count = count;
     sp->entries.resize(static_cast<size_t>(count));
@@ -458,7 +443,6 @@ void nvnSamplerPoolFinalize(NVNsamplerPool* pool) {
     unbind_guest(pool);
 }
 
-// Stores a decoded sampler under id. The builder and sampler forms share this: both decode to a SamplerInfo.
 void sampler_pool_store(const NVNsamplerPool* pool, int id, const SamplerInfo& info) {
     SamplerPool* sp = host_of<SamplerPool>(pool);
     if (!sp) return;
@@ -498,7 +482,6 @@ int nvnSamplerPoolGetSize(const NVNsamplerPool* pool) {
 }  // namespace
 
 void register_api_memory() {
-    // MemoryPool
     NVN_REG(nvnMemoryPoolInitialize);
     NVN_REG(nvnMemoryPoolSetDebugLabel);
     NVN_REG(nvnMemoryPoolFinalize);
@@ -509,7 +492,6 @@ void register_api_memory() {
     NVN_REG(nvnMemoryPoolMapVirtual);
     NVN_REG(nvnMemoryPoolGetSize);
     NVN_REG(nvnMemoryPoolGetFlags);
-    // Buffer
     NVN_REG(nvnBufferInitialize);
     NVN_REG(nvnBufferSetDebugLabel);
     NVN_REG(nvnBufferFinalize);
@@ -521,7 +503,6 @@ void register_api_memory() {
     NVN_REG(nvnBufferGetMemoryOffset);
     NVN_REG(nvnBufferGetSize);
     NVN_REG(nvnBufferGetDebugID);
-    // TexturePool
     NVN_REG(nvnTexturePoolInitialize);
     NVN_REG(nvnTexturePoolSetDebugLabel);
     NVN_REG(nvnTexturePoolFinalize);
@@ -530,7 +511,6 @@ void register_api_memory() {
     NVN_REG(nvnTexturePoolGetMemoryPool);
     NVN_REG(nvnTexturePoolGetMemoryOffset);
     NVN_REG(nvnTexturePoolGetSize);
-    // SamplerPool
     NVN_REG(nvnSamplerPoolInitialize);
     NVN_REG(nvnSamplerPoolSetDebugLabel);
     NVN_REG(nvnSamplerPoolFinalize);
