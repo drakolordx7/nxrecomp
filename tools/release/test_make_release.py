@@ -181,12 +181,12 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(names, sorted(base + '/' + r for r in EXPECTED if r != 'shader_cache.demoshc'))
 
     CASES = [
-        ('key file name', 'tools/release/licenses/prod.keys', b'not really keys', 'prod.keys'),
-        ('.nsp extension', 'tools/release/licenses/title.nsp', b'nsp', '.nsp'),
-        ('romfs folder', 'tools/release/licenses/romfs/x.bin', b'bin', 'romfs'),
-        ('NSO0 magic', 'tools/release/licenses/fake.bin', b'NSO0' + bytes(60), 'NSO0'),
-        ('NXB7 magic', 'tools/release/licenses/cache.dat', b'NXB7' + bytes(60), 'NXB7'),
-        ('header_key text', 'tools/release/licenses/notes.txt',
+        ('key file name', 'base/tools/release/licenses/prod.keys', b'not really keys', 'prod.keys'),
+        ('.nsp extension', 'base/tools/release/licenses/title.nsp', b'nsp', '.nsp'),
+        ('romfs folder', 'base/tools/release/licenses/romfs/x.bin', b'bin', 'romfs'),
+        ('NSO0 magic', 'base/tools/release/licenses/fake.bin', b'NSO0' + bytes(60), 'NSO0'),
+        ('NXB7 magic', 'base/tools/release/licenses/cache.dat', b'NXB7' + bytes(60), 'NXB7'),
+        ('header_key text', 'base/tools/release/licenses/notes.txt',
          b'header_key = 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff\n', 'header_key'),
     ]
 

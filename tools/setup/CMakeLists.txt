@@ -97,7 +97,7 @@ function(nxs_test_in dir name)
     list(GET NXS_G_BUILD_IDS 0 _nxs_first_build)
     target_compile_definitions(test_${name} PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE NXS_TEST_GAME_DIR="${NX_GAME_DIR}"
                                NXS_TEST_PYTHON="${NX_PYTHON}" NXS_TEST_BUILD_ID="${_nxs_first_build}"
-                               NXS_TEST_NX_ROOT="${NX_ROOT}" NXS_TEST_GAME_ID="${NXS_G_ID}")
+                               NXS_TEST_NX_ROOT="${NX_ROOT}" NXS_TEST_BASE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../.." NXS_TEST_GAME_ID="${NXS_G_ID}")
     target_compile_options(test_${name} PRIVATE ${NXS_WARN})
     target_link_libraries(test_${name} PRIVATE ${ARGN})
     add_test(NAME ${name} COMMAND test_${name})

@@ -15,7 +15,7 @@ using namespace nxs;
 
 namespace {
 
-const std::string kRealMainStr = nxs_test::game_data_path("exefs/main");
+const std::string kRealMainStr = nxs_test::game_path("game/exefs/main");
 const char* kRealMain = kRealMainStr.c_str();
 const char* kRealBuildId = nxs_test::first_build_id();
 

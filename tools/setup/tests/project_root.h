@@ -20,10 +20,10 @@ inline std::filesystem::path game_dir() {
     return std::filesystem::is_directory(main_checkout / "game", ec) ? main_checkout : dir;
 }
 
-// `rel` (written with '/') below <game dir>/game, with the platform's separators.
-inline std::string game_data_path(const std::string& rel) {
-    return (game_dir() / "game" / rel).make_preferred().string();
-}
+// `rel` (written with '/') below the game folder (game/keys/prod.keys, work/...) or the base checkout (runtime/src/...), with the
+// platform's separators.
+inline std::string game_path(const std::string& rel) { return (game_dir() / rel).make_preferred().string(); }
+inline std::string base_path(const std::string& rel) { return (std::filesystem::path(NXS_TEST_BASE_DIR) / rel).make_preferred().string(); }
 
 inline std::filesystem::path python_exe() {
     if (const char* e = std::getenv("NX_PYTHON"); e && *e) return std::filesystem::path(e).make_preferred();
