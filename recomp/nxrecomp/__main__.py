@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """python -m nxrecomp <command> ...   (see README.md)
 
-  lift   <input> <outdir> [--game NAME] [--kind nso|nx_elf|static_elf] [--base 0x..] [--name N] [--jobs J] [--shards S]
+  lift   <input> <outdir> [--game CONFIG.py] [--kind nso|nx_elf|static_elf] [--base 0x..] [--name N] [--jobs J] [--shards S]
          [--index N] [--sites FILE]  lift every function of one module
-  cover  <input> [--game NAME] ...   per-instruction-word translation coverage of .text
+  cover  <input> [--game CONFIG.py] ...   per-instruction-word translation coverage of .text
   funcs  -> python -m nxrecomp.funcs
 """
 import argparse

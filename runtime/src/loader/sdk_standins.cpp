@@ -150,8 +150,6 @@ void rtld_entry(::Ctx* c) {
     trap("nn::init::Start returned", c->x[0]);
 }
 
-void rtld_fn_138c(::Ctx*) { *reinterpret_cast<uint32_t*>(g_rtld + 0x3008) = 1; }
-
 // Diagnostic ([boot] trace_plt = 1): wraps rtld's lazy PLT resolver (rtld+0x1318) and logs every binding: the slot, the link map, the
 // relocation index and what the lifted lookup (rtld+0x8b0) answers, before the resolver runs for real.
 GuestFn g_orig_resolver = nullptr;
@@ -190,10 +188,6 @@ bool install_rtld_standins(uint64_t rtld_base) {
         if (!fn_lookup(rtld_base)) {
             fn_register(rtld_base, rtld_entry);
             NXLOG_W("boot", "the lifted rtld has no function at its entry: using the host stand-in (sdk_standins.cpp rtld_entry)");
-        }
-        if (!fn_lookup(rtld_base + 0x138c)) {
-            fn_register(rtld_base + 0x138c, rtld_fn_138c);
-            NXLOG_W("boot", "the lifted rtld has no function at 0x138c: using the host stand-in (sdk_standins.cpp rtld_fn_138c)");
         }
         if (config_get_bool("boot", "trace_plt", false)) {
             g_orig_resolver = fn_lookup(rtld_base + 0x1318);
