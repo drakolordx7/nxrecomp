@@ -107,11 +107,11 @@ SceneRunResult run_scene(const SceneRunDesc& desc) {
         double lat_sum = 0, lat_max = 0;
         bool overlay_shown = false;
         while (d.frames == 0 || rendered < d.frames) {
-            limiter.begin_frame();                      // 1. wait for the frame start, before touching input
-            if (window) platform::pump_events();        // 2. sample input as late as possible
+            limiter.begin_frame();
+            if (window) platform::pump_events();
             const uint64_t t_input = FrameLimiter::now_ns();
             if (overlay && d.overlay_visible_from_frame >= 0 && !overlay_shown && static_cast<int64_t>(rendered) >= d.overlay_visible_from_frame) {
-                input::Event ev;                        // the real path: a key event through the queue
+                input::Event ev;
                 ev.type = input::EventType::KeyDown;
                 ev.u.key.scancode = overlay->toggle_scancode();
                 input::queue_push(ev);

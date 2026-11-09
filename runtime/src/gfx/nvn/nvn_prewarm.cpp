@@ -149,7 +149,7 @@ void worker_main() {
             if (g_stop) return;
             j = std::move(g_queue.front());
             g_queue.pop_front();
-            if (j->state != 0) continue;       // a draw took it over
+            if (j->state != 0) continue;
             j->state = 1;
         }
         VkPipeline p;
@@ -313,7 +313,7 @@ void prewarm_shutdown() {
     std::lock_guard<std::mutex> lk(g_mu);
     for (auto& [h, vec] : g_jobs)
         for (auto& j : vec)
-            if (j->state == 2 && j->pipe) vkDestroyPipeline(vkdev(), j->pipe, nullptr);     // built and never used
+            if (j->state == 2 && j->pipe) vkDestroyPipeline(vkdev(), j->pipe, nullptr);
     g_jobs.clear();
     NXLOG_I(kTag, "prewarm: %llu recorded, %llu loaded, %llu queued, %llu built ahead, %llu taken (%llu waited %.1f ms), %llu taken over by a draw",
             static_cast<unsigned long long>(g_stats.recorded), static_cast<unsigned long long>(g_stats.loaded), static_cast<unsigned long long>(g_stats.queued),

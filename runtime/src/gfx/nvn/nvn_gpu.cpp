@@ -36,7 +36,6 @@ constexpr uint32_t kSlots = 4;
 constexpr uint32_t kGpMax = 1024;      // GPU pass profiler: timestamps per submission
 constexpr VkDeviceSize kUploadBytes = 32ull << 20;
 
-// Live-count gauges of this file (leak monitor, nxrt/gauge.h).
 nxrt::GaugeCounter g_gauge_deferred("nvn.deferred_destroy");     // closures waiting for their submission to finish (defer_destroy, Frame::defer)
 nxrt::GaugeCounter g_gauge_render_queue("nvn.render_queue");     // jobs queued for the render thread
 nxrt::GaugeCounter g_gauge_barriers_mem("nvn.cnt.barriers_mem");   // full memory barriers recorded (cumulative; per frame = delta / frames)
@@ -49,8 +48,8 @@ struct Slot {
     size_t dpool_cur = 0;
     gfx::Buffer upload;
     VkDeviceSize upload_off = 0;
-    std::vector<gfx::Buffer> extra;       // staging / overflow buffers of the submission
-    uint64_t serial = 0;                  // last submission that used the slot
+    std::vector<gfx::Buffer> extra;
+    uint64_t serial = 0;
     bool timed = false;                   // frame trace: the submission wrote GPU timestamps (query pair index = slot index * 2)
     uint64_t cpu_t0 = 0;
     uint64_t sets_live = 0;               // descriptor sets allocated from this slot's pools since the last reset (vk.descriptor_sets)
@@ -80,7 +79,6 @@ struct Gpu {
     uint32_t next_slot = 0;
     Counters ctr;
 
-    // render thread
     std::thread th;
     std::mutex qmu;
     std::condition_variable qcv;
@@ -88,7 +86,6 @@ struct Gpu {
     bool stop = false;
     std::thread::id tid;
 
-    // deferred destruction
     std::mutex dmu;
     std::vector<std::function<void()>> pending_destroy;   // from any thread, assigned a serial by the render thread
     std::deque<Deferred> deferred;                        // render thread
@@ -139,7 +136,7 @@ void render_loop() {
         {
             std::unique_lock<std::mutex> lk(g->qmu);
             g->qcv.wait(lk, [] { return g->stop || !g->queue.empty(); });
-            if (g->queue.empty()) return;   // stop requested and drained
+            if (g->queue.empty()) return;
             job = std::move(g->queue.front());
             g->queue.pop_front();
             g_gauge_render_queue.sub(1);
@@ -250,7 +247,6 @@ Slot& acquire_slot() {
 
 }  // namespace
 
-// ---- Frame ---------------------------------------------------------------------------------------------------------------
 UploadAlloc Frame::upload(VkDeviceSize size, VkDeviceSize align) {
     Slot& s = *static_cast<Slot*>(slot);
     if (align == 0) align = 16;
@@ -321,12 +317,11 @@ VkDescriptorSet Frame::alloc_set(VkDescriptorSetLayout layout) {
             vk_gauge_descriptor_sets().add(1);
             return set;
         }
-        ++s.dpool_cur;   // exhausted or fragmented: move on to the next pool (created on demand)
+        ++s.dpool_cur;
     }
     return VK_NULL_HANDLE;
 }
 
-// ---- general helpers ---------------------------------------------------------------------------------------------------
 bool on_render_thread() { return g && std::this_thread::get_id() == g->tid; }
 gfx::Device& device() { return *g->dev; }
 VkDevice vkdev() { return g->dev->device(); }
@@ -478,7 +473,6 @@ void memory_barrier(VkCommandBuffer cb) {
     vkCmdPipelineBarrier2(cb, &di);
 }
 
-// ---- submission --------------------------------------------------------------------------------------------------------
 namespace {
 
 uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record) {
@@ -556,7 +550,6 @@ uint64_t run_frame_sync(const std::function<void(Frame&)>& fn) {
     return serial;
 }
 
-// ---- gpu.h ---------------------------------------------------------------------------------------------------------------
 bool active() { return g != nullptr; }
 
 namespace {
@@ -694,7 +687,6 @@ std::string unsupported_report() {
     return out;
 }
 
-// ---- lifecycle -----------------------------------------------------------------------------------------------------------
 namespace {
 
 void register_counter_gauges();
@@ -756,7 +748,6 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
     (void)report_registered;
     register_counter_gauges();
     gp->th = std::thread(render_loop);
-    // wait for the thread id to be published
     for (int i = 0; i < 1000 && gp->tid == std::thread::id(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     if (rend) {
         run_on_render_thread([&] { gp->output_ok = gp->output.init(dev); });

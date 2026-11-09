@@ -12,7 +12,6 @@
 
 namespace nxrt::play {
 
-// ---- arithmetic -----------------------------------------------------------------------------------------------------------------
 constexpr double kHudAspect = 16.0 / 9.0;           // what the GUIF frames and the retail cameras are authored for
 constexpr int kMinRenderDim = 320, kMaxRenderDim = 16384;
 constexpr double kMinAspect = 1.0, kMaxAspect = 5.0;
@@ -35,7 +34,6 @@ bool hud_ortho(float* left, float* right, float* bottom, float* top, double disp
 // Vertical field of view in radians plus an offset in degrees, kept between 10 and 170 degrees.
 float fov_with_offset(float base_radians, double offset_degrees);
 
-// ---- what the game's display hooks use (play_game.h GamePlay::display_live) -------------------------------------------------------
 struct DisplayLive {
     int render_w = 1600, render_h = 900;   // internal size, fixed once the game has asked
     double aspect = 0;                     // 0 = render_w / render_h

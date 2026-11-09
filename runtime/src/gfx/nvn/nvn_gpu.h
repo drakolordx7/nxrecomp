@@ -14,7 +14,6 @@ namespace nxrt::nvn::be::gpu {
 // True when a Vulkan back end is running (install_backend was called with a device). The stub reports false.
 bool active();
 
-// ---- submission --------------------------------------------------------------------------------------------------------
 // Replays the lists on the render thread, in order, and returns when the commands are recorded into Vulkan (not when the GPU
 // has run them). Returns the serial of the submission: the GPU timeline value that is reached when it has completed.
 uint64_t submit(const std::vector<Ref<CmdList>>& lists);
@@ -31,7 +30,6 @@ bool serial_done(uint64_t serial);
 // been handed to the swapchain; it honours the shell's frame limiter.
 void present(Window* window, int index);
 
-// ---- resources (called from destructors and finalizers, any thread) --------------------------------------------------------
 void destroy_texture_gpu(TexGpu* t);          // the Vulkan image of a finalized texture; deferred until the GPU is done with it
 void destroy_pool_gpu(PoolGpu* p);
 // The game finalized t (or initialized its NVNtexture again): its image goes now, deferred until the GPU is done with it, although a texture
@@ -61,7 +59,6 @@ bool download_texture(Texture* t);
 // nvnDeviceSetWindowOriginMode / nvnDeviceSetDepthMode: the replay needs them to place viewports and the depth range.
 void set_window_modes(int origin_mode, int depth_mode);
 
-// ---- device facts for the api files ------------------------------------------------------------------------------------
 uint64_t timestamp_ns();                       // nvnDeviceGetCurrentTimestampInNanoseconds
 
 }  // namespace nxrt::nvn::be::gpu

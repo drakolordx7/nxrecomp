@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Mouse pointer in menus: the arithmetic and the pointer state (no game, no host state). See menu_mouse.h.
 #include "nxrt/game/menu_mouse.h"
 
 #include <algorithm>
@@ -37,7 +36,7 @@ void window_to_picture(const Geometry& g, float px, float py, float* u, float* v
 
 void window_to_ui(const Geometry& g, float px, float py, float* nx, float* ny, bool* inside) {
     const Rect r = picture_rect(g);
-    const double u = (px - r.x) / r.w, v = (py - r.y) / r.h;        // 0..1 across the picture, v down
+    const double u = (px - r.x) / r.w, v = (py - r.y) / r.h;
     double aspect = g.display_aspect > 0 ? g.display_aspect : (g.render_h > 0 ? static_cast<double>(g.render_w) / g.render_h : kUiAspect);
     if (aspect < 0.1) aspect = kUiAspect;
     // The UI camera is authored for 16:9 and kept at that shape in the middle of a wider (or narrower) picture: its width is kUiAspect / aspect of the

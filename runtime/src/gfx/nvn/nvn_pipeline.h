@@ -41,7 +41,6 @@ struct ProgLayout {
 // Stages by NVN stage index (0 vertex, 1 fragment, 2 geometry, 5 compute); null = absent.
 const ProgLayout* prog_layout(const ShaderInfo* const stages[6]);
 
-// Vertex input for the key.
 struct KeyAttr {
     uint8_t location = 0, binding = 0;
     uint16_t offset = 0;
@@ -57,7 +56,6 @@ struct GraphicsKey {
     uint32_t attr_count = 0;
     KeyAttr attr[16] = {};
     uint8_t binding_instance[16] = {};          // 1 = per-instance rate
-    // blend, per colour slot
     uint8_t blend_enable[8] = {};
     uint8_t blend_src_rgb[8] = {}, blend_dst_rgb[8] = {}, blend_src_a[8] = {}, blend_dst_a[8] = {};   // VkBlendFactor
     uint8_t blend_op_rgb[8] = {}, blend_op_a[8] = {};                                                 // VkBlendOp
@@ -97,7 +95,6 @@ bool pipeline_cache_dirty();
 void pipeline_cache_save();
 void pipeline_cache_flush();
 
-// ---- prewarm (nvn_prewarm.cpp) ----------------------------------------------------------------------------------------------
 // Every pipeline that had to be created at a draw is recorded in a key file ([nvn] pipeline_keys). The next run compiles the recorded
 // pipelines of a program on worker threads as soon as the game sets the program's shaders, long before its first draw.
 void prewarm_init();                                                      // loads the key file, starts the cache saver (idempotent)
@@ -116,7 +113,6 @@ uint32_t xfb_stride(const ShaderInfo* vs);
 VkBuffer constant_data_buffer(const ShaderInfo* s, VkDeviceSize* range);
 VkBuffer driver_constants_buffer(VkDeviceSize* range);
 
-// ---- pipeline libraries (nvn_gpl.cpp, VK_EXT_graphics_pipeline_library) ------------------------------------------------------
 // A pipeline is linked from four parts: vertex input, pre-rasterisation shaders (vertex/geometry code + raster state), fragment shader
 // (fragment code), fragment output (blend and attachment formats). The two shader parts hold all the compile time and depend on very little
 // state (the shaders of a program and three raster flags), so they are compiled by background threads when the game sets a program's
@@ -146,7 +142,6 @@ struct GplStats {
 GplStats gpl_stats();
 void set_compile_thread_priority(bool background = true);                                  // [nvn] compile_priority for the threads that build pipelines in the background
 
-// ---- shader preparation (nvn_gpl.cpp, S24) ---------------------------------------------------------------------------------
 // Compiles the shader parts of every program in a list (setup writes it from the player's own game files: <shader cache>/../programs.bin)
 // before the game runs, so the driver has them in its cache and the game's own requests are fast. The parts are thrown away as soon as they exist.
 using PrepareOptions = nxrt::nvn::ShaderPrepareOptions;

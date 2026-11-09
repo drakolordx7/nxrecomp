@@ -145,7 +145,6 @@ PoolGpu* import_pool(MemoryPool* p) {
     return g;
 }
 
-// ---- background import --------------------------------------------------------------------------------------------------
 // One worker thread imports pools as they are created. The pool is kept alive by a reference while it is queued or running; the render
 // thread, when it needs a pool that is still in flight, waits for it instead of importing a second time.
 std::mutex g_pf_mu;
@@ -317,7 +316,6 @@ void pool_gpu_destroy(PoolGpu* p) {
 }
 
 
-// ---- device-local copies of pool pages (S38) ---------------------------------------------------------------------
 // The game's vertex, index and uniform data live in its memory pools, which are host memory: every draw read them over PCIe (S34). A pool
 // that draws read from gets a device-local buffer of the same size (the mirror). A page is copied into it, in a transfer at the start of a
 // submission, after some draw wanted it; from then on draws whose whole range is in valid pages read the mirror. A page stops being valid
@@ -459,7 +457,7 @@ void absorb_writes(Mirror& m, uint32_t now) {
     for (uint64_t p : g_written_tmp) {
         const size_t i = static_cast<size_t>(p);
         bit_put(m.want, p, false);
-        if (m.copied_at[i] == 0) continue;                     // never copied: nothing was wasted
+        if (m.copied_at[i] == 0) continue;
         if (bit_get(m.used, p)) {
             m.score[i] = 0;
             m.backoff[i] = 0;
@@ -583,10 +581,10 @@ void mirror_begin_submit(Frame& f, bool on) {
         g_copy_tmp.clear();
         uint64_t p = 0;
         while (p < m.npages) {
-            if (!m.want[static_cast<size_t>(p >> 6)]) { p = (p | 63) + 1; continue; }     // a word with nothing wanted
+            if (!m.want[static_cast<size_t>(p >> 6)]) { p = (p | 63) + 1; continue; }
             if (!bit_get(m.want, p)) { ++p; continue; }
             if (!copyable(m, p, now)) { bit_put(m.want, p, false); ++p; continue; }     // valid already, hot or banned: the next draw asks again
-            if (budget < kPageBytes) { m.any_want = true; break; }                      // the rest waits for the next submission
+            if (budget < kPageBytes) { m.any_want = true; break; }
             uint64_t q = p + 1;
             while (q < m.npages && copyable(m, q, now) && (q - p + 1) * kPageBytes <= budget) ++q;
             const bool armed = mem::ww::arm(m.ww, p, q - p);
@@ -609,7 +607,6 @@ void mirror_begin_submit(Frame& f, bool on) {
             memory_barrier(f.cb);      // earlier GPU writes into the pools, and draws still reading the mirrors, come first
             barrier_done = true;
         }
-        // the source is the pool's own buffer: the copy reads what the CPU and earlier GPU work left in the pages
         vkCmdCopyBuffer(f.cb, m.src, m.buf.buffer, static_cast<uint32_t>(g_copy_tmp.size()), g_copy_tmp.data());
     }
     if (barrier_done) {
@@ -622,7 +619,7 @@ void mirror_begin_submit(Frame& f, bool on) {
         di.memoryBarrierCount = 1;
         di.pMemoryBarriers = &b;
         vkCmdPipelineBarrier2(f.cb, &di);
-        if (gpass_on()) gpass_stamp(f, "mirror", 0);      // GPU pass profiler: the copies of this submission
+        if (gpass_on()) gpass_stamp(f, "mirror", 0);
     }
 }
 

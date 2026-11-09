@@ -35,7 +35,7 @@ void command_buffer_gone(const CommandBuffer* cb) {
 }
 
 NVNboolean nvnCommandBufferInitialize(NVNcommandBuffer* c, NVNdevice* device) {
-    if (CommandBuffer* old = cb_of(c)) command_buffer_gone(old);   // initialised over a live one: the old one is replaced
+    if (CommandBuffer* old = cb_of(c)) command_buffer_gone(old);
     auto* cb = new CommandBuffer();
     cb->device = host_of<Device>(device);
     bind_guest(c, cb);
@@ -86,8 +86,8 @@ void nvnCommandBufferAddCommandMemory(NVNcommandBuffer* c, const NVNmemoryPool* 
         g_command_memory.sub(static_cast<int64_t>(cb->command_blocks.front().size));
         cb->command_blocks.erase(cb->command_blocks.begin());
     }
-    cb->command_total = size;            // the block the next recording uses
-    cb->command_used = 0;                // memory handed over again: its usage is given back
+    cb->command_total = size;
+    cb->command_used = 0;
     cb->base_used = 0;
     cb->last_block_addr = addr;
 }
@@ -147,7 +147,7 @@ NVNcommandHandle nvnCommandBufferEndRecording(NVNcommandBuffer* c) {
     const uint64_t h = handle_register(list);
     std::lock_guard<std::mutex> lk(cb->lock);
     cb->handles.push_back(h);
-    if (cb->handles.size() > 4096) cb->handles.erase(cb->handles.begin(), cb->handles.begin() + 2048);   // old ones are dropped by region anyway
+    if (cb->handles.size() > 4096) cb->handles.erase(cb->handles.begin(), cb->handles.begin() + 2048);
     return h;
 }
 
@@ -158,7 +158,6 @@ void nvnCommandBufferCallCommands(NVNcommandBuffer* c, int count, const NVNcomma
     cb->rec->emit(Op::CallCommands, p, handles, static_cast<uint32_t>(count) * 8u);
 }
 
-// CopyCommands: the other lists' records are copied into this one now (the console copies the command words).
 void nvnCommandBufferCopyCommands(NVNcommandBuffer* c, int count, const NVNcommandHandle* handles) {
     CommandBuffer* cb = cb_of(c);
     if (!cb || !cb->recording || !cb->rec || count <= 0 || !handles) return;

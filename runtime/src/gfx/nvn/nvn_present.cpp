@@ -34,7 +34,7 @@ void present_on_render_thread(Window* w, int index) {
     Texture* t = w->textures[index].get();
     if (!t) return;
     counters().presents.fetch_add(1, std::memory_order_relaxed);
-    diag_frame_tick();                       // the freeze watchdog counts presented frames
+    diag_frame_tick();
     if (!rend || !op) return;
     if (!tex_gpu(t)) return;
     if (FrameLimiter* lim = limiter()) {
@@ -59,7 +59,6 @@ void present_on_render_thread(Window* w, int index) {
     tex_transition(t, f, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     VkImageView src = tex_present_view(t);
     const VkExtent3D e = tex_extent(t, 0);
-    // one present path (S14): the SDR picture is copied as written (encode mode 0); HDR scene / HDR swapchain / FSR 1 use the other modes
     const extras::HdrState hs = extras::hdr_state();
     extras::OutputParams prm;
     prm.src = src;

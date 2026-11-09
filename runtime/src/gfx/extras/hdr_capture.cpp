@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// HDR capture decoder (hdr_capture.cpp): pixel unpacking (PQ 10-bit words, IEEE half floats, 8-bit sRGB), the previews, the
-// statistics and the PFM writer behind hdr_capture.h. Uses the transfer functions and primaries from hdr_math.h.
 #include "extras/hdr_capture.h"
 
 #include <algorithm>
@@ -41,13 +39,12 @@ float half_to_float(uint16_t h) {
     return sign ? -mag : mag;
 }
 
-// Unpacks one raw pixel to scene-linear BT.709, 1.0 = paper white (negatives are kept).
 void decode_pixel(CaptureFormat fmt, const uint8_t* p, float paper_white_nits, float out[3]) {
     switch (fmt) {
         case CaptureFormat::A2B10G10R10:
         case CaptureFormat::A2R10G10B10: {
             const uint32_t word = read_u32_le(p);
-            uint32_t code[3];                                    // BT.2020 R, G, B
+            uint32_t code[3];
             if (fmt == CaptureFormat::A2B10G10R10) {
                 code[0] = word & 0x3FFu;
                 code[1] = (word >> 10) & 0x3FFu;
@@ -125,7 +122,6 @@ bool decode_hdr_capture(CaptureFormat fmt, const uint8_t* raw, uint32_t w, uint3
         float* px = &lin[i * 3];
         decode_pixel(fmt, raw + i * bpp, paper_white_nits, px);
 
-        // Previews: negatives are 0.
         const float clamped_max = std::max({px[0], px[1], px[2], 0.0f});
         if (sdr_rgba) {
             for (int c = 0; c < 3; ++c) {
@@ -143,7 +139,6 @@ bool decode_hdr_capture(CaptureFormat fmt, const uint8_t* raw, uint32_t w, uint3
             map[i * 4 + 3] = 255;
         }
 
-        // Statistics in paper-white units.
         const double v = clamped_max;
         sum += v;
         max_v = std::max(max_v, v);
@@ -190,7 +185,7 @@ bool write_pfm(const std::string& path, const std::vector<float>& linear_rgb, ui
             const float v = linear_rgb[static_cast<size_t>(y) * row_floats + i] * scale;
             uint32_t bits;
             std::memcpy(&bits, &v, sizeof bits);
-            row[i * 4 + 0] = static_cast<uint8_t>(bits & 0xFFu);   // little endian, byte by byte
+            row[i * 4 + 0] = static_cast<uint8_t>(bits & 0xFFu);
             row[i * 4 + 1] = static_cast<uint8_t>((bits >> 8) & 0xFFu);
             row[i * 4 + 2] = static_cast<uint8_t>((bits >> 16) & 0xFFu);
             row[i * 4 + 3] = static_cast<uint8_t>((bits >> 24) & 0xFFu);

@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// FSR 1 spatial upscaler (fsr1_spatial.h).
 #include "extras/fsr1_spatial.h"
 
 #include <algorithm>
@@ -183,7 +182,7 @@ VkImageView Fsr1Spatial::upscale(VkCommandBuffer cb, VkImageView src, VkExtent2D
         t->initialised = true;
     }
     const float perceptual = linear_hdr ? 1.0f : 0.0f;
-    {   // EASU
+    {
         EasuPush pc = {};
         fsr1_easu_consts(pc.con, pc.con + 4, pc.con + 8, pc.con + 12, static_cast<float>(in_view.width), static_cast<float>(in_view.height), static_cast<float>(in_tex.width),
                          static_cast<float>(in_tex.height), static_cast<float>(out.width), static_cast<float>(out.height));
@@ -206,7 +205,7 @@ VkImageView Fsr1Spatial::upscale(VkCommandBuffer cb, VkImageView src, VkExtent2D
     }
     image_barrier(cb, easu_img_.img.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-    {   // RCAS
+    {
         RcasPush pc = {};
         fsr1_rcas_consts(pc.con, (1.0f - std::clamp(sharpness, 0.0f, 1.0f)) * 2.0f);
         pc.opt[0] = perceptual;

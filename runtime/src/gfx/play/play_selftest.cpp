@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode self-test driver, see play_selftest.h.
 #include "play_selftest.h"
 
 #include <windows.h>
@@ -99,8 +98,6 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
     if (next_ >= steps_.size()) return;
     const Step& s = steps_[next_];
     if (s.verb == "gate") {
-        // gate:NAME holds the script until a file named selftest_NAME exists in the working folder, then deletes it and goes on. A person
-        // or a driver script uses it to run the next steps at a moment of its choosing (for example once the game is in play).
         const std::string path = "selftest_" + s.a;
         std::error_code ec;
         if (!std::filesystem::exists(path, ec)) return;
@@ -143,7 +140,7 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
         fail("the window close did not end the process");
     } else if (s.verb == "cap") {
         if (limiter) limiter->set_target_fps(std::atof(s.a.c_str()));
-        wait_ = 30;      // let the schedule settle
+        wait_ = 30;
     } else if (s.verb == "measure") {
         measuring_ = true;
         if (limiter) limiter->reset_stats();
@@ -167,7 +164,6 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
         const double want = std::atof(s.a.c_str()), tol = std::atof(s.b.c_str());
         if (std::fabs(last_fps_ - want) > want * tol) fail("fps " + std::to_string(last_fps_) + " is not within " + s.b + " of " + s.a);
     } else if (s.verb == "expect_late") {
-        // the limiter's own accuracy on the last measure: frames that had to wait must have started within MS of their schedule
         if (!limiter) fail("no limiter");
         const FrameLimiter::Stats ls = limiter->stats();
         if (ls.waited < 50) fail("only " + std::to_string(ls.waited) + " frames waited: the game was slower than the cap, nothing to judge");
@@ -190,7 +186,6 @@ void SelfTest::tick(gfx::Renderer* renderer, FrameLimiter* limiter, SelfTestHost
     } else if (s.verb == "pass") {
         finish(0, "");
     } else if (s.verb == "report") {
-        // report[:label]: one log line with what the window looks like now
         int pw = 0, ph = 0;
         platform::pixel_size(&pw, &ph);
         const char* m = "windowed";

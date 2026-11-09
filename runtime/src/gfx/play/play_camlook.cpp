@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode camera look maths, see play_camlook.h.
 #include "nxrt/game/play_camlook.h"
 
 #include <algorithm>
@@ -23,7 +22,6 @@ void LookOffsets::add_angles(double dyaw, double dpitch, const LookParams& p) {
 }
 
 namespace {
-// Rodrigues: rotation matrix (row-major 3x3) about the unit axis a by angle t.
 void axis_angle(const double a[3], double t, double r[9]) {
     const double c = std::cos(t), s = std::sin(t), k = 1.0 - c;
     r[0] = c + a[0] * a[0] * k;        r[1] = a[0] * a[1] * k - a[2] * s; r[2] = a[0] * a[2] * k + a[1] * s;
@@ -42,13 +40,11 @@ void mulv(const double a[9], const double v[3], double out[3]) {
 void orbit_transform(const float in[12], const float pivot[3], double yaw, double pitch, float out[12]) {
     double m[9] = {in[0], in[1], in[2], in[4], in[5], in[6], in[8], in[9], in[10]};
     double p[3] = {in[3] - pivot[0], in[7] - pivot[1], in[11] - pivot[2]};
-    // 1. yaw about world up (Y)
     const double up[3] = {0, 1, 0};
     double ry[9], m1[9], p1[3];
     axis_angle(up, yaw, ry);
     mul3(ry, m, m1);
     mulv(ry, p, p1);
-    // 2. pitch about the camera's right axis after the yaw (column 0 of the rotation)
     const double right[3] = {m1[0], m1[3], m1[6]};
     const double len = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
     double m2[9], p2[3];

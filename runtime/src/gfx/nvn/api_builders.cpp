@@ -26,7 +26,6 @@
 namespace nxrt::nvn {
 namespace {
 
-// ---- raw access to the guest object ----------------------------------------------------------------------------------------
 template <class T>
 inline T rd(const void* base, size_t off) {
     T v;
@@ -43,7 +42,6 @@ inline T* ptr_of(uint64_t v) { return reinterpret_cast<T*>(static_cast<uintptr_t
 template <class T>
 inline void zero_object(T* o) { std::memset(static_cast<void*>(o), 0, sizeof(T)); }
 
-// ---- layout offsets -------------------------------------------------------------------------------------------------------
 constexpr size_t kDevFlags = 0;
 
 constexpr size_t kQMemory = 0x00, kQMemorySize = 0x08, kQCommand = 0x10, kQCompute = 0x18, kQControl = 0x20, kQFlush = 0x28,
@@ -72,15 +70,12 @@ static_assert(kBSize + 8 <= sizeof(NVNbufferBuilder), "buffer builder layout fit
 static_assert(kEOffset + 8 <= sizeof(NVNeventBuilder), "event builder layout fits the NVN object");
 static_assert(kDevFlags + 4 <= sizeof(NVNdeviceBuilder), "device builder layout fits the NVN object");
 
-// Rounds a size up to the next multiple of 4096.
 inline size_t round_up_4k(size_t v) { return (v + 0xfffu) & ~static_cast<size_t>(0xfffu); }
 
-// ---- NVNdeviceBuilder ------------------------------------------------------------------------------------------------------
 void nvnDeviceBuilderSetDefaults(NVNdeviceBuilder* b) { zero_object(b); }
 void nvnDeviceBuilderSetFlags(NVNdeviceBuilder* b, int flags) { wr<int32_t>(b, kDevFlags, flags); }
 int nvnDeviceBuilderGetFlags(const NVNdeviceBuilder* b) { return rd<int32_t>(b, kDevFlags); }
 
-// ---- NVNqueueBuilder -------------------------------------------------------------------------------------------------------
 void nvnQueueBuilderSetDevice(NVNqueueBuilder* b, NVNdevice* d) { wr<uint64_t>(b, kQDevice, bits_of(d)); }
 NVNdevice* nvnQueueBuilderGetDevice(const NVNqueueBuilder* b) { return ptr_of<NVNdevice>(rd<uint64_t>(b, kQDevice)); }
 
@@ -102,7 +97,6 @@ size_t nvnQueueBuilderGetComputeMemorySize(const NVNqueueBuilder* b) { return rd
 void nvnQueueBuilderSetControlMemorySize(NVNqueueBuilder* b, size_t size) { wr<uint64_t>(b, kQControl, size); }
 size_t nvnQueueBuilderGetControlMemorySize(const NVNqueueBuilder* b) { return rd<uint64_t>(b, kQControl); }
 
-// The command, compute and control sizes, each rounded up to 4096, added together.
 size_t nvnQueueBuilderGetQueueMemorySize(const NVNqueueBuilder* b) {
     return round_up_4k(rd<uint64_t>(b, kQCommand)) + round_up_4k(rd<uint64_t>(b, kQCompute)) +
            round_up_4k(rd<uint64_t>(b, kQControl));
@@ -121,7 +115,6 @@ size_t nvnQueueBuilderGetCommandFlushThreshold(const NVNqueueBuilder* b) { retur
 void nvnQueueBuilderSetQueuePriority(NVNqueueBuilder* b, int priority) { wr<int32_t>(b, kQPriority, priority); }
 int nvnQueueBuilderGetQueuePriority(const NVNqueueBuilder* b) { return rd<int32_t>(b, kQPriority); }
 
-// ---- NVNwindowBuilder ------------------------------------------------------------------------------------------------------
 void nvnWindowBuilderSetDevice(NVNwindowBuilder* b, NVNdevice* d) { wr<uint64_t>(b, kWDevice, bits_of(d)); }
 NVNdevice* nvnWindowBuilderGetDevice(const NVNwindowBuilder* b) { return ptr_of<NVNdevice>(rd<uint64_t>(b, kWDevice)); }
 
@@ -155,7 +148,6 @@ int nvnWindowBuilderGetPresentInterval(const NVNwindowBuilder* b) { return rd<in
 
 void nvnWindowBuilderSetNumActiveTextures(NVNwindowBuilder* b, int count) { wr<int32_t>(b, kWActive, count); }
 
-// ---- NVNmemoryPoolBuilder --------------------------------------------------------------------------------------------------
 void nvnMemoryPoolBuilderSetDevice(NVNmemoryPoolBuilder* b, NVNdevice* d) { wr<uint64_t>(b, kPDevice, bits_of(d)); }
 NVNdevice* nvnMemoryPoolBuilderGetDevice(const NVNmemoryPoolBuilder* b) {
     return ptr_of<NVNdevice>(rd<uint64_t>(b, kPDevice));
@@ -173,7 +165,6 @@ NVNmemoryPoolFlags nvnMemoryPoolBuilderGetFlags(const NVNmemoryPoolBuilder* b) {
     return static_cast<NVNmemoryPoolFlags>(rd<int32_t>(b, kPFlags));
 }
 
-// ---- NVNbufferBuilder ------------------------------------------------------------------------------------------------------
 void nvnBufferBuilderSetDevice(NVNbufferBuilder* b, NVNdevice* d) { wr<uint64_t>(b, kBDevice, bits_of(d)); }
 NVNdevice* nvnBufferBuilderGetDevice(const NVNbufferBuilder* b) { return ptr_of<NVNdevice>(rd<uint64_t>(b, kBDevice)); }
 void nvnBufferBuilderSetDefaults(NVNbufferBuilder* b) { zero_object(b); }
@@ -190,7 +181,6 @@ ptrdiff_t nvnBufferBuilderGetMemoryOffset(const NVNbufferBuilder* b) {
 }
 size_t nvnBufferBuilderGetSize(const NVNbufferBuilder* b) { return rd<uint64_t>(b, kBSize); }
 
-// ---- NVNeventBuilder -------------------------------------------------------------------------------------------------------
 void nvnEventBuilderSetDefaults(NVNeventBuilder* b) { zero_object(b); }
 void nvnEventBuilderSetStorage(NVNeventBuilder* b, const NVNmemoryPool* pool, int64_t offset) {
     wr<uint64_t>(b, kEPool, bits_of(pool));
@@ -205,7 +195,6 @@ ptrdiff_t nvnEventBuilderGetMemoryOffset(const NVNeventBuilder* b) {
 
 }  // namespace
 
-// ---- decode(): what the back end reads ------------------------------------------------------------------------------------
 DeviceBuilderInfo decode(const NVNdeviceBuilder* b) {
     DeviceBuilderInfo i;
     i.flags = rd<int32_t>(b, kDevFlags);

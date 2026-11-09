@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Vulkan device layer (declarations in include/nxrt/gfx.h): instance + validation, GPU choice, logical device, VMA, image-format
-// checks, buffers, one-shot submits.
 // Ideas taken from SuperMarioWonderRecomp (MIT) docs/nvn/DEBUG-2.md #69 (ASTC on NVIDIA desktop) and #70 (iGPU listed first):
 // the checks and the GPU rule are written from scratch, see docs/S4b.md.
 #include <algorithm>
@@ -27,7 +25,6 @@
 
 namespace nxrt {
 
-// ---- live-object gauges (declared in vk_gauges.h) -------------------------------------------------------------------------------
 nxrt::GaugeCounter& vk_gauge_images() { static nxrt::GaugeCounter g("vk.images"); return g; }
 nxrt::GaugeCounter& vk_gauge_image_views() { static nxrt::GaugeCounter g("vk.image_views"); return g; }
 nxrt::GaugeCounter& vk_gauge_buffers() { static nxrt::GaugeCounter g("vk.buffers"); return g; }
@@ -118,7 +115,6 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBit
 
 }  // namespace
 
-// ---- GPU rule ---------------------------------------------------------------------------------------------------------
 size_t pick_gpu(const std::vector<GpuCandidate>& gpus, const char* want, bool* matched) {
     if (matched) *matched = true;
     if (gpus.empty()) return 0;
@@ -143,14 +139,11 @@ size_t pick_gpu(const std::vector<GpuCandidate>& gpus, const char* want, bool* m
     return fallback;
 }
 
-// ---- private state ----------------------------------------------------------------------------------------------------
 struct Device::Impl {
-    // validation counters (written from any thread by the layer callback)
     std::atomic<uint64_t> errors{0}, warnings{0}, infos{0}, verbose{0};
     std::mutex first_error_mu;
     std::string first_error;
 
-    // image-format cache
     struct Key {
         VkFormat format; VkImageType type; VkImageTiling tiling; VkImageUsageFlags usage; VkImageCreateFlags flags;
         bool operator<(const Key& o) const {
@@ -162,7 +155,6 @@ struct Device::Impl {
     std::map<Key, Val> fmt_cache;
     std::atomic<uint64_t> fmt_checks{0}, fmt_hits{0}, fmt_rejected{0};
 
-    // one-shot submits
     std::mutex once_mu;
     VkCommandPool once_pool = VK_NULL_HANDLE;
     VkFence once_fence = VK_NULL_HANDLE;
@@ -226,7 +218,6 @@ VmaTotalStatistics vma_totals(VmaAllocator a, VmaStatsCache& c) {
     return c.st;
 }
 
-// The device-local heap with the most memory (the one the budget gauges describe).
 uint32_t device_local_heap(VmaAllocator a) {
     const VkPhysicalDeviceMemoryProperties* mp = nullptr;
     vmaGetMemoryProperties(a, &mp);
@@ -315,7 +306,6 @@ int vk_guard_discount_heap(const VkPhysicalDeviceMemoryProperties& mp, VkPhysica
 
 uint64_t vk_guard_gpu_bytes() { return gpu_bytes_for_guard(); }
 
-// ---- creation ---------------------------------------------------------------------------------------------------------
 std::unique_ptr<Device> Device::create(const DeviceDesc& desc, std::string* error) {
     std::unique_ptr<Device> d(new Device());
     d->impl_ = new Impl();
@@ -349,7 +339,6 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
 
     if (!headless && !platform::has_window()) return fail("no platform window: create one (platform::create_window) or run headless");
 
-    // layers and extensions
     uint32_t n = 0;
     vkEnumerateInstanceLayerProperties(&n, nullptr);
     std::vector<VkLayerProperties> layers(n);
@@ -428,7 +417,6 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
         owns_platform_surface_ = true;
     }
 
-    // physical devices
     uint32_t ndev = 0;
     vkEnumeratePhysicalDevices(instance_, &ndev, nullptr);
     if (!ndev) return fail("no Vulkan physical device");
@@ -549,7 +537,6 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     auto add_ext = [&](const char* name, void* feat_struct) {
         if (!has_dext(name)) return false;
         dev_exts.push_back(name);
-        // every extension feature struct is { sType, pNext, ... }: link it into the chain
         struct Base { VkStructureType s; void* n; };
         static_cast<Base*>(feat_struct)->n = chain;
         chain = feat_struct;
@@ -577,7 +564,6 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.external_memory_host = has_dext(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (features_.external_memory_host) dev_exts.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
     if (has_dext(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME)) { dev_exts.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME); features_.push_descriptor = true; }
-    // availability query: one chain holding all the structs
     a11.pNext = &a12; a12.pNext = &a13; a13.pNext = chain;
     VkPhysicalDeviceFeatures2 avail = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &a11};
     vkGetPhysicalDeviceFeatures2(physical_, &avail);
@@ -609,7 +595,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.wide_lines = af.wideLines;
     features_.large_points = af.largePoints;
     features_.image_cube_array = af.imageCubeArray;
-    features_.occlusion_query = true;   // occlusion queries are core
+    features_.occlusion_query = true;
     features_.occlusion_query_precise = af.occlusionQueryPrecise;
     features_.pipeline_statistics_query = af.pipelineStatisticsQuery;
     features_.sparse_binding = af.sparseBinding;
@@ -722,7 +708,6 @@ Device::~Device() {
     delete impl_;
 }
 
-// ---- validation -------------------------------------------------------------------------------------------------------
 ValidationStats Device::validation_stats() const {
     ValidationStats s;
     s.errors = impl_->errors.load();
@@ -749,7 +734,6 @@ void Device::set_name(VkObjectType type, uint64_t handle, const char* name) {
     vkSetDebugUtilsObjectNameEXT(device_, &ni);
 }
 
-// ---- images -----------------------------------------------------------------------------------------------------------
 FormatCheckStats Device::format_check_stats() const {
     return {impl_->fmt_checks.load(), impl_->fmt_hits.load(), impl_->fmt_rejected.load()};
 }
@@ -866,7 +850,6 @@ void Device::destroy_image(Image& img) {
     img = Image{};
 }
 
-// ---- buffers ----------------------------------------------------------------------------------------------------------
 VkResult Device::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, MemoryUse use, Buffer* out, const char* name) {
     VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bi.size = size;
@@ -916,7 +899,6 @@ void Device::invalidate_buffer(const Buffer& b) {
     if (b.allocation) vmaInvalidateAllocation(vma_, b.allocation, 0, VK_WHOLE_SIZE);
 }
 
-// ---- one-shot submit, idle, stats -------------------------------------------------------------------------------------
 bool Device::submit_once(const std::function<void(VkCommandBuffer)>& fn) {
     std::lock_guard<std::mutex> lk(impl_->once_mu);
     VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};

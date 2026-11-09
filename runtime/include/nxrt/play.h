@@ -30,9 +30,8 @@ namespace nxrt::play {
 
 // Loads the settings file and creates the frame limiter. Idempotent. Returns false (and uses the factory settings) when the file is invalid.
 bool load();
-// What the launcher needs from the settings before the window exists.
 struct DisplayConfig {
-    int width = 1280, height = 720;         // windowed client size
+    int width = 1280, height = 720;
     std::string window_mode = "windowed";   // "windowed" "borderless" "exclusive"
     bool vsync = false;
     int fps_cap = 60;                       // 0 = unlimited
@@ -54,7 +53,7 @@ void stop();                                // saves changed settings, removes t
 
 // Counters for the tests and the log.
 struct Stats {
-    uint64_t frames = 0;                    // Update hook calls
+    uint64_t frames = 0;
     uint64_t process_input_calls = 0;
     uint64_t aim_frames = 0;                // ProcessInput calls where the mouse aim was applied
     uint64_t events = 0;                    // input events drained

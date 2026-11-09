@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Display options of play mode: see play_display.h.
 #include "nxrt/game/play_display.h"
 
 #include <algorithm>
@@ -9,7 +8,6 @@
 
 namespace nxrt::play {
 
-// ---- arithmetic -----------------------------------------------------------------------------------------------------------------
 namespace {
 
 int clamp_dim(double v) {
@@ -79,7 +77,6 @@ bool hud_ortho(float* left, float* right, float* bottom, float* top, double disp
     const double cx = (static_cast<double>(*left) + *right) * 0.5;
     const double dir = span >= 0 ? 1.0 : -1.0;
     if (display_aspect < kHudAspect - 0.02) {
-        // narrower than 16:9: keep the width the frame was drawn for and grow the height around its centre, so nothing is cut off at the sides
         const double cy = (static_cast<double>(*top) + *bottom) * 0.5;
         const double nh = w / display_aspect;
         const double vdir = (static_cast<double>(*top) - *bottom) >= 0 ? 1.0 : -1.0;
@@ -99,7 +96,6 @@ float fov_with_offset(float base_radians, double offset_degrees) {
     return static_cast<float>(std::clamp(v, 10.0 * kDeg, 170.0 * kDeg));
 }
 
-// ---- renderer tuning (every game: the NVN back end's sampler settings) ----------------------------------------------------------
 void display_tuning(const DisplaySettings& d) {
     gfx::tuning().anisotropy.store(d.anisotropy);
     gfx::tuning().lod_bias.store(static_cast<float>(std::clamp(d.lod_bias, -2.0, 2.0)));

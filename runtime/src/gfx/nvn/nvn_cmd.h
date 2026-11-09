@@ -20,15 +20,12 @@ namespace nxrt::nvn::be {
 
 enum class Op : uint16_t {
     Nop = 0,
-    // bindings
     BindProgram, BindBuffers, BindTextures, BindImages, BindVertexAttribs, BindVertexStreams,
     BindBlend, BindColor, BindChannelMask, BindDepthStencil, BindPolygon, BindMultisample,
     SetTexturePool, SetSamplerPool,
-    // fixed-function state
     SetViewports, SetScissors, SetDepthRanges, SetDepthBounds, SetStencil, SetBlendColor, SetPointSize, SetLineWidth,
     SetPolygonOffsetClamp, SetAlphaRef, SetSampleMask, SetRasterizerDiscard, SetDepthClamp, SetPrimitiveRestart,
     SetPatchSize, SetTessLevels, SetRenderEnable, SetRenderTargets, SetCoverageModulationTable, SetConservativeRaster,
-    // work
     DrawArrays, DrawElements, DrawIndirect, DrawTexture, ClearColor, ClearDepthStencil, ClearTexture, ClearBuffer,
     CopyBufferToBuffer, CopyBufferToTexture, CopyTextureToBuffer, CopyTextureToTexture, Downsample, UpdateUniformBuffer,
     Dispatch, DispatchIndirect, ReportCounter, ReportValue, ResetCounter, Barrier, FenceSync, WaitSync, SignalEvent, WaitEvent,
@@ -38,7 +35,6 @@ enum class Op : uint16_t {
 };
 const char* op_name(Op op);
 
-// ---- payloads (all trivially copyable) ---------------------------------------------------------------------------------------
 struct P_BindProgram { Program* program; uint32_t stages; uint32_t pad; };                  // stages: NVN shader stage bits
 enum BufferKind : uint32_t { kBufVertex = 0, kBufUniform = 1, kBufStorage = 2, kBufXfb = 3 };
 struct P_BindBuffers { uint32_t kind, stage, first, count; };                                 // blob: NVNbufferRange[count]
@@ -102,7 +98,6 @@ struct P_Sync { Sync* sync; uint32_t condition, flags; };                       
 struct P_Event { Event* event; uint32_t mode, location, index, value, pad; };                 // SignalEvent: mode (NVNeventSignalMode), location, index, value; WaitEvent: mode = NVNeventWaitMode, value
 struct P_CallCommands { uint32_t count, copy; };                                               // blob: u64 handles[count]
 
-// ---- lists --------------------------------------------------------------------------------------------------------------------
 struct RecHeader { uint16_t op; uint16_t flags; uint32_t size; };
 
 class CmdList : public Obj {
@@ -110,14 +105,13 @@ public:
     static constexpr Kind kKind = Kind::CmdList;
     CmdList() : Obj(kKind) {}
     std::vector<uint8_t> bytes;
-    std::vector<Ref<Obj>> held;           // objects the payloads point to
+    std::vector<Ref<Obj>> held;
     uint64_t handle = 0;                  // NVNcommandHandle (0 until EndRecording)
     uint32_t record_count = 0;
     uint32_t draw_count = 0;
     uint64_t mem_start = 0, mem_end = 0;  // command memory the game believes this list occupies (GPU addresses)
     std::atomic<uint64_t> calls{0};
 
-    // Appends one record. `blob` (may be null) is copied after the payload.
     template <class P>
     void emit(Op op, const P& payload, const void* blob = nullptr, uint32_t blob_size = 0) {
         static_assert(std::is_trivially_copyable_v<P>, "payloads are plain data");
@@ -132,7 +126,7 @@ private:
         const uint32_t p = (payload_size + 7u) & ~7u, b = (blob_size + 7u) & ~7u;
         const uint32_t total = static_cast<uint32_t>(sizeof(RecHeader)) + p + b;
         const size_t at = bytes.size();
-        bytes.resize(at + total);   // zero-initialised padding
+        bytes.resize(at + total);
         RecHeader h{static_cast<uint16_t>(op), 0, total};
         std::memcpy(&bytes[at], &h, sizeof h);
         if (payload_size) std::memcpy(&bytes[at + sizeof h], payload, payload_size);
@@ -152,7 +146,6 @@ public:
     Op op() const { return static_cast<Op>(hdr().op); }
     template <class P>
     const P& payload() const { return *reinterpret_cast<const P*>(cur_ + sizeof(RecHeader)); }
-    // The blob after a payload of type P.
     template <class P>
     const uint8_t* blob() const { return cur_ + sizeof(RecHeader) + ((sizeof(P) + 7u) & ~7u); }
     uint32_t size() const { return hdr().size; }
@@ -163,7 +156,6 @@ private:
     const uint8_t* cur_ = nullptr;
 };
 
-// ---- command buffers and handles ------------------------------------------------------------------------------------
 struct CommandBuffer : Obj {
     static constexpr Kind kKind = Kind::CommandBuffer;
     CommandBuffer() : Obj(kKind) {}
@@ -172,7 +164,6 @@ struct CommandBuffer : Obj {
     TexturePool* tpool = nullptr;     // the texture pool set in the list being recorded (the list holds it); background texture preparation resolves handles with it
     int64_t copy_row_stride = 0, copy_image_stride = 0;
     uint64_t callback = 0, callback_data = 0;       // guest function pointer and its data
-    // command / control memory the game added
     struct Block { uint64_t pool_gpu; uint64_t offset; uint64_t size; };
     std::vector<Block> command_blocks;
     uint64_t command_total = 0, control_total = 0;

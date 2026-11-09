@@ -175,7 +175,7 @@ VkPipeline MaskClear::ds_pipeline_for(const VkFormat* color_formats, uint32_t co
     ms.rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples);
 
     VkPipelineDepthStencilStateCreateInfo dss = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-    dss.depthTestEnable = VK_TRUE;                       // depth writes need the test; ALWAYS passes
+    dss.depthTestEnable = VK_TRUE;
     dss.depthWriteEnable = write_depth ? VK_TRUE : VK_FALSE;
     dss.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     dss.stencilTestEnable = has_stencil ? VK_TRUE : VK_FALSE;
@@ -183,9 +183,9 @@ VkPipeline MaskClear::ds_pipeline_for(const VkFormat* color_formats, uint32_t co
     so.failOp = so.passOp = so.depthFailOp = VK_STENCIL_OP_REPLACE;
     so.compareOp = VK_COMPARE_OP_ALWAYS;
     so.compareMask = 0xff;
-    dss.front = dss.back = so;                           // write mask and reference are dynamic
+    dss.front = dss.back = so;
 
-    VkPipelineColorBlendAttachmentState cba[kMaxAttachments] = {};   // write mask 0 everywhere
+    VkPipelineColorBlendAttachmentState cba[kMaxAttachments] = {};
     VkPipelineColorBlendStateCreateInfo cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     cb.attachmentCount = color_count;
     cb.pAttachments = cba;
@@ -237,7 +237,6 @@ bool MaskClear::record_depth_stencil(VkCommandBuffer cb, const VkFormat* color_f
     const uint32_t w = static_cast<uint32_t>(x1 - x0), h = static_cast<uint32_t>(y1 - y0);
     const VkPipeline pipe = ds_pipeline_for(color_formats, color_count, depth_format, has_stencil, sample_count, write_depth);
     if (!pipe) return false;
-    // every fragment gets the clear depth: a viewport whose depth range is the single value
     const float z = std::min(1.0f, std::max(0.0f, depth));
     const VkViewport vpt = {static_cast<float>(x0), static_cast<float>(y0), static_cast<float>(w), static_cast<float>(h), z, z};
     const VkRect2D scissor = {{x0, y0}, {w, h}};
@@ -267,7 +266,6 @@ bool MaskClear::record(VkCommandBuffer cb, VkFormat color_format, uint32_t total
     const VkPipeline pipe = pipeline_for(Key{static_cast<int>(color_format), total_attachments, attachment, mask, kind, sample_count});
     if (!pipe) return false;
 
-    // 32 bytes of push constants: the colour, then zeros (the shaders read the first 16).
     uint32_t pc[kPushBytes / 4] = {};
     std::memcpy(pc, value, 16);
 

@@ -50,7 +50,7 @@ struct State {
         int handle;
         gfx::TexUploadHooks hooks;
     };
-    std::vector<Sub> subs;             // in the order they subscribed
+    std::vector<Sub> subs;
     int next_handle = 1;
     std::map<MemoKey, Memo> memo;
     std::set<uint32_t> edited;         // Texture::id of the textures that were given edited data
@@ -192,7 +192,6 @@ void worker_main() {
 
 }  // namespace
 
-// ---- prepare_texture side (nvn_texdata.h) ---------------------------------------------------------------------------------------
 bool tex_edit_active() { return g_active.load(std::memory_order_acquire); }
 
 TexEditKey tex_edit_match(const Texture& t, const uint8_t* src) {
@@ -308,7 +307,7 @@ int texture_upload_subscribe(const TexUploadHooks& hooks) {
     int handle = 0;
     {
         std::lock_guard<std::mutex> lk(s.mu);
-        for (int tries = 0; tries < kMaxHandle && !handle; ++tries) {   // the next free handle, 1 .. 255
+        for (int tries = 0; tries < kMaxHandle && !handle; ++tries) {
             const int h = s.next_handle;
             s.next_handle = h % kMaxHandle + 1;
             bool used = false;
@@ -335,7 +334,7 @@ void texture_upload_unsubscribe(int handle) {
         s.memo.clear();
         g_active.store(!s.subs.empty(), std::memory_order_release);
     }
-    texture_upload_changed();   // the changed textures go back to the game's
+    texture_upload_changed();
 }
 
 void texture_upload_changed() {
@@ -352,7 +351,7 @@ void texture_upload_changed() {
         }
     }
     s.cv_work.notify_one();
-    textures_mark_bc7_candidates_dirty();   // the small BC7 textures are uploaded again too
+    textures_mark_bc7_candidates_dirty();
 }
 
 TexUploadStats texture_upload_stats() {

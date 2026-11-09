@@ -85,7 +85,6 @@ bool to_bool(const std::string& v, bool* out) {
     return false;
 }
 
-// One word of a fixed list (case-insensitive): its index in `words`. A word that is none of them sets *msg listing the allowed ones.
 bool pick_word(const std::string& k, const std::string& v, const std::vector<const char*>& words, int* idx, std::string* msg) {
     const std::string l = lower(v);
     for (size_t i = 0; i < words.size(); ++i) {
@@ -138,7 +137,6 @@ std::string strip_inline_comment(const std::string& line) {
     return line;
 }
 
-// The settings with the built-in tables only: the outputs from ActInfo, the struct defaults, and no bindings.
 Settings builtin_settings() {
     Settings s;
     for (int i = 0; i < kActCount; ++i) {
@@ -371,7 +369,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             break;
         case Sec::PadMap: {
             PadSrc src;
-            if (!parse_pad_src(k, &src)) break;   // unknown pad button name: a warning
+            if (!parse_pad_src(k, &src)) break;
             uint64_t& dst = s->pad.remap[static_cast<int>(src)];
             if (lower(v) == "default") {
                 dst = kPadDefault;
@@ -477,7 +475,7 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         }
         case Sec::Switch: {
             Act a = Act::None;
-            if (!parse_act(k, &a) || a == Act::None) break;   // unknown action name: a warning
+            if (!parse_act(k, &a) || a == Act::None) break;
             Output o;
             std::string perr;
             if (!parse_output(v, &o, &perr)) {
@@ -596,7 +594,6 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
 
     Sec sec = Sec::None;
     Ctx ctx = Ctx::All;
-    // Which of the two dead-zone keys the [pad] section has, for the rule after the loop (right_deadzone takes deadzone's value when only deadzone is there).
     bool pad_has_deadzone = false, pad_has_right_deadzone = false;
     for (size_t i = 0; i < lines.size(); ++i) {
         std::string line = trim(lines[i]);
@@ -628,7 +625,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             continue;
         }
 
-        if (sec == Sec::Unknown) continue;   // the keys of an unknown section are skipped
+        if (sec == Sec::Unknown) continue;
 
         // Bindings keep the key before the LAST '=' (the key may itself be "="); their value never contains '='.
         const size_t eq = sec == Sec::Bindings ? line.rfind('=') : line.find('=');
@@ -697,7 +694,6 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
     if (pad_has_deadzone && !pad_has_right_deadzone) s->pad.right_deadzone = s->pad.stick_deadzone;
 
     if (has_bindings) {
-        // A file with bindings written by an older revision gets the newer factory bindings it lacks (see GameDefaults).
         const int file_rev = s->defaults_rev;   // 0 when the file has no [meta]
         if (file_rev < defaults_rev()) {
             std::string added;
@@ -708,7 +704,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             s->migration_added = added;
         }
     } else if (with_default_bindings) {
-        s->defaults_rev = defaults_rev();   // the factory bindings were applied, so the result is at the current revision
+        s->defaults_rev = defaults_rev();
     }
     return true;
 }
@@ -775,7 +771,7 @@ std::string format_settings(const Settings& s) {
     kv("pitch", num(s.mouse.pitch_rad));
     kv(key_alt_camera(), flag(s.mouse.alt_camera));
     kv(key_alt_sens(), num(source_sens(s.mouse.alt_yaw_rad)));
-    if (s.mouse.alt_pitch_rad != s.mouse.alt_yaw_rad) kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));   // a vertical of its own, after the pair
+    if (s.mouse.alt_pitch_rad != s.mouse.alt_yaw_rad) kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_cursor", flag(s.mouse.menu_cursor));
@@ -864,7 +860,7 @@ std::string format_settings(const Settings& s) {
     kv("in_screenshots", flag(s.fps.in_screenshots));
 
     o += "\n[switch]\n";
-    for (int a = 1; a < kActCount; ++a) {   // every action except none
+    for (int a = 1; a < kActCount; ++a) {
         kv(act_info(static_cast<Act>(a)).name, output_text(s.out[a]));
     }
 
@@ -874,7 +870,7 @@ std::string format_settings(const Settings& s) {
         for (const Binding& b : s.bindings) {
             if (static_cast<int>(b.ctx) != c) continue;
             const std::string key = input_name(b.in);
-            if (key.empty()) continue;   // an input with no name cannot be written; it cannot be read back either
+            if (key.empty()) continue;
             o += key + " = " + act_info(b.act).name;
             if (b.trig != Trig::Press || b.ms != 0) o += std::string(" ") + trig_name(b.trig);
             if (b.ms != 0) o += " " + std::to_string(b.ms);
@@ -894,7 +890,7 @@ bool load_settings(const std::string& path, Settings* out, std::string* err) {
         if (err) *err = "cannot check " + path + ": " + ec.message();
         return false;
     }
-    if (!exists) {   // a first run: no file yet, not an error
+    if (!exists) {
         *out = default_settings();
         return false;
     }
@@ -930,7 +926,6 @@ bool save_settings(const std::string& path, const Settings& s, std::string* err)
             return false;
         }
     }
-    // Write the whole file to a temp name first, then rename it over the target, so a crash never leaves half a file.
     const std::string tmp = path + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);

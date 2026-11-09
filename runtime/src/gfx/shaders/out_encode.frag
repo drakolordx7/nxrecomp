@@ -9,7 +9,6 @@ layout(push_constant) uniform PushConstants {
     vec4 p;      // x: mode (0 copy, 1 linear to sRGB, 2 linear to HDR10, 3 linear to scRGB), y: paper white nits, z: peak nits
 } pc;
 
-// IEC 61966-2-1 sRGB OETF of clamp(x, 0, 1).
 vec3 srgb_oetf(vec3 x) {
     x = clamp(x, 0.0, 1.0);
     vec3 lo = x * 12.92;
@@ -17,7 +16,6 @@ vec3 srgb_oetf(vec3 x) {
     return vec3(x.r <= 0.0031308 ? lo.r : hi.r, x.g <= 0.0031308 ? lo.g : hi.g, x.b <= 0.0031308 ? lo.b : hi.b);
 }
 
-// SMPTE ST 2084 (PQ) inverse EOTF: nits in [0, 10000] to the 0..1 signal.
 const float PQ_M1 = 2610.0 / 16384.0;
 const float PQ_M2 = 2523.0 / 4096.0 * 128.0;
 const float PQ_C1 = 3424.0 / 4096.0;
@@ -32,7 +30,7 @@ vec3 pq_encode(vec3 nits) {
 void main() {
     vec2 local = (v_dst - pc.pic.xy) / pc.pic.zw;
     if (any(lessThan(local, vec2(0.0))) || any(greaterThan(local, vec2(1.0)))) {
-        o_color = vec4(0.0, 0.0, 0.0, 1.0);   // letterbox bar (black in every mode)
+        o_color = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
     if (pc.src.z > 0.5) local.y = 1.0 - local.y;   // flip: a window with the lower-left origin mode is presented upside down otherwise
@@ -46,7 +44,6 @@ void main() {
     if (mode == 1) {
         outc = srgb_oetf(rgb);
     } else if (mode == 2) {
-        // scene-linear BT.709 with 1.0 = paper white -> BT.2020 -> nits, limited to the peak, then PQ
         vec3 r2020 = vec3(dot(vec3(0.6274, 0.3293, 0.0433), rgb),
                           dot(vec3(0.0691, 0.9195, 0.0114), rgb),
                           dot(vec3(0.0164, 0.0880, 0.8956), rgb));
@@ -55,7 +52,7 @@ void main() {
     } else if (mode == 3) {
         outc = min(rgb * pc.p.y, vec3(pc.p.z)) / 80.0;   // scRGB: 1.0 = 80 nits, limited to the peak like HDR10
     } else {
-        outc = rgb;                  // mode 0 (and any other value): the texel unchanged
+        outc = rgb;
     }
     o_color = vec4(outc, 1.0);
 }

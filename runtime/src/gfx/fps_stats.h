@@ -30,8 +30,8 @@ private:
         double dt_ms = 0;
     };
     std::array<Frame, kMaxFrames> ring_{};
-    std::size_t head_ = 0;    // index of the oldest frame
-    std::size_t count_ = 0;   // frames held
+    std::size_t head_ = 0;
+    std::size_t count_ = 0;
 };
 
 }  // namespace nxrt::gfx

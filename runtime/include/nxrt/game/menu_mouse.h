@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Mouse pointer in the game's menus (S28).
-//
 // The pointer state and the arithmetic (window pixel to the UI plane and to the picture) are here and covered by unit tests; they know no
 // game. A game's menus take the pointer through hooks of its own, reached through GamePlay (play_game.h: menu_frame, menu_over_value,
 // menu_active). Metroid Prime Remastered: games/mpr/menu_mouse_game.h.
@@ -12,7 +10,6 @@
 
 namespace nxrt::play::mm {
 
-// ---- arithmetic -----------------------------------------------------------------------------------------------------------------
 constexpr double kUiAspect = 16.0 / 9.0;      // the aspect the front end's UI camera is authored for; on a wider display it stays centred
 
 struct Geometry {
@@ -37,7 +34,6 @@ void window_to_picture(const Geometry& g, float px, float py, float* u, float* v
 // out = M * (x, y, z, 1) for a row-major 3x4 transform (the game's CTransform4f).
 void transform_point(const float m[12], float x, float y, float z, float out[3]);
 
-// ---- the pointer ------------------------------------------------------------------------------------------------------------------
 // What the hooks see in one rendered frame. `hover`: the pointer moved since the last frame; `click`: the left button went down.
 struct Snapshot {
     bool active = false;       // menu context, window focused, feature on

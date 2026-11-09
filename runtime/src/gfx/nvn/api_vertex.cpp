@@ -19,7 +19,7 @@ static_assert(sizeof(uint32_t) <= sizeof(NVNvertexAttribState), "vertex attribut
 
 void nvnVertexAttribStateSetDefaults(NVNvertexAttribState* s) { wr32(s, 0); }
 void nvnVertexAttribStateSetFormat(NVNvertexAttribState* s, NVNformat format, ptrdiff_t relative_offset) {
-    const uint32_t keep = rd32(s) & 0x1f00u;   // the stream index
+    const uint32_t keep = rd32(s) & 0x1f00u;
     wr32(s, keep | (static_cast<uint32_t>(format) & 0xffu) | (static_cast<uint32_t>(relative_offset) << 14));
 }
 void nvnVertexAttribStateSetStreamIndex(NVNvertexAttribState* s, int index) {

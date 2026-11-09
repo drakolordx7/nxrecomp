@@ -5,7 +5,7 @@
 // location, so the other channels of that attachment keep their values.
 layout(location = LOC) out TYPE o_color;
 layout(push_constant) uniform PushConstants {
-    TYPE value;   // the first 16 bytes of the push constant range
+    TYPE value;
 } pc;
 void main() {
     o_color = pc.value;

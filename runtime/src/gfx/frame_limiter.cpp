@@ -6,7 +6,7 @@
 #include "nxrt/log.h"
 
 #include <windows.h>
-#include <emmintrin.h>  // _mm_pause
+#include <emmintrin.h>
 
 #include <algorithm>
 #include <atomic>
@@ -38,18 +38,18 @@ struct FrameLimiter::Impl {
     // Guards the state below. begin_frame holds it only for bookkeeping, never during the wait.
     std::mutex mu;
     bool has_sched = false;
-    double sched_ns = 0.0;    // scheduled start of the last frame (double, so a fractional period does not round away)
+    double sched_ns = 0.0;
     bool has_prev = false;
-    uint64_t prev_start = 0;  // actual start of the last frame
+    uint64_t prev_start = 0;
     uint64_t ring[kRing] = {};
     std::size_t ring_n = 0, ring_pos = 0;
-    uint64_t late_ring[kRing] = {};          // lateness (ns) of the frames that waited
+    uint64_t late_ring[kRing] = {};
     std::size_t late_n = 0, late_pos = 0;
     uint64_t overran_frames = 0;             // frames that did not have to wait
     uint64_t last_wait = 0, last_late = 0;
 
     // Used only by begin_frame, which is called from one thread per limiter.
-    double overshoot_ema_ns = 0.0;  // average of (actual wake - requested wake) of the timer
+    double overshoot_ema_ns = 0.0;
 
     void record_locked(uint64_t t) {
         if (has_prev) {
@@ -61,13 +61,11 @@ struct FrameLimiter::Impl {
         prev_start = t;
     }
 
-    // How long before the target the timer stops and the spin takes over.
     uint64_t margin_ns() const {
         const double m = std::min(std::max(kMinMarginNs, 2.0 * overshoot_ema_ns), kMaxMarginNs);
         return static_cast<uint64_t>(m);
     }
 
-    // Sleeps on the timer for coarse_ns (relative), then updates the overshoot average. False if the timer call failed.
     bool coarse_wait_timer(uint64_t coarse_ns) {
         LARGE_INTEGER due;
         const LONGLONG units = static_cast<LONGLONG>(coarse_ns / 100);  // 100 ns units; negative = relative
@@ -82,7 +80,6 @@ struct FrameLimiter::Impl {
         return true;
     }
 
-    // Returns once the monotonic clock has reached target (absolute ns).
     void wait_until(uint64_t target) {
         for (;;) {
             const uint64_t t = FrameLimiter::now_ns();
@@ -91,7 +88,6 @@ struct FrameLimiter::Impl {
             if (remaining > margin_ns()) {
                 if (timer) {
                     if (coarse_wait_timer(remaining - margin_ns())) continue;
-                    // The timer call failed: spin the rest.
                 } else {
                     Sleep(1);  // fallback when no high-resolution timer exists; no timeBeginPeriod
                     continue;
@@ -153,8 +149,8 @@ uint64_t FrameLimiter::begin_frame_nohook() {
             next = now;
         } else {
             next = s.sched_ns + period;
-            if (now > next + kResyncPeriods * period) next = now;  // stall: restart from now, no catch-up burst
-            else if (now > next + kMaxCarryPeriods * period) next = now - kMaxCarryPeriods * period;  // late: carry only a little
+            if (now > next + kResyncPeriods * period) next = now;
+            else if (now > next + kMaxCarryPeriods * period) next = now - kMaxCarryPeriods * period;
         }
         s.sched_ns = next;
         s.has_sched = true;
@@ -165,7 +161,6 @@ uint64_t FrameLimiter::begin_frame_nohook() {
     s.wait_until(target);
     const uint64_t start = now_ns();
     // A wait that ends long after its target means the thread was not scheduled (the timer fired late); a long planned wait means the schedule ran ahead.
-    // Either one is a visible freeze, so say which one it was.
     if (start > target + 40000000ull || target > entry + static_cast<uint64_t>(4.0 * period))
         NXLOG_W("limiter", "frame wait: planned %.1f ms, woke %.1f ms after the target (frame period %.2f ms)", static_cast<double>(target > entry ? target - entry : 0) * 1e-6,
                 static_cast<double>(start > target ? start - target : 0) * 1e-6, period * 1e-6);
@@ -190,7 +185,7 @@ uint64_t FrameLimiter::begin_frame_nohook() {
 void FrameLimiter::reset_schedule() {
     std::lock_guard<std::mutex> lk(impl_->mu);
     impl_->has_sched = false;
-    impl_->has_prev = false;  // the interval spanning the pause is not measured
+    impl_->has_prev = false;
 }
 
 FrameLimiter::Stats FrameLimiter::stats() const {
@@ -246,7 +241,7 @@ void FrameLimiter::reset_stats() {
     impl_->late_n = 0;
     impl_->late_pos = 0;
     impl_->overran_frames = 0;
-    impl_->has_prev = false;  // the interval spanning the reset is not measured
+    impl_->has_prev = false;
 }
 
 uint64_t FrameLimiter::last_wait_ns() const {
@@ -268,7 +263,7 @@ uint64_t FrameLimiter::now_ns() {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
     const uint64_t q = static_cast<uint64_t>(c.QuadPart);
-    // Split so the multiplication cannot overflow: (q % freq) < freq, so the product stays below 1e9 * freq.
+
     return (q / freq) * 1000000000ull + ((q % freq) * 1000000000ull) / freq;
 }
 

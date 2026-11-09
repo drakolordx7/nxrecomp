@@ -19,7 +19,6 @@
 
 namespace nxrt::nvn {
 
-// ---- builders --------------------------------------------------------------------------------------------------------
 struct DeviceBuilderInfo {
     int flags = 0;
 };
@@ -66,7 +65,6 @@ struct EventBuilderInfo {
 };
 EventBuilderInfo decode(const NVNeventBuilder* b);
 
-// ---- textures --------------------------------------------------------------------------------------------------------
 struct TextureBuilderInfo {
     NVNdevice* device = nullptr;
     int flags = 0;                       // NVNtextureFlags
@@ -99,7 +97,6 @@ struct TextureViewInfo {
 };
 TextureViewInfo decode(const NVNtextureView* v);
 
-// ---- samplers --------------------------------------------------------------------------------------------------------
 struct SamplerInfo {
     int min_filter = 0, mag_filter = 0;                  // NVNminFilter, NVNmagFilter
     int wrap_s = 0, wrap_t = 0, wrap_r = 0;              // NVNwrapMode
@@ -114,7 +111,6 @@ struct SamplerInfo {
 SamplerInfo decode(const NVNsamplerBuilder* b);
 SamplerInfo decode(const NVNsampler* s);
 
-// ---- fixed-function state objects ------------------------------------------------------------------------------------
 struct BlendInfo {
     int target = 0;                                      // render target the blend applies to (nvnBlendStateSetBlendTarget)
     int src_rgb = 0, dst_rgb = 0, src_a = 0, dst_a = 0;  // NVNblendFunc

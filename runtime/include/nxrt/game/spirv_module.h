@@ -13,7 +13,7 @@ namespace nxrt::spirv {
 constexpr uint32_t kMagic = 0x07230203u;
 constexpr size_t kHeaderWords = 5;   // magic, version, generator, id bound, schema
 
-enum : uint32_t {   // opcodes
+enum : uint32_t {
     OpName = 5, OpExtInstImport = 11, OpExtInst = 12, OpEntryPoint = 15, OpExecutionMode = 16, OpCapability = 17, OpTypeVoid = 19,
     OpTypeBool = 20, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23, OpTypeMatrix = 24, OpTypeImage = 25, OpTypeSampler = 26,
     OpTypeSampledImage = 27, OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypeStruct = 30, OpTypePointer = 32, OpTypeForwardPointer = 39,
@@ -21,20 +21,20 @@ enum : uint32_t {   // opcodes
     OpDecorate = 71, OpMemberDecorate = 72, OpVectorShuffle = 79, OpCompositeConstruct = 80, OpCopyObject = 83, OpImageSampleImplicitLod = 87,
     OpBitcast = 124, OpFMul = 133, OpEmitVertex = 218, OpLabel = 248,
 };
-enum : uint32_t {   // decorations
+enum : uint32_t {
     DecBlock = 2, DecBufferBlock = 3, DecBuiltIn = 11, DecLocation = 30, DecComponent = 31, DecIndex = 32, DecBinding = 33,
     DecDescriptorSet = 34, DecOffset = 35, DecXfbBuffer = 36, DecXfbStride = 37,
 };
-enum : uint32_t {   // storage classes
+enum : uint32_t {
     ScUniformConstant = 0, ScInput = 1, ScUniform = 2, ScOutput = 3, ScPrivate = 6, ScStorageBuffer = 12,
 };
-enum : uint32_t {   // execution models, execution modes, capabilities, image dimensions
+enum : uint32_t {
     ExecModelVertex = 0, ExecModelGeometry = 3, ExecModelFragment = 4, ExecModelCompute = 5,
     ExecXfb = 11, ExecLocalSize = 17, ExecInputTriangles = 22,
     CapTransformFeedback = 53,
     Dim3D = 2, DimBuffer = 5,
 };
-enum : uint32_t {   // GLSL.std.450
+enum : uint32_t {
     GlslFMax = 40, GlslFma = 50,
 };
 

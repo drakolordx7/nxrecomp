@@ -55,7 +55,6 @@ void note_unknown_handle(NVNcommandHandle handle, int count) {
                 static_cast<unsigned long long>(handle), count, static_cast<unsigned long long>(n + 1));
 }
 
-// ---- device -------------------------------------------------------------------------------------------------------------
 int device_info_value(int info) {
     switch (info) {
 #define NVN_DEVICE_INFO_VALUE(name, value) case name: return value;
@@ -91,7 +90,7 @@ void nvnDeviceSetCheckpointMaxCallStacksDepth(NVNdevice*, int) {}
 
 void nvnDeviceGetInteger(const NVNdevice* device, NVNdeviceInfo info, int* out) {
     if (!out) return;
-    (void)device;   // the values do not depend on the device (the game asks before and after nvnDeviceInitialize)
+    (void)device;
     *out = device_info_value(static_cast<int>(info));
 }
 
@@ -191,7 +190,6 @@ NVNseparateSamplerHandle nvnDeviceGetSeparateSamplerHandle(const NVNdevice* devi
 
 NVNboolean nvnDeviceIsExternalDebuggerAttached(const NVNdevice*) { return 0; }
 
-// ---- queue --------------------------------------------------------------------------------------------------------------
 NVNboolean nvnQueueInitialize(NVNqueue* queue, const NVNqueueBuilder* builder) {
     if (!queue) return 0;
     const QueueBuilderInfo info = builder ? decode(builder) : QueueBuilderInfo{};
@@ -292,10 +290,9 @@ NVNboolean nvnQueueWaitSync(NVNqueue* queue, const NVNsync* sync) {
     return be::host_of<be::Queue>(queue) && be::host_of<be::Sync>(sync) ? 1 : 0;
 }
 
-// ---- sync ---------------------------------------------------------------------------------------------------------------
 NVNboolean nvnSyncInitialize(NVNsync* sync, NVNdevice*) {
     if (!sync) return 0;
-    const bool was_live = be::host_of<be::Sync>(sync) != nullptr;   // initialised over a live sync: replaced, not added
+    const bool was_live = be::host_of<be::Sync>(sync) != nullptr;
     be::bind_guest(sync, new be::Sync());
     if (!was_live) g_syncs.add(1);
     return 1;
@@ -318,7 +315,6 @@ NVNsyncWaitResult nvnSyncWait(const NVNsync* sync, uint64_t timeout_ns) {
                                                     : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED;
 }
 
-// ---- event --------------------------------------------------------------------------------------------------------------
 // The 32-bit value of an event: a 4-byte aligned word inside the storage of its pool; null when there is none.
 uint32_t* event_word(const be::Event* e) {
     if (!e || !e->pool || !e->pool->base || e->offset < 0 || e->offset % 4 != 0) return nullptr;
@@ -360,11 +356,10 @@ ptrdiff_t nvnEventGetMemoryOffset(const NVNevent* event) {
     return e ? static_cast<ptrdiff_t>(e->offset) : 0;
 }
 
-// ---- window -------------------------------------------------------------------------------------------------------------
 NVNboolean nvnWindowInitialize(NVNwindow* window, const NVNwindowBuilder* builder) {
     if (!window) return 0;
     const WindowBuilderInfo info = builder ? decode(builder) : WindowBuilderInfo{};
-    if (be::Window* old = be::host_of<be::Window>(window)) window_gone(old);   // initialised over a live window: the old one is replaced
+    if (be::Window* old = be::host_of<be::Window>(window)) window_gone(old);
     auto* w = new be::Window();
     for (int i = 0; i < info.texture_count && i < 4; ++i) {
         if (!info.textures[i]) continue;
@@ -447,14 +442,12 @@ void nvnWindowSetNumActiveTextures(NVNwindow* window, int count) {
     w->active = count;
 }
 
-// ---- loader hooks (no-ops) ----------------------------------------------------------------------------------------------
 void nvnLoadCProcs(NVNdevice*, void*) {}
 void nvnSetExternalDebuggerEnabledNVX(NVNboolean) {}
 
 }  // namespace
 
 void register_api_device() {
-    // device
     NVN_REG(nvnDeviceInitialize);
     NVN_REG(nvnDeviceFinalize);
     NVN_REG(nvnDeviceSetDebugLabel);
@@ -487,7 +480,6 @@ void register_api_device() {
     NVN_REG(nvnDeviceGetSeparateTextureHandle);
     NVN_REG(nvnDeviceGetSeparateSamplerHandle);
     NVN_REG(nvnDeviceIsExternalDebuggerAttached);
-    // queue
     NVN_REG(nvnQueueInitialize);
     NVN_REG(nvnQueueFinalize);
     NVN_REG(nvnQueueSetDebugLabel);
@@ -503,18 +495,15 @@ void register_api_device() {
     NVN_REG(nvnQueueResetMemoryUsageCounts);
     NVN_REG(nvnQueueFenceSync);
     NVN_REG(nvnQueueWaitSync);
-    // sync
     NVN_REG(nvnSyncInitialize);
     NVN_REG(nvnSyncFinalize);
     NVN_REG(nvnSyncSetDebugLabel);
     NVN_REG(nvnSyncWait);
-    // event
     NVN_REG(nvnEventInitialize);
     NVN_REG(nvnEventFinalize);
     NVN_REG(nvnEventGetValue);
     NVN_REG(nvnEventSignal);
     NVN_REG(nvnEventGetMemoryOffset);
-    // window
     NVN_REG(nvnWindowInitialize);
     NVN_REG(nvnWindowFinalize);
     NVN_REG(nvnWindowSetDebugLabel);
@@ -527,7 +516,6 @@ void register_api_device() {
     NVN_REG(nvnWindowGetNumTextures);
     NVN_REG(nvnWindowGetNumActiveTextures);
     NVN_REG(nvnWindowSetNumActiveTextures);
-    // loader hooks
     NVN_REG(nvnLoadCProcs);
     NVN_REG(nvnSetExternalDebuggerEnabledNVX);
 }

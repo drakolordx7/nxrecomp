@@ -10,7 +10,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 layout(set = 0, binding = 0) uniform sampler2D u_src;                       // linear filter, clamp to edge
 layout(set = 0, binding = 1, rgba16f) writeonly uniform image2D u_dst;
 layout(push_constant) uniform PushConstants {
-    uvec4 con0;   // fsr1_easu_consts() output, in this order
+    uvec4 con0;
     uvec4 con1;
     uvec4 con2;
     uvec4 con3;
@@ -41,7 +41,7 @@ FfxFloat32x4 FsrEasuBF(FfxFloat32x2 p) { vec4 r = textureGather(u_src, p, 2); re
 #include "fsr1/ffx_fsr1.h"
 
 void CurrFilter(uvec2 pos) {
-    if (any(greaterThanEqual(pos, uvec2(pc.opt.yz)))) return;   // outside the output
+    if (any(greaterThanEqual(pos, uvec2(pc.opt.yz)))) return;
     vec3 c;
     ffxFsrEasuFloat(c, pos, pc.con0, pc.con1, pc.con2, pc.con3);
     if (linear_in()) c = expand3(c);

@@ -80,7 +80,6 @@ const char* pad_name(PromptStyle style, const PadSettings& pad, bool label_abxy,
     return (xbox ? kXbox : kPs)[static_cast<int>(src)];
 }
 
-// Does binding b apply in context c? A binding of c applies; an `all` binding applies unless the same input has a binding of c itself.
 bool binding_applies(const Settings& s, const Binding& b, Ctx c) {
     if (b.act == Act::None) return false;
     if (c == Ctx::All) return b.ctx == Ctx::All;

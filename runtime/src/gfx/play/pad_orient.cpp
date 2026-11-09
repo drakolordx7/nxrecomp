@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode pad orientation, see pad_orient.h.
 #include "pad_orient.h"
 
 #include <cmath>
@@ -19,7 +18,6 @@ void from_matrix(const double m[3][3], float d[9]) {
         for (int w = 0; w < 3; ++w) d[3 * a + w] = static_cast<float>(m[w][a]);
 }
 
-// Rotation by the vector v (axis * angle in radians), Rodrigues.
 void rot_vec(const double v[3], double r[3][3]) {
     const double th = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
     if (th < 1e-12) {
@@ -41,7 +39,6 @@ void mul(const double a[3][3], const double b[3][3], double out[3][3]) {
         for (int j = 0; j < 3; ++j) out[i][j] = t[i][j];
 }
 
-// Keeps the matrix a rotation (the products drift): Gram-Schmidt on the columns.
 void orthonormalize(double m[3][3]) {
     double c[3][3];
     for (int w = 0; w < 3; ++w) {
@@ -75,7 +72,6 @@ void PadOrient::step(const float gyro[3], const float accel[3], double dt, doubl
     if (!(dt > 0.0) || dt > 0.5) return;
     double m[3][3], r[3][3];
     to_matrix(direction, m);
-    // the gyro turns the pad about its own axes
     const double v[3] = {gyro[0] * kTwoPi * dt, gyro[1] * kTwoPi * dt, gyro[2] * kTwoPi * dt};
     rot_vec(v, r);
     mul(m, r, m);
@@ -85,7 +81,7 @@ void PadOrient::step(const float gyro[3], const float accel[3], double dt, doubl
     const double an = std::sqrt(static_cast<double>(accel[0]) * accel[0] + static_cast<double>(accel[1]) * accel[1] + static_cast<double>(accel[2]) * accel[2]);
     if (tilt_gain > 0.0 && an > 0.85 && an < 1.15) {
         double aw[3];
-        for (int w = 0; w < 3; ++w) aw[w] = (m[w][0] * accel[0] + m[w][1] * accel[1] + m[w][2] * accel[2]) / an;      // accel in the world frame
+        for (int w = 0; w < 3; ++w) aw[w] = (m[w][0] * accel[0] + m[w][1] * accel[1] + m[w][2] * accel[2]) / an;
         const double want[3] = {0, 0, -1};
         // rotate by (aw x want) * gain * dt in the world frame: the world-frame correction is applied on the left
         const double e[3] = {aw[1] * want[2] - aw[2] * want[1], aw[2] * want[0] - aw[0] * want[2], aw[0] * want[1] - aw[1] * want[0]};

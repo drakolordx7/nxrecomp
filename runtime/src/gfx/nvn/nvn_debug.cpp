@@ -14,7 +14,6 @@
 namespace nxrt::nvn::be {
 namespace {
 
-// Splits "a,b,c" into its non-empty items.
 std::vector<std::string> items(const std::string& list) {
     std::vector<std::string> out;
     size_t i = 0;
@@ -91,7 +90,7 @@ bool debug_skip_draw(const std::string& fs_hash, int draw_index) {
         while (f >> w) list.push_back(w);
     }
     for (const std::string& p : list) {
-        if (!p.empty() && p[0] == '#') {   // "#198" or "#198-210"
+        if (!p.empty() && p[0] == '#') {
             const int a = std::atoi(p.c_str() + 1);
             const size_t dash = p.find('-');
             const int b = dash == std::string::npos ? a : std::atoi(p.c_str() + dash + 1);

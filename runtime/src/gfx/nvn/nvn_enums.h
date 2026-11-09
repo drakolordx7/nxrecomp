@@ -31,7 +31,6 @@ PrimConversion prim_conversion(int nvn_draw_primitive);   // None for everything
 // The replay multiplies by the instance count. Unknown modes give 0.
 uint64_t primitives_for(int nvn_draw_primitive, uint32_t count);
 
-// Samplers
 VkFilter vk_mag_filter(int nvn_mag_filter);                         // NVNmagFilter
 VkFilter vk_min_filter(int nvn_min_filter);                         // NVNminFilter: the min part of the 6 values
 VkSamplerMipmapMode vk_mipmap_mode(int nvn_min_filter);             // NEAREST / LINEAR in the *_MIPMAP_* values; NEAREST for the two no-mip values
@@ -39,7 +38,6 @@ bool min_filter_uses_mips(int nvn_min_filter);                      // the four 
 VkSamplerAddressMode vk_address_mode(int nvn_wrap_mode);            // NVNwrapMode: CLAMP -> CLAMP_TO_EDGE, MIRROR_CLAMP* -> MIRROR_CLAMP_TO_EDGE
 VkSamplerReductionMode vk_reduction_mode(int nvn_sampler_reduction);
 
-// Texture views / swizzle
 VkComponentSwizzle vk_swizzle(int nvn_texture_swizzle);             // NVNtextureSwizzle ZERO, ONE, R, G, B, A
 VkImageViewType vk_view_type(int nvn_texture_target);               // NVNtextureTarget; BUFFER -> 1D, RECTANGLE -> 2D, MULTISAMPLE -> 2D / 2D_ARRAY; 1D targets are returned as 1D (the image code decides about 2D stand-ins)
 VkImageType vk_image_type(int nvn_texture_target);                  // 1D*, 2D* / cube / rectangle, 3D

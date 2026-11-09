@@ -98,7 +98,6 @@ bool hash_guarded(const Texture& t, uint64_t& h) {
 
 uint64_t now_ns() { return ft::now_ns(); }
 
-// Caller holds mu.
 void drop_result(Entry& e) {
     S().held_bytes -= std::min(S().held_bytes, e.held);
     e.held = 0;
@@ -131,7 +130,7 @@ void leave_waiting_locked(Texture* t) {
 void schedule_locked(Texture* t) {
     State& s = S();
     Entry& e = s.map[t];
-    if (e.st == Entry::Queued) return;                // the job reads the generation when it starts
+    if (e.st == Entry::Queued) return;
     if (e.st == Entry::Running) { e.again = true; return; }
     if (e.st == Entry::Waiting) { leave_waiting_locked(t); e.st = Entry::Idle; }
     if (e.st == Entry::Done) drop_result(e);          // its content is older than the new write
@@ -169,7 +168,7 @@ void debounce_locked(Texture* t) {
     const uint64_t due = now_ns() + kDebounceNs;
     switch (e.st) {
         case Entry::Waiting: e.due_ns = due; return;
-        case Entry::Queued: return;                       // reads the generation when it starts
+        case Entry::Queued: return;
         case Entry::Running: e.again = true; return;
         case Entry::Done: drop_result(e); break;
         case Entry::Idle: break;
@@ -282,7 +281,6 @@ void worker_main() {
             keep = Ref<Texture>();     // the texture may be destroyed here; ~Texture takes no lock of ours
             lk.lock();
         }
-        // results of textures the game has finalized will never be used
         for (auto it2 = s.map.begin(); it2 != s.map.end();) {
             if (it2->second.st == Entry::Done && it2->first->destroyed.load()) {
                 drop_result(it2->second);
@@ -402,12 +400,12 @@ void on_registered(Texture* t) {
 
 void on_bound(Texture* t) {
     if (!t || !enabled()) return;
-    if (S().quiesced.load(std::memory_order_relaxed)) reopen_staging();      // a new GPU layer is running (the old one was shut down)
+    if (S().quiesced.load(std::memory_order_relaxed)) reopen_staging();
     if (!(t->prep_flags.load(std::memory_order_relaxed) & kWanted)) t->prep_flags.fetch_or(kWanted, std::memory_order_acq_rel);
-    if (!t->cpu_dirty.load(std::memory_order_relaxed)) return;      // the common case: bound again every draw, nothing to do
+    if (!t->cpu_dirty.load(std::memory_order_relaxed)) return;
     const uint32_t gen = t->prep_gen.load(std::memory_order_acquire);
     const uint32_t mark = gen | 0x80000000u;
-    if (t->prep_sched.load(std::memory_order_relaxed) == mark) return;                    // already requested for this content
+    if (t->prep_sched.load(std::memory_order_relaxed) == mark) return;
     t->prep_sched.store(mark, std::memory_order_relaxed);
     consider(t);
 }

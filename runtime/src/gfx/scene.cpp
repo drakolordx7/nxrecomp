@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The test scene (declarations in include/nxrt/scene.h): a clear colour and two textured quads, the texture going through the
-// block-linear tiling library of tools/tiling (tegra_tiling.h) before it is uploaded.
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -15,7 +13,7 @@ namespace nxrt::gfx {
 namespace {
 constexpr const char* kTag = "scene";
 constexpr uint32_t kTexSize = 256;
-constexpr uint32_t kTexLevels = 9;   // 256 .. 1
+constexpr uint32_t kTexLevels = 9;
 
 #include "scene_shaders.inc"
 
@@ -40,9 +38,9 @@ void paint_level0(uint8_t* px) {
             p[3] = 255;
             const int dx = static_cast<int>(x) - 128, dy = static_cast<int>(y) - 128;
             const int d2 = dx * dx + dy * dy;
-            if (d2 >= 84 * 84 && d2 <= 92 * 92) { p[0] = 250; p[1] = 220; p[2] = 20; }           // ring
-            if (x < 28 && y < 28) { p[0] = p[1] = p[2] = 255; }                                    // white corner marker, top left
-            if (x >= 228 && y >= 228 && x - 228 == y - 228) { p[0] = p[1] = p[2] = 0; }            // black diagonal, bottom right
+            if (d2 >= 84 * 84 && d2 <= 92 * 92) { p[0] = 250; p[1] = 220; p[2] = 20; }
+            if (x < 28 && y < 28) { p[0] = p[1] = p[2] = 255; }
+            if (x >= 228 && y >= 228 && x - 228 == y - 228) { p[0] = p[1] = p[2] = 0; }
         }
     }
 }
@@ -50,7 +48,6 @@ void paint_level0(uint8_t* px) {
 }  // namespace
 
 std::vector<uint8_t> TestScene::make_texture_levels(uint32_t* level_count) {
-    // all levels back to back, tight rows, level 0 first; box-filtered mips
     std::vector<uint8_t> out;
     std::vector<uint8_t> cur(static_cast<size_t>(kTexSize) * kTexSize * 4);
     paint_level0(cur.data());
@@ -94,7 +91,7 @@ struct TestScene::Impl {
         dev->wait_idle();
         if (pipeline) { vkDestroyPipeline(d, pipeline, nullptr); vk_gauge_pipelines().sub(1); }
         if (layout) { vkDestroyPipelineLayout(d, layout, nullptr); vk_gauge_pipeline_layouts().sub(1); }
-        if (pool) {   // frees the set
+        if (pool) {
             vkDestroyDescriptorPool(d, pool, nullptr);
             vk_gauge_descriptor_pools().sub(1);
             if (set) vk_gauge_descriptor_sets().sub(1);
@@ -117,7 +114,6 @@ std::unique_ptr<TestScene> TestScene::create(Device& dev, VkFormat color_format,
         return nullptr;
     };
 
-    // ---- the texture: author linear, tile (as the console stores it), untile (as the runtime reads it), upload
     uint32_t levels = 0;
     const std::vector<uint8_t> linear = make_texture_levels(&levels);
     tegra::TextureDesc td;
@@ -193,7 +189,6 @@ std::unique_ptr<TestScene> TestScene::create(Device& dev, VkFormat color_format,
     });
     if (!uploaded) return fail("texture upload failed");
 
-    // ---- descriptors, pipeline
     VkDevice d = dev.device();
     VkSamplerCreateInfo sci = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
@@ -330,7 +325,6 @@ void TestScene::record(const FrameInfo& f) {
 
     const float aspect = static_cast<float>(f.extent.width) / static_cast<float>(f.extent.height);
     const float t = static_cast<float>(f.frame_number);
-    // big quad: rotates, breathes
     PushConstants pc = {};
     pc.center[0] = 0.0f;
     pc.center[1] = 0.0f;

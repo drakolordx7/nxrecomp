@@ -25,7 +25,6 @@ enum class Icon : uint8_t {
 };
 constexpr int kIconCount = static_cast<int>(Icon::kCount);
 
-// ---- the game's side -----------------------------------------------------------------------------------------------------------------
 struct PromptIcon {
     Btn btn;
     bool pressed;

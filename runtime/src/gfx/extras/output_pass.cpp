@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Output pass (output_pass.h).
 #include "extras/output_pass.h"
 
 #include <algorithm>
@@ -272,7 +271,6 @@ int OutputPass::record(VkCommandBuffer cb, VkImageView dst_view, VkFormat dst_fo
         case OutputKind::ScRgb: mode = 3; break;
     }
 
-    // FSR 1: only when the picture on screen is larger than the source crop and the crop starts at the origin
     const int32_t sw = static_cast<int32_t>(p.src_extent.width), sh = static_cast<int32_t>(p.src_extent.height);
     const bool has_crop = p.crop[2] > 0 && p.crop[3] > 0;
     const double cw = has_crop ? std::min(p.crop[2], sw) : sw, ch = has_crop ? std::min(p.crop[3], sh) : sh;

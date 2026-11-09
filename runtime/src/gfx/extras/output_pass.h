@@ -27,7 +27,7 @@ struct OutputParams {
     bool keep_aspect = true;                 // letterbox instead of stretching
     bool flip_y = false;                     // lower-left window origin
     bool src_linear = false;                 // scene-linear float source (HDR scene) rather than sRGB-encoded bytes
-    OutputKind out = OutputKind::Sdr8;       // what the destination carries
+    OutputKind out = OutputKind::Sdr8;
     float paper_white_nits = 203, peak_nits = 1000;
     bool fsr1 = false;                       // upscale with FSR 1 when the picture is larger than the source
     float sharpness = 0.8f;                  // 0..1 (RCAS)
@@ -59,7 +59,6 @@ private:
 
     gfx::Device* dev_ = nullptr;
     VkSampler linear_ = VK_NULL_HANDLE, nearest_ = VK_NULL_HANDLE;
-    // encode (graphics)
     VkDescriptorSetLayout enc_set_layout_ = VK_NULL_HANDLE;
     VkPipelineLayout enc_layout_ = VK_NULL_HANDLE;
     VkShaderModule vs_ = VK_NULL_HANDLE, fs_ = VK_NULL_HANDLE;

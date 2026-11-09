@@ -1,10 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Vulkan 1.3 device layer of the graphics shell (S4b). Game independent: the NVN back end (later work) builds on it.
-//   Device    instance (+ validation in debug), GPU choice (discrete first, override), logical device, one graphics+present
-//             queue, VMA allocator, image-format checks before every image is created, buffers, one-shot submits.
-//   Renderer  swapchain (or an offscreen image ring in headless mode), present-mode choice, frames in flight, GPU timestamps,
-//             resize / minimise handling, screenshots, an overlay hook. Frame limiting is separate (frame_limiter.h): call
-//             FrameLimiter::begin_frame() first, then platform::pump_events(), then Renderer::begin_frame().
+// Call order per frame: FrameLimiter::begin_frame() (frame_limiter.h), platform::pump_events(), Renderer::begin_frame().
 // Configuration (config.h; env wins): [gfx] gpu (NXRT_GFX_GPU), validation (NXRT_GFX_VALIDATION), headless (NXRT_GFX_HEADLESS),
 // present_mode (NXRT_GFX_PRESENT_MODE), frames_in_flight (NXRT_GFX_FRAMES_IN_FLIGHT); see docs/S4b.md.
 #pragma once
@@ -29,7 +24,6 @@ namespace nxrt::extras { class LowLatency; }
 
 namespace nxrt::gfx {
 
-// ---- GPU choice -------------------------------------------------------------------------------------------------------
 // The rule alone (testable without a GPU). type = VkPhysicalDeviceType (0 other, 1 integrated, 2 discrete, 3 virtual, 4 cpu).
 struct GpuCandidate {
     std::string name;
@@ -51,7 +45,6 @@ struct GpuInfo {
     bool can_present = false;    // has a queue family that can draw and present to the window surface (true when headless)
 };
 
-// ---- device -----------------------------------------------------------------------------------------------------------
 struct DeviceDesc {
     std::string app_name = "nxrt";
     // Unset values are read from the configuration (see the top of this file).
@@ -77,7 +70,7 @@ struct ImageDesc {
     VkImageCreateFlags flags = 0;
     VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
     bool create_view = true;              // a view of the whole image (2D / 2D array / 3D / cube by flags and layer count)
-    const char* name = nullptr;           // debug name
+    const char* name = nullptr;
 };
 
 struct Image {
@@ -158,7 +151,7 @@ public:
     const DeviceFeatures& features() const { return features_; }
     const DeviceLimitsExt& limits_ext() const { return limits_; }
     const std::vector<GpuInfo>& gpus() const { return gpus_; }
-    const GpuInfo& gpu() const { return gpus_[gpu_index_]; }       // the one in use
+    const GpuInfo& gpu() const { return gpus_[gpu_index_]; }
     bool gpu_override_matched() const { return gpu_override_matched_; }
     float timestamp_period_ns() const { return props_.limits.timestampPeriod; }
     bool timestamps_supported() const { return timestamp_valid_bits_ > 0; }
@@ -187,11 +180,10 @@ public:
 
     void set_name(VkObjectType type, uint64_t handle, const char* name);     // VK_EXT_debug_utils, no-op without it
 
-    // Live allocation counters of the allocator (for leak checks).
     struct MemoryStats { uint64_t allocations = 0, blocks = 0, bytes = 0; };
     MemoryStats memory_stats();
 
-    struct Impl;                          // implementation detail (vk_device.cpp)
+    struct Impl;
 
 private:
     Device() = default;
@@ -219,7 +211,6 @@ private:
     Impl* impl_ = nullptr;
 };
 
-// ---- presentation -----------------------------------------------------------------------------------------------------
 enum class PresentMode : uint8_t { Fifo, FifoRelaxed, Mailbox, Immediate };
 const char* present_mode_name(PresentMode m);
 bool parse_present_mode(const char* s, PresentMode* out);          // "fifo", "fifo_relaxed", "mailbox", "immediate"
@@ -238,7 +229,7 @@ struct FrameInfo {
     VkImageView view = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
     VkExtent2D extent = {};
-    uint32_t slot = 0;                    // frame-in-flight index
+    uint32_t slot = 0;
     uint32_t image_index = 0;
     uint64_t frame_number = 0;            // counts successful begin_frame calls from 0
     bool hdr_output = false;              // the target is an HDR swapchain image (HDR10 / scRGB): colours are encoded, not sRGB
@@ -277,7 +268,7 @@ public:
     // Fifo, Immediate -> Mailbox -> Fifo, FifoRelaxed -> Fifo). Recreates the swapchain; false if recreation failed.
     bool set_present_mode(PresentMode m);
     PresentMode requested_present_mode() const;
-    PresentMode present_mode() const;                 // in use
+    PresentMode present_mode() const;
     bool present_mode_supported(PresentMode m) const;
     // Headless mode only: change the size of the offscreen images (the resize path without a window).
     bool resize_headless(uint32_t w, uint32_t h);
@@ -314,7 +305,6 @@ private:
     Impl* impl_ = nullptr;
 };
 
-// ---- image helpers (PNG through SDL3, no extra dependency) --------------------------------------------------------------
 bool save_png_rgba(const std::string& path, const uint8_t* rgba, uint32_t w, uint32_t h);
 bool load_png_rgba(const std::string& path, std::vector<uint8_t>* rgba, uint32_t* w, uint32_t* h);
 struct ImageDiff {

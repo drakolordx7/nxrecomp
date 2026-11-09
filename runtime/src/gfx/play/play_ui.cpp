@@ -46,7 +46,6 @@ constexpr const char* kAnisoNames[] = {"Game default", "2x", "4x", "8x", "16x"};
 constexpr int kAnisoValues[] = {0, 2, 4, 8, 16};
 constexpr int kAnisoCount = static_cast<int>(sizeof kAnisoValues / sizeof kAnisoValues[0]);
 constexpr Trig kTrigChoices[] = {Trig::Press, Trig::Tap, Trig::Hold, Trig::Toggle, Trig::DoubleTap};
-// The Button prompts combo on the Controller tab, in PromptStyle order.
 constexpr const char* kPromptLabels[kPromptStyleCount] = {"Switch (the game's own)", "Xbox", "PlayStation", "Keyboard and mouse",
                                                           "Auto (follows the last used device)"};
 
@@ -63,17 +62,16 @@ constexpr SwitchButton kSwitchButtons[] = {
 constexpr int kSwitchButtonCount = static_cast<int>(sizeof kSwitchButtons / sizeof kSwitchButtons[0]);
 static_assert(kSwitchButtonCount == 16, "the Switch pad has 16 buttons in the status view");
 
-// The working copy and the editing state of the page. One page per process.
 struct Page {
     bool loaded = false;
     bool dirty = false;                    // the working copy differs from the settings in force (set by every change)
     Settings edit;
-    Ctx ctx = Ctx::Play;               // the context shown in the Bindings tab
+    Ctx ctx = Ctx::Play;
     int rebind = -1;                       // index into edit.bindings of the row waiting for an input; -1 = none
     bool link_pitch = true;                // Mouse tab: moving the horizontal sensitivity moves the vertical one too (local, not saved)
     bool out_tab_open = false;             // the Switch layout tab was open last frame; its fields are refilled when it opens
-    char out_text[kActCount][128] = {};    // the text of each output field
-    std::string out_err[kActCount];        // parse error of each field; empty when its text is valid
+    char out_text[kActCount][128] = {};
+    std::string out_err[kActCount];
     bool aspect_custom = false;            // Display tab: the Custom aspect entry is picked (local, not saved)
     bool fps_capture = false;              // Display tab: the frame rate counter's hotkey waits for a key (local, not saved)
 };
@@ -84,7 +82,6 @@ const char* yes_no(bool b) { return b ? "yes" : "no"; }
 const char* cstr(const char* s) { return s ? s : ""; }
 const char* act_label(Act a) { return a == Act::None ? "none (input off)" : act_info(a).name; }
 
-// Stops our rebind. The host's capture is cancelled only when it is ours.
 void stop_rebind(UiHost& host, Page& p) {
     if (p.rebind >= 0 && host.capturing()) host.cancel_capture();
     p.rebind = -1;
@@ -120,9 +117,8 @@ void poll_capture(UiHost& host, Page& p) {
     }
 }
 
-// Fills the Switch layout fields from the working copy. Also clears their errors.
 void refresh_out_text(Page& p) {
-    for (int a = 1; a < kActCount; ++a) {   // Act::None has no row
+    for (int a = 1; a < kActCount; ++a) {
         const std::string text = output_text(p.edit.out[a]);
         std::snprintf(p.out_text[a], sizeof p.out_text[a], "%s", text.c_str());
         p.out_err[a].clear();
@@ -139,7 +135,6 @@ void sanitize(Settings& s) {
     // A fixed render size is 0 (follow the window) or 320..16384 per side; the settings file rejects anything else.
     s.display.render_width = s.display.render_width <= 0 ? 0 : std::clamp(s.display.render_width, 320, 16384);
     s.display.render_height = s.display.render_height <= 0 ? 0 : std::clamp(s.display.render_height, 320, 16384);
-    // Extras: peak and paper white are 0 (auto) or in range.
     extras::HdrSettings& h = s.extras.hdr;
     h.peak_nits = h.peak_nits <= 0 ? 0 : std::clamp(h.peak_nits, 200.0, 10000.0);
     h.paper_white_nits = h.paper_white_nits <= 0 ? 0 : std::clamp(h.paper_white_nits, 80.0, 500.0);
@@ -173,7 +168,6 @@ void load_factory(UiHost& host, Page& p) {
     mark(p);
 }
 
-// A slider on a double; true when the user changed it.
 bool slider(const char* label, double* v, double lo, double hi, const char* format, ImGuiSliderFlags flags = 0) {
     float f = static_cast<float>(*v);
     if (!ImGui::SliderFloat(label, &f, static_cast<float>(lo), static_cast<float>(hi), format, flags)) return false;
@@ -202,8 +196,6 @@ bool render_size_field(const char* label, int* v) {
     }
     return changed;
 }
-
-// ---- Mouse --------------------------------------------------------------------------------------------------------------------------
 
 void sensitivity_help(double rad) {
     if (rad <= 0) {
@@ -246,9 +238,6 @@ void mouse_tab(Page& p) {
     game_mouse_section(2, p);
 }
 
-// ---- Controller ---------------------------------------------------------------------------------------------------------------------
-
-// The 16 controller buttons, in PadSrc order.
 constexpr const char* kPadSrcLabels[kPadSrcCount] = {
     "A / Cross (bottom)", "B / Circle (right)", "X / Square (left)", "Y / Triangle (top)",
     "LB / L1",            "RB / R1",            "LT / L2",            "RT / R2",
@@ -267,7 +256,6 @@ constexpr int kPadChoiceCount = static_cast<int>(sizeof kPadChoiceNames / sizeof
 static_assert(kPadChoiceCount == 2 + kSwitchButtonCount, "one choice per Switch button, plus Default and Nothing");
 constexpr const char* kPadCustomLabel = "Custom (edit in controls.ini)";
 
-// The value a choice stores.
 uint64_t pad_choice_value(int c) {
     if (c == 0) return kPadDefault;
     if (c == 1) return 0;
@@ -373,8 +361,6 @@ void pad_tab(const LiveStatus& live, Page& p) {
     ImGui::Text("Gyro available: %s    Rumble available: %s", yes_no(live.pad_gyro), yes_no(live.pad_rumble));
 }
 
-// ---- Display ------------------------------------------------------------------------------------------------------------------------
-
 int window_mode_index(const std::string& mode) {
     for (int i = 0; i < kWindowModeCount; ++i)
         if (mode == kWindowModeKeys[i]) return i;
@@ -397,7 +383,7 @@ void fps_label(int fps, char* buf, std::size_t n) {
 
 // The frame rate counter. Its controls act on the host at once, not on the working copy: the game's hotkey flips `show` too, so the
 // page reads the host's value every frame and never writes a stale copy. These controls do not mark the page as changed.
-constexpr const char* kCornerNames[] = {"Top left", "Top right", "Bottom left", "Bottom right"};   // in Corner order
+constexpr const char* kCornerNames[] = {"Top left", "Top right", "Bottom left", "Bottom right"};
 constexpr int kCornerCount = static_cast<int>(sizeof kCornerNames / sizeof kCornerNames[0]);
 constexpr const char* kFpsDetailNames[] = {"Frame rate", "Frame rate and frame time", "Plus 1% low and worst frame"};
 constexpr int kFpsDetailCount = static_cast<int>(sizeof kFpsDetailNames / sizeof kFpsDetailNames[0]);
@@ -526,7 +512,7 @@ void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
                     if (d.aspect <= 0.0) d.aspect = kAspectValues[1];   // Custom starts at 16:9
                 } else {
                     p.aspect_custom = false;
-                    d.aspect = kAspectValues[i];                       // Auto is index 0, value 0
+                    d.aspect = kAspectValues[i];
                 }
                 mark(p);
             }
@@ -563,8 +549,6 @@ void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
     ImGui::Text("Display %.2f Hz, window %d x %d, %.1f fps", live.refresh_hz, live.width, live.height, live.fps);
 }
 
-// ---- Extras -------------------------------------------------------------------------------------------------------------------------
-
 // HDR output, upscaling and low latency (nxrt/extras.h). Items that apply at the next start say so in their labels, as the Display tab does.
 constexpr const char* kHdrModeNames[] = {"Off", "Auto", "On"};
 constexpr const char* kHdrFormatNames[] = {"Auto", "HDR10", "scRGB"};
@@ -572,7 +556,6 @@ constexpr const char* kLatencyModeNames[] = {"Off", "Auto", "On", "Boost"};
 constexpr const char* kUpscaleNames[] = {"Off", "FSR 1 (spatial)"};
 constexpr int kUpscaleCount = static_cast<int>(sizeof kUpscaleNames / sizeof kUpscaleNames[0]);
 
-// A hover tooltip for the item drawn last.
 void tip(const char* text) {
     if (ImGui::IsItemHovered()) ImGui::SetItemTooltip("%s", text);
 }
@@ -698,10 +681,8 @@ void extras_tab(Page& p) {
     hdr_group(p);
     upscale_group(p);
     latency_group(p);
-    if (const GameSection* gs = game_section(); gs && gs->extras_rows && gs->extras_rows(p.edit)) mark(p);   // the game's own rows (settings.h)
+    if (const GameSection* gs = game_section(); gs && gs->extras_rows && gs->extras_rows(p.edit)) mark(p);
 }
-
-// ---- Bindings -----------------------------------------------------------------------------------------------------------------------
 
 std::string input_button_text(const Binding& b, bool waiting) {
     if (waiting) return "press a key...";
@@ -811,8 +792,6 @@ void bindings_tab(UiHost& host, Page& p) {
     ImGui::TextWrapped("Bindings of a context win over the 'all' layer for the same input. Action 'none' switches an input off in that context.");
 }
 
-// ---- Switch layout ------------------------------------------------------------------------------------------------------------------
-
 void switch_tab(Page& p) {
     // The cycling actions by the game's names (mpr: beam_next and beam_prev ... beam_1 to beam_4).
     const std::string help = std::string("What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
@@ -866,8 +845,6 @@ void switch_tab(Page& p) {
         mark(p);
     }
 }
-
-// ---- Status -------------------------------------------------------------------------------------------------------------------------
 
 // Live view only: nothing here touches the working copy.
 void status_tab(const LiveStatus& live) {
@@ -940,7 +917,7 @@ void draw_settings_page(UiHost& host) {
             extras_tab(p);
             ImGui::EndTabItem();
         }
-        if (const GameSection* gs = game_section(); gs && gs->tab && gs->tab_title && ImGui::BeginTabItem(gs->tab_title)) {   // the game's own tab (settings.h)
+        if (const GameSection* gs = game_section(); gs && gs->tab && gs->tab_title && ImGui::BeginTabItem(gs->tab_title)) {
             if (gs->tab(p.edit)) mark(p);
             ImGui::EndTabItem();
         }

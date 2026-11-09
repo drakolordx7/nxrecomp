@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// SDL3 platform layer (declarations in include/nxrt/platform.h): window, fullscreen, raw relative mouse, gamepad hot-plug,
-// Vulkan surface, and the translation of SDL events into nxrt::input events (include/nxrt/input.h).
 #include "nxrt/platform.h"
 
 #include <SDL3/SDL.h>
@@ -60,7 +58,6 @@ void current_pixel_size(int* w, int* h) {
     if (h) *h = ph;
 }
 
-// Copies a UTF-8 string into a fixed buffer, never splitting a multi-byte character, always NUL terminated.
 void copy_utf8(char* dst, size_t cap, const char* src) {
     const size_t len = src ? std::strlen(src) : 0;
     size_t n = len < cap - 1 ? len : cap - 1;
@@ -71,7 +68,6 @@ void copy_utf8(char* dst, size_t cap, const char* src) {
     dst[n] = '\0';
 }
 
-// The open pad with this id, or nullptr.
 SDL_Gamepad* find_pad(uint32_t id) {
     for (const OpenPad& p : g_pads) {
         if (p.id == id) return p.pad;
@@ -139,7 +135,6 @@ const char* pad_kind_name(input::PadKind k) {
     }
 }
 
-// Opens a gamepad that SDL reports as added and fills its info entry.
 void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
     for (const OpenPad& p : g_pads) {
         if (p.id == id) return;  // duplicate notification for a pad already open
@@ -165,7 +160,6 @@ void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
 
     NXLOG_I(kTag, "gamepad %u added: \"%s\" kind=%s rumble=%d gyro=%d", static_cast<unsigned>(id), info.name,
             pad_kind_name(info.kind), info.rumble ? 1 : 0, info.gyro ? 1 : 0);
-    // Motion sensors: enabled when the pad has them, skipped silently when it does not.
     const bool accel_on =
         SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
     const bool gyro_on = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
@@ -179,7 +173,6 @@ void gamepad_opened(SDL_JoystickID id, uint64_t ts) {
     input::queue_push(e);
 }
 
-// Closes a gamepad that SDL reports as removed and drops its info entry.
 void gamepad_closed(SDL_JoystickID id, uint64_t ts) {
     for (auto it = g_pads.begin(); it != g_pads.end(); ++it) {
         if (it->id != id) continue;
@@ -194,7 +187,6 @@ void gamepad_closed(SDL_JoystickID id, uint64_t ts) {
     }
 }
 
-// Turns one SDL event into zero or one nxrt input events and updates the quit flag.
 void translate(const SDL_Event& ev) {
     const uint64_t ts = ev.common.timestamp;
     switch (ev.type) {
@@ -334,8 +326,6 @@ void translate(const SDL_Event& ev) {
 
 }  // namespace
 
-// ---- lifecycle ----------------------------------------------------------------------------------------------------
-
 bool init(const InitOptions& opt) {
     if (g_inited) return true;
     // Hints must be set before SDL_Init. Raw, unaccelerated relative mouse; gamepads keep reporting when the window is
@@ -373,11 +363,9 @@ void shutdown() {
 
 bool initialised() { return g_inited; }
 
-// ---- window -----------------------------------------------------------------------------------------------------
-
 bool create_window(const WindowDesc& desc) {
     if (!g_inited && !init()) return false;
-    if (g_window) destroy_window();  // one window at a time
+    if (g_window) destroy_window();
 
     SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     if (desc.resizable) flags |= SDL_WINDOW_RESIZABLE;
@@ -423,8 +411,6 @@ bool minimized() { return window_flag(SDL_WINDOW_MINIMIZED); }
 bool focused() { return window_flag(SDL_WINDOW_INPUT_FOCUS); }
 
 bool visible() { return g_window != nullptr && !window_flag(SDL_WINDOW_HIDDEN); }
-
-// ---- fullscreen ---------------------------------------------------------------------------------------------------
 
 bool set_fullscreen(FullscreenMode mode, int w, int h, float hz) {
     if (!g_window) return false;
@@ -481,8 +467,6 @@ float display_refresh_hz() {
     return m ? m->refresh_rate : 0.f;
 }
 
-// ---- relative mouse -----------------------------------------------------------------------------------------------
-
 bool set_relative_mouse(bool on) {
     if (!g_window) return false;
     if (!SDL_SetWindowRelativeMouseMode(g_window, on)) {
@@ -506,8 +490,6 @@ bool relative_mouse_is_raw() {
     const char* v = SDL_GetHint(SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE);
     return v == nullptr || std::strcmp(v, "0") == 0;
 }
-
-// ---- events -------------------------------------------------------------------------------------------------------
 
 bool push_test_motion(float dx, float dy) {
     if (!g_inited) return false;
@@ -553,8 +535,6 @@ void request_quit() { g_quit = true; }
 
 uint64_t ticks_ns() { return SDL_GetTicksNS(); }
 
-// ---- gamepad polling, sensors and rumble ------------------------------------------------------------------------------
-
 bool gamepad_poll(uint32_t id, GamepadRaw* out) {
     SDL_Gamepad* pad = find_pad(id);
     if (!pad || !out) return false;
@@ -586,8 +566,6 @@ bool gamepad_rumble(uint32_t id, uint16_t low, uint16_t high, uint32_t duration_
     if (!pad) return false;
     return SDL_RumbleGamepad(pad, low, high, duration_ms);
 }
-
-// ---- Vulkan -------------------------------------------------------------------------------------------------------
 
 const char* const* vulkan_instance_extensions(uint32_t* count) {
     if (count) *count = 0;

@@ -140,7 +140,6 @@ bool cache_read(const std::string& path, uint64_t key, PreparedTexture& out) {
     return true;
 }
 
-// ---- level geometry --------------------------------------------------------------------------------------------------------
 // One level of the tight linear buffer (the untiled image, or the pitch-linear copy).
 struct LevelGeom {
     uint32_t w = 1, h = 1, d = 1;   // texels
@@ -261,7 +260,6 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     const std::vector<LevelGeom> geo = level_geometry(t.b, L);
     if (geo.size() != L.levels) return fail("internal: level count mismatch");
 
-    // ---- what the GPU gets ------------------------------------------------------------------------------------------------
     Mode mode = Mode::Passthrough;
     std::string cache_file;   // empty: cache off (or not a BC7 output)
     uint64_t key = 0;
@@ -327,7 +325,6 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     out.levels = L.levels;
     out.layers = L.layers;
 
-    // ---- output level table ---------------------------------------------------------------------------------------------
     out.level.reserve(geo.size());
     for (const LevelGeom& g : geo) {
         PreparedLevel pl{};
@@ -382,7 +379,6 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         }
     }
 
-    // ---- host pixel edit (nxrt/tex_upload.h): the kept edited data, or this call makes it ------------------------------------
     TexEditKey edit;
     bool edit_make = false;
     if (fmt.astc && (mode == Mode::Bc7 || mode == Mode::Rgba8) && L.layers == 1 && geo[0].d == 1 && t.b.target == NVN_TEXTURE_TARGET_2D &&
@@ -411,7 +407,6 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         edit_guard.f = out.format;
     }
 
-    // ---- disk cache ---------------------------------------------------------------------------------------------------------
     const bool bc7 = mode == Mode::Bc7;
     const int quality = bc7 ? bc7_quality() : 0;
     (void)quality;
@@ -431,7 +426,6 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     if (!bc7 || (entry_format != VK_FORMAT_UNDEFINED && entry_format != out.format)) cache_file.clear();
     if (edit_make) cache_file.clear();   // edited data stays out of the shared cache
 
-    // ---- the source image: tight linear buffer --------------------------------------------------------------------------
     const LevelGeom& last = geo.back();
     const uint64_t lin_total = last.lin_off + last.slice * L.layers;
     std::vector<uint8_t> lin(static_cast<size_t>(lin_total));
@@ -443,7 +437,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         for (uint32_t layer = 0; layer < L.layers; ++layer)
             for (uint32_t z = 0; z < g.d; ++z)
                 for (uint32_t y = 0; y < g.by; ++y) {
-                    const uint64_t r = static_cast<uint64_t>(z) * g.by + y;   // row index in the level
+                    const uint64_t r = static_cast<uint64_t>(z) * g.by + y;
                     const uint8_t* src = src_mem + static_cast<uint64_t>(layer) * (L.pitch * g.by * g.d) + r * L.pitch;
                     std::memcpy(lin.data() + static_cast<uint64_t>(layer) * g.slice + r * row, src, static_cast<size_t>(row));
                 }
@@ -458,11 +452,10 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         return true;
     }
 
-    // ---- transcode or decode, one 2D slice at a time (the library threads inside a slice) ------------------------------
     out.data.assign(static_cast<size_t>(out_total), 0);
     a2b_options opt{};
     opt.quality = quality;
-    opt.threads = 0;             // all hardware threads
+    opt.threads = 0;
     opt.perceptual = 0;
     opt.allow_opaque_mode6 = 0;
     a2b_input in{};

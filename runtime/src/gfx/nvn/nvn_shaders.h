@@ -25,8 +25,6 @@
 
 namespace nxrt::nvn::be {
 
-// ---- hashing ----------------------------------------------------------------------------------------------------
-
 // SHA-1 (FIPS 180-4). Only a cache key here, not a security measure.
 class Sha1 {
 public:
@@ -45,8 +43,6 @@ private:
 std::string sha1_hex(const void* data, size_t size);                 // 40 lowercase hex digits
 std::string shader_hash(const uint8_t* code, uint32_t size);          // the first 16 of them: the .spv file name
 
-// ---- the NVN control section ----------------------------------------------------------------------------------------
-
 constexpr uint32_t kShaderControlMagic = 0x98761234;
 
 struct ShaderControl {
@@ -61,8 +57,6 @@ struct ShaderControl {
 };
 
 ShaderControl read_control(const uint8_t* control);
-
-// ---- SPIR-V reflection ----------------------------------------------------------------------------------------------
 
 enum class ShaderStage : uint8_t { Unknown, Vertex, Fragment, Compute, Geometry };
 
@@ -212,8 +206,6 @@ SupportBuffer support_buffer_defaults();  // render scale 1 everywhere, no BGRA,
 // What Ryujinx writes for viewport 0 (SetViewportTransformDisable / SetViewportSize), with render scale 1.
 void support_buffer_set_viewport(SupportBuffer& sb, float width, float height, bool transform_disabled = false);
 
-// ---- one stage ------------------------------------------------------------------------------------------------------
-
 struct ShaderInfo {
     std::string hash;
     ShaderStage stage = ShaderStage::Unknown;  // from the SPIR-V execution model
@@ -237,8 +229,6 @@ bool make_shader_info(const uint8_t* code, const uint8_t* control, std::vector<u
 
 const char* stage_name(ShaderStage s);
 const char* source_name(NvnSource s);
-
-// ---- the runtime cache ----------------------------------------------------------------------------------------------
 
 // A directory holding <hash>.spv files and results.tsv. Lookups are keyed by the hash of the code block.
 class ShaderCache {

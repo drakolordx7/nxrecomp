@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Registry of initialized textures by storage range (see nvn_core.h).
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -135,7 +134,6 @@ void textures_cpu_wrote(const void* lo, uint64_t size) {
     std::vector<Ref<Texture>> hit;
     {
         std::lock_guard<std::mutex> lk(g_mu);
-        // sparse textures whose mapped tiles lie in the written physical memory
         for (Texture* t : g_virtual) {
             MemoryPool* vp = t->vpool.get();
             if (!vp) continue;

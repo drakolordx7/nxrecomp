@@ -11,6 +11,6 @@ struct Tuning {
     std::atomic<float> lod_bias{0.0f};     // added to the LOD bias of every sampler (negative = sharper)
 };
 
-Tuning& tuning();                          // process-wide
+Tuning& tuning();
 
 }  // namespace nxrt::gfx

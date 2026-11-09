@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode: names and parsers for contexts, triggers, actions, Switch outputs and inputs. The contract is play_types.h.
 #include "nxrt/game/play_types.h"
 
 #include <SDL3/SDL_keyboard.h>
@@ -38,8 +37,6 @@ std::string name_key(const std::string& s) {
     }
     return r;
 }
-
-// ---- contexts and triggers ---------------------------------------------------------------------------------------------------
 
 // The generic names; the registered game names the contexts itself (GameVocabulary::ctx_names).
 const char* const kCtxNames[] = {"all", "play", "alt", "map", "menu", "inspect"};
@@ -83,8 +80,6 @@ bool parse_trig(const std::string& s, Trig* out) {
     return false;
 }
 
-// ---- button prompts ---------------------------------------------------------------------------------------------------------------
-
 namespace {
 const char* const kPromptNames[] = {"switch", "xbox", "playstation", "keyboard", "auto"};
 static_assert(sizeof(kPromptNames) / sizeof(kPromptNames[0]) == kPromptStyleCount, "one name per PromptStyle");
@@ -114,8 +109,6 @@ bool parse_prompt_style(const std::string& s, PromptStyle* out) {
     }
     return false;
 }
-
-// ---- pad sources and the counter corner ---------------------------------------------------------------------------------------------
 
 namespace {
 const char* const kPadSrcNames[kPadSrcCount] = {"south",         "east",           "west",       "north",      "left_shoulder", "right_shoulder",
@@ -149,8 +142,6 @@ bool parse_corner(const std::string& name, Corner* out) {
     }
     return false;
 }
-
-// ---- actions -----------------------------------------------------------------------------------------------------------------
 
 // One row per Act, in enum order (checked by the static_assert below and by the unit tests). The generic names and outputs: the game's
 // action slots have no factory output here; the registered game gives its own table (GameVocabulary::acts).
@@ -239,8 +230,6 @@ bool parse_act(const std::string& name, Act* out) {
     }
     return false;
 }
-
-// ---- Switch outputs ----------------------------------------------------------------------------------------------------------
 
 namespace {
 using nxrt::hid::NpadButtonBit;
@@ -334,8 +323,6 @@ std::string output_text(const Output& o) {
     return r.empty() ? "none" : r;
 }
 
-// ---- inputs ------------------------------------------------------------------------------------------------------------------
-
 std::string input_name(const InputId& id) {
     switch (id.kind) {
         case InKind::Key: {
@@ -389,7 +376,7 @@ bool parse_input(const std::string& name_in, InputId* out) {
         id.code = -1;
     } else {
         SDL_Scancode sc = name.empty() ? SDL_SCANCODE_UNKNOWN : SDL_GetScancodeFromName(name.c_str());
-        if (sc == SDL_SCANCODE_UNKNOWN) sc = find_scancode_ci(name);   // SDL's lookup is exact; this one ignores case and spaces
+        if (sc == SDL_SCANCODE_UNKNOWN) sc = find_scancode_ci(name);
         if (sc == SDL_SCANCODE_UNKNOWN) return false;
         id.kind = InKind::Key;
         id.code = static_cast<int32_t>(sc);

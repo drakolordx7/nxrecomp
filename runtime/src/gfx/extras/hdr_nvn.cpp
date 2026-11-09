@@ -17,7 +17,6 @@ namespace {
 
 const game::GameRender* render() { return game::info().render; }
 
-// What is known of one fragment shader: whether it is the game's tone-map shader, and its HDR variant (made the first time it is asked for).
 struct ToneMap {
     bool is = false;
     bool variant_tried = false, variant_ok = false;

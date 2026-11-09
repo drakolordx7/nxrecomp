@@ -22,7 +22,6 @@
 
 namespace nxrt::play {
 
-// ---- contexts ----------------------------------------------------------------------------------------------------------------
 // Play: the game in play. Alt: in play in the alternate body (a second control scheme). Inspect: in play with an inspect mode on.
 enum class Ctx : uint8_t { All = 0, Play, Alt, Map, Menu, Inspect, kCount };
 constexpr int kCtxCount = static_cast<int>(Ctx::kCount);
@@ -30,19 +29,15 @@ const char* ctx_name(Ctx c);                           // the game's names (Game
 bool parse_ctx(const std::string& s, Ctx* out);        // case-insensitive
 inline bool ctx_in_play(Ctx c) { return c == Ctx::Play || c == Ctx::Alt || c == Ctx::Inspect; }
 
-// ---- triggers ----------------------------------------------------------------------------------------------------------------
 enum class Trig : uint8_t { Press = 0, Tap, Hold, Toggle, DoubleTap };
 const char* trig_name(Trig t);                         // "press" "tap" "hold" "toggle" "doubletap"
 bool parse_trig(const std::string& s, Trig* out);      // case-insensitive; also accepts "double_tap"
 
-// ---- actions -----------------------------------------------------------------------------------------------------------------
 enum class Act : uint8_t {
     None = 0,
-    // left stick
     MoveForward, MoveBack, MoveLeft, MoveRight,
     // right stick (keyboard look; the mouse does not use these)
     LookUp, LookDown, LookLeft, LookRight,
-    // game actions: primary, target, secondary, jump, switch to the alternate body, free look, map, pause, confirm, back
     Primary, Target, Secondary, Jump, AltForm, LookHold, Map, Pause, Confirm, Back,
     DpadUp, DpadDown, DpadLeft, DpadRight,
     SetA1, SetA2, SetA3, SetA4,            // select one of four in the cycled set
@@ -62,7 +57,6 @@ struct ActInfo {
 const ActInfo& act_info(Act a);                         // the registered game's row (GameVocabulary::acts), else the generic one
 bool parse_act(const std::string& name, Act* out);     // case-insensitive, '-' and '_' equal
 
-// ---- Switch outputs ----------------------------------------------------------------------------------------------------------
 // What an action does on the Switch pad: buttons pressed together plus stick deflection (each axis -1..1, summed over all active
 // actions and clamped). SetANext / SetAPrev have no fixed output: the engine turns them into one of SetA1..4 (see engine).
 struct Output {
@@ -78,7 +72,6 @@ struct Output {
 bool parse_output(const std::string& text, Output* out, std::string* err = nullptr);
 std::string output_text(const Output& o);              // canonical text, parse_output(output_text(o)) == o
 
-// ---- inputs ------------------------------------------------------------------------------------------------------------------
 enum class InKind : uint8_t { None = 0, Key, Mouse, Wheel };
 struct InputId {
     InKind kind = InKind::None;
@@ -98,7 +91,6 @@ struct Binding {
     int ms = 0;                 // Tap/Hold/DoubleTap window in ms; 0 = the default of [timing]
 };
 
-// ---- settings ----------------------------------------------------------------------------------------------------------------
 constexpr double kPi = 3.14159265358979323846;
 // Source engine yaw scale: one mouse count at sensitivity 1.0 turns 0.022 degrees. The settings file stores radians per count; the
 // settings page shows (and edits) the Source-scale value, source = rad_per_count / kSourceRadPerCount.
@@ -117,7 +109,6 @@ struct MouseSettings {
     bool menu_cursor = true;                       // in menus the mouse is a pointer: cursor, hover, click, right click, wheel
     bool wheel_cycles = true;                       // the wheel cycles set A (the SetANext / SetAPrev bindings stay either way)
 };
-// ---- pad button remapping ------------------------------------------------------------------------------------------------------------
 // The physical buttons of an SDL gamepad, named by position (the face buttons by where they sit, so the names do not depend on the printed
 // letters). Each one presses a Switch button; `default` (kPadDefault) keeps the built-in mapping of pad_map.h.
 enum class PadSrc : uint8_t {
@@ -175,7 +166,6 @@ struct DisplaySettings {
     bool fewer_gpu_waits = true;   // no full barrier after passes that only wrote their attachments ([nvn] pass_barriers = tracked)
 };
 
-// ---- button prompts ----------------------------------------------------------------------------------------------------------------
 // Which button icons the game's prompts show: the game's own Switch icons, or those of another pad or the keyboard. Auto follows the
 // last input device used.
 enum class PromptStyle : uint8_t { Switch = 0, Xbox, PlayStation, Keyboard, Auto };
@@ -186,7 +176,6 @@ struct PromptSettings {
     PromptStyle style = PromptStyle::Auto;     // follows the last used device: keyboard icons until a pad is used (or when none is connected)
 };
 
-// ---- frame rate counter ------------------------------------------------------------------------------------------------------------
 // The small corner overlay with the frame rate and the frame time. Off by default; a hotkey (and the F1 page and the launcher) switches it.
 enum class Corner : uint8_t { TopLeft = 0, TopRight, BottomLeft, BottomRight };
 const char* corner_name(Corner c);                       // "top_left" "top_right" "bottom_left" "bottom_right"
@@ -200,7 +189,6 @@ struct FpsSettings {
     bool in_screenshots = false;                         // [fps] in_screenshots: the counter is drawn into screenshots too (test tooling asks for this)
 };
 
-// ---- lock-on and camera feel (S32) --------------------------------------------------------------------------------------------
 // [aim] lock_mode: classic is the game's own lock-on (the view turns to the target); free starts the same way (the game centres the target)
 // and then lets the mouse and the right stick move the view, as long as the target stays on the screen (free_lock_margin).
 // [camera] view_sway: 1 is the game's own behaviour (the held item's idle drift, walking bob and landing dip move the view); 0 keeps the view still.
@@ -307,7 +295,6 @@ const char* key_alt_camera();
 const char* key_alt_sens();
 const char* key_view_sway();
 
-// ---- the settings file ---------------------------------------------------------------------------------------------------------
 // Plain ini, '#' or ';' starts a comment. Sections and keys are case-insensitive, whitespace around names and values is ignored.
 //   [meta]     defaults_rev = <n>   (written by the game; the factory-defaults revision of the file, a file without it counts as 0)
 //   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_cursor = 1   wheel_cycles = 1     (radians per count)

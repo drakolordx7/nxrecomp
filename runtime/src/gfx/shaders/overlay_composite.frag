@@ -6,7 +6,6 @@ layout(push_constant) uniform PushConstants {
     vec4 p;      // x: mode (2 HDR10, 3 scRGB), y: paper white nits, z: peak nits
 } pc;
 
-// IEC 61966-2-1 sRGB EOTF (encoded to linear) of clamp(x, 0, 1).
 vec3 srgb_eotf(vec3 x) {
     x = clamp(x, 0.0, 1.0);
     vec3 lo = x / 12.92;
@@ -14,7 +13,6 @@ vec3 srgb_eotf(vec3 x) {
     return vec3(x.r <= 0.04045 ? lo.r : hi.r, x.g <= 0.04045 ? lo.g : hi.g, x.b <= 0.04045 ? lo.b : hi.b);
 }
 
-// SMPTE ST 2084 (PQ) inverse EOTF: nits in [0, 10000] to the 0..1 signal.
 const float PQ_M1 = 2610.0 / 16384.0;
 const float PQ_M2 = 2523.0 / 4096.0 * 128.0;
 const float PQ_C1 = 3424.0 / 4096.0;
@@ -34,11 +32,10 @@ void main() {
         return;
     }
     vec3 straight = clamp(texel.rgb / a, 0.0, 1.0);
-    vec3 lin = srgb_eotf(straight);   // scene-linear, 1.0 = paper white
+    vec3 lin = srgb_eotf(straight);
     int mode = int(pc.p.x + 0.5);
     vec3 outc;
     if (mode == 2) {
-        // BT.709 to BT.2020 -> nits, limited to the peak, then PQ
         vec3 r2020 = vec3(dot(vec3(0.6274, 0.3293, 0.0433), lin),
                           dot(vec3(0.0691, 0.9195, 0.0114), lin),
                           dot(vec3(0.0164, 0.0880, 0.8956), lin));
@@ -47,7 +44,7 @@ void main() {
     } else if (mode == 3) {
         outc = lin * pc.p.y / 80.0;   // scRGB: 1.0 = 80 nits, not clamped
     } else {
-        outc = lin;                   // any other value: scene-linear, unencoded
+        outc = lin;
     }
     o_color = vec4(outc, a);
 }

@@ -17,7 +17,6 @@
 namespace nxrt::nvn {
 namespace {
 
-// ---- builder ---------------------------------------------------------------------------------------------------------------
 struct TexBuilderData {
     NVNdevice* device;
     NVNmemoryPool* pool;
@@ -95,7 +94,6 @@ void nvnTextureBuilderSetStorage(NVNtextureBuilder* b, NVNmemoryPool* pool, ptrd
 void nvnTextureBuilderSetPackagedTextureData(NVNtextureBuilder* b, const void* data) {
     edit_b(b, [&](TexBuilderData& d) { d.packaged = data; });
 }
-// As smo: a null layout pointer changes nothing.
 void nvnTextureBuilderSetPackagedTextureLayout(NVNtextureBuilder* b, const NVNpackagedTextureLayout* layout) {
     if (!layout) return;
     edit_b(b, [&](TexBuilderData& d) {
@@ -137,8 +135,6 @@ uint32_t nvnTextureBuilderGetGLTextureName(const NVNtextureBuilder* b) { return 
 const NVNmemoryPool* nvnTextureBuilderGetMemoryPool(const NVNtextureBuilder* b) { return load_b(b).pool; }
 ptrdiff_t nvnTextureBuilderGetMemoryOffset(const NVNtextureBuilder* b) { return load_b(b).offset; }
 
-// ---- view ------------------------------------------------------------------------------------------------------------------
-// Which fields were set. smo keeps the same idea (a 'set' bit per field, read back as the Get return value).
 enum : uint32_t {
     kSetLevels = 0x1,
     kSetLayers = 0x2,
@@ -224,7 +220,6 @@ void nvnTextureViewSetDepthStencilMode(NVNtextureView* v, NVNtextureDepthStencil
 void nvnTextureViewSetTarget(NVNtextureView* v, NVNtextureTarget target) {
     edit_v(v, [&](ViewData& d) { d.target = static_cast<int32_t>(target); d.set |= kSetTarget; });
 }
-// The getters write the stored value (zero for a field never set, as smo) and return whether the field was set.
 NVNboolean nvnTextureViewGetLevels(const NVNtextureView* v, int* min_level, int* num_levels) {
     const ViewData d = load_v(v);
     if (min_level) *min_level = d.min_level;
@@ -261,7 +256,6 @@ NVNboolean nvnTextureViewGetTarget(const NVNtextureView* v, NVNtextureTarget* ta
     if (target) *target = static_cast<NVNtextureTarget>(d.target);
     return (d.set & kSetTarget) != 0;
 }
-// Compares every stored byte, the set flags included (smo compares its whole View the same way).
 NVNboolean nvnTextureViewCompare(const NVNtextureView* a, const NVNtextureView* b) {
     return std::memcmp(a, b, sizeof(ViewPacked)) == 0 ? 1 : 0;
 }
@@ -271,7 +265,6 @@ ptrdiff_t nvnTextureBuilderGetViewOffset(const NVNtextureBuilder*, const NVNtext
 
 }  // namespace
 
-// ---- decode ----------------------------------------------------------------------------------------------------------------
 // Copies what the object holds. A zero-filled object decodes to all zero (no defaults are applied here).
 TextureBuilderInfo decode(const NVNtextureBuilder* b) {
     const TexBuilderData d = load_b(b);

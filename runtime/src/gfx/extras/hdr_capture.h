@@ -37,7 +37,6 @@ struct HdrCaptureStats {
 bool decode_hdr_capture(CaptureFormat fmt, const uint8_t* raw, uint32_t w, uint32_t h, float paper_white_nits,
                         std::vector<float>* linear_rgb, std::vector<uint8_t>* sdr_rgba, std::vector<uint8_t>* map_rgba, HdrCaptureStats* stats);
 
-// Bytes per pixel of a format (4 or 8).
 uint32_t capture_bytes_per_pixel(CaptureFormat fmt);
 
 // Writes a PFM (Portable Float Map, 3 channels, little endian: header "PF\n<w> <h>\n-1.0\n", rows bottom to top) of linear_rgb scaled by
