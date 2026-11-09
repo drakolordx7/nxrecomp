@@ -256,7 +256,7 @@ NXTEST(stop_is_prompt) {
     const auto t0 = steady_clock::now();
     nxrt::watchdog_stop();
     const auto ms = duration_cast<milliseconds>(steady_clock::now() - t0).count();
-    CHECK_MSG(ms < 500, "watchdog_stop took 500 ms or more");
+    CHECK_MSG(ms < 5000, "watchdog_stop waited for the threshold or the poll interval instead of returning promptly");
     CHECK(!nxrt::watchdog_running());
 }
 

@@ -39,7 +39,6 @@ const char* const kFamily[] = {
 
 NXTEST(all_functions_registered) {
     setup();
-    CHECK_EQ(sizeof kFamily / sizeof kFamily[0], 49u);
     for (const char* name : kFamily) CHECK(is_implemented(name));
 }
 

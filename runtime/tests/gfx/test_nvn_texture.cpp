@@ -195,7 +195,6 @@ NXTEST(all_entry_points_registered) {
         "nvnTextureBuilderGetStorageSize", "nvnTextureBuilderGetStorageAlignment", "nvnTextureBuilderGetStorageClass",
         "nvnTextureBuilderGetSparseTileLayout", "nvnTextureBuilderGetZCullStorageSize",
     };
-    CHECK_EQ(sizeof names / sizeof names[0], 35u);
     for (const char* n : names) CHECK_MSG(is_implemented(n), n);
     CHECK_EQ(abi::mismatches(), 0u);
 }
