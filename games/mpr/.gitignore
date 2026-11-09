@@ -1,0 +1,20 @@
+# sub-repos and local-only folders
+/refs/
+/toolchain/
+/game/
+/work/
+*.i64
+*.idb
+*.nsp
+*.xci
+*.keys
+/publish/
+nxrt.log*
+*.log
+
+# local editor and tool settings
+/game-build-*/
+__pycache__/
+recomp-wt/
+root-wt/
+tools-wt/

@@ -1,0 +1,469 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Play mode, the Metroid Prime Remastered side (play_game.h GamePlay): raw mouse aim on CPlayerMP1::ProcessInput, camera look on the camera Think
+// functions, free lock-on and the decoupled gun (play_lockcam.h), the display hooks (display_hooks.h), the tone curve (mpr_tonemap.h), the menu
+// pointer on the game's own UI (menu_mouse_game.h), the glow colour (play_glow.h), the start-up and menu tweaks (mpr_fastboot.h), the suit and
+// arm cannon paint (mpr_tint.h), and what the player state says about the context and the beams.
+//
+// The hook bodies are the ones play.cpp had before the game boundary (docs/GAME_BOUNDARY.md); what they took from play mode's state now comes
+// through GameHost.
+#include "mpr_game.h"
+#include "mpr_sites.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+
+#include "display_hooks.h"
+#include "mpr_acts.h"
+#include "menu_mouse_game.h"
+#include "mpr_fastboot.h"
+#include "mpr_settings.h"
+#include "mpr_tint.h"
+#include "mpr_tonemap.h"
+#include "nxrt/dispatch.h"
+#include "nxrt/frame_limiter.h"
+#include "nxrt/hooks.h"
+#include "nxrt/log.h"
+#include "nxrt/memory.h"
+#include "play_aim.h"
+#include "play_ballcam.h"
+#include "nxrt/game/play_camlook.h"
+#include "nxrt/game/play_game.h"
+#include "play_glow.h"
+#include "play_jump.h"
+#include "play_lockcam.h"
+#include "play_scenefix.h"
+#include "play_lookrate.h"
+#include "mpr_addrs.h"
+
+namespace nxrt::play {
+
+namespace {
+
+constexpr const char* kTag = "play";
+using namespace nxrt::games::mpr::addr;
+
+struct M {
+    GameHost* host = nullptr;
+    uint64_t base = mem::kMainBase;
+    std::unique_ptr<AimDriver> aim;
+    std::atomic<uint64_t> player{0};
+    LookOffsets free_look;                // free look (first person, Alt held); main thread only
+    BallOrbit ball;                       // S48: the turn of the morph ball camera (play_ballcam.h); main thread only
+    BallCamLayout ball_layout;
+    // the last ball camera Think, for the status line
+    double ball_heading = 0, ball_pitch = 0, ball_applied_pitch = 0, ball_yaw_total = 0;
+    uint32_t ball_state = 0, ball_behaviour = 0;
+    bool ball_free = false;
+    uint32_t hook_input = 0, hook_fpcam = 0, hook_ballcam = 0;
+    uint64_t map_acts_seen = 0;           // the map action's activations when the context was last worked out
+    bool map_hint = false, was_in_game = false;
+    bool have_pointer = false;            // the pointer's last position, for the map drag
+    float pointer_x = 0, pointer_y = 0;
+    uint64_t pointer_ns = 0;
+};
+
+M& m() {
+    static M inst;
+    return inst;
+}
+
+uint64_t now_ns() { return FrameLimiter::now_ns(); }
+
+// Calls the game's own SetTransform(player, xf) from inside the hook.
+struct XfCall { ::Ctx* c; };
+void guest_set_transform(void* user, uint64_t player, const float xf[12]) {
+    M& st = m();
+    ::Ctx* c = static_cast<XfCall*>(user)->c;
+    alignas(16) float copy[12];
+    std::memcpy(copy, xf, sizeof copy);
+    ::Ctx saved = *c;
+    c->x[0] = player;
+    c->x[1] = reinterpret_cast<uint64_t>(copy);
+    dispatch_call(c, st.base + kFnSetTransform);
+    *c = saved;
+}
+
+thread_local bool t_in_process_input = false;
+
+int process_input_hook(::Ctx* c, uint64_t addr, void*) {
+    if (t_in_process_input) return 0;
+    M& st = m();
+    GameHost& host = *st.host;
+    const uint64_t now = now_ns();
+    const uint64_t player = c->x[0], mgr = c->x[2];
+    st.player.store(player);
+    glow_player_tick(c, player);   // S44: the ball's inner glow colour (restores *c)
+
+    // The first ProcessInput since the frame boundary takes the mouse counts (late sample: the host pumps the window's events once more first).
+    double dx = 0, dy = 0;
+    host.input_tick(&dx, &dy);
+    // Camera look instead of body aim: the morph ball camera takes the mouse in the ball (S48, [mouse] ball_camera); the free look key makes the
+    // first-person mouse turn the view and not Samus. The counts are consumed here (the aim gets none), and the camera Think hooks below apply them.
+    {
+        const AimBlock gate = st.aim->gate(player, mgr);
+        const MouseSettings& ms = host.settings().mouse;
+        uint32_t morph_word = 0;                       // 0 unmorphed, 2 and 3 transitions, 1 in the ball (the gate stops at "not first person" first)
+        guest_read(player + 0x4d4, &morph_word, sizeof morph_word);
+        if (morph_word == 1) {
+            const BallCameraSettings& ball = mpr_settings(host.settings()).ball;
+            if (ball.on) {
+                LookParams lp;
+                lp.yaw_rad = ball.yaw_rad;
+                lp.pitch_rad = ball.pitch_rad;
+                lp.invert_x = ms.invert_x;
+                lp.invert_y = ms.invert_y;
+                lp.pitch_limit_rad = kBallMaxElevation;   // the real limit is the camera's height above the ball (cam_think_hook)
+                if (dx != 0 || dy != 0) st.ball.add_mouse(dx, dy, lp);
+                // the right stick turns the camera too, at a speed in radians per second (the game gives the stick no job in the ball)
+                float sx = 0, sy = 0, dt_in = 0;
+                if (ball.orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
+                    host.right_stick(&sx, &sy);
+                    if (sx != 0 || sy != 0) {
+                        const double rate = ball.orbit * static_cast<double>(dt_in);
+                        st.ball.add_angles(-static_cast<double>(sx) * rate, static_cast<double>(sy) * rate, lp);
+                    }
+                }
+            } else {
+                st.ball.reset();
+            }
+            dx = dy = 0;
+        } else {
+            st.ball.reset();
+        }
+        if (gate == AimBlock::None && host.action_active(mact::LookHold, now)) {
+            LookParams lp;
+            lp.yaw_rad = ms.yaw_rad;
+            lp.pitch_rad = ms.pitch_rad;
+            lp.invert_x = ms.invert_x;
+            lp.invert_y = ms.invert_y;
+            if (dx != 0 || dy != 0) st.free_look.add(dx, dy, lp);
+            dx = dy = 0;
+        } else {
+            st.free_look.reset();
+        }
+    }
+    AimParams p;
+    {
+        const MouseSettings& ms = host.settings().mouse;
+        p.yaw_rad = ms.yaw_rad;
+        p.pitch_rad = ms.pitch_rad;
+        p.invert_x = ms.invert_x;
+        p.invert_y = ms.invert_y;
+        p.pitch_limit_rad = host.pitch_limit_deg() * kPi / 180.0;
+        // The pad is the look device while the stick or the gyro moves the pitch, and while the game's gyro camera or Pointer scheme is on: the game then sets the
+        // pitch target from the pad's orientation, and the aim must not write its own angle over it.
+        p.pad_look = host.has_input() && (host.pad_look(host.settings().pad.gyro) || lockcam_gyro_freelook(c, mgr));
+    }
+    XfCall xc{c};
+    st.aim->set_transform_fn(&guest_set_transform, &xc);
+    const bool applied = st.aim->apply(player, mgr, dx, dy, p, [&] {
+        ::Ctx saved = *c;
+        t_in_process_input = true;
+        dispatch_call(c, addr);
+        t_in_process_input = false;
+        *c = saved;
+    });
+    if (host.log_status() && (dx != 0 || dy != 0))
+        NXLOG_I(kTag, "aim: dx=%.1f dy=%.1f block=%s applied=%d pitch=%.4f", dx, dy, aim_block_name(st.aim->last_block()), applied ? 1 : 0, st.aim->pitch());
+    if (applied) host.aim_applied(dx, dy);
+    return 1;
+}
+
+// Camera Think hooks. Free look (first person): after the game's own Think the camera transform is turned about the eye by the look offset, and
+// before the next Think the game's own transform is put back, so its camera logic never sees the offset. Morph ball (S48, play_ballcam.h): the
+// yaw turns the game's own camera around the ball before its Think (CBallCameraMP1::TeleportCamera), so the game carries on from there; the
+// pitch is a view offset like free look's, about the ball.
+struct CamMemo { bool have = false; float orig[12] = {}, applied[12] = {}; uint64_t cam = 0; };
+thread_local bool t_in_cam_think = false;
+CamMemo g_cam_memo[2];
+
+bool read_xf(uint64_t actor, uint64_t* xfp, float xf[12]) {
+    *xfp = 0;
+    uint64_t a = 0;
+    if (!guest_read(actor + 8, &a, 8) || !a || !guest_read(a + 0x20, &a, 8) || !a || !guest_read(a + 0x40, &a, 8) || !a) return false;
+    *xfp = a;
+    return guest_read(a, xf, 12 * sizeof(float));
+}
+
+// The centre of the ball: the player's position (the bottom of the ball) plus the ball's radius, up.
+bool ball_pivot(float pivot[3]) {
+    M& st = m();
+    const uint64_t player = st.player.load();
+    float pxf[12];
+    uint64_t pp = 0;
+    if (!player || !read_xf(player, &pp, pxf)) return false;
+    pivot[0] = pxf[3];
+    pivot[1] = pxf[7] + st.ball_layout.ball_radius;
+    pivot[2] = pxf[11];
+    return std::isfinite(pivot[0]) && std::isfinite(pivot[1]) && std::isfinite(pivot[2]);
+}
+
+// The game's CBallCameraMP1::TeleportCamera(cam, xf, mgr) from inside the Think hook.
+void ball_teleport(::Ctx* c, uint64_t cam, uint64_t mgr, const float xf[12]) {
+    M& st = m();
+    alignas(16) float copy[12];
+    std::memcpy(copy, xf, sizeof copy);
+    ::Ctx saved = *c;
+    c->x[0] = cam;
+    c->x[1] = reinterpret_cast<uint64_t>(copy);
+    c->x[2] = mgr;
+    dispatch_call(c, st.base + st.ball_layout.fn_teleport);
+    *c = saved;
+}
+
+int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
+    if (t_in_cam_think) return 0;
+    M& st = m();
+    const bool ball = user != nullptr;
+    CamMemo& memo = g_cam_memo[ball ? 1 : 0];
+    const uint64_t cam = c->x[0];
+    XfCall xc{c};
+    uint64_t xfp = 0;
+    float cur[12];
+    if (memo.have && memo.cam == cam && read_xf(cam, &xfp, cur) && std::memcmp(cur, memo.applied, sizeof cur) == 0) guest_set_transform(&xc, cam, memo.orig);
+    memo.have = false;
+    float pivot[3] = {};
+    bool have_pivot = false;
+    if (ball) {
+        const BallCamLayout& bl = st.ball_layout;
+        uint32_t state = ~0u, behaviour = ~0u;
+        guest_read(cam + bl.state, &state, sizeof state);
+        guest_read(cam + bl.behaviour, &behaviour, sizeof behaviour);
+        st.ball_state = state;
+        st.ball_behaviour = behaviour;
+        st.ball_free = ballcam_free(state, behaviour);
+        have_pivot = ball_pivot(pivot);
+        const double yaw = st.ball.begin_think(st.ball_free);   // a turn made while the room's camera rules is dropped (yaw and pitch)
+        if (yaw != 0 && st.ball_free && have_pivot && read_xf(cam, &xfp, cur)) {
+            float out[12];
+            orbit_transform(cur, pivot, yaw, 0.0, out);
+            ball_teleport(c, cam, c->x[1], out);        // Think(this, float dt, CStateManager&): x1 = the state manager
+            st.ball_yaw_total += yaw;
+        }
+    }
+    {
+        ::Ctx saved = *c;
+        t_in_cam_think = true;
+        dispatch_call(c, addr);
+        t_in_cam_think = false;
+        *c = saved;
+    }
+    if (!read_xf(cam, &xfp, cur)) return 1;
+    // Decoupled gun ([camera] gun_drives_view = 0): the camera keeps its own transform without the camera bob (CFirstPersonCameraMP1 keeps that one at +660),
+    // and the difference goes to the gun (play_lockcam.cpp), so the bob moves the gun on screen and not the view.
+    float work[12];
+    std::memcpy(work, cur, sizeof work);
+    bool changed = false;
+    if (!ball && lockcam_gun_decoupled()) {
+        float steady[12];
+        if (guest_read(cam + st.aim->layout().fp_base_xf, steady, sizeof steady)) {
+            bool finite = true;
+            for (float f : steady) finite = finite && std::isfinite(f);
+            if (finite) {
+                lockcam_set_gun_delta(cur, steady);
+                std::memcpy(work, steady, sizeof work);
+                changed = true;
+            }
+        }
+    } else if (!ball) {
+        lockcam_clear_gun_delta();
+    }
+    if (!ball && st.free_look.active()) {
+        const float eye[3] = {work[3], work[7], work[11]};
+        float out[12];
+        orbit_transform(work, eye, st.free_look.yaw(), st.free_look.pitch(), out);
+        std::memcpy(work, out, sizeof work);
+        changed = true;
+    }
+    if (ball) {
+        st.ball_applied_pitch = 0;
+        if (have_pivot && st.ball.pitch() != 0) {
+            // kept between kBallMinElevation and kBallMaxElevation above the ball, only ever shortened toward 0 (play_ballcam.h)
+            const double p = st.ball.end_think(st.ball_free, camera_elevation(work, pivot));
+            if (p != 0) {
+                float out[12];
+                orbit_transform(work, pivot, 0.0, p, out);
+                std::memcpy(work, out, sizeof work);
+                changed = true;
+                st.ball_applied_pitch = p;
+            }
+        }
+        camera_heading_pitch(work, &st.ball_heading, &st.ball_pitch);
+    }
+    if (!changed) return 1;
+    std::memcpy(memo.orig, cur, sizeof cur);
+    guest_set_transform(&xc, cam, work);
+    if (read_xf(cam, &xfp, memo.applied)) { memo.have = true; memo.cam = cam; }
+    return 1;
+}
+
+void install_render(uint64_t base, const Settings& s, int window_w, int window_h) {
+    M& st = m();
+    st.base = base;
+    st.aim = std::make_unique<AimDriver>(base);
+    display_install(base, s, window_w, window_h);
+    extras::tonemap_hook_install(base);
+}
+
+void install(uint64_t base, GameHost* host, const Settings& s) {
+    M& st = m();
+    st.base = base;
+    st.host = host;
+    if (!st.aim) st.aim = std::make_unique<AimDriver>(base);
+    st.hook_input = hook_add_entry(base + kFnProcessInput, &process_input_hook);
+    st.hook_fpcam = hook_add_entry(base + kFnFpCamThink, &cam_think_hook, nullptr);
+    st.hook_ballcam = hook_add_entry(base + kFnBallCamThink, &cam_think_hook, &st);
+    lockcam_install(base, st.aim.get());
+    scenefix_install(base);
+    jump_install(base);     // S50: the jump timer's last frame (play_jump.h)
+    lockcam_set(s);
+    glow_install(base);   // after lockcam: both hook CPlayerGunMP1::Update
+    glow_set(mpr_settings(s).tweaks);
+    mm::game_install(base);
+    fastboot_install(base);
+    fastboot_set(s);
+    tint_install();
+    tint_set(mpr_settings(s).tweaks);
+}
+
+void remove() {
+    M& st = m();
+    tint_remove();
+    fastboot_remove();
+    mm::game_remove();
+    glow_remove();
+    lockcam_remove();
+    scenefix_remove();
+    jump_remove();
+    if (st.hook_input) hook_remove(st.hook_input);
+    if (st.hook_fpcam) hook_remove(st.hook_fpcam);
+    if (st.hook_ballcam) hook_remove(st.hook_ballcam);
+    st.hook_input = st.hook_fpcam = st.hook_ballcam = 0;
+    display_remove();
+}
+
+void settings_changed(const Settings& s) {
+    display_apply(s);
+    lockcam_set(s);
+    fastboot_set(s);
+    glow_set(mpr_settings(s).tweaks);
+    tint_set(mpr_settings(s).tweaks);
+}
+
+void frame_begin() {
+    lockcam_frame();
+    glow_frame();
+    tint_frame();
+}
+
+void map_pointer_sticks(const GameFrameIn& in, GameFrame* out);
+
+void frame(const GameFrameIn& in, const GameHost& host, GameFrame* out) {
+    M& st = m();
+    const bool in_game = in.in_game;
+    const double step = in.step_seconds;
+    // The gyro's rate is added to the pitch target once per call, with no time step (play_lookrate.h): the game gets the rate times (step * 60), so a step of
+    // 1/120 s adds half as much, twice as often. Menus and the map get the gyro as it is. The stick needs no such thing: its pitch code runs once per 1/60 s
+    // (the hook on ComputeFreeLook).
+    out->look_scale = in_game ? static_cast<float>(look_rate_scale(step)) : 1.f;
+    // The map is not a game state this module reads: it is where the player is after pressing the map action and before the game is in play again.
+    const uint64_t map_acts = host.activations(Act::Map);
+    if (in_game && map_acts != st.map_acts_seen) st.map_hint = true;
+    st.map_acts_seen = map_acts;
+    if (in_game && !st.was_in_game) st.map_hint = false;
+    st.was_in_game = in_game;
+    if (!in_game) out->ctx = st.map_hint ? Ctx::Map : Ctx::Menu;
+    map_pointer_sticks(in, out);
+    if (!st.aim) return;
+    const GameHints hints = st.aim->hints(st.player.load());
+    if (hints.valid) {
+        static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma (mact::Beam1..4)
+        unsigned mask = 0;
+        for (int i = 0; i < 4; ++i)
+            if (hints.owned_beams & (1u << i)) mask |= 1u << game_to_mine[i];
+        out->hints_valid = true;
+        out->cycle_index = hints.beam >= 0 ? game_to_mine[hints.beam] : -1;     // set A = the beams
+        out->cycle_mask = mask;
+    }
+    if (in_game) out->ctx = hints.morphed ? mctx::Alt : hints.visor == 2 ? mctx::Inspect : Ctx::Play;
+}
+
+// The map: a held left button on the pointer turns the map (left stick), a held middle button moves it (right stick); the drag speed is the pointer's
+// travel as a fraction of the window height per second.
+void map_pointer_sticks(const GameFrameIn& in, GameFrame* out) {
+    M& st = m();
+    mm::Pointer& pp = mm::pointer();
+    const bool on_map = out->ctx == Ctx::Map && in.pointer_live;
+    if (on_map && st.have_pointer && (pp.held() || pp.mid_held())) {
+        const float dt = std::max(1e-3f, static_cast<float>(in.now_ns - st.pointer_ns) / 1e9f);
+        const float k = 1.f / (0.8f * static_cast<float>(std::max(1, in.win_h)) * dt);
+        const float dx = std::max(-1.f, std::min(1.f, (pp.x() - st.pointer_x) * k)), dy = std::max(-1.f, std::min(1.f, (pp.y() - st.pointer_y) * k));
+        if (pp.held()) { out->aux[0] = dx; out->aux[1] = -dy; }
+        else { out->aux[2] = dx; out->aux[3] = -dy; }
+    }
+    st.pointer_x = pp.x();
+    st.pointer_y = pp.y();
+    st.pointer_ns = in.now_ns;
+    st.have_pointer = true;
+}
+
+bool menu_wheel(Ctx ctx, float dy, Act* act, int* ms) {
+    if (ctx != Ctx::Map || dy == 0) return false;
+    *act = dy > 0 ? Act::BtnR : Act::BtnL;     // the map's zoom, a longer pulse than a button tap so one notch is a visible step
+    *ms = 160;
+    return true;
+}
+
+Act menu_frame(bool menu_up, const mm::Geometry& g) { return mm::game_frame(menu_up, g); }
+bool menu_over_value() { return mm::game_over_value(); }
+bool menu_active() { return mm::game_snapshot().active; }
+
+void status(GameStatus* out) {
+    M& st = m();
+    if (!st.aim) return;
+    out->aim = aim_block_name(st.aim->last_block());
+    out->pitch_rad = st.aim->pitch();
+}
+
+// " display_hook_calls=... menumouse(...)": the part of the status line the base printed for this game before the boundary.
+void status_text(char* buf, size_t n) {
+    M& st = m();
+    const int k = std::snprintf(buf, n, " ballcam(heading=%.3f pitch=%.3f offset=%.3f turned=%.3f state=%u behaviour=%u free=%d)", st.ball_heading, st.ball_pitch,
+                                st.ball_applied_pitch, st.ball_yaw_total, st.ball_state, st.ball_behaviour, st.ball_free ? 1 : 0);
+    if (k < 0 || static_cast<size_t>(k) >= n) return;
+    buf += k;
+    n -= static_cast<size_t>(k);
+    std::snprintf(buf, n, " display_hook_calls=%u menumouse(active=%d hovers=%llu clicks=%llu widget_calls=%llu hook_calls=%llu)", display_hook_calls(),
+                  mm::game_snapshot().active ? 1 : 0, static_cast<unsigned long long>(mm::game_stats().hovers), static_cast<unsigned long long>(mm::game_stats().clicks),
+                  static_cast<unsigned long long>(mm::game_stats().widget_calls), static_cast<unsigned long long>(mm::game_hook_calls()));
+}
+
+}
+
+const GamePlay& mpr_game_play() {
+    static const GamePlay t = [] {
+        GamePlay p;
+        p.install_render = &install_render;
+        p.install = &install;
+        p.remove = &remove;
+        p.settings_changed = &settings_changed;
+        p.frame_begin = &frame_begin;
+        p.frame = &frame;
+        p.display_live = &display_live;
+        p.display_hook_calls = &display_hook_calls;
+        p.menu_frame = &menu_frame;
+        p.menu_over_value = &menu_over_value;
+        p.menu_wheel = &menu_wheel;
+        p.menu_active = &menu_active;
+        p.status = &status;
+        p.status_text = &status_text;
+        return p;
+    }();
+    return t;
+}
+
+}

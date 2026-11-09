@@ -1,0 +1,35 @@
+{
+  "id": "mpr",
+  "title": "Metroid Prime Remastered",
+  "product": "Metroid Prime Remastered PC",
+  "short_title": "Metroid Prime",
+  "title_id": "010012101468C000",
+  "save_folder": "MPRRecomp",
+  "entry_module": "rtld",
+  "languages": ["Japanese", "AmericanEnglish", "French", "German", "Italian", "Spanish", "Korean", "Dutch", "BritishEnglish", "CanadianFrench",
+                "LatinAmericanSpanish", "SimplifiedChinese", "TraditionalChinese"],
+  "setup_hook": "setup/hook.cmake",
+  "builds": [
+    {"build_id": "67C9CA1428222752F951021464A7B3597EB98FEC", "version": "1.0.0"}
+  ],
+  "modules": [
+    {"name": "main", "base": "0x7100000000", "shards": 96, "sites": "recomp/main.sites"},
+    {"name": "sdk", "base": "0x7500000000", "shards": 32},
+    {"name": "subsdk0", "base": "0x7600000000", "shards": 20},
+    {"name": "rtld", "base": "0x7700000000", "shards": 1}
+  ],
+  "files": {
+    "exe": "mpr.exe",
+    "setup": "mpr_setup.exe",
+    "setup_cli": "mpr_setup_cli.exe",
+    "launcher": "mpr_launcher.exe",
+    "launcher_ini": "mpr_launcher.ini",
+    "game_ini": "mpr.ini",
+    "log": "mpr.log",
+    "shader_pack": "shader_cache.mprshc"
+  },
+  "release": {
+    "prefix": "mpr",
+    "setup_glob": "mpr_setup*.exe"
+  }
+}
