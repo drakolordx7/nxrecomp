@@ -4,12 +4,12 @@
 Bindings: the factory defaults of play mode (runtime-wt/verify/src/gfx/play/play_defaults.cpp, [bindings.all] and the
 [bindings.menu]/[bindings.map] layers) and the factory [switch] table (play_types.h).
 
-  tools\\.venv\\Scripts\\python tools\\test\\bindings_run.py --part keyboard
-  tools\\.venv\\Scripts\\python tools\\test\\bindings_run.py --part pad
+  base\\tools\\.venv\\Scripts\\python tools\\test\\bindings_run.py --part keyboard
+  base\\tools\\.venv\\Scripts\\python tools\\test\\bindings_run.py --part pad
   ... parts: keyboard, keyboard2, pad, pad2, scan, map, pause, menu
-  tools\\.venv\\Scripts\\python tools\\test\\bindings_run.py --combine      (joins the part tables into table_all.txt)
+  base\\tools\\.venv\\Scripts\\python tools\\test\\bindings_run.py --combine      (joins the part tables into table_all.txt)
 
-Each part is its own mpr run with its own prologue and warp (gameplay.py). The exe is NXRT_VERIFY_EXE or game-build-verify\\build\\snap2.
+Each part is its own mpr run with its own prologue and warp (gameplay.py). The exe is NXRT_VERIFY_EXE or this checkout's build folder (NX/build/<checkout>/release).
 Output per part: work\\verify\\bindings\\<part>\\ (the run: script.nxs, mpr.log, out\\trace.jsonl, shots),
 work\\verify\\bindings\\table_<part>.txt and table_<part>.json. Exit code: the mpr.exe exit code.
 
@@ -25,7 +25,7 @@ import gameplay as gp  # noqa: E402
 
 ROOT = gp.ROOT
 OUTROOT = os.path.join(ROOT, 'work', 'verify', 'bindings')
-EXE = os.environ.get('NXRT_VERIFY_EXE', ROOT + '/game-build-verify/build/snap2')
+EXE = gp.EXE_DIR
 BEAMS = {0: 'power', 1: 'ice', 2: 'wave', 3: 'plasma'}
 VISORS = {0: 'combat', 1: 'xray', 2: 'scan', 3: 'thermal'}
 GIVE = ['@give MorphBall 1', '@give ChargeBeam 1', '@give WaveBeam 1', '@give IceBeam 1', '@give PlasmaBeam 1',

@@ -2,8 +2,8 @@
 
 Run from the project folder:
 
-  tools\\.venv\\Scripts\\python.exe tools\\test\\stutter_probe.py [--variants SPEC] [--load N] [--repeat K] [--out DIR]
-  tools\\.venv\\Scripts\\python.exe tools\\test\\stutter_probe.py --load-test SECONDS    (spinners only, for checking the load generator)
+  base\\tools\\.venv\\Scripts\\python.exe tools\\test\\stutter_probe.py [--variants SPEC] [--load N] [--repeat K] [--out DIR]
+  base\\tools\\.venv\\Scripts\\python.exe tools\\test\\stutter_probe.py --load-test SECONDS    (spinners only, for checking the load generator)
 
 SPEC is "name:ENV=VAL,ENV=VAL;name2:..."; "name:" means no environment change.
 Each variant runs at load 0 and at load N, K times each. The order is interleaved (repeat, then variant, then load) and one

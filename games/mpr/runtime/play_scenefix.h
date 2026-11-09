@@ -12,7 +12,7 @@
 //
 //   [game] modcon_query_guard = 1     default on; 0 runs the game's code unchanged (for reproducing the crash)
 //
-// The hook sites must be in recomp/main.sites (entryhook 0x71001b57ac 0x7100fba8b8); without them this does nothing.
+// The hook sites must be in recomp/main.sites (kFnModConProcessRenderQuery, kFnModConMP1ProcessRenderQuery); without them this does nothing.
 #pragma once
 #include <cstdint>
 

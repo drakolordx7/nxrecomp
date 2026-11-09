@@ -1,5 +1,5 @@
 r"""Guest address -> demangled symbol name (+offset) for the four modules of the Metroid Prime NSOs.
-  tools\.venv\Scripts\python tools\boot\addrname.py 0x7500148900 0x7100123456 ...
+  base\tools\.venv\Scripts\python tools\boot\addrname.py 0x7500148900 0x7100123456 ...
 Reads the .dynsym of work\elf\{main,sdk,subsdk0,rtld}.elf (nx2elf output, module-relative values) and caches a sorted table in
 work\run\symcache.pkl. Importable: addrname.annotate(text) appends '<name+off>' after every 0x71..0x77xxxxxxxx / f_77xxxxxxxx address."""
 import os, pickle, re, subprocess, sys, bisect

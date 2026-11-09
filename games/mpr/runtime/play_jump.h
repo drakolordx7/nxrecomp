@@ -25,7 +25,7 @@
 //
 //   [physics] jump_fix = 1     default on; 0 runs the game's code unchanged
 //
-// Hook sites (recomp/main.sites): entryhook 0x7100cf0060 (records dt), midhook 0x7100cf0750 (the rule). Without them this does nothing.
+// Hook sites (recomp/main.sites): kJumpInput (entry, records dt), kJumpInputBlend (mid, the rule). Without them this does nothing.
 #pragma once
 #include <cstdint>
 

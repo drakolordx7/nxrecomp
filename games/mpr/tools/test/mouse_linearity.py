@@ -8,7 +8,7 @@ yaw change is wrapped to (-pi, pi] and compared with -counts * yaw_rad (yaw_rad 
 is up); their yaw is expected to stay put.
 
   cd <project folder>
-  tools\\.venv\\Scripts\\python tools\\test\\mouse_linearity.py
+  base\\tools\\.venv\\Scripts\\python tools\\test\\mouse_linearity.py
 
 Output: work/verify/mouse/run/ (the run) and work/verify/mouse/table.txt.
 Exit code: 0 all bursts within 1 %, 1 a burst flagged, 2 the run did not pass (after one rerun).
@@ -25,7 +25,7 @@ RATES = (60, 144, 240)
 DEFAULT_YAW_RAD = 0.000767945
 DEFAULT_PITCH_RAD = 0.000767945
 FLAG_TOL = 0.01          # flag a judged value when |ratio - 1| > 1 %
-EXE_DIR = gp.ROOT + '/game-build-verify/build/snap4'
+EXE_DIR = gp.EXE_DIR
 OUT_DIR = os.path.join(gp.ROOT, 'work', 'verify', 'mouse', 'run')
 TABLE = os.path.join(gp.ROOT, 'work', 'verify', 'mouse', 'table.txt')
 WALL_S = 1500

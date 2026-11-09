@@ -15,7 +15,9 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
 #include "play_aim.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play::mm {
 
@@ -24,48 +26,24 @@ namespace {
 constexpr const char* kTag = "menumouse";
 
 // Offsets in `main` (docs/mpr/hooks.md; the names are from the game's own symbols).
-constexpr uint64_t kFnWidgetProcessInput = 0x88cb74;       // CUIWidgetGOC::ProcessInput(CStateManager&, float): x0 widget, x1 state manager; returns flags in w0
-constexpr uint64_t kFnGetTouchPosition = 0x35322c;         // CFinalInput::GetTouchScreenPosition(CTransform4f const*): the UI position in s0, s1
-constexpr uint64_t kFnCheckTouchScreen = 0x88d7d4;         // CUIWidgetGOC::CheckTouchScreen(CStateManager&, CVector2f const&): the button's box test
-constexpr uint64_t kFnTouchInput = 0x88d1b8;               // CUIWidgetGOC::ProcessWidgetTouchScreenInput(CStateManager&, CFinalInput const&)
-constexpr uint64_t kFnComponentById = 0xb082fc;            // CStateManagerObject::ComponentById(id): this = state manager + 0x30
-constexpr uint64_t kFnWidgetCastToPtr = 0x88ae38;          // CUIWidgetGOC::CastToPtr(CGameObjectComponent*)
-constexpr uint64_t kFnMenuBeforeThink = 0x888608;          // CUIMenuGOC::BeforeThink(CStateManager&, float): x0 menu, x1 state manager; runs the widgets' ProcessInput
+using namespace nxrt::games::mpr::addr;
 constexpr uint64_t kMenuFocus = 213, kMenuCount = 192, kMenuIds = 200;   // CUIMenuGOC: has the focus; widget count and array of component ids
-constexpr uint64_t kFnFindSelected = 0x8892e0;             // CUIMenuGOC::FindSelectedWidget(CStateManager&): id of the selected widget (state 4), found by walking the links from the menu's first widget
-constexpr uint64_t kFnQueueSetState = 0x88c994;            // CUIWidgetGOC::QueueSetStateAction(CStateManager&, target id, sender id, EUIWidgetState)
-constexpr uint64_t kGotInvalidId = 0x2112870;              // pointer to the invalid CValueVersionId (u32)
-constexpr uint64_t kFnTextPaneCastToPtr = 0x85dfe4;        // CTextPaneGOC::CastToPtr(CGameObjectComponent*)
-constexpr uint64_t kFnTextPaneBounds = 0x861b98;           // CTextPaneGOC::GetBounds(CAABox&): the pane's box in UI units
-constexpr uint64_t kFnRenderCastToPtr = 0x80a030;          // CRenderGOC::CastToPtr(CGameObjectComponent*)
-constexpr uint64_t kFnRenderTextureBounds = 0xa330f0;      // CRenderTexture::GetBounds(CAABox&)
 constexpr uint64_t kBtnPaneCount = 128, kBtnPanes = 136;   // CUIButtonGOC: the linked text panes / render components (ids)
-constexpr uint64_t kFnSliderCastToPtr = 0x889d64;          // CUISliderGOC::CastToPtr(CGameObjectComponent*)
-constexpr uint64_t kFnSliderSetTick = 0x88a8bc;            // CUISliderGOC::SetTickCount(CStateManager&, float tick, bool send_value): x0 slider, x1 state manager, s0 tick
 // A slider row of the front end's option pages (HUD Opacity, SFX, Music): the knob travels from kSliderX0 (0) to kSliderX1 (max) in UI units. The slider
 // widget has no button and so no box; its component is the one its "button" field names.
 constexpr float kSliderX0 = -3.02f, kSliderX1 = 1.28f, kSliderGrab = 0.35f;
-constexpr uint64_t kFnButtonCastToPtr = 0x883b64;          // CUIButtonGOC::CastToPtr(CGameObjectComponent*)
 constexpr uint64_t kWButton = 0x90;                        // id of the widget's CUIButtonGOC
 constexpr uint64_t kBtnBox = 176;                          // the button's CAABox2f: min x, min y, max x, max y
-constexpr uint64_t kStateManagerFinalInput = 0x4e0320;     // CFinalInput inside CStateManager (the one ProcessInput hands to the widgets)
 constexpr float kUiHalfWidth = 8.0f, kUiHalfHeight = 4.5f;   // the UI camera's extent in UI units
 
 // The older GUI frames (pause screen, options, inventory, log book, map, message boxes): CGuiFrame holds a flat list of widgets
-constexpr uint64_t kFnGuiFrameInput = 0xbd45e0;            // CGuiFrame::ProcessControllerInput(NGuiUtils::SWidgetInput const&): x0 frame, x1 input
-constexpr uint64_t kFnGuiWorldPos = 0xbd6b40;              // CGuiObject::GetWorldPosition(): CVector3f in s0..s2
-constexpr uint64_t kFnGuiToScreen = 0xbd53bc;              // CGuiCamera::ConvertToScreenSpace(CVector3f const&): CVector3f in s0..s2
-constexpr uint64_t kFnGuiWorker = 0xbe2b1c;                // CGuiCompoundWidget::GetWorkerWidget(int)
-constexpr uint64_t kFnTableSelectRow = 0xbe25e8;           // CGuiTableGroup::MAF_SelectRowAtIndex(int): selects the row and tells the screen
 constexpr uint64_t kTableRows = 272, kTableCurrent = 280;
 constexpr uint64_t kGuiTextPaneDims = 396;                 // CGuiPane: width, height in the frame's units
-constexpr uint64_t kFnPauseManagerInput = 0xe65bec;        // CPauseScreenManagerMP1::ProcessControllerInput(CStateManager const&, CFinalInput const&): x0 the manager
 // The pause screen manager keeps the text panes of its tab and button labels (FRME_PauseScreenInstructions); a click on one is that button.
 // The pane holds the button's icon; the word beside or under it (OPTIONS, LOG BOOK, BACK, EXIT, SELECT) is part of the same label, so the click zone reaches over it (ndc units).
 struct PauseLabel { uint64_t off; Act act; float left, right, below, above; };
 const PauseLabel kPauseLabels[] = {{104, Act::BtnL, 0.05f, 0.42f, 0.05f, 0.05f}, {112, Act::BtnR, 0.42f, 0.05f, 0.05f, 0.05f}, {136, Act::BtnMinus, 0.07f, 0.07f, 0.06f, 0.05f},
                                    {144, Act::Confirm, 0.07f, 0.07f, 0.06f, 0.05f}, {152, Act::Back, 0.07f, 0.07f, 0.06f, 0.05f}};
-constexpr uint64_t kFnGuiIsActive = 0xbd681c, kFnGuiIsVisible = 0xbd6810, kFnGuiIsEnabled = 0xbd686c;
 constexpr uint64_t kFrameWidgetCount = 56, kFrameWidgets = 64, kFrameCamera = 48;
 constexpr uint64_t kGuiVtable[][2] = {
     {0x20daa68, 0}, {0x20dae40, 1}, {0x20db108, 2}, {0x20db4b8, 3}, {0x20db548, 4}, {0x20db5e0, 5}, {0x20db678, 6}, {0x20db838, 7}, {0x20db8d0, 8}, {0x20db960, 9}, {0x20db428, 10}};
@@ -82,7 +60,7 @@ constexpr uint64_t kPropTouchMode = 40;       // what a touch does: 0 act at onc
 constexpr uint64_t kPropKindOk = 77;
 
 struct State {
-    uint64_t base = 0x7100000000ull;
+    uint64_t base = mem::kMainBase;
     uint32_t hook_widget = 0, hook_pos = 0;
     Snapshot snap;
     std::atomic<uint64_t> hovers{0}, clicks{0}, widget_calls{0};

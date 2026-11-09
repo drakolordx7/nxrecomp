@@ -44,6 +44,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/tt.h"
 #include "nxrt/tt_script.h"
+#include "mpr_addrs.h"
 
 // The probes live in their own namespace and reach the test tooling through tt::GameProbes (nxrt/tt.h, mpr_game_probes() below). The memory
 // helpers they use are the base's (src/testtools/tt_game.cpp).
@@ -55,29 +56,20 @@ using nxrt::tt::detail::write_mem;
 
 namespace {
 
-constexpr uint64_t kGpGameState = 0x459cc70;
+using namespace nxrt::games::mpr::addr;
 constexpr uint64_t kWorldStateSize = 0x50;
 
-constexpr uint64_t kFnSetCurrentWorldId = 0xc838e4;     // (CGameStateMP1*, CObjectId)
-constexpr uint64_t kFnCurrentWorldState = 0xc84478;     // (CGameStateMP1*) -> CWorldStateMP1*
-constexpr uint64_t kFnSetDesiredArea = 0xc8275c;        // (CWorldStateMP1*, CObjectId)
-constexpr uint64_t kFnContinueWithNewInitialState = 0x40a820;   // (CGameState&, SInitialState const&)
-constexpr uint64_t kFnGameInstanceState = 0xb01cc8;     // (CStateManager*) -> CGameInstanceState*
-constexpr uint64_t kFnQuitGame = 0x410544;              // (CGameInstanceState*, int reason)
 constexpr uint64_t kFnUpdate = games::mpr::site::kUpdate;   // CGameArchitectureSupport::Update(float*): the frame boundary (mpr_sites.h)
-constexpr uint64_t kFnProcessInput = 0xc70334;          // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 player, x2 state manager
 constexpr int kQuitReasonWarp = 7;
 // The game's resource loader (S42), for the warp gate: TOneStatic<CGameGlobalObjects> lives at main+0x4578710 (CGameArchitecture ctor 0x3c635c);
 // CGameGlobalObjects +0x00 = CResourceFactory* (its ctor 0x3c9174); CResourceFactory +0x10 = CResourceLoaderManager* (strong_ptr {control, object}
 // at +0x08, ctor 0x331558). CResourceLoaderManager::IsThreadWorkDone (0xc7458) is: ints at +0xe8 (load list), +0xa4 (request queue), +0x138 and
 // +0x110 all 0, and the byte at +0x144 is 0.
-constexpr uint64_t kGameGlobals = 0x4578710;
 constexpr uint64_t kFactoryLoader = 0x10;
 constexpr uint64_t kLoaderCounts[] = {0xe8, 0xa4, 0x138, 0x110};
 constexpr uint64_t kLoaderBusyByte = 0x144;
 
 std::atomic<uint64_t> g_player{0}, g_mgr{0}, g_pi_stamp{0};
-constexpr uint64_t kFnGetVelocityWR = 0xc577c4;        // CPhysicsActorMP1::GetVelocityWR(player, CStateManager const&) -> CVector3f*
 ProbeLayout g_layout;
 
 // Base of the main module: the probe layout's, else [test] game_base, else where the console maps main.
@@ -462,14 +454,11 @@ void watch_stop() {
 
 // ---- @rays: batch of static-collision ray casts through the game's own NCollisionMP1::RayStaticIntersection (S26) -------------------------------
 // Used by the route planner (nav.py, a local test script) to read the walkable geometry of the loaded areas without parsing any game file.
-constexpr uint64_t kFnMakeIncludeExcludeFilter = 0xcb6f0c;   // CIncludeExcludeCollisionFilterMP1::CIncludeExcludeCollisionFilterMP1(this x0, CMaterialFilterMP1 const& x1)
-constexpr uint64_t kSkPassEverything = 0x20e7818;           // CMaterialFilterMP1::skPassEverything
 // A host fault inside the guest call (a bad pointer) is caught here: the ray counts as a miss and the run goes on.
 bool seh_call(::Ctx* c, uint64_t addr) {
     __try { dispatch_call(c, addr); return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-constexpr uint64_t kFnRayStaticIntersection = 0xc7dac0;   // (CStateManager const* x0, CVector3f const* start x1, CVector3f const* dir x2, float len s0) -> result struct at x8:
                                                           // +0 t, +4 point xyz, +16 normal xyz, +28 f, +32 hit (byte)
 bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
     const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
@@ -515,8 +504,6 @@ bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path
 // ---- @probe: would the player's own collision box collide with the static world at these positions? (S26) ----------------------------------------
 // NCollisionMP1::DetectStaticCollisionBoolean(mgr, rc_ptr<CCollidableObject>, CTransform4f, filter) with the player's box (CPlayerMP1::GetCollidableBox), the
 // transform a translation of the position (the player's origin is at its feet). in: lines `x y z`; out: one `0` (free) or `1` (collides) per line.
-constexpr uint64_t kFnDetectStaticCollisionBoolean = 0xc7d310;
-constexpr uint64_t kFnGetCollidableBox = 0xcf1ce0;
 bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
     const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
     const uint64_t player = g_layout.player ? g_layout.player : g_player.load();

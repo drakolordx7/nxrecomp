@@ -1,0 +1,169 @@
+## kind	name	offset in main	note. Single source of the hook-site addresses: tools/addrs.py writes recomp/main.sites and runtime/mpr_addrs.h from this file.
+## kinds: entry / mid = hook site (lifter --sites; the runtime hooks it), spare = site kept in the lift but not hooked, fn / data / ret = address the runtime reads or calls.
+## A line starting with a single # is copied to recomp/main.sites; ## lines stay here.
+#   0x3c81c8  CGameArchitectureSupport::Update(float*): once per rendered game frame (frame boundary, timestep)
+#   0xc70334  CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): player input (state probes, mouse aim)
+entry	kUpdate	0x3c81c8	
+entry	kFnProcessInput	0xc70334	CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&)
+# S11 (high refresh rate, branch hifps; base runtime/docs/S11.md, game sites in games/mpr/runtime/mpr_sites.h): real-time dt for the game step.
+#   Update() hard-codes 1/60 in four places and a 14 ms background-work budget in four more; the runtime sets those registers from the
+#   frame time (entry hook above: measures the frame; these mid hooks load the value into the register the next instruction reads).
+mid	kDtClamp	0x3c8238	Update: w8 = 1/60, elapsed-time clamp (fmov s0,w8)
+mid	kDtLoop	0x3c830c	Update: w27 = 1/60 for the whole loop (tick, accumulator compare, input dt, TimerTick dt, render-state sum)
+mid	kDtFloor	0x3c8354	Update: w8 = -1/60, accumulator floor (fmov s1,w8 follows)
+mid	kBudget0	0x3c8634	Update: w8 = 0.014, extra-processing budget, first compare
+mid	kBudget1	0x3c8648	Update: w8 = 0.014, budget remaining for ExtraProcessingTick
+mid	kBudget2	0x3c86f4	Update: w8 = 0.014, second compare
+mid	kBudget3	0x3c8708	Update: w8 = 0.014, budget for ProcessGraveyard
+#   per-tick friction constant of the in-air walk branch (the community 120/240 fps patch rewrites the same fmov): s1 = 3.5 per 1/60 s
+mid	kFriction	0xcee3ec	CPlayerMP1::GetDampedClampedVelocityWR: s1 = 3.5, fmul s8,s0,s1 follows
+#   render timings: a frame counter / 60 (texture scroll, UV animation, water); advanced by the frame time instead of by 1
+entry	kTickRenderTimings	0xc32890	NRenderUtilMPT::TickRenderTimings (handled by the runtime)
+#   texture streaming ages entries by a per-frame 1/60 (1/30 on the 30 fps path)
+mid	kStreamA0	0xfe268	CGraphicsServerDevice::BeginTargetFrame: w8 = 1/60 (fmov s0,w8)
+mid	kStreamA1	0xfe274	... w8 = 1/30 (fmov s1,w8)
+mid	kStreamB0	0xff2fc	CGraphicsServerDevice::TickMainThreadMaintenance: w9 = 1/60 (fmov s0,w9)
+mid	kStreamB1	0xff308	... w9 = 1/30 (fmov s1,w9)
+#   movies: the clock of the movie player is the delta of CMovieList::Update(float); give it real elapsed time (audio plays in real time)
+entry	kMovieUpdate	0x3669ec	CMovieList::Update(float): s0 = delta seconds
+# S10 (display options, branch display; games/mpr/runtime/display_hooks.cpp, docs/gfx/S10.md): resolution, aspect ratio, HUD proportions, FOV, post effects.
+#   COsContext::GetScreenWidth / GetScreenHeight (docked render size; the handheld getters stay: the touch screen maps through them)
+entry	kGetScreenWidth	0x1248	
+entry	kGetScreenHeight	0x1250	
+#   CDynamicResolutionControl::GetResolutionScale (called once per frame by CGameRenderJob::RenderGamePass): 1.0 = dynamic resolution off
+entry	kGetResolutionScale	0x3c08a0	
+#   CDisplayManager::UpdateCameraNodes: the world projection takes its aspect from [[this + 16] + 152]; written before the original runs
+entry	kUpdateCameraNodes	0xafe41c	
+#   CGuiCamera::GetProjectionState: every GUIF frame (HUD, menus, title) goes through it; a 16:9 camera is widened to the display aspect
+entry	kGuiProjectionState	0xbd52fc	
+#   CGameCamera::GetVerticalFOV: the vertical field of view in radians; the FOV offset is added
+entry	kGetVerticalFov	0x4c2998	
+#   CRenderPass_Bloom::Render (skipped when bloom is off) and CRenderPass_ChromaticAberration::Render (strength zeroed when off)
+entry	kBloomRender	0x3a450c	
+entry	kChromaticRender	0x3a69b0	
+#   CUIDisplayManager::UpdateCameraNodes: the front end (title, menus) draws its 2D UI through the "UIOrthoCamera" scene node of this manager, authored for 16:9
+entry	kUiUpdateCameraNodes	0xb0e5ec	CUIDisplayManager::UpdateCameraNodes
+# S14 (display extras, branch extras; games/mpr/runtime/mpr_tonemap.cpp, base runtime/docs/S14.md): HDR output.
+#   NTonemap::build_tonemap_eval_params(STonemapParams const&): writes the 80-byte tone-curve block (exposure, toe, linear, shoulder, LUT scale) the
+#   tone-map shader reads, through x8; the runtime runs it and then moves the shoulder's asymptote to the display's peak
+entry	kFnBuildEvalParams	0x211c60	
+# S13 (verify; games/mpr/runtime/mpr_play.cpp, base runtime/docs/S13.md): mouse look that moves a camera and not the body. After the game's own Think the
+# camera transform is turned: free look about the eye (first person, Alt held), the morph ball camera orbited about the ball.
+entry	kFnFpCamThink	0xd72314	CFirstPersonCameraMP1::Think(float, CStateManager&): x0 = the camera
+entry	kFnBallCamThink	0xcff7ec	CBallCameraMP1::Think(float, CStateManager&): x0 = the camera
+#   CPlayerStuckTrackerMP1::AddState (S25): one sample per 1/60 s of game time, so the 20 sample window of the stuck test keeps its length at high frame rates
+entry	kStuckAddState	0xd801d8	entry, handled: CPlayerStuckTrackerMP1::AddState(this, state, pos, vel, input); x0 = this stays as the result
+# S28 (mouse pointer in menus, branch mouse; games/mpr/runtime/menu_mouse_game.cpp, base runtime/docs/S28.md): the front end's UI widgets take the pointer.
+#   CUIWidgetGOC::ProcessInput(CStateManager&, float): x0 = widget; the hook runs the game's own and, when the pad did nothing for this widget, looks at the pointer
+entry	kFnWidgetProcessInput	0x88cb74	CUIWidgetGOC::ProcessInput(CStateManager&, float): x0 widget, x1 state manager; returns flags in w0
+#   CFinalInput::GetTouchScreenPosition(CTransform4f const*): answers the pointer position (UI units) while the game's touch routine runs for a click
+entry	kFnGetTouchPosition	0x35322c	CFinalInput::GetTouchScreenPosition(CTransform4f const*): the UI position in s0, s1
+#   CUIMenuGOC::BeforeThink(CStateManager&, float): x0 = the menu; before it runs its widgets the pointer picks the one it means
+entry	kFnMenuBeforeThink	0x888608	CUIMenuGOC::BeforeThink(CStateManager&, float): x0 menu, x1 state manager; runs the widgets' ProcessInput
+#   CGuiFrame::ProcessControllerInput(NGuiUtils::SWidgetInput const&): the older GUI frames (pause screen, options, map, message boxes): the pointer selects table rows
+entry	kFnGuiFrameInput	0xbd45e0	CGuiFrame::ProcessControllerInput(NGuiUtils::SWidgetInput const&): x0 frame, x1 input
+#   CPauseScreenManagerMP1::ProcessControllerInput: x0 = the manager, which holds the tab and button labels of the pause screen (clicked like the buttons they show)
+entry	kFnPauseManagerInput	0xe65bec	CPauseScreenManagerMP1::ProcessControllerInput(CStateManager const&, CFinalInput const&): x0 the manager
+# S32 (freelock; games/mpr/runtime/play_lockcam.cpp, base runtime/docs/S32.md): free lock-on and the decoupled gun.
+#   CPlayerMP1::UpdateOrbitOrientation(float, CStateManager&): x0 = the player; turns the body to face the lock-on target (skipped by free lock-on)
+entry	kFnUpdateOrbitOrientation	0xc77854	CPlayerMP1::UpdateOrbitOrientation(float, CStateManager&): x0 the player, x1 the manager; turns the body to face the orbit target
+#   CPlayerMP1::ComputeFreeLook(CFinalInput const&, CStateManager const&): x0 = the player; with a lock the pitch target is the direction to the target
+entry	kFnComputeFreeLook	0xc71638	CPlayerMP1::ComputeFreeLook(CFinalInput const&, CStateManager const&): x0 the player; called from ProcessInput
+#   CPlayerMP1::TurnInput(CStateManager const&, CFinalInput const&) const: x0 = the player; returns the turn input in s0 (zero while locked on)
+entry	kFnTurnInput	0xcefa54	CPlayerMP1::TurnInput(CStateManager const&, CFinalInput const&) const: x0 the player; returns s0
+#   CFirstPersonCameraMP1::UpdateTransform(CStateManager&, float): x0 = the camera; while locked on it eases its own view toward the target (run as unlocked by free lock-on)
+entry	kFnFpCamUpdateTransform	0xd710ac	CFirstPersonCameraMP1::UpdateTransform(CStateManager&, float): x0 the camera; with a lock it turns its own view to the target
+#   CPlayerMP1::ValidateCurrentOrbitTargetId(CStateManager&): x0 = the player; returns why the lock breaks (5 = the view turned away); free lock-on turns that into "still locked"
+entry	kFnValidateCurrentOrbitTarget	0xc765d0	CPlayerMP1::ValidateCurrentOrbitTargetId(CStateManager&): x0 the player; returns 0 = still valid, else the reason the lock breaks (5 = the view turned too far from it)
+#   CPlayerGunMP1::Update(IMP1EntityBaseGOC&, float, float, float, CStateManager&): x0 = the gun; the decoupled gun moves its transform (+484) by the camera bob that the view no longer shows
+entry	kFnGunUpdate	0xc93950	CPlayerGunMP1::Update(IMP1EntityBaseGOC&, float, float, float, CStateManager&): x0 the gun
+#   CPlayerMP1::UpdateAimTarget(CStateManager&): x0 = the player; free lock-on makes the locked target the aim target too, so the aiming cursor and the gun stay on it
+entry	kFnUpdateAimTarget	0xc7ad8c	CPlayerMP1::UpdateAimTarget(CStateManager&): x0 the player; picks the object the aiming cursor and the homing shots follow (the locked target when it can be shot)
+#   CAimingCursorMP1::Update(CFinalInput const&, float, CStateManager&): x0 = the cursor; free lock-on follows what the cursor does while locked on
+entry	kFnCursorUpdate	0xcb6250	CAimingCursorMP1::Update(CFinalInput const&, float, CStateManager&): x0 the cursor, x1 the input, x2 the manager
+#   CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: free lock-on tells the aiming cursor that the aim-follow command is held while the lock is on
+entry	kFnDigitalHeld	0x4d7540	CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: x0 the frame, x1 the value, x2 the input
+# S42 (crashes, branch crashes; games/mpr/runtime/play_scenefix.cpp, base runtime/docs/S42.md): a ModCon scene node can be in a render list before its model
+# data is loaded; the decal render queries then read its bounds through a null pointer (CFrustumPlanes::BoxInFrustumPlanes on address 0x190).
+#   CModConSceneNode::ProcessRenderQuery(CSceneRenderQuery const&, CSceneRenderQueryResult&): x0 = node; skipped while the node's data is not loaded
+entry	kFnModConProcessRenderQuery	0x1b57ac	CModConSceneNode::ProcessRenderQuery(CSceneRenderQuery const&, CSceneRenderQueryResult&)
+#   CModConSceneNodeMP1::ProcessRenderQuery (the override the game's nodes use): the same
+entry	kFnModConMP1ProcessRenderQuery	0xfba8b8	CModConSceneNodeMP1::ProcessRenderQuery (same, plus the draw flags at +0x1d0)
+# S46 (fastboot; games/mpr/runtime/mpr_fastboot.cpp, base runtime/docs/S46.md): optional start-up and menu tweaks ([tweaks] in controls.ini), all off by default.
+#   CCommandFrame::GetDigitalPressedInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: skip_intro answers "pressed" for the skip command at
+#   its two cutscene-skip call sites (return addresses 0xe51e78 in CGameIOWinMP1::UserInput, 0x4bd840 in CCameraManager::CheckForCinematicSkip)
+entry	kFnDigitalPressed	0x4d71f0	CCommandFrame::GetDigitalPressedInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: bool in w0
+#   CGameState::IsCinematicSkippable(CGuid const&) const: skip_intro makes the opening cutscene skippable (what mCinematicForceSkippableOverride does for all)
+entry	kFnIsCinematicSkippable	0x40a2dc	CGameState::IsCinematicSkippable(CGuid const&) const: bool in w0
+#   CStreamedMovieGOC::Think(CStateManager&, float): x0 = the movie component; skip_boot_logos ends the title's intro movie with its own Skip(immediate)
+entry	kFnMovieThink	0x852b28	CStreamedMovieGOC::Think(CStateManager&, float): x0 the movie component, x1 the state manager
+#   CFrontEndIOWin::TimerTick(CArchMsgParmTimerTick const&, CArchitectureQueue&) and NIOWinStateManagerUtils::UpdateStateManager(CStateManager&,
+#   CArchMsgParmTimerTick const&): fast_menus hands the front end's state manager a longer step (x1 + 8, float)
+entry	kFnFrontEndTimerTick	0x41a21c	CFrontEndIOWin::TimerTick(CArchMsgParmTimerTick const&, CArchitectureQueue&)
+entry	kFnUpdateStateManager	0x41b000	NIOWinStateManagerUtils::UpdateStateManager(CStateManager&, CArchMsgParmTimerTick const&): x1 the parm
+# S44 (glow, branch glow2; games/mpr/runtime/play_glow.cpp, base runtime/docs/S44.md): the glow colour tweak gives the morph ball's hull and the arm
+# cannon an incandescence modulation colour (CModelFlagsMPT colour mode 2, as CModelFlagsMPT::ColorModulateIncan builds) when the game draws them
+# with Normal flags; the caller is told apart by the return address.
+#   CModelDataMP1::Render(CGameRenderCommandState&, CStateManager const&, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x3 = flags
+spare	kFnModelDataRender	0xfa9694	
+#   CModelDataMP1::Render(CGameRenderCommandState&, EWhichModel, CTransform4f const&, CModelFlagsMPT const&, SCameraData const*): x4 = flags
+spare	kFnModelDataRenderWhich	0xfa6c0c	
+#   CModelDataMP1::RenderGun(CGameRenderCommandState&, EWhichModel, CTransform4f const&, SGunRenderParams const&, CModelFlagsMPT const&): x5 = flags
+spare	kFnModelDataRenderGun	0xfa7dd0	
+# S50 (jump; games/mpr/runtime/play_jump.cpp, base runtime/docs/S50.md): the jump timer's last frame. In the step where the timer ends partway (timer < dt) JumpInput
+# blends jump and gravity; at the rise cap the jump part is lost to the next frame's cap together with the gravity part, so uneven steps overshoot.
+entry	kJumpInput	0xcf0060	CPlayerMP1::JumpInput(float dt, CFinalInput const&, CStateManager&): the runtime records dt (s0)
+mid	kJumpInputBlend	0xcf0750	JumpInput, blend frame only: s8 = f * jump force, s9 = (1 - f) * gravity, s0 = mass (fmul s0,s9,s0; fadd s9,s8,s0 follow)
+## addresses the runtime reads or calls that are not hook sites
+data	kDefaultAspectGlobal	0x20e7a7c	CCameraManagerMP1's cached aspect (written by CreateCameras)
+data	kStateManagerFinalInput	0x4e0320	CFinalInput inside CStateManager (the one ProcessInput hands to the widgets)
+fn	kFnRenderCastToPtr	0x80a030	CRenderGOC::CastToPtr(CGameObjectComponent*)
+fn	kFnTextPaneCastToPtr	0x85dfe4	CTextPaneGOC::CastToPtr(CGameObjectComponent*)
+fn	kFnTextPaneBounds	0x861b98	CTextPaneGOC::GetBounds(CAABox&): the pane's box in UI units
+fn	kFnButtonCastToPtr	0x883b64	CUIButtonGOC::CastToPtr(CGameObjectComponent*)
+fn	kFnFindSelected	0x8892e0	CUIMenuGOC::FindSelectedWidget(CStateManager&): id of the selected widget (state 4), found by walking the links from the menu's first widget
+fn	kFnSliderCastToPtr	0x889d64	CUISliderGOC::CastToPtr(CGameObjectComponent*)
+fn	kFnSliderSetTick	0x88a8bc	CUISliderGOC::SetTickCount(CStateManager&, float tick, bool send_value): x0 slider, x1 state manager, s0 tick
+fn	kFnWidgetCastToPtr	0x88ae38	CUIWidgetGOC::CastToPtr(CGameObjectComponent*)
+fn	kFnQueueSetState	0x88c994	CUIWidgetGOC::QueueSetStateAction(CStateManager&, target id, sender id, EUIWidgetState)
+fn	kFnTouchInput	0x88d1b8	CUIWidgetGOC::ProcessWidgetTouchScreenInput(CStateManager&, CFinalInput const&)
+fn	kFnCheckTouchScreen	0x88d7d4	CUIWidgetGOC::CheckTouchScreen(CStateManager&, CVector2f const&): the button's box test
+fn	kFnRenderTextureBounds	0xa330f0	CRenderTexture::GetBounds(CAABox&)
+fn	kFnComponentById	0xb082fc	CStateManagerObject::ComponentById(id): this = state manager + 0x30
+fn	kFnGuiToScreen	0xbd53bc	CGuiCamera::ConvertToScreenSpace(CVector3f const&): CVector3f in s0..s2
+fn	kFnGuiIsVisible	0xbd6810	
+fn	kFnGuiIsActive	0xbd681c	
+fn	kFnGuiIsEnabled	0xbd686c	
+fn	kFnGuiWorldPos	0xbd6b40	CGuiObject::GetWorldPosition(): CVector3f in s0..s2
+fn	kFnTableSelectRow	0xbe25e8	CGuiTableGroup::MAF_SelectRowAtIndex(int): selects the row and tells the screen
+fn	kFnGuiWorker	0xbe2b1c	CGuiCompoundWidget::GetWorkerWidget(int)
+data	kGotInvalidId	0x2112870	pointer to the invalid CValueVersionId (u32)
+fn	kFnMovieIsPlaying	0x41fe48	CMovieIOWin::IsMoviePlaying(uint handle)
+ret	kRetSkipCameraManager	0x4bd840	... and in CCameraManager::CheckForCinematicSkip(CStateManager&, CFinalInput const&)
+fn	kFnMovieSkip	0x8536d4	CStreamedMovieGOC::Skip(CStateManager&, bool immediate)
+ret	kRetSkipUserInput	0xe51e78	return address of its call for the skip command (1) in CGameIOWinMP1::UserInput
+data	kMovieInvalidHandle	0x1d15334	CMovieIOWin::skInvalidId (u32)
+data	kGpGameState	0x459cc70	gpGameState: CGameStateMP1*; +0 world id, +0x10 world-state count, +0x18 world states (0x50 each, +0x10 current area)
+fn	kFnSetTransform	0xc4d588	CActorMP1::SetTransform(CTransform4f const&): x0 = the actor, x1 = the transform
+fn	kFnGetVelocityWR	0xc577c4	CPhysicsActorMP1::GetVelocityWR(CStateManager const&) -> CVector3f* (y = up)
+fn	kFnMaxRiseSpeed	0xc72354	CPlayerMP1::GetMaximumPlayerPositiveVerticalVelocity(CStateManager const&) -> s0
+data	kRenderTimingCounter	0x459cc10	u32 frame counter (data); the float seconds follow at +4
+fn	kFnContinueWithNewInitialState	0x40a820	(CGameState&, SInitialState const&)
+fn	kFnQuitGame	0x410544	(CGameInstanceState*, int reason)
+fn	kFnGameInstanceState	0xb01cc8	(CStateManager*) -> CGameInstanceState*
+fn	kFnDetectStaticCollisionBoolean	0xc7d310	
+fn	kFnRayStaticIntersection	0xc7dac0	(CStateManager const* x0, CVector3f const* start x1, CVector3f const* dir x2, float len s0) -> result struct at x8:
+fn	kFnSetDesiredArea	0xc8275c	(CWorldStateMP1*, CObjectId)
+fn	kFnSetCurrentWorldId	0xc838e4	(CGameStateMP1*, CObjectId)
+fn	kFnCurrentWorldState	0xc84478	(CGameStateMP1*) -> CWorldStateMP1*
+fn	kFnMakeIncludeExcludeFilter	0xcb6f0c	CIncludeExcludeCollisionFilterMP1::CIncludeExcludeCollisionFilterMP1(this x0, CMaterialFilterMP1 const& x1)
+fn	kFnGetCollidableBox	0xcf1ce0	
+data	kSkPassEverything	0x20e7818	CMaterialFilterMP1::skPassEverything
+data	kGameGlobals	0x4578710	
+fn	kFnGetCommandValue	0x45a690	NControlCommands::GetDataEnumValueForCommand(ECommand): w0 the command
+fn	kFnGyroFreelook	0xc3af10	NSharedPlayerControls::GetGyroFreelookControl(CStateManager const&): x0 the manager; true while the gyro camera is on (command 101 held)
+fn	kFnSetAimTargetId	0xc687d4	CPlayerMP1::SetAimTargetId(CValueVersionId): x0 the player, w1 the id
+fn	kFnGetCombatMode	0xc73564	CPlayerMP1::GetCombatMode() const: x0 the player; true while the combat visor's weapons are in use
+ret	kTurnInputFromComputeMovement	0xcefba0	the return address of its call inside CPlayerMP1::ComputeMovement (the other callers are footsteps and the dash)
+data	kGpTweakPlayer	0x4b32880	gpTweakPlayer: pointer to CTweakPlayerMP1
+fn	kFnBallCamTeleport	0xcf6d84	CBallCameraMP1::TeleportCamera(CTransform4f const&, CStateManager&): x0 camera, x1 transform, x2 state manager

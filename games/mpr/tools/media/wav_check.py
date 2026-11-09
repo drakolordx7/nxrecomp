@@ -9,7 +9,7 @@ Default output: one PASS/FAIL summary line, then one line per failed condition a
 one per warning. --json prints the full result (verdict, metrics, warnings) as JSON.
 Exit codes: 0 PASS, 1 FAIL, 2 unreadable file or bad arguments.
 
-Needs numpy (available in tools\\.venv).
+Needs numpy (available in base\\tools\\.venv).
 """
 
 import argparse

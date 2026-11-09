@@ -18,7 +18,7 @@ Analysis: for each (scenario, rate) the trace rows between the start and end che
 All time is igt (game play time). Horizontal motion is x and z, height is y. Walk speed is the trace spd (the game's physics speed, 3D
 magnitude; where a row has no spd, the x/z position difference over igt is used and counted). Tolerances are relative to the 60 Hz run.
 
-  tools\\.venv\\Scripts\\python tools\\test\\hifps_probe.py [--rates 60,120,144,240] [--scenarios walk,jump,turn] [--exe DIR] [--max-seconds 1500] [--no-run]
+  base\\tools\\.venv\\Scripts\\python tools\\test\\hifps_probe.py [--rates 60,120,144,240] [--scenarios walk,jump,turn] [--exe DIR] [--max-seconds 1500] [--no-run]
 
 Output: work/hifps_probe/all/ (script.nxs, mpr.log, out/trace.jsonl, out/result.json, cwd/) and one deviation table per scenario.
 Exit code: 0 all checks pass, 1 a check fails or a run did not end with @pass, 3 a window has no player samples (gameplay not reached), 2 usage.
@@ -26,14 +26,15 @@ The run is retried once when it fails at the prologue's mash step (exit 1, no pl
 """
 import argparse, json, math, os, sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import gameplay as gp  # noqa: E402
 
+ROOT = gp.ROOT
+
 OUT = os.path.join(ROOT, 'work', 'hifps_probe')
 RUN_DIR = os.path.join(OUT, 'all')
-DEFAULT_EXE = os.environ.get('NXRT_VERIFY_EXE') or os.path.join(ROOT, 'game-build-verify', 'build', 'snap4')
+DEFAULT_EXE = gp.EXE_DIR
 
 RATES = (60, 120, 144, 240)
 SCENARIOS = ('walk', 'jump', 'turn')

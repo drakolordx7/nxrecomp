@@ -14,28 +14,15 @@
 #include "nxrt/log.h"
 #include "display_hooks.h"
 #include "play_lookrate.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play {
 
 namespace {
 
 // main-module relative addresses (Metroid Prime Remastered 1.0.0); the hook sites are base + these
-constexpr uint64_t kFnUpdateOrbitOrientation = 0xc77854;   // CPlayerMP1::UpdateOrbitOrientation(float, CStateManager&): x0 the player, x1 the manager; turns the body to face the orbit target
-constexpr uint64_t kFnComputeFreeLook = 0xc71638;          // CPlayerMP1::ComputeFreeLook(CFinalInput const&, CStateManager const&): x0 the player; called from ProcessInput
-constexpr uint64_t kFnTurnInput = 0xcefa54;                // CPlayerMP1::TurnInput(CStateManager const&, CFinalInput const&) const: x0 the player; returns s0
-constexpr uint64_t kTurnInputFromComputeMovement = 0xcefba0;   // the return address of its call inside CPlayerMP1::ComputeMovement (the other callers are footsteps and the dash)
-constexpr uint64_t kFnValidateCurrentOrbitTarget = 0xc765d0;   // CPlayerMP1::ValidateCurrentOrbitTargetId(CStateManager&): x0 the player; returns 0 = still valid, else the reason the lock breaks (5 = the view turned too far from it)
-constexpr uint64_t kFnFpCamUpdateTransform = 0xd710ac;     // CFirstPersonCameraMP1::UpdateTransform(CStateManager&, float): x0 the camera; with a lock it turns its own view to the target
-constexpr uint64_t kFnGunUpdate = 0xc93950;                // CPlayerGunMP1::Update(IMP1EntityBaseGOC&, float, float, float, CStateManager&): x0 the gun; builds the gun's world transform (+484, 3x4 floats) from the camera and the cursor, then lets the motion states and the firing use it
-constexpr uint64_t kFnSetTransform = 0xc4d588;             // CActorMP1::SetTransform(CTransform4f const&)
-constexpr uint64_t kFnUpdateAimTarget = 0xc7ad8c;          // CPlayerMP1::UpdateAimTarget(CStateManager&): x0 the player; picks the object the aiming cursor and the homing shots follow (the locked target when it can be shot)
-constexpr uint64_t kFnSetAimTargetId = 0xc687d4;           // CPlayerMP1::SetAimTargetId(CValueVersionId): x0 the player, w1 the id
-constexpr uint64_t kFnGetCombatMode = 0xc73564;            // CPlayerMP1::GetCombatMode() const: x0 the player; true while the combat visor's weapons are in use
+using namespace nxrt::games::mpr::addr;
 
-constexpr uint64_t kFnCursorUpdate = 0xcb6250;             // CAimingCursorMP1::Update(CFinalInput const&, float, CStateManager&): x0 the cursor, x1 the input, x2 the manager
-constexpr uint64_t kFnGyroFreelook = 0xc3af10;             // NSharedPlayerControls::GetGyroFreelookControl(CStateManager const&): x0 the manager; true while the gyro camera is on (command 101 held)
-constexpr uint64_t kFnGetCommandValue = 0x45a690;          // NControlCommands::GetDataEnumValueForCommand(ECommand): w0 the command
-constexpr uint64_t kFnDigitalHeld = 0x4d7540;              // CCommandFrame::GetDigitalHeldInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: x0 the frame, x1 the value, x2 the input
 constexpr const char* kTag = "lockcam";
 constexpr double kDefaultPitchLimit = 1.5184;      // the aim's pitch limit before it has read the tweak (87 degrees)
 constexpr uint32_t kOrbitState = 0x4e0;      // CPlayerMP1: EPlayerOrbitState

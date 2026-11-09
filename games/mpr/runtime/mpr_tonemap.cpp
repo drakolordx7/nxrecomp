@@ -11,11 +11,12 @@
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/game/hdr_math.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::extras {
 namespace {
 constexpr const char* kTag = "hdr";
-constexpr uint64_t kFnBuildEvalParams = 0x211c60;
+using namespace nxrt::games::mpr::addr;
 std::atomic<uint32_t> g_hook_id{0};
 std::atomic<uint32_t> g_calls{0};
 thread_local bool t_nested = false;

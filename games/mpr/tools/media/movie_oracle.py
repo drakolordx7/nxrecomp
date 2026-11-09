@@ -1,6 +1,6 @@
 """Movie oracle: play every FMV0 movie of the game through the HLE movie:: path (nxrt_tests media_movie) and compare with the container and ffmpeg.
 
-  tools\.venv\Scripts\python tools\media\movie_oracle.py [--tests-build DIR] [--romfs DIR] [--work DIR] [--only ID_PREFIX] [--frame-step N] [--threads N]
+  base\tools\.venv\Scripts\python tools\media\movie_oracle.py [--tests-build DIR] [--romfs DIR] [--work DIR] [--only ID_PREFIX] [--frame-step N] [--threads N]
 
 Steps: fmv_manifest.py (extract the 25 movies from the RomFS paks), fmv_reference.py (ffmpeg frame md5 + reference PCM), write expected.tsv and the
 per-movie .pts files, run `nxrt_tests media_movie` with NXRT_MOVIE_DIR, then compare the PCM the HLE path produced with ffmpeg's (compare_pcm.py).

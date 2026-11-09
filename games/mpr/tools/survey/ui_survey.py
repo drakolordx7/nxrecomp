@@ -1,6 +1,6 @@
 """UI survey: GUIF list, asset-type census + keyword search, Scaleform/SWF byte scan, main.elf strings/symbols,
 UI/FrontEnd pak census.
-usage: tools/.venv/Scripts/python.exe -u tools/survey/ui_survey.py [index|scan|elf|all]
+usage: base/tools/.venv/Scripts/python.exe -u tools/survey/ui_survey.py [index|scan|elf|all]
 Read-only on game/ and refs/. Writes under work/survey/ui/. Uses read_adir copied from tools/survey/inventory.py
 (inventory.py runs its main() at import time, so it cannot be imported)."""
 import os, sys, struct, uuid, re, mmap, csv, collections

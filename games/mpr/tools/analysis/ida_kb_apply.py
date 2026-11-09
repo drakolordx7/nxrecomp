@@ -2,7 +2,7 @@
 """Apply the MPR knowledge base (docs/mpr) to an IDA database: names, function/site comments, C types.
 
 Headless (idalib, no GUI):
-    tools\\.venv\\Scripts\\python.exe tools\\analysis\\ida_kb_apply.py main.elf [--kb docs/mpr] [--out work/ida/main.i64] [--force] [--include-unverified]
+    base\\tools\\.venv\\Scripts\\python.exe tools\\analysis\\ida_kb_apply.py main.elf [--kb docs/mpr] [--out work/ida/main.i64] [--force] [--include-unverified]
 Inside IDA / the ida-mcp execute_python tool:
     exec(open(r'D:\\...\\tools\\analysis\\ida_kb_apply.py').read()); apply_kb(r'D:\\...\\docs\\mpr')
 

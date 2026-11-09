@@ -3,7 +3,7 @@
 Warps to tallon_canyon_cavern, grants the other beams and visors, presses the keys one at a time (`key <name>`: the keyboard path of the
 play layer, the same one a window key takes) and reads the game's own beam and visor numbers from the trace after each press.
 
-  tools\\.venv\\Scripts\\python tools\\test\\keys_check.py [--exe DIR] [--out DIR] [--no-run]
+  base\\tools\\.venv\\Scripts\\python tools\\test\\keys_check.py [--exe DIR] [--out DIR] [--no-run]
 
 Beam numbers in the trace are the game's (0 power, 1 ice, 2 wave, 3 plasma; the keys follow the bindings' order power, wave, ice, plasma); visors 0 combat, 1 x-ray, 2 scan, 3 thermal (the keys follow the bindings' order combat, scan, thermal, x-ray).
 Exit 0 when every key leaves the expected beam/visor, 1 otherwise.
@@ -71,12 +71,12 @@ def analyse(d):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--exe', default=ROOT + '/game-build-rel/build/rel')
+    ap.add_argument('--exe', default=gp.EXE_DIR)
     ap.add_argument('--out', default=ROOT + '/work/run_rel/keys')
     ap.add_argument('--no-run', action='store_true')
     a = ap.parse_args()
     if not a.no_run:
-        env = {'NXRT_NVN_SHADER_CACHE': ROOT + '/work/shader_cache/spirv', 'NXRT_NVN_BC7_CACHE': ROOT + '/work/bc7_cache_polish', 'NXRT_AUDIO_SINK': 'null'}
+        env = {'NXRT_NVN_BC7_CACHE': ROOT + '/work/bc7_cache_polish', 'NXRT_AUDIO_SINK': 'null'}
         r = gp.run(script(), a.out, env=env, seconds=900, exe_dir=a.exe)
         print('run: exit %s verdict %s wall %.0f s %s' % (r['exit'], r.get('verdict', '-'), r['wall'], r.get('message', '')))
         if r['exit'] != 0:
