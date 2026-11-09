@@ -163,24 +163,6 @@ class NeonWideOps:
 
     i_sqshrn2 = i_sqshrn
 
-    def i_sqrshrn(self, f, i, ops):
-        return self.narrow(i, ops, "nx::sat<int{dbits}_t>(({a} + (int64_t(1) << ({n} - 1))) >> {n})",
-                           src_kind="s", dst_kind="s")
-
-    i_sqrshrn2 = i_sqrshrn
-
-    def i_sqadd(self, f, i, ops):
-        bits = self.vinfo(ops[0])[0]
-        return self.v_bin(i, ops, f"nx::sat<int{bits}_t>(int64_t(a) + int64_t(b))", signed=True)
-
-    def i_sqsub(self, f, i, ops):
-        bits = self.vinfo(ops[0])[0]
-        return self.v_bin(i, ops, f"nx::sat<int{bits}_t>(int64_t(a) - int64_t(b))", signed=True)
-
-    def i_uqadd(self, f, i, ops):
-        bits = self.vinfo(ops[0])[0]
-        return self.v_bin(i, ops, f"(uint64_t(a) + uint64_t(b)) > uint{bits}_t(~0ull) ? uint{bits}_t(~0ull) : a + b")
-
     def i_uqsub(self, f, i, ops):
         return self.v_bin(i, ops, "a > b ? a - b : 0")
 
@@ -221,11 +203,6 @@ class NeonWideOps:
         return self.narrow(i, ops, "nx::sat<uint{dbits}_t>({a} >> {n})", src_kind="s")
 
     i_sqshrun2 = i_sqshrun
-
-    def i_sqrshrun(self, f, i, ops):
-        return self.narrow(i, ops, "nx::sat<uint{dbits}_t>(({a} + (int64_t(1) << ({n} - 1))) >> {n})", src_kind="s")
-
-    i_sqrshrun2 = i_sqrshrun
 
     def i_fcvtn(self, f, i, ops):
         dbits, n = self.vinfo(ops[0])
@@ -362,9 +339,6 @@ class NeonWideOps:
 
     def i_not(self, f, i, ops):
         return self.v_un(i, ops, "~a", lanes="bytes")
-
-    def i_abs(self, f, i, ops):
-        return self.v_un(i, ops, "a < 0 ? -a : a", signed=True)
 
     def i_frecpe(self, f, i, ops):
         return self.fun(i, ops, "1.0f / a")

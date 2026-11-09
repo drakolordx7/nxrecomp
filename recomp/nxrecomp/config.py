@@ -12,13 +12,11 @@ import os
 
 
 class ModuleSpec:
-    """One module of the program: where it is mapped and how it is lifted."""
+    """One module of the program: its name ('main', 'sdk', 'subsdk0', ...) and the guest address of its first byte."""
 
-    def __init__(self, name, base, source=None, kind='nso'):
-        self.name = name              # 'main', 'sdk', 'subsdk0', ...
-        self.base = base              # guest address of the module's first byte
-        self.source = source          # default input path (relative to the game's work dir) or None
-        self.kind = kind              # 'nso' | 'nx_elf' | 'static_elf'
+    def __init__(self, name, base):
+        self.name = name
+        self.base = base
 
 
 class GameConfig:
@@ -31,22 +29,9 @@ class GameConfig:
     # Direct calls, indirect calls (call_indirect) and tail calls to that address all go to the handler.
     overrides = {}
 
-    # extra function entries the discovery cannot see (offsets are module-relative), per module name
+    # extra function entries the discovery cannot see (offsets are module-relative), per module name. rtld's process entry
+    # (offset 0) is rooted by the lifter itself.
     extra_entries = {}
-
-    # instruction patches: file of `<address> <original word> <new word>` lines (see program.load_patches), or None
-    patches = None
-
-    # a function with more than this many instructions is compiled with optnone (bounded compile time); the build's
-    # time-limit fallback (cmake/nx_cc_launcher.py) lowers it when a file still takes too long
-    optnone_insns = 20000
-
-    # host function names to treat as noreturn-like terminators (none by default)
-    noreturn_imports = ()
-
-    # a hook the game config may use to name functions in the generated code's comments: addr -> str
-    def function_name(self, module, addr):
-        return None
 
 
 def load_game(name):

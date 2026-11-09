@@ -44,12 +44,6 @@ class ExtOps:
                 f"r.{kind}{dbits}[k] = {'int' if signed else 'uint'}{dbits}_t({wide}(r.{kind}{dbits}[k]) + {wide}(S.{kind}{sbits}[2 * k]) + S.{kind}{sbits}[2 * k + 1]); "
                 f"c->v[{d.n}] = r; }}")
 
-    def i_sadalp(self, f, i, ops):
-        return self.adalp(i, ops, True)
-
-    def i_uadalp(self, f, i, ops):
-        return self.adalp(i, ops, False)
-
     def i_rshrn(self, f, i, ops):
         # (a + 2^(n-1)) >> n without the add overflowing 64-bit lanes
         return self.narrow(i, ops, "(({a} >> {n}) + (({a} >> ({n} - 1)) & 1))")
@@ -121,36 +115,11 @@ class ExtOps:
     def i_facgt(self, f, i, ops):
         return self.fac(i, ops, ">")
 
-    def i_sqrdmulh(self, f, i, ops):
-        bits = self.vinfo(ops[0])[0]
-        # 2ab + round overflows int64 only for MIN * MIN (32-bit lanes), which saturates to MAX anyway.
-        return self.v_bin(i, ops, f"(int64_t(a) * int64_t(b) == (int64_t(1) << {2 * bits - 2})) ? int{bits}_t(~0ull >> {65 - bits}) : "
-                                  f"nx::sat<int{bits}_t>((int64_t(a) * int64_t(b) * 2 + (int64_t(1) << {bits - 1})) >> {bits})",
-                          signed=True)
-
     def i_shsub(self, f, i, ops):
         return self.v_bin(i, ops, "(int64_t(a) - int64_t(b)) >> 1", signed=True)
 
     def i_uhsub(self, f, i, ops):
         return self.v_bin(i, ops, "(int64_t(a) - int64_t(b)) >> 1")
-
-    def i_srshl(self, f, i, ops):
-        # Shift by the signed low byte of b; right shifts round: (a >> n) + bit n-1 of a (no overflow for 64-bit lanes).
-        bits = self.vinfo(ops[0])[0]
-        sh = f"int8_t(S1.u{bits}[k])"
-        return self.v_bin(i, ops, f"{sh} >= 0 ? ({sh} >= {bits} ? 0 : int64_t(uint64_t(int64_t(a)) << {sh})) : "
-                                  f"(-{sh} >= {bits} ? 0 : (int64_t(a) >> -{sh}) + ((int64_t(a) >> (-{sh} - 1)) & 1))",
-                          signed=True)
-
-    def i_uabdl(self, f, i, ops):
-        return self.widen(i, ops, "{a} > {b} ? {a} - {b} : {b} - {a}", False)
-
-    i_uabdl2 = i_uabdl
-
-    def i_sabdl(self, f, i, ops):
-        return self.widen(i, ops, "{a} > {b} ? {a} - {b} : {b} - {a}", True)
-
-    i_sabdl2 = i_sabdl
 
     def i_umlsl(self, f, i, ops):
         return self.widen(i, ops, "{o} - {a} * {b}", False)
@@ -163,14 +132,6 @@ class ExtOps:
     i_smlsl2 = i_smlsl
 
     # crypto extension: helpers in nx/cpu.h
-    def i_pmull(self, f, i, ops):
-        if ops[0].vas != A.ARM64_VAS_1Q:
-            raise Unhandled("pmull on bytes")
-        d, a, b = (self.regop(i, o) for o in ops[:3])
-        lane = 1 if i.mnemonic == "pmull2" else 0
-        return f"c->v[{d.n}] = nx::clmul64(c->v[{a.n}].u64[{lane}], c->v[{b.n}].u64[{lane}]);"
-
-    i_pmull2 = i_pmull
 
     def crypto2(self, i, ops, fn):
         d, n = self.regop(i, ops[0]), self.regop(i, ops[1])

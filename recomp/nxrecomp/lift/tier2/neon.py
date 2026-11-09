@@ -203,16 +203,6 @@ class NeonOps:
     def i_shadd(self, f, i, ops):
         return self.v_bin(i, ops, "(int64_t(a) + int64_t(b)) >> 1", signed=True)
 
-    def i_sabd(self, f, i, ops):
-        return self.v_bin(i, ops, "a > b ? a - b : b - a", signed=True)
-
-    def i_uabd(self, f, i, ops):
-        return self.v_bin(i, ops, "a > b ? a - b : b - a")
-
-    def i_sqdmulh(self, f, i, ops):
-        bits = self.vinfo(ops[0])[0]
-        return self.v_bin(i, ops, f"nx::sat<int{bits}_t>((int64_t(a) * int64_t(b) * 2) >> {bits})", signed=True)
-
     def i_sshl(self, f, i, ops):
         bits = self.vinfo(ops[0])[0]
         return self.v_bin(i, ops, f"int8_t(S1.u{bits}[k]) >= 0 ? (int8_t(S1.u{bits}[k]) >= {bits} ? 0 : int64_t(a) << int8_t(S1.u{bits}[k])) : (int8_t(S1.u{bits}[k]) <= -{bits} ? (a < 0 ? -1 : 0) : int64_t(a) >> -int8_t(S1.u{bits}[k]))", signed=True)
@@ -296,21 +286,3 @@ class NeonOps:
 
     def i_sshr(self, f, i, ops):
         return self.v_shift_imm(i, ops, "{a} >> ({n} >= {bits} ? {bits} - 1 : {n})", signed=True)
-
-    def i_srshr(self, f, i, ops):
-        return self.v_shift_imm(i, ops, "({a} + (int64_t(1) << ({n} - 1))) >> {n}", signed=True)
-
-    def i_urshr(self, f, i, ops):
-        return self.v_shift_imm(i, ops, "({a} + (uint64_t(1) << ({n} - 1))) >> {n}")
-
-    def i_ssra(self, f, i, ops):
-        return self.v_shift_imm(i, ops, "{o} + ({a} >> ({n} >= {bits} ? {bits} - 1 : {n}))", signed=True, acc=True)
-
-    def i_usra(self, f, i, ops):
-        return self.v_shift_imm(i, ops, "{o} + (({n} >= {bits}) ? 0 : ({a} >> {n}))", acc=True)
-
-    def i_srsra(self, f, i, ops):
-        return self.v_shift_imm(i, ops, "{o} + (({a} + (int64_t(1) << ({n} - 1))) >> {n})", signed=True, acc=True)
-
-    def i_ursra(self, f, i, ops):
-        return self.v_shift_imm(i, ops, "{o} + (({a} + (uint64_t(1) << ({n} - 1))) >> {n})", acc=True)

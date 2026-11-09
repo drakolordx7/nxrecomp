@@ -196,12 +196,10 @@ class Fn:
                 out = 'c->x[30] = 0x%xULL; %s' % (pc + 4, self.env.call(target))
                 # A bl whose next word is not an instruction (op0 0..3) never comes back to it: the callee returns past it
                 # (SDK rtld: `bl f; .word off` where f reads the word at x30, restores x30 and returns to the outer caller;
-                # SDK noreturn calls followed by udf). Return instead of running into the data word.
-                try:
-                    nxt = self.env.word(pc + 4)
-                except Exception:
-                    nxt = None
-                if nxt is not None and bits(nxt, 28, 25) <= 3:
+                # SDK noreturn calls followed by udf). Return instead of running into the data word. Only a word inside the
+                # module's .text is read; the oracles' one-instruction envs have no .text (no text_lo/text_hi) and skip this.
+                lo, hi = getattr(self.env, 'text_lo', 0), getattr(self.env, 'text_hi', 0)
+                if lo <= pc + 4 < hi and bits(self.env.word(pc + 4), 28, 25) <= 3:
                     out += ' return;'
                 return out
             return self.jump(target)

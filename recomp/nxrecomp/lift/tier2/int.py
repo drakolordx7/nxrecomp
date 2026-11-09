@@ -79,13 +79,6 @@ class IntOps:
         bits = 64 if n.bits == 64 else 32
         return f"nx::adds{bits}(c, {n.r()}, {self.shifted(i, ops[1], bits)}, 0);"
 
-    def i_neg(self, f, i, ops):
-        d = self.regop(i, ops[0])
-        if not d.gp:
-            return self.v_un(i, ops, "-a", signed=True)
-        bits = d.bits
-        return d.w(f"{u(bits)}(0) - {self.shifted(i, ops[1], bits)}")
-
     def i_negs(self, f, i, ops):
         d = self.regop(i, ops[0])
         return d.w(f"nx::subs{d.bits}(c, 0, {self.shifted(i, ops[1], d.bits)})")
@@ -400,10 +393,6 @@ class IntOps:
             return self.v_un(i, ops, f"std::countl_zero(uint{bits}_t((uint{bits}_t(a) ^ (uint{bits}_t(a) << 1)) | 1))")
         n = self.regop(i, ops[1]).r()
         return d.w(f"std::countl_zero({u(d.bits)}(({u(d.bits)}({n}) ^ ({u(d.bits)}({n}) << 1)) | 1)) ")
-
-    def i_rbit(self, f, i, ops):
-        d = self.regop(i, ops[0])
-        return d.w(f"nx::rbit{d.bits}({self.regop(i, ops[1]).r()})")
 
     def i_rev(self, f, i, ops):
         d = self.regop(i, ops[0])

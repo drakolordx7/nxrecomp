@@ -59,9 +59,6 @@ class VecLdSt:
         parts.append(wb)
         return "{ " + " ".join(p for p in parts if p) + " }"
 
-    def i_ld1(self, f, i, ops):
-        return self.vldst(i, ops, 1, False)
-
     def i_st1(self, f, i, ops):
         return self.vldst(i, ops, 1, True)
 
