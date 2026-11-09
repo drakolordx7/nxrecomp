@@ -9,10 +9,8 @@
 //       below), the two-phase search/cleanup walk of the guest stack over NxModule.eh, the personality routine's typeinfo
 //       matching, landing (x0 = _Unwind_Exception*, x1 = selector, callee-saved registers and SP of the landing frame), and
 //       nx_catch_call's setjmp frames. The guest's own libunwind/personality (__gxx_personality_v0) is never called.
-// The guest reaches the handlers in three ways, all equivalent: an HLE thunk by import name ("_Unwind_RaiseException", registered
-// by register_unwind_hle()), an entry hook on the guest function (hook_add_entry + hook_unwind_*), or a lifter function override
-// (game config `overrides`: guest address -> "nxrt_unwind_raise_exception", which the runtime exports as the extern "C" functions
-// h_nxrt_unwind_raise_exception etc. in src/eh/handlers.cpp).
+// The guest reaches the handlers in two ways, both equivalent: an HLE thunk by import name ("_Unwind_RaiseException", registered
+// by register_unwind_hle()), or an entry hook on the guest function (hook_add_entry + hook_unwind_*).
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -149,12 +147,4 @@ struct Stats {
 Stats stats();
 void stats_reset();
 
-}
-
-extern "C" {
-// Lifter function overrides (game config `overrides = {addr: "nxrt_unwind_raise_exception"}` -> h_nxrt_unwind_raise_exception(Ctx *c)).
-void h_nxrt_unwind_raise_exception(Ctx* c);
-void h_nxrt_unwind_resume(Ctx* c);
-void h_nxrt_unwind_resume_or_rethrow(Ctx* c);
-void h_nxrt_unwind_delete_exception(Ctx* c);
 }

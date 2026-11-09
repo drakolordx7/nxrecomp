@@ -27,10 +27,3 @@ int hook_unwind_resume_or_rethrow(::Ctx* c, uint64_t, void*) { unwind_resume_or_
 int hook_unwind_delete_exception(::Ctx* c, uint64_t, void*) { unwind_delete_exception(c); return 1; }
 
 }
-
-extern "C" {
-void h_nxrt_unwind_raise_exception(Ctx* c) { nxrt::eh::unwind_raise_exception(c); }
-void h_nxrt_unwind_resume(Ctx* c) { nxrt::eh::unwind_resume(c); }
-void h_nxrt_unwind_resume_or_rethrow(Ctx* c) { nxrt::eh::unwind_resume_or_rethrow(c); }
-void h_nxrt_unwind_delete_exception(Ctx* c) { nxrt::eh::unwind_delete_exception(c); }
-}
