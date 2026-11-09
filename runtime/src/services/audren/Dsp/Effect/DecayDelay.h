@@ -10,7 +10,7 @@ namespace nxrt::audren {
 
 class DecayDelay : public IDelayLine {
   private:
-    std::unique_ptr<IDelayLine> _owned;   // set when the DecayDelay owns its delay line (C# relies on the GC for that)
+    std::unique_ptr<IDelayLine> _owned;
     IDelayLine* _ptr;
     IDelayLine& _delayLine;
 
@@ -18,7 +18,6 @@ class DecayDelay : public IDelayLine {
 
   public:
     explicit DecayDelay(IDelayLine& delayLine) : _ptr(&delayLine), _delayLine(delayLine) {}
-    // Owning form: `new DecayDelay(new DelayLine(...))` in the C#.
     explicit DecayDelay(std::unique_ptr<IDelayLine> delayLine) : _owned(std::move(delayLine)), _ptr(_owned.get()), _delayLine(*_ptr) {}
     DecayDelay(DecayDelay&& o) noexcept : _owned(std::move(o._owned)), _ptr(o._ptr), _delayLine(*o._ptr), _decayRate(o._decayRate) {}
 
@@ -44,4 +43,4 @@ class DecayDelay : public IDelayLine {
     float Tap(uint32_t sampleIndex) override { return _delayLine.Tap(sampleIndex); }
 };
 
-}  // namespace nxrt::audren
+}

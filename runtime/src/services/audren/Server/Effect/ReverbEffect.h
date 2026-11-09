@@ -16,10 +16,8 @@ namespace nxrt::audren {
 
 class ReverbEffect : public BaseEffect {
   public:
-    // The reverberation parameter (C# ReverbParameter Parameter; default-initialised).
     ReverbParameter Parameter{};
 
-    // The reverberation state (C# Memory<ReverbState>, one element).
     Span<ReverbState> State;
 
   private:
@@ -82,4 +80,4 @@ class ReverbEffect : public BaseEffect {
     }
 };
 
-}  // namespace nxrt::audren
+}

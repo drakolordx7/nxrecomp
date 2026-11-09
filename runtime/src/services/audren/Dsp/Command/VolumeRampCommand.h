@@ -49,4 +49,4 @@ class VolumeRampCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

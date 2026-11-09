@@ -25,17 +25,17 @@ uint64_t guest_function_of(uint64_t host_rip);
 // ---- HLE thunks ----------------------------------------------------------------------------------------------------
 // Each thunk is a 16-byte slot in [mem::kHleBase, +mem::kHleSize). Calling the address through call_indirect runs the host
 // handler with the guest registers; the handler returns by writing x0.. and returning (the caller continues after the call).
-uint64_t hle_register(const char* name, HleFn fn);        // makes/updates the thunk for `name`; returns its address
+uint64_t hle_register(const char* name, HleFn fn);
 uint64_t hle_address(const char* name);                   // thunk for `name`; an unknown name gets a logging stub (x0 = 0)
 HleFn hle_lookup(const char* name);                       // the registered handler or nullptr (stubs are not "registered")
 bool hle_is_thunk(uint64_t addr);
-const char* hle_name_at(uint64_t addr);                   // name behind a thunk address or nullptr
+const char* hle_name_at(uint64_t addr);
 size_t hle_count();
-size_t hle_stub_count();                                  // thunks that are logging stubs (no handler)
-uint64_t hle_calls(uint64_t addr);                        // times the thunk at addr has been called
+size_t hle_stub_count();
+uint64_t hle_calls(uint64_t addr);
 struct HleInfo { std::string name; uint64_t calls = 0; bool stub = false; };
 std::vector<HleInfo> hle_list();                          // every thunk, in creation order (end-of-run report)
-void hle_clear();                                         // tests only
+void hle_clear();
 // Name of the HLE function the calling thread is currently inside, or nullptr.
 const char* hle_current_name();
 void hle_restore_current(const char* name);               // after a longjmp out of an HLE handler (eh/catch_call.cpp): sets what hle_current_name() answers
@@ -46,4 +46,4 @@ void hle_restore_current(const char* name);               // after a longjmp out
 void dispatch_call(::Ctx* c, uint64_t addr);
 [[noreturn]] void trap(const char* what, uint64_t addr);   // logs "GUEST TRAP: what (0xaddr)" and raises 0xE0000001
 
-}  // namespace nxrt
+}

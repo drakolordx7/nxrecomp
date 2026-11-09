@@ -26,7 +26,7 @@ struct PadFrame {
     bool operator==(const PadFrame& o) const {
         return buttons == o.buttons && lx == o.lx && ly == o.ly && rx == o.rx && ry == o.ry && mouse_dx == o.mouse_dx && mouse_dy == o.mouse_dy;
     }
-    bool held_equal(const PadFrame& o) const {      // everything except the mouse impulse
+    bool held_equal(const PadFrame& o) const {
         return buttons == o.buttons && lx == o.lx && ly == o.ly && rx == o.rx && ry == o.ry;
     }
 };
@@ -55,4 +55,4 @@ private:
     bool last_had_impulse_ = false;
 };
 
-}  // namespace nxrt::tt
+}

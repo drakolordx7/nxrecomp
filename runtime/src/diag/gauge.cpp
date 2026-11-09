@@ -31,9 +31,9 @@ Registry& reg() {
 }
 
 // ---- frame times of the window -------------------------------------------------------------------------------------------
-constexpr size_t kRing = 1 << 16;           // frames kept between two samples (enough for 6,500 fps at a 10 s window)
+constexpr size_t kRing = 1 << 16;
 std::atomic<uint64_t> g_ring_n{0};
-std::atomic<uint64_t> g_ring[kRing];        // QueryPerformanceCounter ticks of each presented frame
+std::atomic<uint64_t> g_ring[kRing];
 
 uint64_t qpc() {
     LARGE_INTEGER v;
@@ -124,7 +124,7 @@ void run(double interval_s, double t0) {
     }
 }
 
-}  // namespace
+}
 
 void gauge_register(const char* name, std::function<int64_t()> fn) {
     Registry& r = reg();
@@ -189,4 +189,4 @@ void soak_stop() {
     if (s.f) { fclose(s.f); s.f = nullptr; }
 }
 
-}  // namespace nxrt
+}

@@ -26,12 +26,11 @@ namespace {
 
 constexpr const char* kTag = "mem";
 constexpr uint64_t kAddrLimit = 0x800000000000ull;  // user-mode address limit of x64 Windows (47 bits)
-constexpr uint64_t kVmEnd = 0x8000000000ull;         // end of the address space reported by vm_query
+constexpr uint64_t kVmEnd = 0x8000000000ull;
 constexpr int kAliasTries = 16;
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 
-// Whole pages covering [addr, addr+size). False when the range leaves the user address space.
 bool page_span(uint64_t addr, uint64_t size, uint64_t* start, uint64_t* end) {
     if (size > kAddrLimit || addr > kAddrLimit - size) return false;
     *start = addr & ~(kPage - 1);
@@ -59,9 +58,9 @@ std::mutex g_fixed_mu;
 std::map<uint64_t, Fixed> g_fixed;
 
 // ---- module state ----
-std::mutex g_state_mu;                    // init / shutdown
+std::mutex g_state_mu;
 std::atomic<bool> g_inited{false};
-std::atomic<uint64_t> g_default_heap{0};  // bytes, from Config or [memory] heap_gb
+std::atomic<uint64_t> g_default_heap{0};
 
 std::mutex g_kernel_mu;
 uint64_t g_kernel_next = kKernelBase;     // guarded by g_kernel_mu
@@ -72,19 +71,18 @@ std::map<uint64_t, VmInfo> g_vm;          // start -> block, guarded by g_vm_mu
 // ---- heap (guarded by g_heap_mu) ----
 std::mutex g_heap_mu;
 HANDLE g_section = nullptr;
-uint64_t g_heap_size = 0;                 // 0 = no heap; otherwise the section size = size of the primary view
-std::vector<uint64_t> g_commit_bits;      // one bit per 4 KiB page of the section, set by heap_commit
-uint64_t g_committed = 0;                 // bytes of pages whose bit is set
+uint64_t g_heap_size = 0;
+std::vector<uint64_t> g_commit_bits;
+uint64_t g_committed = 0;
 // Per 4 KiB page of the section, what the host reports for it: 0 never committed, 1 committed but no-access (a decommitted page or one
 // the guest made inaccessible), 2 committed and accessible. VirtualQuery over the section view walks every page table entry of the
 // run of identical pages (about 75 ms for a 3 GiB committed heap), so is_mapped and protect answer heap ranges from this table.
 std::vector<uint8_t> g_heap_cls;
 struct Alias {
     uint64_t size;
-    uint64_t offset;                      // section offset of the first byte of the view
+    uint64_t offset;
 };
-std::map<uint64_t, Alias> g_aliases;      // view address -> record
-// Alias region in use: start -> size for every live view and for every candidate address the kernel refused.
+std::map<uint64_t, Alias> g_aliases;
 std::map<uint64_t, uint64_t> g_alias_used;
 
 // ---- gauges (include/nxrt/gauge.h); each callback takes the lock of the state it reads ----
@@ -94,17 +92,17 @@ struct GaugeHook {
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
-GaugeHook gauge_heap_reserved("mem.heap_reserved", [] { return static_cast<int64_t>(heap_reserved()); });   // section size
-GaugeHook gauge_heap_committed("mem.heap_committed", [] { return static_cast<int64_t>(heap_committed()); });   // committed through heap_commit
-GaugeHook gauge_aliases("mem.aliases", [] {   // heap alias views live (g_heap_mu)
+GaugeHook gauge_heap_reserved("mem.heap_reserved", [] { return static_cast<int64_t>(heap_reserved()); });
+GaugeHook gauge_heap_committed("mem.heap_committed", [] { return static_cast<int64_t>(heap_committed()); });
+GaugeHook gauge_aliases("mem.aliases", [] {
     std::lock_guard<std::mutex> lk(g_heap_mu);
     return static_cast<int64_t>(g_aliases.size());
 });
-GaugeHook gauge_alias_used("mem.alias_used", [] {   // alias-region ranges in use, plus addresses the kernel refused (never freed: only grows)
+GaugeHook gauge_alias_used("mem.alias_used", [] {
     std::lock_guard<std::mutex> lk(g_heap_mu);
     return static_cast<int64_t>(g_alias_used.size());
 });
-GaugeHook gauge_fixed("mem.fixed_regions", [] {   // fixed reservations of this module (images, stacks, kernel region)
+GaugeHook gauge_fixed("mem.fixed_regions", [] {
     std::lock_guard<std::mutex> lk(g_fixed_mu);
     return static_cast<int64_t>(g_fixed.size());
 });
@@ -114,7 +112,7 @@ GaugeHook gauge_fixed_bytes("mem.fixed_bytes", [] {
     for (const auto& kv : g_fixed) n += kv.second.size;
     return static_cast<int64_t>(n);
 });
-GaugeHook gauge_vm_blocks("mem.vm_blocks", [] {   // blocks of the Horizon-style vm map kept for QueryMemory
+GaugeHook gauge_vm_blocks("mem.vm_blocks", [] {
     std::lock_guard<std::mutex> lk(g_vm_mu);
     return static_cast<int64_t>(g_vm.size());
 });
@@ -125,7 +123,6 @@ bool fast_query() {
     return v;
 }
 
-// True when [start, end) lies inside the heap primary view (g_heap_mu held).
 bool in_heap_view(uint64_t start, uint64_t end) {
     return fast_query() && g_heap_size && !g_heap_cls.empty() && start >= kHeapBase && end <= kHeapBase + g_heap_size && start < end;
 }
@@ -134,7 +131,6 @@ bool bit_test(uint64_t page) { return (g_commit_bits[page / 64] >> (page % 64)) 
 void bit_set(uint64_t page) { g_commit_bits[page / 64] |= uint64_t{1} << (page % 64); }
 void bit_clear(uint64_t page) { g_commit_bits[page / 64] &= ~(uint64_t{1} << (page % 64)); }
 
-// First address >= from at which `size` bytes are free in the alias region; 0 when there is none.
 uint64_t find_free_alias(uint64_t from, uint64_t size) {
     const uint64_t limit = kAliasBase + kAliasSize;
     uint64_t cand = std::max(from, kAliasBase);
@@ -157,7 +153,7 @@ uint64_t find_free_alias(uint64_t from, uint64_t size) {
     }
 }
 
-}  // namespace
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // init / shutdown
@@ -305,7 +301,7 @@ bool commit(uint64_t addr, uint64_t size, Prot p) {
     uint64_t start = 0, end = 0;
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
-    const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);   // the write tracker keeps out of the range while it changes
+    const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);
     if (!VirtualAlloc(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), MEM_COMMIT, protect_of(p))) {
         DWORD e = GetLastError();
         NXLOG_E(kTag, "commit %llx (+%llx): VirtualAlloc failed, error %lu", static_cast<unsigned long long>(start),
@@ -348,7 +344,6 @@ bool protect(uint64_t addr, uint64_t size, Prot p) {
             }
         }
     }
-    // Pass 1: every page must be committed, so a failure never leaves the range half changed.
     for (uint64_t cur = start; cur < end;) {
         MEMORY_BASIC_INFORMATION mbi{};
         if (VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi) != sizeof mbi || mbi.RegionSize == 0) {
@@ -362,7 +357,6 @@ bool protect(uint64_t addr, uint64_t size, Prot p) {
         }
         cur = std::min<uint64_t>(end, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize);
     }
-    // Pass 2: region by region (a range can span several allocations, each has its own region).
     for (uint64_t cur = start; cur < end;) {
         MEMORY_BASIC_INFORMATION mbi{};
         VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi);
@@ -431,7 +425,7 @@ bool is_mapped(uint64_t addr, uint64_t size) {
 bool heap_create(uint64_t reserve_bytes) {
     if (!initialised() && !init()) return false;
     std::lock_guard lk(g_heap_mu);
-    if (g_heap_size) return true;  // a heap already exists: nothing to do
+    if (g_heap_size) return true;
 
     const uint64_t want = reserve_bytes ? reserve_bytes : g_default_heap.load();
     if (want == 0) {
@@ -624,7 +618,7 @@ uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at, Prot p) {
         if (v) UnmapViewOfFile(v);
         NXLOG_W(kTag, "heap_alias: %llx is taken (error %lu): marking it unusable",
                 static_cast<unsigned long long>(cand), static_cast<unsigned long>(GetLastError()));
-        g_alias_used[cand] = size;  // refused by the kernel: never offer it again
+        g_alias_used[cand] = size;
     }
     NXLOG_E(kTag, "heap_alias: no free range for %llx bytes in the alias region", static_cast<unsigned long long>(size));
     return 0;
@@ -689,7 +683,6 @@ void vm_set(uint64_t addr, uint64_t size, uint32_t state, uint32_t perm) {
     if (size == 0 || addr + size < addr) return;
     const uint64_t end = addr + size;
     std::lock_guard lk(g_vm_mu);
-    // Cut every block that overlaps [addr, end); the parts outside the new range stay.
     auto it = g_vm.lower_bound(addr);
     if (it != g_vm.begin()) {
         auto p = std::prev(it);
@@ -706,7 +699,7 @@ void vm_set(uint64_t addr, uint64_t size, uint32_t state, uint32_t perm) {
 
 VmInfo vm_query(uint64_t addr) {
     std::lock_guard lk(g_vm_mu);
-    auto it = g_vm.upper_bound(addr);  // first block that starts after addr
+    auto it = g_vm.upper_bound(addr);
     if (it != g_vm.begin()) {
         auto p = std::prev(it);
         if (addr < p->second.addr + p->second.size) return p->second;
@@ -718,4 +711,4 @@ VmInfo vm_query(uint64_t addr) {
     return VmInfo{0, gap_end, kMemFree, 0};
 }
 
-}  // namespace nxrt::mem
+}

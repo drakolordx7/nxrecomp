@@ -22,7 +22,7 @@ namespace detail {
 // Defined below. Counts one unhandled command of `s` (on the object and per service name) and returns the per-name count
 // of that command, including this one. Used by Service::handle and by StubService::handle (stub.cpp).
 uint64_t note_unhandled(Service& s, uint32_t cmd);
-}  // namespace detail
+}
 
 namespace {
 
@@ -34,11 +34,10 @@ constexpr uint64_t kMaxMsgBytes = 0x1000;
 constexpr size_t kHeaderBytes = 16;                                      // CmifIn/OutHeader, CmifDomain*Header, SFCI payload start
 constexpr size_t kConnectNameMax = 12;                                   // ConnectToNamedPort reads at most 12 bytes
 
-// Gauges (include/nxrt/gauge.h). Domain objects: +1 when an object enters a domain's table, -1 when it leaves it (erased, or the domain dies).
 GaugeCounter g_domain_objects("ipc.domain_objects");
-GaugeCounter g_requests_pending("ipc.requests_pending");   // svcSendSyncRequest calls in flight
+GaugeCounter g_requests_pending("ipc.requests_pending");
 
-enum class Wire { Cmif, Domain, Tipc };                                  // how a reply is laid out
+enum class Wire { Cmif, Domain, Tipc };
 
 // Everything below is guarded by one recursive mutex: the registry, per-name counters, and session/domain state. It is never held
 // while a service handler runs (handlers may block).
@@ -50,13 +49,13 @@ std::recursive_mutex& mu() {
 struct Registry {
     std::map<std::string, ServiceFactory> factories;
     std::vector<std::string> stubs_requested;
-    std::map<std::string, ServiceStats> stats;   // per service name, accumulated over sessions
+    std::map<std::string, ServiceStats> stats;
 };
 
 Registry& reg() {
     static Registry r = [] {
         Registry x;
-        x.factories["sm:"] = [] { return make_sm(); };   // built-in
+        x.factories["sm:"] = [] { return make_sm(); };
         return x;
     }();
     return r;
@@ -107,7 +106,6 @@ std::vector<uint8_t> sfco(uint32_t result) {   // CmifOutHeader: 'SFCO', version
     return v;
 }
 
-// Guest buffers the request describes, as the handler sees them.
 void fill_request_buffers(const hipc::Message& m, Request& req) {
     for (const hipc::BufDesc& d : m.send) req.a.push_back(Buffer{d.addr, d.size});
     for (const hipc::BufDesc& d : m.recv) req.b.push_back(Buffer{d.addr, d.size});
@@ -136,7 +134,6 @@ uint32_t run_handler(const std::shared_ptr<Service>& svc, Request& req, Response
     return kernel::kInvalidState;
 }
 
-// Closes the move handles of a request (a move transfers them to the service) once it has been handled.
 void consume_moved_handles(const hipc::Message& m) {
     for (uint32_t h : m.move) kernel::handle_close(h);
 }
@@ -147,8 +144,8 @@ void consume_moved_handles(const hipc::Message& m) {
 // 0xF601 is written instead.
 void write_reply(uint32_t* words, size_t cap, Wire wire, uint32_t result, Response* rsp, const std::shared_ptr<DomainState>& dom) {
     const bool ok = result == 0 && rsp != nullptr;
-    std::vector<uint32_t> made;   // session handles created for returned objects (CMIF and TIPC): moved to the client
-    std::vector<uint32_t> ids;    // domain object ids registered for returned objects (domain replies)
+    std::vector<uint32_t> made;
+    std::vector<uint32_t> ids;
     std::string why;
     hipc::Message m;
     // TIPC: raw data without padding (Switchbrew: "RawData field directly contains the payload"). hipc::build pads type 0 but not
@@ -192,17 +189,16 @@ void write_reply(uint32_t* words, size_t cap, Wire wire, uint32_t result, Respon
         }
         std::string err;
         if (hipc::build(m, words, cap, &err) != 0) {
-            if (wire == Wire::Tipc) words[0] &= 0xFFFF0000u;   // type 0
+            if (wire == Wire::Tipc) words[0] &= 0xFFFF0000u;
             return;
         }
         why = err.empty() ? "message buffer too small" : err;
     }
 
-    // The reply does not fit (or a handle could not be made): undo what was made for it and answer with the header only.
     NXLOG_E("ipc", "reply does not fit the message buffer (%s): answering 0x%x", why.c_str(), kCmifInvalidObject);
     for (uint32_t h : made) kernel::handle_close(h);
     if (rsp)
-        for (uint32_t h : rsp->out_move) kernel::handle_close(h);   // dropped: never reached the client
+        for (uint32_t h : rsp->out_move) kernel::handle_close(h);
     if (!ids.empty()) {
         std::lock_guard<std::recursive_mutex> lk(mu());
         for (uint32_t id : ids)
@@ -281,7 +277,7 @@ uint32_t control(const std::shared_ptr<KSession>& s, const hipc::Message& m, Res
     }
 }
 
-}  // namespace
+}
 
 // ---- Service ------------------------------------------------------------------------------------------------------------
 
@@ -301,7 +297,7 @@ uint64_t note_unhandled(Service& s, uint32_t cmd) {
     st.stub = s.is_stub();
     return ++st.unhandled[cmd];
 }
-}  // namespace detail
+}
 
 // ---- registry -----------------------------------------------------------------------------------------------------------
 
@@ -364,7 +360,6 @@ void registry_reset() {
 
 KSession::~KSession() {
     std::lock_guard<std::recursive_mutex> lk(mu());
-    // The domain dies with this session when nothing else holds it; its objects then die too unless another holder keeps them.
     const bool dom_dies = dom && dom.use_count() == 1;
     if (dom_dies) {
         g_domain_objects.sub(static_cast<int64_t>(dom->objects.size()));
@@ -372,10 +367,10 @@ KSession::~KSession() {
             if (kv.second != svc && kv.second.use_count() == 1) kv.second->on_close();
     }
     if (svc) {
-        long own = 1;   // this session's reference
+        long own = 1;
         if (dom_dies)
             for (const auto& kv : dom->objects)
-                if (kv.second == svc) own++;   // the domain's reference to this service, which dies with it
+                if (kv.second == svc) own++;
         if (svc.use_count() == own) svc->on_close();
     }
 }
@@ -399,7 +394,7 @@ uint32_t connect_named_port(const char* name, uint32_t* out_handle) {
 }
 
 uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr, uint64_t msg_size) {
-    struct Pending {   // counts this request while it is in flight, whatever way it returns
+    struct Pending {
         Pending() { g_requests_pending.add(1); }
         ~Pending() { g_requests_pending.sub(1); }
     } pending;
@@ -426,7 +421,6 @@ uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr,
         return 0;
     }
 
-    // Control messages (5, 7).
     if (m.type == hipc::kInvoke2ManagerMethodOld || m.type == hipc::kInvoke2ManagerMethod) {
         if (m.raw.size() < kHeaderBytes) return kInvalidCombination;
         Response rsp;
@@ -456,7 +450,6 @@ uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr,
         return 0;
     }
 
-    // CMIF requests (1, 3, 4, 6). Anything else is not a request type.
     if (m.type != hipc::kInvokeMethod && m.type != hipc::kInvokeManagerMethod && m.type != hipc::kInvoke2MethodOld &&
         m.type != hipc::kInvoke2Method) {
         NXLOG_E("ipc", "SendSyncRequest(0x%x): unknown message type %u", session_handle, m.type);
@@ -478,7 +471,7 @@ uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr,
         const size_t n_obj = m.raw[1];
         const size_t in_raw = rd16(m.raw, 2);
         const uint32_t target = rd32(m.raw, 4);
-        if (kind == 2) {   // close the object: erased from the domain
+        if (kind == 2) {
             std::shared_ptr<Service> dying;
             {
                 std::lock_guard<std::recursive_mutex> lk(mu());
@@ -538,7 +531,6 @@ uint32_t send_sync_request(::Ctx* c, uint32_t session_handle, uint64_t msg_addr,
         return 0;
     }
 
-    // Plain CMIF request on a session.
     if (rd32(m.raw, 0) != kSfci) {
         NXLOG_E("ipc", "service '%s': bad SFCI magic 0x%08x", s->svc ? s->svc->name().c_str() : "?", rd32(m.raw, 0));
         write_reply(words, cap, Wire::Cmif, kCmifInvalidObject, nullptr, nullptr);
@@ -585,4 +577,4 @@ std::string ipc_summary() {
     return out.empty() ? std::string("ipc: no service requests") : out;
 }
 
-}  // namespace nxrt::ipc
+}

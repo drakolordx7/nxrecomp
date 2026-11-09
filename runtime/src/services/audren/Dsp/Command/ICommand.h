@@ -66,4 +66,4 @@ class ICommand {
     virtual bool ShouldMeter() { return false; }
 };
 
-}  // namespace nxrt::audren
+}

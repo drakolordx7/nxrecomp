@@ -44,7 +44,6 @@ class AudioProcessor {
         RenderEnd,
     };
 
-    // One session's pending work (C# RendererSession). Owns the CommandList until it is processed.
     struct RendererSession {
         std::unique_ptr<::nxrt::audren::CommandList> CommandList;
         int32_t RenderingLimit = 0;
@@ -59,14 +58,12 @@ class AudioProcessor {
     std::thread _workerThread;
 
   public:
-    // C# IHardwareDevice[] OutputDevices { get; private set; }: one device per session, owned here.
     std::vector<std::unique_ptr<IHardwareDevice>> OutputDevices;
 
   private:
     int64_t _lastTime = 0;
     int64_t _playbackEnds = 0;
 
-    // C# PerformanceCounter.ElapsedNanoseconds.
     static int64_t ElapsedNanoseconds() {
         return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
     }
@@ -113,7 +110,6 @@ class AudioProcessor {
 
                 for (size_t i = 0; i < _sessionCommandList.size(); i++) {
                     if (_sessionCommandList[i] != nullptr) {
-                        // C# CommandList.Dispose() and the slot reset: the session's CommandList is destroyed with its slot.
                         _sessionCommandList[i]->CommandList->Process(OutputDevices[i].get());
                         _sessionCommandList[i].reset();
                     }
@@ -146,13 +142,11 @@ class AudioProcessor {
     AudioProcessor& operator=(const AudioProcessor&) = delete;
 
     ~AudioProcessor() {
-        // C# Dispose(): the thread is stopped if it is still running. The Stop handshake is only valid while the worker is running.
         if (_workerThread.joinable()) {
             Stop();
         }
     }
 
-    // Start the worker thread and open one output device per session (C# Start).
     void Start(IHardwareDeviceDriver* deviceDriver) {
         OutputDevices.clear();
         OutputDevices.resize(static_cast<size_t>(Constants::AudioRendererSessionCountMax));
@@ -177,7 +171,6 @@ class AudioProcessor {
         }
     }
 
-    // Stop the worker thread and release the output devices (C# Stop, plus the join the C++ thread needs).
     void Stop() {
         _mailbox.SendMessage(MailboxMessage::Stop);
 
@@ -194,7 +187,6 @@ class AudioProcessor {
         }
     }
 
-    // Queue a CommandList for a session. The processor owns it from now on (C# Send).
     void Send(int32_t sessionId, std::unique_ptr<::nxrt::audren::CommandList> commands, int32_t renderingLimit, uint64_t appletResourceId) {
         auto session = std::make_unique<RendererSession>();
         session->CommandList = std::move(commands);
@@ -206,7 +198,6 @@ class AudioProcessor {
         _sessionCommandList[static_cast<size_t>(sessionId)] = std::move(session);
     }
 
-    // True while a session's previous CommandList has not been processed yet (C# HasRemainingCommands).
     bool HasRemainingCommands(int32_t sessionId) const {
         std::lock_guard<std::mutex> guard(_slotMutex);
 
@@ -267,7 +258,6 @@ class AudioProcessor {
                 level = DeviceQueuedNanoseconds();
             }
 
-            // Keep the host-clock bookkeeping current for the moment the device goes away.
             _lastTime = ElapsedNanoseconds();
             _playbackEnds = _lastTime;
 
@@ -277,22 +267,16 @@ class AudioProcessor {
         int64_t timeNow = ElapsedNanoseconds();
 
         if (timeNow > _playbackEnds) {
-            // Playback has restarted.
             _playbackEnds = timeNow;
         }
 
         _playbackEnds += increment;
 
-        // The number of frames we are behind where the timer says we should be.
         int64_t framesBehind = (timeNow - _lastTime) / increment;
 
-        // The number of frames yet to play on the backend.
         int64_t bufferedFrames = (_playbackEnds - timeNow) / increment + framesBehind;
 
-        // If we've entered a situation where a lot of buffers will be queued on the backend,
-        // Skip some audio frames so that playback can catch up.
         if (bufferedFrames > MaxBufferedFrames) {
-            // Skip a few frames so that we're not too far behind. (the target number of frames)
             _lastTime += increment * (bufferedFrames - TargetBufferedFrames);
         }
 
@@ -307,4 +291,4 @@ class AudioProcessor {
     }
 };
 
-}  // namespace nxrt::audren
+}

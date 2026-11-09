@@ -35,22 +35,21 @@ public:
     uint64_t begin_frame_nohook();
     void run_pre_frame_hook();
 
-    // Restart the schedule (after a pause, a minimise, a mode change).
     void reset_schedule();
 
     struct Stats {
         uint64_t frames = 0;            // frame intervals measured (begin_frame calls minus one)
-        double mean_ms = 0;             // mean interval between frame starts
+        double mean_ms = 0;
         double min_ms = 0, max_ms = 0;
         double p99_ms = 0;              // 99th percentile of the intervals
         double stddev_ms = 0;
-        double fps = 0;                 // 1000 / mean_ms
+        double fps = 0;
         // Limiter accuracy, separate from what the frame body costs: frames whose body finished before the scheduled start had to
         // wait ("waited"); for those, how late the start came against the schedule. A frame whose body overran the period
         // ("overran") starts at once and is not the limiter's doing.
         uint64_t waited = 0, overran = 0;
         double overran_fraction = 0;    // overran / (waited + overran)
-        double late_p99_ms = 0, late_max_ms = 0;   // lateness of waited frames
+        double late_p99_ms = 0, late_max_ms = 0;
         double late_over_half_ms = 0;   // fraction of the waited frames that started more than 0.5 ms late (a robust accuracy measure with few frames, unlike p99)
     };
     Stats stats() const;                // over the intervals since reset_stats() (at most the last 8192)
@@ -60,7 +59,7 @@ public:
     uint64_t last_wait_ns() const;
     uint64_t last_late_ns() const;
 
-    static uint64_t now_ns();           // QueryPerformanceCounter in nanoseconds
+    static uint64_t now_ns();
 
 private:
     struct Impl;
@@ -72,4 +71,4 @@ private:
 // Busters formula, at least 3 under), never below 1. 60 -> 57, 120 -> 116, 144 -> 138.24, 240 -> 224.
 double suggest_vrr_cap(double refresh_hz);
 
-}  // namespace nxrt
+}

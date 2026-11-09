@@ -10,7 +10,6 @@ namespace nxrt::audren {
 
 class NodeStates {
 private:
-    // Int stack over a caller-provided span (C# private class Stack).
     class Stack {
     public:
         void Reset(Span<int32_t> storage, int32_t nodeCount) {
@@ -85,7 +84,6 @@ public:
         _stack.Reset(stackWorkBuffer, nodeCount * nodeCount);
     }
 
-    // Returns the sorted node ids (valid after Sort returned true).
     Span<const int32_t> GetTsortResult() const {
         return _resultArray.Slice(0, static_cast<size_t>(_tsortResultIndex));
     }
@@ -125,7 +123,6 @@ public:
                             if (jState == NodeState::Unknown) {
                                 _stack.Push(j);
                             }
-                            // Found a loop, reset and propagate rejection.
                             else if (jState == NodeState::Discovered) {
                                 Reset();
 
@@ -197,4 +194,4 @@ private:
     int32_t _tsortResultIndex = 0;
 };
 
-}  // namespace nxrt::audren
+}

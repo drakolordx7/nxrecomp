@@ -22,7 +22,6 @@ public:
     TestScene(const TestScene&) = delete;
     TestScene& operator=(const TestScene&) = delete;
 
-    // Records the scene for frame f.frame_number into f.cmd (the colour image is in COLOR_ATTACHMENT_OPTIMAL).
     void record(const FrameInfo& f);
 
     // The test texture (256 x 256 RGBA8, 9 levels) as pixels, level 0 and all levels back to back (tight rows); and the number
@@ -40,18 +39,18 @@ private:
 // ---- the frame loop ---------------------------------------------------------------------------------------------------
 struct SceneRunDesc {
     uint32_t frames = 300;                 // frames to render, then stop (0: until the window is closed)
-    bool headless = true;                  // true: offscreen images, no window; false: a window with a swapchain
-    uint32_t width = 640, height = 360;    // offscreen size, or the window size
+    bool headless = true;
+    uint32_t width = 640, height = 360;
     PresentMode present_mode = PresentMode::Fifo;
-    double target_fps = 0;                 // frame limiter (0 = unlimited)
-    int validation = -1;                   // see DeviceDesc
-    std::string gpu;                       // GPU override
-    int screenshot_frame = -1;             // frame number to capture, -1 none
-    std::string screenshot_path;           // PNG written for it
-    bool overlay = false;                  // create the ImGui overlay (toggle key F1)
+    double target_fps = 0;
+    int validation = -1;
+    std::string gpu;
+    int screenshot_frame = -1;
+    std::string screenshot_path;
+    bool overlay = false;
     int overlay_visible_from_frame = -1;   // show the overlay from this frame on (synthetic toggle), -1: leave it hidden
-    bool window_hidden = false;            // create the window hidden
-    bool boost_priority = false;           // run the loop at high priority (timing tests)
+    bool window_hidden = false;
+    bool boost_priority = false;
     uint32_t warmup_frames = 0;            // frames before the pacing statistics start (pipeline and driver warm-up)
     std::function<void(uint64_t frame, Renderer&)> per_frame;   // called before begin_frame (tests change modes / sizes here)
 };
@@ -59,11 +58,11 @@ struct SceneRunDesc {
 struct SceneRunResult {
     bool ok = false;
     std::string error;
-    uint64_t frames = 0;                   // frames rendered
+    uint64_t frames = 0;
     std::string gpu_name;
     int gpu_type = 0;
     ValidationStats validation;
-    FrameLimiter::Stats pacing;            // frame start intervals (FrameLimiter)
+    FrameLimiter::Stats pacing;
     RendererStats renderer;
     double wall_seconds = 0;
     // Input latency of the loop: from the moment input was sampled (right after the limiter wait and the platform pump) to the
@@ -73,7 +72,6 @@ struct SceneRunResult {
     Device::MemoryStats memory_end;
 };
 
-// Creates platform (unless headless), device, renderer, scene (and overlay), runs the loop, tears everything down.
 SceneRunResult run_scene(const SceneRunDesc& desc);
 
-}  // namespace nxrt::gfx
+}

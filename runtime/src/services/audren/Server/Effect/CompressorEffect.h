@@ -13,10 +13,8 @@ namespace nxrt::audren {
 
 class CompressorEffect : public BaseEffect {
   public:
-    // The compressor parameter (C# CompressorParameter Parameter; default-initialised).
     CompressorParameter Parameter{};
 
-    // The compressor state (C# Memory<CompressorState>, one element).
     Span<CompressorState> State;
 
   private:
@@ -67,4 +65,4 @@ class CompressorEffect : public BaseEffect {
     void UpdateResultState(EffectResultState& destState, EffectResultState& srcState) override { destState = srcState; }
 };
 
-}  // namespace nxrt::audren
+}

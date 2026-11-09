@@ -14,23 +14,17 @@ namespace nxrt::audren {
 
 class RendererSystemContext {
   public:
-    // The session id of the current renderer.
     int32_t SessionId = 0;
 
-    // The target channel count for sink.
     uint32_t ChannelCount = 0;
 
-    // The total count of mix buffer.
     uint32_t MixBufferCount = 0;
 
-    // Instance of the BehaviourInfo used to derive bug fixes and features of the current audio renderer revision (owned elsewhere).
     nxrt::audren::BehaviourInfo* BehaviourInfo = nullptr;
 
-    // Instance of the UpsamplerManager used for upsampling (owned elsewhere).
     nxrt::audren::UpsamplerManager* UpsamplerManager = nullptr;
 
-    // The memory to use for depop processing.
     Span<float> DepopBuffer;
 };
 
-}  // namespace nxrt::audren
+}

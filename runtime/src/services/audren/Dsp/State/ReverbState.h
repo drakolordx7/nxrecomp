@@ -162,7 +162,6 @@ struct ReverbState {
             FdnDelayLines[i].SetDelay(fdnDelayTimes[i]);
             DecayDelays[i].SetDelay(decayDelayTimes[i]);
 
-            // C#: -3 (int) * uint -> long, then to float.
             uint32_t sampleSum = DecayDelays[i].CurrentSampleCount() + FdnDelayLines[i].CurrentSampleCount();
             float tempA = static_cast<float>(-3LL * static_cast<int64_t>(sampleSum));
             float tempB = tempA / (decayTime * static_cast<float>(sampleRate));
@@ -192,4 +191,4 @@ struct ReverbState {
     }
 };
 
-}  // namespace nxrt::audren
+}

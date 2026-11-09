@@ -8,13 +8,9 @@ namespace nxrt::audren {
 
 #pragma pack(push, 1)
 struct PerformanceEntryVersion1 {
-    // The node id associated to this entry.
     int32_t NodeId;
-    // The start time (in microseconds) associated to this entry.
     int32_t StartTime;
-    // The processing time (in microseconds) associated to this entry.
     int32_t ProcessingTime;
-    // The entry type associated to this entry.
     PerformanceEntryType EntryType;
     // Trailing padding up to the C# Size (0x10).
     uint8_t Padding[3];
@@ -31,4 +27,4 @@ struct PerformanceEntryVersion1 {
 static_assert(sizeof(PerformanceEntryVersion1) == 0x10);
 static_assert(IPerformanceEntry<PerformanceEntryVersion1>);
 
-}  // namespace nxrt::audren
+}

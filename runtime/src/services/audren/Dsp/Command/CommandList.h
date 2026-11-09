@@ -73,4 +73,4 @@ class CommandList {
     size_t _floatCount = 0;
 };
 
-}  // namespace nxrt::audren
+}

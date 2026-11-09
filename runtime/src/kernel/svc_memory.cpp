@@ -35,7 +35,7 @@ inline unsigned long long U(uint64_t v) { return v; }
 
 // Guards the heap size, the MapMemory list and the alias-region windows below.
 std::mutex g_mu;
-uint64_t g_heap_cur = 0;                           // bytes; meaningful while mem::heap_exists()
+uint64_t g_heap_cur = 0;
 
 // MapMemory mappings: dst (stack region) is a view of src (heap) that stays writable only through dst.
 struct MapRec {
@@ -56,7 +56,6 @@ bool overlaps_perm_locked(uint64_t addr, uint64_t size) {   // call with g_mu he
     return it != g_perm_locked.end() && it->first < addr + size;
 }
 
-// Host views in the alias region made by MapSharedMemory, MapTransferMemory and MapPhysicalMemory, keyed by their address.
 enum class WinKind : uint8_t { Shared, Transfer, Physical };
 struct Window {
     uint64_t size;
@@ -67,7 +66,6 @@ std::map<uint64_t, Window> g_windows;
 
 uint64_t heap_now() { return mem::heap_exists() ? g_heap_cur : 0; }  // call with g_mu held
 
-// Every byte of [addr, addr+size) lies inside [base, base+len). size is non-zero (callers reject zero sizes first).
 bool within(uint64_t addr, uint64_t size, uint64_t base, uint64_t len) {
     return size <= len && addr >= base && addr - base <= len - size;
 }
@@ -99,17 +97,16 @@ bool in_map_region(uint64_t addr, uint64_t size) {
 std::map<uint64_t, uint64_t> g_reserve_base;   // window address -> base of its host reservation (differs when addr is not 64 KiB aligned)
 
 // ---- gauges (include/nxrt/gauge.h): every callback takes g_mu, the lock of the state it reads ----
-// Removes its gauge when the file's statics are torn down (declared after the containers above, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { gauge_register(n, std::move(f)); }
     ~GaugeHook() { gauge_unregister(name); }
 };
-GaugeHook gauge_heap_bytes("mem.heap_bytes", [] {   // SetHeapSize value (guest heap in use)
+GaugeHook gauge_heap_bytes("mem.heap_bytes", [] {
     std::lock_guard lk(g_mu);
     return static_cast<int64_t>(heap_now());
 });
-GaugeHook gauge_maps("mem.maps", [] {   // MapMemory mappings still live (the list only shrinks on UnmapMemory)
+GaugeHook gauge_maps("mem.maps", [] {
     std::lock_guard lk(g_mu);
     return static_cast<int64_t>(g_maps.size());
 });
@@ -119,7 +116,7 @@ GaugeHook gauge_map_bytes("mem.map_bytes", [] {
     for (const MapRec& r : g_maps) n += r.size;
     return static_cast<int64_t>(n);
 });
-GaugeHook gauge_windows("mem.windows", [] {   // MapSharedMemory / MapTransferMemory / MapPhysicalMemory views live in the alias region
+GaugeHook gauge_windows("mem.windows", [] {
     std::lock_guard lk(g_mu);
     return static_cast<int64_t>(g_windows.size());
 });
@@ -129,7 +126,7 @@ GaugeHook gauge_window_bytes("mem.window_bytes", [] {
     for (const auto& kv : g_windows) n += kv.second.size;
     return static_cast<int64_t>(n);
 });
-GaugeHook gauge_alias_reservations("mem.alias_reservations", [] {   // host reservations behind those windows
+GaugeHook gauge_alias_reservations("mem.alias_reservations", [] {
     std::lock_guard lk(g_mu);
     return static_cast<int64_t>(g_reserve_base.size());
 });
@@ -150,7 +147,6 @@ bool alias_alloc(uint64_t addr, uint64_t size) {
     return true;
 }
 
-// Releases a window made by alias_alloc (its base address, whole allocation).
 void alias_free(uint64_t addr) {
     uint64_t base = addr;
     auto it = g_reserve_base.find(addr);
@@ -163,7 +159,6 @@ void alias_free(uint64_t addr) {
     }
 }
 
-// Logs the refused call with its argument values and sets the result code.
 void fail(::Ctx* c, const char* what, uint32_t rc, uint64_t a, uint64_t b, uint64_t d) {
     NXLOG_W(kTag, "%s returned 0x%X (args %llx, %llx, %llx)", what, rc, U(a), U(b), U(d));
     svc_ret(c, rc);
@@ -194,7 +189,7 @@ void set_heap_size(::Ctx* c) {
             fail(c, "SetHeapSize", kernel::kOutOfMemory, size, 0, 0);
             return;
         }
-        g_heap_cur = 0;  // a fresh heap (first call, or after mem::shutdown)
+        g_heap_cur = 0;
     }
     const uint64_t old = g_heap_cur;
     if (size > old && !mem::heap_commit(old, size - old)) {
@@ -205,7 +200,6 @@ void set_heap_size(::Ctx* c) {
         fail(c, "SetHeapSize (decommit)", kernel::kInvalidMemoryState, size, old, 0);
         return;
     }
-    // Only the changed tail is touched in the vm map, so permissions set by SetMemoryPermission on the rest survive.
     if (size > old) mem::vm_set(mem::kHeapBase + old, size - old, mem::kMemHeap, kPermRW);
     if (size < old) mem::vm_set(mem::kHeapBase + size, old - size, mem::kMemFree, 0);
     g_heap_cur = size;
@@ -328,7 +322,7 @@ void map_memory(::Ctx* c) {
     ft::event(ft::zone_id("mm.protect"), tq0, ft::now_ns(), 0); tq0 = ft::now_ns();
     mem::vm_set(dst, size, mem::kMemStack, kPermRW);
     const mem::VmInfo src_before = mem::vm_query(src);
-    mem::vm_set(src, size, src_before.state, 0);  // the source is no-access while mapped
+    mem::vm_set(src, size, src_before.state, 0);
     ft::event(ft::zone_id("mm.vmset"), tq0, ft::now_ns(), 0);
     g_maps.push_back(MapRec{dst, src, size, src_before.state, src_before.perm});
     NXLOG_D(kTag, "MapMemory(dst %llx, src %llx, size %llx)", U(dst), U(src), U(size));
@@ -348,18 +342,16 @@ void unmap_memory(::Ctx* c) {
     std::lock_guard lk(g_mu);
     for (size_t i = 0; i < g_maps.size(); i++) {
         MapRec& r = g_maps[i];
-        // A whole mapping, or its first or last part (the rest stays mapped).
         const bool prefix = dst == r.dst && src == r.src && size <= r.size;
         const bool suffix = size <= r.size && dst + size == r.dst + r.size && src + size == r.src + r.size;
         if (!prefix && !suffix) continue;
-        // The source is no-access while mapped: it must be made writable before the copy back.
         if (!mem::protect(src, size, mem::Prot::RW)) {
             fail(c, "UnmapMemory (protect source)", kernel::kInvalidMemoryState, dst, src, size);
             return;
         }
         std::memcpy(reinterpret_cast<void*>(src), reinterpret_cast<const void*>(dst), size);
         if (!mem::decommit(dst, size)) NXLOG_E(kTag, "UnmapMemory: decommit(%llx, %llx) failed", U(dst), U(size));
-        if (r.src_perm != kPermRW) {   // the copy back needed it writable; the source had less (SetMemoryPermission before the map)
+        if (r.src_perm != kPermRW) {
             const mem::Prot back = r.src_perm == 0 ? mem::Prot::None : (r.src_perm == kPermR ? mem::Prot::R : mem::Prot::RW);
             if (back != mem::Prot::RW && !mem::protect(src, size, back)) NXLOG_E(kTag, "UnmapMemory: protect(%llx, %llx) failed", U(src), U(size));
         }
@@ -470,7 +462,6 @@ void unmap_shared_memory(::Ctx* c) {
         fail(c, "UnmapSharedMemory (not mapped here)", kernel::kInvalidMemoryState, addr, size, h);
         return;
     }
-    // Copy the view back into the object's own buffer (kept since MapSharedMemory), then point the object at it again.
     std::memcpy(reinterpret_cast<void*>(it->second.saved), reinterpret_cast<const void*>(addr), size);
     s->host = it->second.saved;
     alias_free(addr);
@@ -650,7 +641,7 @@ void flush_data_cache(::Ctx* c) {
     svc_ret(c, kernel::kOk);
 }
 
-}  // namespace
+}
 
 uint64_t svc_current_heap_size() {
     std::lock_guard lk(g_mu);
@@ -687,4 +678,4 @@ void svc_memory_reset_for_tests() {
     g_heap_cur = 0;
 }
 
-}  // namespace nxrt
+}

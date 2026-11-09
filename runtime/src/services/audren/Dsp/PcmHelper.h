@@ -28,7 +28,6 @@ struct PcmHelper {
 
     static int16_t ConvertSampleToPcmInt16(float sample) { return Saturate(sample * 32767.0f); }
 
-    // Output most significant byte.
     static void ConvertSampleToPcm8(Span<int8_t> output, Span<const int16_t> input) {
         for (size_t i = 0; i < input.Length; i++) {
             output[i] = static_cast<int8_t>(input[i] >> 8);
@@ -45,7 +44,7 @@ struct PcmHelper {
 
     static void ConvertSampleToPcm32(Span<int32_t> output, Span<const int16_t> input) {
         for (size_t i = 0; i < input.Length; i++) {
-            output[i] = static_cast<int32_t>(input[i]) * 65536;  // C# input[i] << 16 (no overflow for an int16 value)
+            output[i] = static_cast<int32_t>(input[i]) * 65536;
         }
     }
 
@@ -84,4 +83,4 @@ struct PcmHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

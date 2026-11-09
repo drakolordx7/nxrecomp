@@ -72,4 +72,4 @@ class UpsampleCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

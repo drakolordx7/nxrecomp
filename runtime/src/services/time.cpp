@@ -52,7 +52,7 @@ namespace {
 // ---- constants ----------------------------------------------------------------------------------------------------------------
 constexpr uint64_t kSteadyEpochSeconds = 3600;                          // fixed epoch offset of the steady clock (this runtime's choice)
 constexpr uint64_t kSteadyEpochNs = kSteadyEpochSeconds * 1000000000ull;
-constexpr uint8_t kSourceId[16] = {'n', 'x', 'r', 't', '-', 's', 't', 'e', 'a', 'd', 'y', '-', 'c', 'l', 'k', '1'};   // clock_source_id
+constexpr uint8_t kSourceId[16] = {'n', 'x', 'r', 't', '-', 's', 't', 'e', 'a', 'd', 'y', '-', 'c', 'l', 'k', '1'};
 constexpr uint32_t kShmSize = 0x1000;
 constexpr int64_t kRtcEpochUnix = 946684800;                            // 2000-01-01T00:00:00Z in posix seconds (RTC counts from here)
 
@@ -103,16 +103,16 @@ static_assert(sizeof(Adjust) == 0x38);
 struct State {
     bool created = false;
     uint64_t tick0_ns = 0;                                // raw tick at start-up, in ns (the ContinuousAdjustment clock_offset)
-    int64_t internal_ns = 0, test_ns = 0;                 // steady clock offsets (TimeSpanType, ns)
-    int64_t local_delta = 0, network_delta = 0, ephemeral_delta = 0;   // seconds added to host UTC per clock
+    int64_t internal_ns = 0, test_ns = 0;
+    int64_t local_delta = 0, network_delta = 0, ephemeral_delta = 0;
     bool auto_correction = false;
-    bool device_utc = false;                              // [time] zone = UTC
+    bool device_utc = false;
     bool hosts_ready = false;
     std::string host_name;
     std::vector<uint8_t> host_rule, utc_rule;
-    int64_t location_updated = 0;                         // steady seconds when the device location was last set
+    int64_t location_updated = 0;
     std::unique_ptr<ServiceSharedMemory> shm;
-    ServiceEvent clock_event, tz_event;                   // never signaled
+    ServiceEvent clock_event, tz_event;
 };
 
 std::mutex& mu() {
@@ -168,14 +168,14 @@ int64_t& delta_of(State& s, Clock c) {
     switch (c) {
         case Clock::Network: return s.network_delta;
         case Clock::Ephemeral: return s.ephemeral_delta;
-        default: return s.local_delta;   // user and local share the local offset
+        default: return s.local_delta;
     }
 }
 uint32_t write_bit_of(Clock c) {
     switch (c) {
         case Clock::User: return kWriteUser;
         case Clock::Local: return kWriteLocal;
-        default: return kWriteNetwork;   // network and ephemeral network
+        default: return kWriteNetwork;
     }
 }
 
@@ -259,7 +259,6 @@ void write_shm(State& s) {
     lifo_write(b, kOffAdjust, kPadAdjust, &adj, sizeof adj);
 }
 
-// Start-up state: every offset zero, the start tick taken now, the shared memory zeroed and written once.
 void init_locked(State& s) {
     s.tick0_ns = raw_ticks_ns();
     s.internal_ns = 0;
@@ -622,7 +621,7 @@ std::shared_ptr<ipc::Service> make_static(const char* name, uint32_t perm) {
     });
 }
 
-}  // namespace
+}
 
 // time:u gets no write rights; time:a the local and user clock and the time zone; time:s the network clock; time:r the steady clock.
 void register_time() {
@@ -649,4 +648,4 @@ void time_reset() {
     if (s.created) init_locked(s);
 }
 
-}  // namespace nxrt::services
+}

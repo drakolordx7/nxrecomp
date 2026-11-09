@@ -28,10 +28,10 @@ namespace stdfs = std::filesystem;
 namespace nxrt::services::fs {
 namespace {
 
-constexpr int kMaxSearchDepth = 8;       // folder levels searched below the mods folder
+constexpr int kMaxSearchDepth = 8;
 constexpr int kMaxScanDepth = 64;        // folder levels inside a romfs folder (guards against link loops)
 constexpr size_t kHostLongPath = 240;    // host paths this long or longer get the \\?\ prefix
-constexpr size_t kCaseWarnPerMod = 5;    // case warnings logged per mod before they are only counted
+constexpr size_t kCaseWarnPerMod = 5;
 
 // ---- strings and paths -------------------------------------------------------------------------------------------------------------
 
@@ -164,15 +164,15 @@ bool list_entries(const stdfs::path& dir, std::vector<Ent>& out, size_t* bad = n
 // ---- discovery ---------------------------------------------------------------------------------------------------------------------
 
 struct FoundMod {
-    std::string name;                        // path below the mods folder without container folders ("MyMod", "Pack/Sub")
+    std::string name;
     std::vector<stdfs::path> romfs_dirs, ext_dirs, bins;
-    std::vector<std::string> unsupported;    // what the mod holds that cannot be used
-    std::string folder;                      // the folder that held the markers
+    std::vector<std::string> unsupported;
+    std::string folder;
 };
 
 struct Discovery {
     std::vector<FoundMod> mods;
-    std::vector<std::string> global_unsupported;   // mods/exefs_patches and the like
+    std::vector<std::string> global_unsupported;
     size_t skipped_other_title = 0;
 };
 
@@ -320,13 +320,13 @@ Discovery discover(const stdfs::path& root, uint64_t title) {
 
 struct ModsIni {
     struct Entry {
-        std::string name;    // normalised
+        std::string name;
         bool on = true;
     };
     std::vector<std::string> lines;
     std::vector<Entry> entries;
-    long section_line = -1;      // the [order] line
-    long last_entry_line = -1;   // the last entry line of that section
+    long section_line = -1;
+    long last_entry_line = -1;
     bool existed = false;
 };
 
@@ -430,7 +430,7 @@ bool write_ini(const std::string& path, ModsIni& ini, const std::vector<std::str
     return true;
 }
 
-}  // namespace
+}
 
 // ---- ModOverlay lookups ------------------------------------------------------------------------------------------------------------
 
@@ -482,7 +482,6 @@ public:
         o_.dirs_[path].host = host;
     }
 
-    // `dir` must exist (ensure_dir). Returns false when the file was not added.
     void add_file(const std::string& dir, const std::string& name, ModSource src) {
         const std::string path = join_path(dir, name);
         if (o_.dirs_.count(path)) {   // a file over a folder of a lower mod
@@ -519,13 +518,12 @@ public:
         o_.hidden_[path] = cur_;
     }
 
-    // Lists the game's folders the mods touch to classify the files, and drops entries whose type disagrees with the game's.
     void reconcile(const stdfs::path& base_root) {
         BaseLists base(base_root, o_);
         const std::vector<std::string> dirs = sorted_dirs();
         for (const std::string& d : dirs) {
             auto dit = o_.dirs_.find(d);
-            if (dit == o_.dirs_.end()) continue;   // dropped by a type conflict above
+            if (dit == o_.dirs_.end()) continue;
             BaseLists::Dir& b = base.get(d);
             dit->second.base = b.exists;
             const std::vector<ModOverlay::Child> kids = dit->second.kids;
@@ -637,7 +635,6 @@ private:
         std::string example;
     };
 
-    // The game's folders, listed once each.
     class BaseLists {
     public:
         struct Dir {
@@ -665,7 +662,7 @@ private:
             if (it != cache_.end()) return it->second;
             bool exists = false;
             std::vector<Ent> ents;
-            if (!o_.hidden(dir)) {   // a hidden game folder is not there
+            if (!o_.hidden(dir)) {
                 bool parent_ok = true;
                 if (dir != "/") {
                     Dir& par = get(parent_path(dir));
@@ -750,14 +747,13 @@ private:
     void drop_file(const std::string& path) {
         auto it = o_.files_.find(path);
         if (it == o_.files_.end()) return;
-        if (it->second.mod < o_.infos_.size()) {   // not a generated file
+        if (it->second.mod < o_.infos_.size()) {
             if (it->second.mod != cur_) o_.infos_[it->second.mod].lost++;
             else o_.infos_[it->second.mod].files--;
         }
         o_.files_.erase(it);
     }
 
-    // Removes a folder and everything below it from the mods' view; the files count as lost for their mods.
     void remove_subtree(const std::string& path) {
         const std::string prefix = path + "/";
         for (auto it = o_.files_.begin(); it != o_.files_.end();) {
@@ -796,7 +792,6 @@ void note_invalid(ScanStats& st, const std::string& what) {
     if (st.invalid++ == 0) st.invalid_example = what;
 }
 
-// Walks a mod's romfs folder into the index.
 void scan_loose(OverlayBuilder& b, const stdfs::path& dir, const std::string& img_dir, int depth, ScanStats& st) {
     b.ensure_dir(img_dir, ready_path(dir));
     if (depth > kMaxScanDepth) {
@@ -838,7 +833,7 @@ bool scan_ext(OverlayBuilder& b, const stdfs::path& dir, const std::string& img_
     return ips;
 }
 
-}  // namespace
+}
 
 // ---- packed RomFS images -----------------------------------------------------------------------------------------------------------
 
@@ -978,7 +973,6 @@ namespace {
 std::mutex g_hook_mu;
 ModsIndexHook g_hook;
 
-// Reads [off, off + size) of a host file (to the end when to_end).
 bool read_host_range(const std::wstring& host, uint64_t off, uint64_t size, bool to_end, std::vector<uint8_t>* out) {
     HANDLE h = CreateFileW(host.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -1009,7 +1003,7 @@ bool read_host_range(const std::wstring& host, uint64_t off, uint64_t size, bool
     return true;
 }
 
-}  // namespace
+}
 
 void set_mods_index_hook(ModsIndexHook hook) {
     std::lock_guard<std::mutex> lk(g_hook_mu);
@@ -1075,7 +1069,6 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
         return nullptr;
     }
 
-    // Order and enabled flags: mods.ini first (in its order), then the mods it does not know yet, appended on.
     ModsIni ini = read_ini(cfg.ini_path);
     struct Plan {
         size_t found;
@@ -1118,7 +1111,6 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
         ov->infos_.push_back(std::move(mi));
     }
 
-    // Lowest priority first, so that a later mod replaces what an earlier one put in.
     std::vector<std::string> bad_notes;
     for (size_t pi = plan.size(); pi-- > 0;) {
         if (!plan[pi].on) continue;
@@ -1153,7 +1145,6 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
     }
     b.reconcile(u8(base_romfs_dir));
 
-    // The report: one line per mod in priority order, then conflicts, then what cannot be used.
     size_t on = 0, off = 0, served = 0, over = 0, add = 0, hides = 0;
     std::string unsupported;
     for (const ModOverlay::ModInfo& mi : ov->infos_) {
@@ -1201,8 +1192,8 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
         std::lock_guard<std::mutex> lk(g_hook_mu);
         hook = g_hook;
     }
-    if (!hook && game::info().mods_index_hook) hook = game::info().mods_index_hook;   // the registered game's (nxrt/game.h)
-    if (hook) {   // the game module may fix up tables that depend on the files served (ModsIndexEdit)
+    if (!hook && game::info().mods_index_hook) hook = game::info().mods_index_hook;
+    if (hook) {
         ModsIndexEdit edit(ov.get(), &b, base_romfs_dir, b.take_changes());
         try {
             hook(edit);
@@ -1218,4 +1209,4 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
     return ov;
 }
 
-}  // namespace nxrt::services::fs
+}

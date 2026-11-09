@@ -48,7 +48,7 @@ TiKind ti_kind(uint64_t ti);
 inline bool ti_is_class(TiKind k) { return k == TiKind::Class || k == TiKind::SiClass || k == TiKind::VmiClass; }
 const char* ti_name(uint64_t ti);                 // mangled name, "" for null/unreadable
 bool ti_equal(uint64_t a, uint64_t b);            // same object, or same name (names starting with '*' have internal linkage: object only)
-std::string ti_demangle_hint(uint64_t ti);        // "name (kind)" for logs
+std::string ti_demangle_hint(uint64_t ti);
 
 // The personality routine's test of one handler. `catch_ti` is the typeinfo of the handler (0 = catch(...)), `thrown_ti` the type of
 // the exception object. `*adjusted` is the address of the thrown object on entry (for a thrown pointer: the address of the pointer)
@@ -79,7 +79,7 @@ struct AbiLayout {
 };
 AbiLayout abi_layout_llvm_new();                  // reserve word first
 AbiLayout abi_layout_llvm_old();                  // no reserve word
-void set_abi_layout(const AbiLayout& l);          // fixes the layout (no detection)
+void set_abi_layout(const AbiLayout& l);
 void set_abi_autodetect();                        // forget the layout and detect it again at the next exception (the default state)
 const AbiLayout& abi_layout();                    // the layout in use (the newer one until an exception has been seen)
 
@@ -131,7 +131,7 @@ void legacy_resume(::Ctx* c);
 
 // ---- catch frames ------------------------------------------------------------------------------------------------------------
 // nx_catch_call (ctx.h) is defined in src/eh/catch_call.cpp on top of these; they are exposed for tests and diagnostics.
-size_t catch_frame_depth();                       // catch frames live on the calling thread
+size_t catch_frame_depth();
 
 // ---- terminate and diagnostics -----------------------------------------------------------------------------------------------
 // Guest backtrace from the registers in `c` (pc = c->x[30], then the CFI chain): "#0 0x... module+off (symbol+off)" lines.
@@ -149,7 +149,7 @@ struct Stats {
 Stats stats();
 void stats_reset();
 
-}  // namespace nxrt::eh
+}
 
 extern "C" {
 // Lifter function overrides (game config `overrides = {addr: "nxrt_unwind_raise_exception"}` -> h_nxrt_unwind_raise_exception(Ctx *c)).

@@ -16,8 +16,8 @@ namespace nxrt {
 namespace {
 
 constexpr size_t kMaxMessage = 2000;     // longer messages are cut to this many bytes and get "..."
-constexpr size_t kFormatBuffer = 4096;   // vsnprintf target; anything longer is cut anyway
-constexpr unsigned kFlushEvery = 100;    // lines between flushes for Info and below
+constexpr size_t kFormatBuffer = 4096;
+constexpr unsigned kFlushEvery = 100;
 constexpr char kLevelLetters[] = "EWIDT";
 constexpr int kLevelCount = 5;
 
@@ -27,7 +27,7 @@ std::recursive_mutex g_mu;   // recursive so a sink that logs does not deadlock
 std::atomic<int> g_level{static_cast<int>(LogLevel::Info)};
 std::atomic<bool> g_inited{false};
 std::FILE* g_file = nullptr;
-std::string g_path;          // path of the open file; empty when none
+std::string g_path;
 LogSink g_sink = nullptr;
 void* g_sink_user = nullptr;
 bool g_to_stderr = true;
@@ -35,7 +35,7 @@ bool g_stderr_all = false;
 uint64_t g_counts[kLevelCount] = {};
 unsigned g_since_flush = 0;
 long long g_freq = 1;
-long long g_t0 = 0;         // QueryPerformanceCounter at log_init
+long long g_t0 = 0;
 
 thread_local char t_name[64] = {};
 
@@ -61,14 +61,13 @@ Resolved resolve(const LogOptions& opt) {
     } else if (config_has("log", "path")) {
         r.path = config_get_str("log", "path");
     }
-    if (config_has("log", "level")) {        // [log] level / NXRT_LOG_LEVEL (the generic mapping)
+    if (config_has("log", "level")) {
         std::string lv = config_get_str("log", "level");
         r.level = log_parse_level(lv.c_str(), r.level);
     }
     return r;
 }
 
-// Moves an existing file to <path>.prev, replacing any older .prev.
 void rotate_previous(const std::string& path) {
     std::FILE* old = std::fopen(path.c_str(), "rb");
     if (!old) return;
@@ -78,7 +77,6 @@ void rotate_previous(const std::string& path) {
     std::rename(path.c_str(), prev.c_str());
 }
 
-// Applies resolved settings: closes the old file, resets counters, opens the new file.
 void apply(const Resolved& r, bool only_if_uninit) {
     std::lock_guard<std::recursive_mutex> g(g_mu);
     if (only_if_uninit && g_inited.load(std::memory_order_acquire)) return;
@@ -117,10 +115,10 @@ double seconds_since_init_locked() {
     return static_cast<double>(now.QuadPart - g_t0) / static_cast<double>(g_freq);
 }
 
-}  // namespace
+}
 
 void log_init(const LogOptions& opt) {
-    Resolved r = resolve(opt);  // config reads happen before the log lock is taken
+    Resolved r = resolve(opt);
     apply(r, false);
 }
 
@@ -203,12 +201,12 @@ void log_set_sink(LogSink sink, void* user) {
 
 void logv(LogLevel l, const char* tag, const char* fmt, va_list ap) {
     if (!g_inited.load(std::memory_order_acquire)) {
-        Resolved r = resolve(LogOptions{});  // first use: defaults, plus env and config
+        Resolved r = resolve(LogOptions{});
         apply(r, true);
     }
     const int li = static_cast<int>(l);
     if (li < 0 || li >= kLevelCount) return;
-    if (li > g_level.load(std::memory_order_relaxed)) return;  // filtered: not counted, not written
+    if (li > g_level.load(std::memory_order_relaxed)) return;
 
     char body[kFormatBuffer];
     body[0] = '\0';
@@ -254,4 +252,4 @@ void logf(LogLevel l, const char* tag, const char* fmt, ...) {
     va_end(ap);
 }
 
-}  // namespace nxrt
+}

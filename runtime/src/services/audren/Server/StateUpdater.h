@@ -59,7 +59,6 @@
 
 namespace nxrt::audren {
 
-// C# UpdateDataHeader.Initialize(int revision): sets the revision and the total size (the header's own size).
 inline void InitializeUpdateDataHeader(UpdateDataHeader& header, int32_t revision) {
     header.revision = revision;
     header.total_size = static_cast<uint32_t>(sizeof(UpdateDataHeader));
@@ -170,7 +169,6 @@ class StateUpdater {
 
         int64_t initialInputConsumed = _inputReader.Consumed();
 
-        // First make everything not in use.
         for (uint32_t i = 0; i < context.GetCount(); i++) {
             VoiceInfo& info = context.GetState(static_cast<int32_t>(i));
 
@@ -179,7 +177,6 @@ class StateUpdater {
 
         std::array<Span<VoiceState>, VoiceChannelCountMax> voiceStates{};
 
-        // Start processing
         for (uint32_t i = 0; i < context.GetCount(); i++) {
             VoiceInParameter2 parameter = _inputReader.GetRefOrRefToCopy<VoiceInParameter2>();
 
@@ -245,7 +242,6 @@ class StateUpdater {
 
         int64_t initialInputConsumed = _inputReader.Consumed();
 
-        // First make everything not in use.
         for (uint32_t i = 0; i < context.GetCount(); i++) {
             VoiceInfo& info = context.GetState(static_cast<int32_t>(i));
 
@@ -254,7 +250,6 @@ class StateUpdater {
 
         std::array<Span<VoiceState>, VoiceChannelCountMax> voiceStates{};
 
-        // Start processing
         for (uint32_t i = 0; i < context.GetCount(); i++) {
             VoiceInParameter1 parameter = _inputReader.GetRefOrRefToCopy<VoiceInParameter1>();
 
@@ -603,11 +598,9 @@ class StateUpdater {
     }
 
   private:
-    // C# `ref UpdateDataHeader OutputHeader => ref _outputHeader.Span[0]`.
     UpdateDataHeader& OutputHeader() { return *_outputHeader; }
     const UpdateDataHeader& OutputHeader() const { return *_outputHeader; }
 
-    // C# ResetEffect<T>: unmaps the work buffers of the old effect and replaces it with the effect of the requested type.
     template <class T>
     void ResetEffect(std::unique_ptr<BaseEffect>& effect, const T& parameter, PoolMapper& mapper) {
         effect->ForceUnmapBuffers(mapper);
@@ -675,7 +668,6 @@ class StateUpdater {
         return totalRequiredMixBufferCount > mixBufferCount;
     }
 
-    // C# ResetSink: cleans up the old sink and replaces it with the sink of the requested type.
     static void ResetSink(std::unique_ptr<BaseSink>& sink, const SinkInParameter& parameter) {
         sink->CleanUp();
 
@@ -694,26 +686,19 @@ class StateUpdater {
         }
     }
 
-    // The input cursor (C# SequenceReader<byte> _inputReader).
     SequenceReader _inputReader;
 
-    // The whole output buffer, kept for the consumed-size check (C# _outputOrigin).
     Span<uint8_t> _outputOrigin;
 
-    // The output cursor (C# Memory<byte> _output).
     SpanIOHelper<uint8_t> _output;
 
-    // The handle of the process owning the memory (C# _processHandle).
     uint32_t _processHandle;
 
-    // The behaviour context, owned by AudioRenderSystem (C# BehaviourInfo _behaviourInfo).
     BehaviourInfo* _behaviourInfo;
 
-    // A copy of the input header (C# ref readonly UpdateDataHeader _inputHeader).
     UpdateDataHeader _inputHeader;
 
-    // The output header, the first 0x40 bytes of the output buffer (C# Memory<UpdateDataHeader> _outputHeader).
     UpdateDataHeader* _outputHeader;
 };
 
-}  // namespace nxrt::audren
+}

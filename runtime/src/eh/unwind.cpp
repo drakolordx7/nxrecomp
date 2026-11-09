@@ -45,7 +45,7 @@ std::vector<CatchRec*>& catch_stack() {
     thread_local std::vector<CatchRec*> s;
     return s;
 }
-}  // namespace detail
+}
 
 namespace {
 
@@ -53,9 +53,9 @@ constexpr const char* kTag = "eh";
 constexpr int kMaxDepth = 100000;
 
 AbiLayout g_abi;
-std::mutex g_abi_lock;                          // guards g_abi and the two flags below (the first exceptions of several threads)
-std::atomic<bool> g_abi_detected{false};          // false: the layout is still to be detected from the first exception (unless fixed)
-std::atomic<bool> g_abi_fixed{false};            // set_abi_layout() was called
+std::mutex g_abi_lock;
+std::atomic<bool> g_abi_detected{false};
+std::atomic<bool> g_abi_fixed{false};
 AbiLayout current_layout() {
     std::lock_guard<std::mutex> lk(g_abi_lock);
     return g_abi;
@@ -69,7 +69,6 @@ inline uint64_t rd64(uint64_t a) { uint64_t v; std::memcpy(&v, reinterpret_cast<
 inline void wr64(uint64_t a, uint64_t v) { std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(a)), &v, 8); }
 inline void wr32(uint64_t a, uint32_t v) { std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(a)), &v, 4); }
 
-// Register state of one frame at its call site: what the callee-saved registers and SP were there.
 std::string describe_thrown(::Ctx* c, const Thrown& t);
 
 struct Frame {
@@ -92,7 +91,6 @@ struct FrameInfo {
     const NxFde* fde = nullptr;
 };
 
-// The FDE covering `pc` (a return address minus one), searching every registered module that has unwind tables.
 FrameInfo find_frame(uint64_t pc) {
     FrameInfo r;
     const NxModule* m = nxmodule_at(pc);
@@ -139,13 +137,12 @@ enum class Phase { Search, Cleanup };
 
 struct Pick {
     bool land = false;
-    bool handler = false;        // a catch clause matched (as opposed to a cleanup)
+    bool handler = false;
     uint64_t pad = 0;
     int64_t selector = 0;
     uint64_t adjusted = 0;
 };
 
-// Which landing pad, if any, does the frame take for an exception at `pc` (a return address)?
 Pick pick(const FrameInfo& fi, uint64_t pc, const Thrown& t, Phase phase) {
     Pick p;
     const NxEh* eh = fi.mod->eh;
@@ -154,9 +151,9 @@ Pick pick(const FrameInfo& fi, uint64_t pc, const Thrown& t, Phase phase) {
     for (uint32_t i = 0; i < f->site_count; i++) {
         const NxCallSite* s = &eh->sites[f->site_first + i];
         if (pcm1 < s->start || pcm1 - s->start >= s->len) continue;
-        if (!s->pad) return p;                                   // covered, no landing pad: the exception goes on
+        if (!s->pad) return p;
         uint32_t a = s->action;
-        if (!a) {                                                // cleanup only
+        if (!a) {
             if (phase == Phase::Cleanup) { p.land = true; p.pad = s->pad; p.selector = 0; }
             return p;
         }
@@ -208,7 +205,7 @@ struct Handler {
 std::string describe_pc(uint64_t pc) {
     std::string d = module_describe(pc);
     const FrameInfo fi = find_frame(pc);
-    if (fi.mod && d.compare(0, 2, "0x") == 0) {          // not an image the loader knows (it supplies the symbols): name the lifted module
+    if (fi.mod && d.compare(0, 2, "0x") == 0) {
         char b[96];
         snprintf(b, sizeof b, "%s+0x%llx", fi.mod->name, static_cast<unsigned long long>(pc - fi.mod->base));
         d = b;
@@ -320,7 +317,6 @@ void legacy_forget(uint64_t exc) {
     trap("landing pad without a landing target", pad);
 }
 
-// Phase 2: walk again from `start`, landing in every frame with a cleanup pad and in the handler frame.
 [[noreturn]] void cleanup_phase(::Ctx* c, const Frame& start, const Thrown& t, bool skip_first, const Handler& h, bool legacy) {
     Frame fr = start;
     for (int depth = 0; depth < kMaxDepth; depth++) {
@@ -363,12 +359,10 @@ uint64_t unwind(::Ctx* c, const Thrown& t, bool skip_first, bool legacy) {
 
 bool readable(uint64_t addr, uint64_t n) { return addr && mem::is_mapped(addr, n); }
 
-// Does `ti` look like a std::type_info of this ABI: readable object, a known kind (when the vtables are configured), or else a vptr that
-// points into readable memory and a name that starts like a mangled name.
 bool plausible_typeinfo(uint64_t ti) {
     if (!readable(ti, 16)) return false;
     if (ti_kind(ti) != TiKind::Unknown) return true;
-    if (typeinfo_vtables().klass) return false;                      // kinds are known and this is none of them
+    if (typeinfo_vtables().klass) return false;
     const uint64_t vp = rd64(ti), name = rd64(ti + 8) & ~(1ull << 63);
     if (!readable(vp, 8) || !readable(name, 2)) return false;
     const char c0 = *reinterpret_cast<const char*>(static_cast<uintptr_t>(name));
@@ -393,7 +387,6 @@ void detect_abi_layout(uint64_t ue) {
     }
 }
 
-// "Type: what()" for the uncaught-exception report: the type name and, when the type derives from std::exception, its what().
 std::string describe_thrown(::Ctx* c, const Thrown& t) {
     std::string d = t.type ? ti_demangle_hint(t.type) : "(foreign exception)";
     const TypeinfoVtables& vt = typeinfo_vtables();
@@ -408,7 +401,7 @@ std::string describe_thrown(::Ctx* c, const Thrown& t) {
     if (!fn_lookup(what_fn) && !hle_is_thunk(what_fn)) return d;
     ::Ctx tmp = *c;
     tmp.x[0] = adj;
-    tmp.x[31] = (c->x[31] - 0x4000) & ~15ull;                           // below the live frames
+    tmp.x[31] = (c->x[31] - 0x4000) & ~15ull;
     dispatch_call(&tmp, what_fn);
     if (readable(tmp.x[0], 1)) {
         std::string w(reinterpret_cast<const char*>(static_cast<uintptr_t>(tmp.x[0])), strnlen(reinterpret_cast<const char*>(static_cast<uintptr_t>(tmp.x[0])), 200));
@@ -417,7 +410,6 @@ std::string describe_thrown(::Ctx* c, const Thrown& t) {
     return d;
 }
 
-// Builds the Thrown of a libc++abi exception from its _Unwind_Exception.
 Thrown thrown_from_unwind_exception(uint64_t ue) {
     detect_abi_layout(ue);
     const AbiLayout g_abi = current_layout();
@@ -439,7 +431,7 @@ Thrown thrown_from_unwind_exception(uint64_t ue) {
     return t;
 }
 
-}  // namespace
+}
 
 // ---- public API ---------------------------------------------------------------------------------------------------------------------
 
@@ -475,12 +467,12 @@ const AbiLayout& abi_layout() { return g_abi; }
 
 uint64_t raise(::Ctx* c, const Thrown& t) {
     g_stats.raised.fetch_add(1, std::memory_order_relaxed);
-    return unwind(c, t, /*skip_first=*/false, /*legacy=*/t.header == 0);
+    return unwind(c, t, false, t.header == 0);
 }
 
 uint64_t resume(::Ctx* c, const Thrown& t) {
     g_stats.resumed.fetch_add(1, std::memory_order_relaxed);
-    return unwind(c, t, /*skip_first=*/true, /*legacy=*/t.header == 0);
+    return unwind(c, t, true, t.header == 0);
 }
 
 void unwind_raise_exception(::Ctx* c) { c->x[0] = raise(c, thrown_from_unwind_exception(c->x[0])); }
@@ -509,7 +501,7 @@ void legacy_raise(::Ctx* c) {
     t.type = c->x[1];
     t.object = c->x[0];
     legacy_remember(t.exc, t.type);
-    uint64_t r = raise(c, t);                                    // returns only without a handler
+    uint64_t r = raise(c, t);
     (void)r;
     terminate_process(c, "uncaught C++ exception (host-service raise)");
     c->x[0] = kUrcEndOfStack;
@@ -577,4 +569,4 @@ void stats_reset() {
 
 size_t catch_frame_depth() { return detail::catch_stack().size(); }
 
-}  // namespace nxrt::eh
+}

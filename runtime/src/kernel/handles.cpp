@@ -13,7 +13,7 @@ namespace {
 SRWLOCK g_lock = SRWLOCK_INIT;
 std::unordered_map<uint32_t, std::shared_ptr<KObject>> g_handles;
 uint32_t g_next = 0x10000;
-}  // namespace
+}
 
 uint32_t handle_add(std::shared_ptr<KObject> o) {
     AcquireSRWLockExclusive(&g_lock);
@@ -68,14 +68,12 @@ void handles_reset() {
 
 // ---- gauges (include/nxrt/gauge.h): live handles per object type ----
 namespace {
-// Removes its gauge when the file's statics are torn down (the hooks are declared after g_handles, so they go first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
 
-// Handle-table entries of one object type: a walk of at most 0x3000 entries under the table lock (shared).
 size_t count_type(ObjType t) {
     AcquireSRWLockShared(&g_lock);
     size_t n = 0;
@@ -93,6 +91,6 @@ GaugeHook gauge_obj_shared_mem("kernel.obj_shared_mem", [] { return static_cast<
 GaugeHook gauge_obj_transfer_mem("kernel.obj_transfer_mem", [] { return static_cast<int64_t>(count_type(ObjType::TransferMemory)); });
 GaugeHook gauge_obj_process("kernel.obj_process", [] { return static_cast<int64_t>(count_type(ObjType::Process)); });
 GaugeHook gauge_obj_port("kernel.obj_port", [] { return static_cast<int64_t>(count_type(ObjType::Port)); });
-}  // namespace
+}
 
-}  // namespace nxrt::kernel
+}

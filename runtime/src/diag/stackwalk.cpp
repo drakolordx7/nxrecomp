@@ -25,4 +25,4 @@ size_t capture_stack(const CONTEXT* ctx, uint64_t* frames, size_t max) {
     return n;
 }
 
-}  // namespace nxrt::detail
+}

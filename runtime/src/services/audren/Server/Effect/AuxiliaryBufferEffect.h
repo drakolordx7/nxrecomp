@@ -14,10 +14,8 @@ namespace nxrt::audren {
 
 class AuxiliaryBufferEffect : public BaseEffect {
   public:
-    // The auxiliary buffer parameter (C# AuxiliaryBufferParameter Parameter; default-initialised).
     AuxiliaryBufferParameter Parameter{};
 
-    // Auxiliary buffer state (C# AuxiliaryBufferAddresses State, a plain value).
     AuxiliaryBufferAddresses State{};
 
     AuxiliaryBufferEffect() { Type = TargetEffectType(); }
@@ -74,4 +72,4 @@ class AuxiliaryBufferEffect : public BaseEffect {
     void UpdateForCommandGeneration() override { UpdateUsageStateForCommandGeneration(); }
 };
 
-}  // namespace nxrt::audren
+}

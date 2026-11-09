@@ -28,14 +28,14 @@ constexpr uint32_t kMaxModules = 1u << (32 - 20);   // NX_IMPORT_ID keeps the mo
 struct Entry {
     const NxModule* nx = nullptr;
     Module* image = nullptr;
-    std::unique_ptr<std::atomic<uint64_t>[]> cache;   // per DynSym: resolved target, 0 = not resolved yet
+    std::unique_ptr<std::atomic<uint64_t>[]> cache;
     size_t ncache = 0;
 };
 
 constexpr size_t kMaxListed = 64;
-std::mutex g_lock;                                    // registration and clearing; lookups are lock free
-std::unique_ptr<Entry> g_owned[kMaxListed];           // owns the entries, registration order
-std::atomic<Entry*> g_list[kMaxListed];               // the same, for lock-free readers: entries [0, g_count) are valid
+std::mutex g_lock;
+std::unique_ptr<Entry> g_owned[kMaxListed];
+std::atomic<Entry*> g_list[kMaxListed];
 std::atomic<size_t> g_count{0};
 std::atomic<Entry*> g_by_index[kMaxModules];
 std::atomic<uint64_t> g_import_calls{0};
@@ -51,7 +51,7 @@ struct GaugeHook {
 };
 GaugeHook gauge_nx_modules("core.nx_modules", [] { return static_cast<int64_t>(g_count.load(std::memory_order_acquire)); });
 GaugeHook gauge_import_calls("core.import_calls", [] { return static_cast<int64_t>(g_import_calls.load(std::memory_order_relaxed)); });
-GaugeHook gauge_type_cache("core.type_cache", [] {   // resolved typeinfo slots (only grows)
+GaugeHook gauge_type_cache("core.type_cache", [] {
     std::lock_guard<std::mutex> lk(g_type_lock);
     return static_cast<int64_t>(g_type_cache.size());
 });
@@ -80,7 +80,6 @@ RegResult refuse(RegStatus st, const NxModule* nx, const char* fmt, ...) {
     return r;
 }
 
-// Cheap structural checks of a descriptor (the arrays' lengths are only known for fns, syms and resume).
 const char* validate(const NxModule* nx) {
     if (!nx->name) return "null name";
     if (nx->nfns < 0 || nx->nsyms < 0 || nx->nresume < 0) return "negative table length";
@@ -112,7 +111,7 @@ uint64_t find_export(const char* name, const NxModule* except) {
     return 0;
 }
 
-}  // namespace
+}
 
 RegResult nxmodule_register(Module* image, const NxModule* nx, uint32_t abi_version) {
     if (!nx) return refuse(RegStatus::Invalid, nx, "null descriptor");
@@ -214,7 +213,7 @@ bool nxmodule_type_address(const NxModule* nx, const NxFde* fde, uint32_t filter
     std::lock_guard<std::mutex> lk(g_type_lock);
     auto it = g_type_cache.find(slot);
     if (it != g_type_cache.end()) { *out = it->second; return it->second != 0; }
-    uint64_t a = nxmodule_find_export(nx->syms[sym].name, nx);         // the typeinfo is an import: the module that defines it
+    uint64_t a = nxmodule_find_export(nx->syms[sym].name, nx);
     if (!a) NXLOG_W("loader", "typeinfo %s imported by %s is defined by no registered module: the clause matches nothing", nx->syms[sym].name, nx->name);
     g_type_cache.emplace(slot, a);
     *out = a;
@@ -238,14 +237,14 @@ uint64_t import_resolve(uint32_t import_id) {
     const char* name = e->nx->syms[sym].name;
     uint64_t target = 0;
     if (module_symbol_overridden(name)) {
-        target = hle_address(name);                                    // the host replaces this symbol everywhere
+        target = hle_address(name);
     } else {
-        target = nxmodule_find_export(name, e->nx);                    // a lifted function of another module
+        target = nxmodule_find_export(name, e->nx);
         if (!target) {
-            uint64_t a = module_find_symbol(name);                     // an ELF symbol of another mapped image that is a registered function
+            uint64_t a = module_find_symbol(name);
             if (a && fn_lookup(a)) target = a;
         }
-        if (!target) target = hle_address(name);                       // HLE handler, else a logging stub
+        if (!target) target = hle_address(name);
     }
     e->cache[sym].store(target, std::memory_order_release);
     return target;
@@ -260,6 +259,6 @@ uint64_t import_calls() { return g_import_calls.load(std::memory_order_relaxed);
 
 namespace detail {
 void count_import() { g_import_calls.fetch_add(1, std::memory_order_relaxed); }
-}  // namespace detail
+}
 
-}  // namespace nxrt
+}

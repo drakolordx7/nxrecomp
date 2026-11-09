@@ -52,7 +52,7 @@ void spin_hint(int kind) {
     else YieldProcessor();
 }
 
-}  // namespace
+}
 
 void install_spin_hint() {
     if (!config_get_bool("sched", "spin_yield", true)) {
@@ -73,4 +73,4 @@ void install_busy_mutex_hle() {
     NXLOG_I("sched", "nn::os::LockBusyMutex runs as host code that yields while waiting (debug note 240)");
 }
 
-}  // namespace nxrt::kernel
+}

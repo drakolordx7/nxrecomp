@@ -35,7 +35,7 @@ enum class LatencyMode : uint8_t { Off = 0, Auto, On, Boost };   // Auto: whiche
 struct LatencySettings {
     LatencyMode mode = LatencyMode::Off;
     int frames_ahead = 1;            // with the mode on: simulation of a frame waits until at most this many earlier frames are still unpresented (0 .. 3; -1 = no wait)
-    bool log_timings = false;        // log one line of timings per second
+    bool log_timings = false;
 };
 
 struct Settings {
@@ -81,4 +81,4 @@ void hdr_refresh_levels();
 // Resolves the numbers the settings leave at 0 ("auto") against what the display reports.
 void hdr_resolve_levels(const HdrSettings& s, bool display_hdr, float display_peak_nits, float display_sdr_white_nits, float* paper, float* peak);
 
-}  // namespace nxrt::extras
+}

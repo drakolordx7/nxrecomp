@@ -50,7 +50,6 @@ namespace nxrt::audren {
 
 namespace command_generator_detail {
 
-// C# `array.AsSpan()` for the fixed arrays of the C++ structs.
 template <class T, size_t N>
 Span<T> AsSpan(std::array<T, N>& array) {
     return Span<T>(array.data(), N);
@@ -68,7 +67,7 @@ inline Span<BiquadFilterState> BiquadFilterStatesOf(Span<VoiceState> state) {
 // C# `effect.GetWorkBuffer(-1)` for the effects whose C# override is `GetSingleBuffer()` (they override GetWorkBuffer here as well).
 inline DspAddress GetSingleWorkBuffer(BaseEffect& effect) { return effect.GetWorkBuffer(-1); }
 
-}  // namespace command_generator_detail
+}
 
 class CommandGenerator {
   public:
@@ -185,7 +184,6 @@ class CommandGenerator {
     SplitterContext& _splitterContext;
     PerformanceManager* _performanceManager;
 
-    // C# GenerateDataSource(ref VoiceInfo, Memory<VoiceState>, int).
     void GenerateDataSource(VoiceInfo& voiceInfo, Span<VoiceState> dspState, int32_t channelIndex) {
         if (voiceInfo.MixId != Constants::UnusedMixId) {
             MixInfo& mix = _mixContext.GetState(voiceInfo.MixId);
@@ -207,8 +205,6 @@ class CommandGenerator {
 
                     if (static_cast<int64_t>(mixId) < static_cast<int64_t>(_mixContext.GetCount()) && mixId != Constants::UnusedSplitterIdInt) {
                         MixInfo& mix = _mixContext.GetState(mixId);
-
-                        // _commandBuffer.GenerateFillBuffer();
 
                         _commandBuffer.GenerateDepopPrepare(dspState, _rendererContext.DepopBuffer, mix.BufferCount, mix.BufferOffset, voiceInfo.NodeId,
                                                             voiceInfo.WasPlaying);
@@ -246,7 +242,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateBiquadFilterForVoice(ref VoiceInfo, Memory<VoiceState>, int baseIndex, int bufferOffset, int nodeId).
     void GenerateBiquadFilterForVoice(VoiceInfo& voiceInfo, Span<VoiceState> state, int32_t baseIndex, int32_t bufferOffset, int32_t nodeId) {
         bool supportsOptimizedPath = _rendererContext.BehaviourInfo->UseMultiTapBiquadFilterProcessing();
 
@@ -271,7 +266,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateVoiceMixWithSplitter(SplitterDestination, Memory<VoiceState>, uint bufferOffset, uint bufferCount, uint bufferIndex, int nodeId).
     void GenerateVoiceMixWithSplitter(SplitterDestination destination, Span<VoiceState> state, uint32_t bufferOffset, uint32_t bufferCount,
                                       uint32_t bufferIndex, int32_t nodeId) {
         Span<float> mixVolumes = destination.MixBufferVolume();
@@ -316,7 +310,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateVoiceMix(ReadOnlySpan<float> mixVolumes, ReadOnlySpan<float> previousMixVolumes, Memory<VoiceState>, uint bufferOffset, uint bufferCount, uint bufferIndex, int nodeId).
     void GenerateVoiceMix(Span<const float> mixVolumes, Span<const float> previousMixVolumes, Span<VoiceState> state, uint32_t bufferOffset,
                           uint32_t bufferCount, uint32_t bufferIndex, int32_t nodeId) {
         if (bufferCount > static_cast<uint32_t>(Constants::VoiceChannelCountMax)) {
@@ -333,7 +326,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateVoice(ref VoiceInfo).
     void GenerateVoice(VoiceInfo& voiceInfo) {
         int32_t nodeId = voiceInfo.NodeId;
         uint32_t channelsCount = voiceInfo.ChannelsCount;
@@ -472,7 +464,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateBufferMixerEffect(int bufferOffset, BufferMixEffect effect, int nodeId).
     void GenerateBufferMixerEffect(int32_t bufferOffset, BufferMixEffect& effect, int32_t nodeId) {
         NXAUDREN_ASSERT(effect.Type == EffectType::BufferMix);
 
@@ -486,7 +477,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateAuxEffect(uint bufferOffset, AuxiliaryBufferEffect effect, int nodeId).
     void GenerateAuxEffect(uint32_t bufferOffset, AuxiliaryBufferEffect& effect, int32_t nodeId) {
         NXAUDREN_ASSERT(effect.Type == EffectType::AuxiliaryBuffer);
 
@@ -521,7 +511,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateDelayEffect(uint bufferOffset, DelayEffect effect, int nodeId, bool newEffectChannelMappingSupported).
     void GenerateDelayEffect(uint32_t bufferOffset, DelayEffect& effect, int32_t nodeId, bool newEffectChannelMappingSupported) {
         NXAUDREN_ASSERT(effect.Type == EffectType::Delay);
 
@@ -531,7 +520,6 @@ class CommandGenerator {
                                            newEffectChannelMappingSupported);
     }
 
-    // C# GenerateReverbEffect(uint bufferOffset, ReverbEffect effect, int nodeId, bool isLongSizePreDelaySupported, bool newEffectChannelMappingSupported).
     void GenerateReverbEffect(uint32_t bufferOffset, ReverbEffect& effect, int32_t nodeId, bool isLongSizePreDelaySupported,
                               bool newEffectChannelMappingSupported) {
         NXAUDREN_ASSERT(effect.Type == EffectType::Reverb);
@@ -542,7 +530,6 @@ class CommandGenerator {
                                             isLongSizePreDelaySupported, newEffectChannelMappingSupported);
     }
 
-    // C# GenerateReverb3dEffect(uint bufferOffset, Reverb3dEffect effect, int nodeId, bool newEffectChannelMappingSupported).
     void GenerateReverb3dEffect(uint32_t bufferOffset, Reverb3dEffect& effect, int32_t nodeId, bool newEffectChannelMappingSupported) {
         NXAUDREN_ASSERT(effect.Type == EffectType::Reverb3d);
 
@@ -552,7 +539,6 @@ class CommandGenerator {
                                               newEffectChannelMappingSupported);
     }
 
-    // C# GenerateBiquadFilterEffect(uint bufferOffset, BiquadFilterEffect effect, int nodeId).
     void GenerateBiquadFilterEffect(uint32_t bufferOffset, BiquadFilterEffect& effect, int32_t nodeId) {
         NXAUDREN_ASSERT(effect.Type == EffectType::BiquadFilter);
 
@@ -575,7 +561,6 @@ class CommandGenerator {
                 uint32_t inputBufferIndex = bufferOffset + effect.Parameter.input[i];
                 uint32_t outputBufferIndex = bufferOffset + effect.Parameter.output[i];
 
-                // If the input and output isn't the same, generate a command.
                 if (inputBufferIndex != outputBufferIndex) {
                     _commandBuffer.GenerateCopyMixBuffer(inputBufferIndex, outputBufferIndex, nodeId);
                 }
@@ -583,7 +568,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateLimiterEffect(uint bufferOffset, LimiterEffect effect, int nodeId, int effectId).
     void GenerateLimiterEffect(uint32_t bufferOffset, LimiterEffect& effect, int32_t nodeId, int32_t effectId) {
         NXAUDREN_ASSERT(effect.Type == EffectType::Limiter);
 
@@ -604,7 +588,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateCaptureEffect(uint bufferOffset, CaptureBufferEffect effect, int nodeId).
     void GenerateCaptureEffect(uint32_t bufferOffset, CaptureBufferEffect& effect, int32_t nodeId) {
         NXAUDREN_ASSERT(effect.Type == EffectType::CaptureBuffer);
 
@@ -638,7 +621,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateCompressorEffect(uint bufferOffset, CompressorEffect effect, int nodeId, int effectId).
     void GenerateCompressorEffect(uint32_t bufferOffset, CompressorEffect& effect, int32_t nodeId, int32_t effectId) {
         NXAUDREN_ASSERT(effect.Type == EffectType::Compressor);
 
@@ -653,7 +635,6 @@ class CommandGenerator {
         _commandBuffer.GenerateCompressorEffect(bufferOffset, effect.Parameter, effect.State, dspResultState, effect.IsEnabled, nodeId);
     }
 
-    // C# GenerateEffect(ref MixInfo mix, int effectId, BaseEffect effect).
     void GenerateEffect(MixInfo& mix, int32_t effectId, BaseEffect& effect) {
         int32_t nodeId = mix.NodeId;
 
@@ -712,7 +693,6 @@ class CommandGenerator {
         effect.UpdateForCommandGeneration();
     }
 
-    // C# GenerateEffects(ref MixInfo mix).
     void GenerateEffects(MixInfo& mix) {
         Span<int32_t> effectProcessingOrderArray = mix.EffectProcessingOrderArray();
 
@@ -725,7 +705,6 @@ class CommandGenerator {
                 break;
             }
 
-            // BaseEffect is a class, we don't need to pass it by ref
             BaseEffect& effect = *_effectContext.GetEffect(effectOrder);
 
             NXAUDREN_ASSERT(effect.Type != EffectType::Invalid);
@@ -737,7 +716,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateMixWithSplitter(uint inputBufferIndex, uint outputBufferIndex, float volume, SplitterDestination destination, ref bool isFirstMixBuffer, int nodeId).
     void GenerateMixWithSplitter(uint32_t inputBufferIndex, uint32_t outputBufferIndex, float volume, SplitterDestination destination, bool& isFirstMixBuffer,
                                  int32_t nodeId) {
         BiquadFilterParameter2& bqf0 = destination.GetBiquadFilterParameter(0);
@@ -768,7 +746,6 @@ class CommandGenerator {
         isFirstMixBuffer = false;
     }
 
-    // C# GenerateMix(ref MixInfo mix).
     void GenerateMix(MixInfo& mix) {
         if (mix.HasAnyDestination()) {
             NXAUDREN_ASSERT(mix.DestinationMixId != Constants::UnusedMixId || mix.DestinationSplitterId != Constants::UnusedSplitterId);
@@ -829,7 +806,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateSubMix(ref MixInfo subMix).
     void GenerateSubMix(MixInfo& subMix) {
         _commandBuffer.GenerateDepopForMixBuffers(_rendererContext.DepopBuffer, subMix.BufferOffset, subMix.BufferCount, subMix.NodeId, subMix.SampleRate);
 
@@ -855,7 +831,6 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateFinalMix().
     void GenerateFinalMix() {
         MixInfo& finalMix = _mixContext.GetFinalState();
 
@@ -876,7 +851,6 @@ class CommandGenerator {
             GeneratePerformance(performanceEntry, PerformanceCommand::Type::Start, nodeId);
         }
 
-        // Only generate volume command if the volume isn't 100%.
         if (finalMix.Volume != 1.0f) {
             for (uint32_t bufferIndex = 0; bufferIndex < finalMix.BufferCount; bufferIndex++) {
                 bool performanceSubInitialized = false;
@@ -901,12 +875,10 @@ class CommandGenerator {
         }
     }
 
-    // C# GenerateCircularBuffer(CircularBufferSink sink, ref MixInfo finalMix).
     void GenerateCircularBuffer(CircularBufferSink& sink, MixInfo& finalMix) {
         _commandBuffer.GenerateCircularBuffer(finalMix.BufferOffset, sink, Constants::InvalidNodeId);
     }
 
-    // C# GenerateDevice(DeviceSink sink, ref MixInfo finalMix).
     void GenerateDevice(DeviceSink& sink, MixInfo& finalMix) {
         if (_commandBuffer.CommandList.SampleRate != 48000 && sink.UpsamplerInfo == nullptr) {
             sink.UpsamplerInfo = _rendererContext.UpsamplerManager->Allocate();
@@ -937,7 +909,6 @@ class CommandGenerator {
         _commandBuffer.GenerateDeviceSink(finalMix.BufferOffset, sink, _rendererContext.SessionId, commandList.Buffers, Constants::InvalidNodeId);
     }
 
-    // C# GenerateSink(BaseSink sink, ref MixInfo finalMix).
     void GenerateSink(BaseSink& sink, MixInfo& finalMix) {
         bool performanceInitialized = false;
 
@@ -970,4 +941,4 @@ class CommandGenerator {
     }
 };
 
-}  // namespace nxrt::audren
+}

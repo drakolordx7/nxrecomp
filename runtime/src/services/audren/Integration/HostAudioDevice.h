@@ -47,11 +47,10 @@ class HostAudioDeviceDriver : public IHardwareDeviceDriver {
     std::unique_ptr<IHardwareDevice> OpenHardwareDevice(uint32_t sampleRate, uint32_t channelCount) override;
     bool SupportsChannelCount(uint32_t channelCount) const override;
 
-    // The channel count from the config (2 or 6).
     uint32_t ConfiguredChannelCount() const { return _configuredChannels; }
 
   private:
     uint32_t _configuredChannels;
 };
 
-}  // namespace nxrt::audren
+}

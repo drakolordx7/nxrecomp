@@ -62,7 +62,7 @@ bool guest_readable(uint64_t addr, uint64_t n) { return addr != 0 && (n == 0 || 
 
 bool read_desc(const ipc::Buffer& b, Desc& d) {
     d = Desc{};
-    const uint64_t n = b.size < kBufferSize ? b.size : kBufferSize;   // a shorter descriptor leaves the missing fields zero
+    const uint64_t n = b.size < kBufferSize ? b.size : kBufferSize;
     if (!guest_readable(b.addr, n)) return false;
     buf_read(b, &d, n);
     return true;
@@ -76,7 +76,6 @@ std::string read_name(const ipc::Buffer& b) {
     return std::string(s.c_str());
 }
 
-// Writes a device name zero padded, as many bytes as the buffer holds (at most 0x100).
 bool write_name(const ipc::Buffer& b, const char* name) {
     std::array<uint8_t, kNameSize> out{};
     std::memcpy(out.data(), name, std::min<size_t>(std::strlen(name), kNameSize - 1));
@@ -97,8 +96,8 @@ uint32_t pick_in_channels(uint32_t asked) { return asked == 1 || asked == 4 || a
 // One sink for every stream: it is opened on the first start with the rate and channel count of that stream, and opened again when
 // a stream asks for another format or the active sink was replaced (nxrt::audio::set_sink).
 struct HostSink {
-    std::mutex mu;                                   // guards the fields below and every call into the sink
-    std::shared_ptr<nxrt::audio::AudioSink> sink;    // the sink opened last
+    std::mutex mu;
+    std::shared_ptr<nxrt::audio::AudioSink> sink;
     uint32_t rate = 0, channels = 0;
     bool open_ok = false;
 };
@@ -107,7 +106,6 @@ HostSink& host() {
     return h;
 }
 
-// Caller holds host().mu. True when the sink is open for this format.
 bool open_host_locked(uint32_t rate, uint32_t channels) {
     HostSink& h = host();
     auto cur = nxrt::audio::sink();
@@ -127,8 +125,6 @@ void play_host(uint32_t rate, uint32_t channels, const int16_t* pcm, uint32_t fr
     host().sink->write(pcm, frames);
 }
 
-// Gauges (include/nxrt/gauge.h), summed over every open stream: buffers appended and not yet played, and played buffers whose tag the
-// guest has not taken back yet. Each stream changes them where it moves a buffer between the two lists, and gives its share back when destroyed.
 GaugeCounter g_buffers_queued("audout.buffers_queued");
 GaugeCounter g_buffers_released("audout.buffers_released");
 
@@ -161,7 +157,6 @@ public:
 
     Dir dir() const { return dir_; }
 
-    // Guest commands. Each takes the locks of its stream itself.
     uint32_t start();
     uint32_t stop();
     bool flush();
@@ -181,25 +176,25 @@ public:
 private:
     void pace();
     void play(const Entry& e);
-    void halt();                       // stops and joins the pacing thread; caller holds life_
-    void release_all_locked();         // every queued buffer is released now (unplayed)
-    void sync_event_locked();          // the buffer event is signalled while a released tag is waiting
+    void halt();
+    void release_all_locked();
+    void sync_event_locked();
 
     const Dir dir_;
     const uint32_t rate_;
     const uint32_t channels_;
 
     std::mutex life_;                  // serialises start / stop / shutdown (the thread never takes it)
-    std::mutex mu_;                    // guards everything below
+    std::mutex mu_;
     std::condition_variable cv_;
-    std::deque<Entry> queue_;          // appended and not yet released; the front is playing when started
-    std::deque<uint64_t> released_;    // released tags the guest has not taken yet
+    std::deque<Entry> queue_;
+    std::deque<uint64_t> released_;
     bool started_ = false;
-    uint64_t epoch_ = 0;               // bumped when the queue is emptied, so the pacing thread re-reads its head
-    uint64_t played_ = 0;             // frames released as played
+    uint64_t epoch_ = 0;
+    uint64_t played_ = 0;
     float volume_ = 1.0f;
     std::thread th_;
-    ServiceEvent ev_;                  // readable while released_ is not empty
+    ServiceEvent ev_;
 };
 
 struct Registry {
@@ -351,7 +346,6 @@ void Stream::sync_event_locked() {
     else ev_.signal();
 }
 
-// The samples of one buffer: written to the sink (out) or zeroed (in). Runs without mu_ held.
 void Stream::play(const Entry& e) {
     if (e.frames == 0) return;
     const uint64_t n = static_cast<uint64_t>(e.frames) * channels_ * 2u;
@@ -360,7 +354,7 @@ void Stream::play(const Entry& e) {
         if (readable) std::memset(reinterpret_cast<void*>(static_cast<uintptr_t>(e.samples)), 0, static_cast<size_t>(n));
         return;
     }
-    std::vector<int16_t> pcm(static_cast<size_t>(e.frames) * channels_, 0);   // silence when the samples cannot be read
+    std::vector<int16_t> pcm(static_cast<size_t>(e.frames) * channels_, 0);
     if (readable) std::memcpy(pcm.data(), reinterpret_cast<const void*>(static_cast<uintptr_t>(e.samples)), static_cast<size_t>(n));
     play_host(rate_, channels_, pcm.data(), e.frames);
 }
@@ -585,7 +579,7 @@ std::shared_ptr<ipc::Service> make_audin() {
     });
 }
 
-}  // namespace
+}
 
 void register_audio_out() {
     add("audout:u", [] { return make_audout(); });
@@ -612,4 +606,4 @@ void audio_out_reset() {
     }
 }
 
-}  // namespace nxrt::services
+}

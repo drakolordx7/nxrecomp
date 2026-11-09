@@ -18,13 +18,10 @@ class SequenceReader {
   public:
     explicit SequenceReader(Span<const uint8_t> data) : _data(data) {}
 
-    // C# SequenceReader.Consumed: bytes consumed so far.
     int64_t Consumed() const { return _consumed; }
 
-    // Bytes not consumed yet.
     int64_t Remaining() const { return static_cast<int64_t>(_data.Length) - _consumed; }
 
-    // C# GetRefOrRefToCopy<T>(out _): reads one T and advances by sizeof(T).
     template <class T>
     T GetRefOrRefToCopy() {
         static_assert(std::is_trivially_copyable_v<T>, "unmanaged");
@@ -39,7 +36,6 @@ class SequenceReader {
         return value;
     }
 
-    // C# ReadLittleEndian(out int): reads 4 little-endian bytes and advances by 4.
     void ReadLittleEndian(int32_t& value) {
         if (Remaining() < 4) {
             NXAUDREN_FATAL("SequenceReader: not enough data for an int");
@@ -52,29 +48,24 @@ class SequenceReader {
         _consumed += 4;
     }
 
-    // C# SequenceReader.Advance.
     void Advance(int64_t count) {
         _consumed += count;
         NXAUDREN_ASSERT(_consumed <= static_cast<int64_t>(_data.Length));
     }
 
-    // C# SequenceReader.Rewind.
     void Rewind(int64_t count) {
         _consumed -= count;
         NXAUDREN_ASSERT(_consumed >= 0);
     }
 
-    // C# SequenceReaderExtensions.SetConsumed: moves the cursor to an absolute position.
     void SetConsumed(int64_t consumed) {
         _consumed = consumed;
         NXAUDREN_ASSERT(_consumed >= 0 && _consumed <= static_cast<int64_t>(_data.Length));
     }
 
   private:
-    // The whole input buffer.
     Span<const uint8_t> _data;
-    // Bytes consumed so far.
     int64_t _consumed = 0;
 };
 
-}  // namespace nxrt::audren
+}

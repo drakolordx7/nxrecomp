@@ -129,7 +129,7 @@ struct RegionTable {
     std::vector<Entry> entries;
     bool load(const std::string& path, std::string* err);
     bool load_text(const std::string& text, std::string* err);
-    const Entry* find(const std::string& name) const;     // case-insensitive
+    const Entry* find(const std::string& name) const;
 };
 
 // GUID text "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" -> the 16 bytes as the game's CObjectId holds them in memory.
@@ -157,4 +157,4 @@ struct StepLine {
 bool parse_script(const std::string& text, const std::string& path, const RegionTable* regions, Script* out, std::string* err);
 bool parse_script_file(const std::string& path, const RegionTable* regions, Script* out, std::string* err);
 
-}  // namespace nxrt::tt
+}

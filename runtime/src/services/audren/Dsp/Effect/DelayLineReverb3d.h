@@ -70,4 +70,4 @@ class DelayLine3d : public IDelayLine {
     float Tap(uint32_t sampleIndex) override { return TapUnsafe(sampleIndex, -1); }
 };
 
-}  // namespace nxrt::audren
+}

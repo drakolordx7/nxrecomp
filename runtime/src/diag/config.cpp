@@ -20,18 +20,16 @@ namespace {
 // config_log_effective copies the snapshot first and logs after the lock is released.
 
 struct Seen {
-    std::string section;   // as first queried
-    std::string key;       // as first queried
-    std::string value;     // effective value, as text
+    std::string section;
+    std::string key;
+    std::string value;
     std::string source;    // "env", "ini" or "default"
 };
 
 std::mutex g_mu;
 // canonical id ("section" 0x1F "key", lower-case) -> value. config_set values live here too (source "ini").
 std::unordered_map<std::string, std::string> g_ini;
-// The game's defaults (config_set_defaults): below the ini, kept when the ini is loaded or cleared.
 std::unordered_map<std::string, std::string> g_defaults;
-// every key read so far, keyed by canonical id, ordered for a stable dump.
 std::map<std::string, Seen> g_seen;
 
 std::string S(const char* p) { return p ? std::string(p) : std::string(); }
@@ -111,7 +109,7 @@ bool parse_int(const std::string& raw, int64_t& out) {
             d = static_cast<uint64_t>(c - 'A' + 10);
         else
             return false;
-        if (acc > (UINT64_MAX - d) / base) return false;  // overflow
+        if (acc > (UINT64_MAX - d) / base) return false;
         acc = acc * base + d;
     }
     const uint64_t limit = neg ? static_cast<uint64_t>(INT64_MAX) + 1 : static_cast<uint64_t>(INT64_MAX);
@@ -143,20 +141,19 @@ bool parse_double(const std::string& raw, double& out) {
     return true;
 }
 
-// Parses one ini line into the current section and stores key/value pairs in `out`.
 void parse_line(const std::string& line, std::string& section, std::unordered_map<std::string, std::string>& out) {
     std::string s = trim(line);
     if (s.empty()) return;
     char c0 = s[0];
-    if (c0 == ';' || c0 == '#') return;  // whole-line comment
+    if (c0 == ';' || c0 == '#') return;
     if (c0 == '[') {
         size_t close = s.find(']');
-        if (close == std::string::npos) return;  // garbage
+        if (close == std::string::npos) return;
         section = lower(trim(s.substr(1, close - 1)));
         return;
     }
     size_t eq = s.find('=');
-    if (eq == std::string::npos) return;  // garbage
+    if (eq == std::string::npos) return;
     std::string key = lower(trim(s.substr(0, eq)));
     if (key.empty()) return;
     std::string rest = s.substr(eq + 1);
@@ -198,7 +195,7 @@ std::unordered_map<std::string, std::string> parse_ini(const std::string& text) 
 }
 
 void replace_ini(const std::string& text) {
-    auto parsed = parse_ini(text);  // parse outside the lock
+    auto parsed = parse_ini(text);
     std::lock_guard<std::mutex> g(g_mu);
     g_ini = std::move(parsed);
 }
@@ -209,7 +206,7 @@ std::string fmt_double(double v) {
     return b;
 }
 
-}  // namespace
+}
 
 namespace {
 bool read_text_file(const char* path, std::string& text) {
@@ -224,7 +221,7 @@ bool read_text_file(const char* path, std::string& text) {
         text.erase(0, 3);      // a UTF-8 byte-order mark must not hide the first section header
     return true;
 }
-}  // namespace
+}
 
 bool config_load_file(const char* path) {
     std::string text;
@@ -286,7 +283,7 @@ int64_t config_get_int(const char* section, const char* key, int64_t def) {
     int64_t v = def;
     if (f.found) {
         int64_t parsed;
-        if (parse_int(f.value, parsed)) v = parsed;  // invalid text: keep default
+        if (parse_int(f.value, parsed)) v = parsed;
     }
     record(sec, k, std::to_string(v), f.source);
     return v;
@@ -364,4 +361,4 @@ std::string config_env_name(const char* section, const char* key) {
     return n;
 }
 
-}  // namespace nxrt
+}

@@ -58,4 +58,4 @@ class MixRampCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -19,7 +19,7 @@ constexpr uint64_t kSdkBase = 0x7500000000ull;      // sdk / subsdk modules sit 
 constexpr uint64_t kHeapBase = 0x7800000000ull;     // primary view of the heap section (svcSetHeapSize / nn::os memory heap)
 constexpr uint64_t kHeapMax = 0x200000000ull;       // 8 GiB reserved for the heap view
 constexpr uint64_t kAliasBase = 0x7A00000000ull;    // views of heap pages made on request (pools, shared memory, MapMemory)
-constexpr uint64_t kAliasSize = 0x200000000ull;     // 8 GiB
+constexpr uint64_t kAliasSize = 0x200000000ull;
 constexpr uint64_t kStackBase = 0x7C00000000ull;    // guest thread stacks handed out by the runtime
 constexpr uint64_t kStackSize = 0x100000000ull;
 constexpr uint64_t kKernelBase = 0x7E00000000ull;   // TLS regions, main-thread stack, kernel-owned memory
@@ -35,14 +35,14 @@ struct Config {
 };
 
 bool init(const Config& cfg = {});    // idempotent; reserves stack + kernel regions, creates nothing else
-void shutdown();                      // unmaps everything this module created (tests)
+void shutdown();
 bool initialised();
 
 // ---- plain fixed mappings (images, stacks) --------------------------------------------------------------------------
 // Reserve address space at exactly `addr`. Returns false when the range is not free.
 bool reserve_fixed(uint64_t addr, uint64_t size, const char* tag);
-bool release_fixed(uint64_t addr);                           // release a reservation made by reserve_fixed (whole region)
-bool commit(uint64_t addr, uint64_t size, Prot p = Prot::RW);   // MEM_COMMIT (inside a reserve_fixed range or a heap view)
+bool release_fixed(uint64_t addr);
+bool commit(uint64_t addr, uint64_t size, Prot p = Prot::RW);
 bool decommit(uint64_t addr, uint64_t size);
 bool protect(uint64_t addr, uint64_t size, Prot p);
 uint64_t alloc_kernel(uint64_t size, uint64_t align = kPage);   // committed RW memory from the kernel region (bump allocator)
@@ -52,7 +52,7 @@ bool is_mapped(uint64_t addr, uint64_t size);                // every byte of th
 // One pagefile-backed section (SEC_RESERVE, nothing is charged until committed) with a primary view at kHeapBase.
 bool heap_create(uint64_t reserve_bytes);       // 0 = use the configured size; a second call is ignored
 bool heap_exists();
-uint64_t heap_reserved();                       // section size
+uint64_t heap_reserved();
 bool heap_commit(uint64_t offset, uint64_t size);     // commit [kHeapBase+offset, +size) (page granularity)
 bool heap_decommit(uint64_t offset, uint64_t size);
 uint64_t heap_committed();                      // bytes committed through heap_commit minus heap_decommit
@@ -60,7 +60,7 @@ uint64_t heap_committed();                      // bytes committed through heap_
 // `at` == 0 picks a free range in the alias region. Returns the guest(=host) address or 0. The pages must be committed
 // (in the section) before they are touched through any view.
 uint64_t heap_alias(uint64_t offset, uint64_t size, uint64_t at = 0, Prot p = Prot::RW);
-bool heap_alias_unmap(uint64_t view_addr);      // unmap a view returned by heap_alias
+bool heap_alias_unmap(uint64_t view_addr);
 // A view of section pages [offset, offset+size) at an address the system picks, outside the guest-visible alias region (the guest never sees it).
 // offset must be a multiple of kAllocGranularity. The GPU import of a pool goes through such a view: the driver walks the whole mapping that
 // contains the imported range, so importing 64 KB of the multi-gigabyte primary view cost tens of milliseconds, a small view costs 0.05 ms (S18).
@@ -85,4 +85,4 @@ struct VmInfo {
 void vm_set(uint64_t addr, uint64_t size, uint32_t state, uint32_t perm);   // perm: bit0 R, bit1 W, bit2 X
 VmInfo vm_query(uint64_t addr);                 // the block containing addr, or the free gap around it
 
-}  // namespace nxrt::mem
+}

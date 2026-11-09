@@ -173,7 +173,7 @@ enum class AudioRendererRenderingDevice : uint8_t {
     Dsp,
     Cpu,
 };
-}  // namespace server
+}
 
 #pragma pack(push, 1)
 
@@ -856,4 +856,4 @@ static_assert(sizeof(DeviceParameter) == 0x11C);
 
 #pragma pack(pop)
 
-}  // namespace nxrt::audren
+}

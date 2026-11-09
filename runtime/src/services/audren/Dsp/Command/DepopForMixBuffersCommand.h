@@ -27,7 +27,7 @@ class DepopForMixBuffersCommand : public ICommand {
         DepopBuffer = depopBuffer;
         if (sampleRate == 48000) {
             Decay = 0.962189f;
-        } else {  // if (sampleRate == 32000)
+        } else {
             Decay = 0.943695f;
         }
         return *this;
@@ -67,4 +67,4 @@ class DepopForMixBuffersCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

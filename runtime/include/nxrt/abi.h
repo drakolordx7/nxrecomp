@@ -27,4 +27,4 @@ inline uint64_t& fp(::Ctx* c) { return c->x[29]; }
 inline uint64_t& tpidr_el0(::Ctx* c) { return c->tpidr; }
 inline uint64_t& tpidrro_el0(::Ctx* c) { return c->tpidrro; }
 
-}  // namespace nxrt
+}

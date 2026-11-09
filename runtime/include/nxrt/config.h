@@ -44,4 +44,4 @@ void config_log_effective();
 // The environment variable name used for a key, e.g. NXRT_DIAG_WATCHDOG_SECONDS.
 std::string config_env_name(const char* section, const char* key);
 
-}  // namespace nxrt
+}

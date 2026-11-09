@@ -22,16 +22,14 @@ std::once_flag g_volume_once;
 
 float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
-// Reads [audio] volume the first time the volume is used. set_master_volume and master_volume both call this first.
 void load_volume_config() {
     std::call_once(g_volume_once, [] {
         double v = config_get_double("audio", "volume", 1.0);
-        if (!(v == v)) v = 1.0;   // NaN
+        if (!(v == v)) v = 1.0;
         g_volume.store(clamp01(static_cast<float>(v)));
     });
 }
 
-// The current sink's counters (a copy of the pointer keeps the sink alive while they are read), or zeros with no sink.
 SinkStats current_stats() {
     std::shared_ptr<AudioSink> s;
     {
@@ -42,7 +40,6 @@ SinkStats current_stats() {
 }
 
 // ---- gauges (include/nxrt/gauge.h): the sink's own counters, same numbers as stats_report() ----
-// Removes its gauge when this file's statics are torn down (declared after g_sink, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
@@ -50,12 +47,12 @@ struct GaugeHook {
 };
 GaugeHook gauge_frames_written("audio.sink_frames_written", [] { return static_cast<int64_t>(current_stats().frames_written); });
 GaugeHook gauge_frames_accepted("audio.sink_frames_accepted", [] { return static_cast<int64_t>(current_stats().frames_accepted); });
-GaugeHook gauge_frames_dropped("audio.sink_frames_dropped", [] { return static_cast<int64_t>(current_stats().frames_dropped); });   // overruns: device queue full
+GaugeHook gauge_frames_dropped("audio.sink_frames_dropped", [] { return static_cast<int64_t>(current_stats().frames_dropped); });
 GaugeHook gauge_underruns("audio.underruns", [] { return static_cast<int64_t>(current_stats().underruns); });
 GaugeHook gauge_queued_buffers_peak("audio.queued_buffers_peak", [] { return static_cast<int64_t>(current_stats().queued_peak); });
 GaugeHook gauge_queued_frames_peak("audio.queued_frames_peak", [] { return static_cast<int64_t>(current_stats().queued_peak_frames); });
 GaugeHook gauge_queued_frames_low("audio.queued_frames_low", [] { return static_cast<int64_t>(current_stats().queued_low_frames); });
-}  // namespace
+}
 
 void NullSink::close() { NXLOG_I("audio", "%s", format_stats(name(), stats()).c_str()); }
 
@@ -100,7 +97,7 @@ std::shared_ptr<AudioSink> sink() {
 
 void set_master_volume(float volume) {
     load_volume_config();
-    if (!(volume == volume)) return;   // NaN: keep the current volume
+    if (!(volume == volume)) return;
     g_volume.store(clamp01(volume));
 }
 
@@ -130,4 +127,4 @@ std::string stats_report() {
     return format_stats(s->name(), s->stats());
 }
 
-}  // namespace nxrt::audio
+}

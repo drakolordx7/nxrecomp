@@ -28,7 +28,7 @@ namespace {
 
 struct Ev {
     uint64_t t0;
-    uint32_t dur;      // ns, saturated
+    uint32_t dur;
     uint16_t zone;
     uint16_t thread;
     uint32_t arg;
@@ -39,7 +39,7 @@ constexpr uint32_t kMaxThreads = 1024;
 Ev* g_ev = nullptr;
 size_t g_cap = 0;
 std::atomic<size_t> g_n{0};
-std::mutex g_mu;                                   // names and the file
+std::mutex g_mu;
 std::vector<std::string> g_zone_names;
 std::atomic<uint16_t> g_next_thread{0};
 std::string g_thread_names[kMaxThreads];
@@ -93,7 +93,7 @@ void writer_main() {
     }
 }
 
-}  // namespace
+}
 
 uint64_t now_ns() {
     LARGE_INTEGER c;
@@ -151,7 +151,7 @@ CpuSnap take_snap() {
         s.cyc.push_back(c);
     }
     s.th = recs;
-    for (ThreadRecord& r : s.th) r.host_handle = nullptr;   // the snapshot keeps tid/name only
+    for (ThreadRecord& r : s.th) r.host_handle = nullptr;
     diag_threads_release(recs);
     return s;
 }
@@ -173,13 +173,12 @@ void sampler_main(std::string path) {
     const double tpn = tsc_per_ns();
     uint64_t handled_frame = 0, prev_frame = 0;
     int dumps = 0;
-    CpuSnap snap = take_snap();               // taken just after a frame was seen
+    CpuSnap snap = take_snap();
     while (!g_stop.load()) {
         Sleep(3);
         const uint64_t last = g_last_frame.load();
         if (!last) continue;
         if (last != handled_frame) {
-            // a new frame: if the gap before it was a stall, say what every thread's CPU time was during it
             if (dumps > 0) {
                 const CpuSnap now = take_snap();
                 std::fprintf(f, "--- stall ended: %.1f ms between frames; CPU ms per thread in that time:\n", (last - prev_frame) / 1e6);
@@ -211,7 +210,7 @@ void sampler_main(std::string path) {
     }
     std::fclose(f);
 }
-}  // namespace
+}
 
 void frame() {
     if (!on()) return;
@@ -252,4 +251,4 @@ void stop() {
     if (g_file) { std::fclose(g_file); g_file = nullptr; }
 }
 
-}  // namespace nxrt::ft
+}

@@ -57,7 +57,7 @@ struct KObject {
 struct EventState {
     bool signaled = false;
 };
-struct KEvent : KObject {                                  // readable and writable handles share `state`
+struct KEvent : KObject {
     std::shared_ptr<EventState> state = std::make_shared<EventState>();
     bool writable = false;
     ObjType type() const override { return ObjType::Event; }
@@ -83,21 +83,21 @@ void handle_close(uint32_t h);
 size_t handle_count();
 template <class T>
 std::shared_ptr<T> handle_as(uint32_t h) { return std::dynamic_pointer_cast<T>(handle_get(h)); }
-void handles_reset();                                      // tests
+void handles_reset();
 
 // ---- guest threads ---------------------------------------------------------------------------------------------------------
 struct KThread : KObject {
-    uint64_t id = 0;                    // svcGetThreadId value
+    uint64_t id = 0;
     uint32_t handle = 0;
     std::string name;
-    alignas(16) ::Ctx ctx{};            // guest registers of this thread
+    alignas(16) ::Ctx ctx{};
     uint64_t tls = 0;                   // TLS region (TPIDRRO_EL0), 0x200 bytes; +0x1F0 holds the thread pointer (nn::os convention)
-    uint64_t tp_block = 0;              // static TLS block (TPIDR_EL0 points here)
+    uint64_t tp_block = 0;
     uint64_t entry = 0, arg = 0, stack_top = 0;
     int prio = 44;                      // HOS priority 0 (highest) .. 63; applications use 28..59 (nn::os 0..31 = prio - 28)
     int ideal_core = 0;                 // console core 0..2 the thread prefers (-1 none)
     uint64_t core_mask = 1;             // console cores the thread may run on (bit n = core n)
-    void* host_handle = nullptr;        // Win32 thread handle (owned by the thread object)
+    void* host_handle = nullptr;
     uint32_t host_tid = 0;
     bool started = false, cancel_sync = false;
     std::atomic<bool> exited{false};    // written under the kernel lock (thread_mark_exited), read under the thread-list lock and elsewhere
@@ -109,7 +109,7 @@ struct KThread : KObject {
     uint32_t wait_tag = 0;
     void* cv_storage[1] = {nullptr};    // CONDITION_VARIABLE is pointer sized: this thread's own wake-up (kernel_sync.cpp)
     std::weak_ptr<KThread> self;
-    ~KThread() override;                // closes host_handle
+    ~KThread() override;
     ObjType type() const override { return ObjType::Thread; }
     bool signaled() const override { return exited; }
 };
@@ -126,18 +126,18 @@ struct ThreadParams {
 uint32_t thread_create(const ThreadParams& p);
 // Starts the host thread: it registers with diag, applies the console core/priority model, runs entry(arg) through dispatch_call
 // with sp = stack_top and exits when the function returns (like svcExitThread).
-uint32_t thread_start(uint32_t handle);                    // result code
-[[noreturn]] void thread_exit();                           // svcExitThread for the calling guest thread
+uint32_t thread_start(uint32_t handle);
+[[noreturn]] void thread_exit();
 // Turns the calling host thread into the main guest thread (stack allocated in the kernel region). Returns its handle.
 uint32_t main_thread_adopt(uint64_t stack_size, const char* name = "main");
 void main_thread_release();                                // the adopted main thread is done: unregisters it from diag and marks it exited
 KThread* current_thread();                                 // nullptr on a host thread that is not a guest thread
-::Ctx* current_ctx();                                      // current_thread()->ctx or nullptr
-std::vector<std::shared_ptr<KThread>> threads();           // every thread ever created and not yet destroyed
+::Ctx* current_ctx();
+std::vector<std::shared_ptr<KThread>> threads();
 bool thread_join(uint32_t handle, uint32_t timeout_ms);    // host-side wait for the thread to finish (tests, shutdown)
 void kernel_reset();                                       // tests: join/forget threads, clear handles, sync state (no thread may run guest code)
-uint64_t thread_count_running();                           // started and not yet exited
-bool thread_set_priority(KThread& t, int hos_prio);       // updates the object and the host thread
+uint64_t thread_count_running();
+bool thread_set_priority(KThread& t, int hos_prio);
 bool thread_set_core_mask(KThread& t, int ideal_core, uint64_t mask);   // console cores; false when mask has no usable core
 
 // ---- scheduling model (console cores) ----------------------------------------------------------------------------------------
@@ -145,7 +145,7 @@ bool thread_set_core_mask(KThread& t, int ideal_core, uint64_t mask);   // conso
 // affinity to the host processors that stand for its cores and maps HOS priorities onto six Windows priority bands.
 struct SchedInfo {
     bool active = false;                 // false: fewer than 3 usable host processors or [sched] console_cores = 0
-    uint64_t host_masks[3] = {0, 0, 0};  // host affinity mask per console core
+    uint64_t host_masks[3] = {0, 0, 0};
     int slot = -1;                       // processor slot taken (-1: shared / explicit mask)
 };
 SchedInfo sched_info();                  // initialises on first use
@@ -157,12 +157,12 @@ int sched_current_core();
 // background CPU load a woken thread waits a full scheduler quantum for its processor (debug 180, S10 measurements: 100 to 200 ms
 // stalls and half the frame rate with every core busy); a class above the background keeps the hand-overs immediate.
 void sched_set_process_priority(bool interactive);
-void sched_apply(KThread& t);            // (re)applies affinity + priority of t to its host thread
+void sched_apply(KThread& t);
 std::string sync_wait_report();          // the guest threads blocked in WaitForAddress / process-wide keys / mutex hand-overs, with the word each waits on (watchdog dump; never blocks)
 void yield_host();                       // the calling thread offers its processor to another ready thread (SwitchToThread), unless the starvation guard aged it
 void starvation_guard_start();           // ages guest threads the host leaves ready but never runs (starvation_guard.cpp, [sched] starvation_guard)
 void starvation_guard_stop();
-uint64_t starvation_boosts();            // boosts given so far
+uint64_t starvation_boosts();
 void install_spin_hint();                // WFE / YIELD of the lifted code hand the host processor over (busy_mutex.cpp, [sched] spin_yield)
 void install_busy_mutex_hle();           // nn::os::LockBusyMutex as host code that yields while it waits (busy_mutex.cpp, [sched] busy_mutex_hle)
 void sched_reset_for_tests();            // forget the slot and re-read the config at the next sched_info()
@@ -202,4 +202,4 @@ uint32_t wait_synchronization(const uint32_t* handles, int32_t count, int64_t ti
 uint32_t cancel_synchronization(uint32_t thread_handle);
 void notify_waitable_changed();          // wake threads blocked in wait_synchronization (call after changing an object's signaled state)
 
-}  // namespace nxrt::kernel
+}

@@ -26,12 +26,12 @@ namespace services { struct TitleProfile; namespace fs { class ModsIndexEdit; } 
 namespace timestep { struct Sites; }
 namespace tt { struct GameProbes; }
 namespace play { struct GamePlay; struct GameDefaults; struct PromptGame; struct GameSection; }
-}  // namespace nxrt
+}
 namespace nxl { struct GameLauncher; }
 
 namespace nxrt::game {
 
-struct GameRender;   // game_render.h
+struct GameRender;
 
 struct Info {
     // ---- identity ----
@@ -58,8 +58,8 @@ struct Info {
     const play::GameDefaults* play_defaults = nullptr;
     const play::GamePlay* play = nullptr;
     const play::PromptGame* prompts = nullptr;
-    const play::GameSection* settings = nullptr;     // the game's own controls.ini section, F1 tab and Extras rows
-    const nxl::GameLauncher* launcher = nullptr;     // the game's launcher tabs and rows (set by the game's launcher registration)
+    const play::GameSection* settings = nullptr;
+    const nxl::GameLauncher* launcher = nullptr;
     const GameRender* render = nullptr;
     // Called once the RomFS mods are merged, before they are served: fixes up game tables that depend on the served files
     // (src/services/fs_mods.h ModsIndexEdit). Not called when no mod provides anything.
@@ -81,11 +81,10 @@ inline const Info*& current_slot() {
 }
 inline void set_current(const Info* g) { current_slot() = g; }
 inline const Info* current() { return current_slot(); }
-// The registered game, or an empty Info (every table null) when none is.
 inline const Info& info() {
     static const Info none;
     const Info* g = current();
     return g ? *g : none;
 }
 
-}  // namespace nxrt::game
+}

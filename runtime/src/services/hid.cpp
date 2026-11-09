@@ -40,7 +40,7 @@ constexpr int32_t kStickButtonThreshold = 32767 / 2;    // Ryujinx Hid.cs: short
 constexpr uint64_t kSampleNs = 5000000;       // 5 ms between samples (200 Hz), in ns (ScarletNX hid_motion.h dt_ns)
 constexpr uint32_t kResultInvalidNpadId = res(202, 123);       // Ryujinx ResultCode.InvalidNpadIdType
 constexpr uint32_t kResultInvalidDeviceIndex = res(202, 124);  // Ryujinx ResultCode.InvalidDeviceIndex
-constexpr uint32_t kResultNoHandle = kernel::kOutOfHandles;    // the handle table is full
+constexpr uint32_t kResultNoHandle = kernel::kOutOfHandles;
 
 struct VibValue {
     float amp_low = 0, freq_low = 0, amp_high = 0, freq_high = 0;   // Switchbrew VibrationValue field order
@@ -60,11 +60,11 @@ struct HidState {
     uint64_t joy_hold = 0;                  // NpadJoyHoldType: 0 Vertical, 1 Horizontal
     int64_t handheld_activation = 0;
     int64_t npad_communication = 0;
-    uint32_t last_tag[kNpadCount] = {};     // style tag each entry had at the last sample
+    uint32_t last_tag[kNpadCount] = {};
     bool connected[kNpadCount] = {};
-    std::map<uint32_t, VibValue> vibration; // last value sent per VibrationDeviceHandle
-    std::atomic<int> resources{0};          // live IAppletResource objects
-    std::atomic<bool> background{true};     // the thread samples only when this is set
+    std::map<uint32_t, VibValue> vibration;
+    std::atomic<int> resources{0};
+    std::atomic<bool> background{true};
     std::atomic<bool> stop{false};
     std::thread sampler;
 };
@@ -164,7 +164,6 @@ int index_of_npad_id(uint32_t id) {
     if (id == kNpadIdOther) return 9;
     return -1;
 }
-// The input slot (input_source.h) that feeds a shared-memory entry.
 uint32_t slot_of_index(uint32_t idx) {
     if (idx < 8) return idx;
     return idx == 8 ? nxrt::hid::kNpadSlotHandheld : nxrt::hid::kNpadSlotOther;
@@ -235,7 +234,7 @@ void apply_style(uint8_t* e, uint32_t tag, const NpadInput& in) {
         w64(e, kSystemProperties, 0);
         return;
     }
-    w32(e, kJoyAssignmentMode, (tag == kTagJoyLeft || tag == kTagJoyRight) ? 1 : 0);   // Single for the half pads, else Dual
+    w32(e, kJoyAssignmentMode, (tag == kTagJoyLeft || tag == kTagJoyRight) ? 1 : 0);
     w32(e, kFullKeyColor + 0, 0);
     w32(e, kFullKeyColor + 4, in.color_body);
     w32(e, kFullKeyColor + 8, in.color_buttons);
@@ -289,7 +288,7 @@ void sample_npad(HidState& s, uint8_t* host, uint32_t idx, const InputSnapshot& 
         real.ry = in.right.y;
         real.attributes = attributes_of_tag(tag);
         six.delta_time = kSampleNs;
-        six.attributes = 1;   // connected
+        six.attributes = 1;
         for (int k = 0; k < 3; ++k) {
             six.accel[k] = in.six_axis.accel[k];
             six.gyro[k] = in.six_axis.gyro[k];
@@ -335,7 +334,7 @@ void sample_mouse(uint8_t* host, const nxrt::hid::MouseInput& m) {
     ms.wheel_dx = m.wheel_dx;
     ms.wheel_dy = m.wheel_dy;
     ms.buttons = m.buttons;
-    ms.attributes = m.connected ? 2u : 0u;   // bit 1 connected
+    ms.attributes = m.connected ? 2u : 0u;
     ring_push(ring_at<MouseState>(host, kMouse), ms);
 }
 
@@ -369,7 +368,6 @@ void sampler_main(HidState* s) {
     }
 }
 
-// Caller holds st().mu.
 void ensure_sampler(HidState& s) {
     if (!s.sampler.joinable()) s.sampler = std::thread(sampler_main, &s);
 }
@@ -390,7 +388,6 @@ DeviceHandle decode_handle(uint32_t h) {
     return {h & 0xFF, (h >> 8) & 0xFF, (h >> 16) & 0xFF};
 }
 
-// Input slot of a handle's npad, or -1.
 int slot_of_handle(uint32_t h) {
     const int idx = index_of_npad_id(decode_handle(h).npad_id);
     return idx < 0 ? -1 : static_cast<int>(slot_of_index(static_cast<uint32_t>(idx)));
@@ -429,7 +426,6 @@ void zero_handle_cmd(ipc::Service& svc, uint32_t id, const char* name) {
     });
 }
 
-// Gauge (include/nxrt/gauge.h): IAppletResource objects alive (the sampler runs while any is).
 GaugeCounter g_hid_resources("hid.applet_resources");
 
 // IAppletResource (nn::hid::IAppletResource): one per CreateAppletResource. While one is alive the sampler runs.
@@ -796,7 +792,7 @@ void hid_stop_sampler(HidState& s) {
     s.stop.store(false);
 }
 
-}  // namespace
+}
 
 void register_hid() {
     add("hid", [] { return make_iface("nn::hid::IHidServer", setup_hid); });
@@ -823,7 +819,7 @@ void hid_reset() {
     if (s.shm && s.shm->ok() && mem::is_mapped(s.shm->host(), kSize)) {
         init_shm(reinterpret_cast<uint8_t*>(s.shm->host()));
     } else {
-        s.shm.reset();   // created again on first use
+        s.shm.reset();
     }
 }
 
@@ -847,4 +843,4 @@ void hid_set_background_sampling(bool enabled) {
     st().background.store(enabled);
 }
 
-}  // namespace nxrt::services
+}

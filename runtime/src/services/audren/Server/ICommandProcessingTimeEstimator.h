@@ -50,7 +50,6 @@ inline uint32_t FloatToUInt32(float v) {
     return static_cast<uint32_t>(v);
 }
 
-// Debug.Assert(_sampleCount is 160 or 240)
 inline bool IsSampleCountSupported(uint32_t sampleCount) { return sampleCount == 160 || sampleCount == 240; }
 
 // The static IsChannelCountValid of the C# parameter structs (private in the C++ command classes, so it is repeated here).
@@ -67,9 +66,8 @@ inline uint32_t SelectByChannelCount(uint16_t channelCount, float c1, float c2, 
         default: NXAUDREN_FATAL("CommandProcessingTimeEstimator: NotImplementedException (unsupported channel count)");
     }
 }
-}  // namespace estimator_detail
+}
 
-// The C# interface. Every overload takes the command by const reference: the estimators only read it.
 class ICommandProcessingTimeEstimator {
   public:
     virtual ~ICommandProcessingTimeEstimator() = default;
@@ -107,4 +105,4 @@ class ICommandProcessingTimeEstimator {
     virtual uint32_t Estimate(const FillBufferCommand& command) = 0;
 };
 
-}  // namespace nxrt::audren
+}

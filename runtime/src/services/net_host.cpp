@@ -120,7 +120,6 @@ std::string trim(const std::string& s) {
     while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
     return s.substr(a, b - a);
 }
-// "k=v;k2=v2" -> pairs (empty items skipped).
 std::vector<std::pair<std::string, std::string>> pairs(const std::string& text) {
     std::vector<std::pair<std::string, std::string>> out;
     size_t pos = 0;
@@ -170,8 +169,8 @@ struct HostSock {
     SOCKET s = INVALID_SOCKET;
     bool nonblock = false;
     bool connect_logged = false;
-    bool sendto_target_logged = false;   // a failed SendTo named its target once
-    std::set<std::string> errors_logged;   // "<cmd> <errno>"
+    bool sendto_target_logged = false;
+    std::set<std::string> errors_logged;
     ~HostSock() {
         if (s != INVALID_SOCKET) closesocket(s);
     }
@@ -180,7 +179,7 @@ using SockPtr = std::shared_ptr<HostSock>;
 
 struct Table {
     std::mutex mu;
-    std::vector<SockPtr> fds;   // index = guest descriptor; null = free
+    std::vector<SockPtr> fds;
 };
 Table& tab() {
     static Table t;
@@ -206,7 +205,7 @@ SockPtr fd_get(int fd) {
     return t.fds[static_cast<size_t>(fd)];
 }
 bool fd_close(int fd) {
-    SockPtr p;   // released outside the lock (closesocket on the last reference)
+    SockPtr p;
     Table& t = tab();
     std::lock_guard<std::mutex> lk(t.mu);
     if (fd < 0 || static_cast<size_t>(fd) >= t.fds.size() || !t.fds[static_cast<size_t>(fd)]) return false;
@@ -231,7 +230,6 @@ void log_error(const SockPtr& p, int fd, const char* what, uint32_t err, int wsa
     NXLOG_I("net", "bsd %s fd=%d: errno %u (WSA %d)", what, fd, err, wsa);
 }
 
-// The errno of the last Winsock call, logged when it is a real error.
 uint32_t last_error(const SockPtr& p, int fd, const char* what) {
     const int wsa = WSAGetLastError();
     const uint32_t e = linux_errno(wsa);
@@ -721,8 +719,8 @@ uint32_t do_poll(ipc::Request& req, ipc::Response& rsp) {
     std::vector<uint8_t> fds(static_cast<size_t>(nfds) * 8);
     buf_read(in, fds.data(), fds.size());
     std::vector<WSAPOLLFD> host;
-    std::vector<int> slot_of;          // host entry -> pollfd index
-    std::vector<SockPtr> keep;         // the sockets stay open while polled
+    std::vector<int> slot_of;
+    std::vector<SockPtr> keep;
     int ready = 0;
     for (int i = 0; i < nfds; ++i) {
         int32_t fd;
@@ -835,7 +833,7 @@ uint32_t do_dup(ipc::Request& req, ipc::Response& rsp) {
     return reply(rsp, fd_add(std::move(p)), 0);
 }
 
-}  // namespace
+}
 
 bool sockets_host() { return lower(trim(config_get_str("net", "sockets", "off"))) == "host"; }
 
@@ -849,7 +847,7 @@ void install_bsd(ipc::Service& s) {
         }
         s.add_cmd(id, name, [id, name, h = std::move(h)](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
             const int32_t a0 = req.arg<int32_t>(0);
-            if (id == 5 || id == 6) {   // Select / Poll may block: log the entry too, with the fd list for Poll
+            if (id == 5 || id == 6) {
                 std::string fds;
                 const ipc::Buffer in = req.in_buf(0);
                 if (id == 6 && in.addr)
@@ -918,7 +916,7 @@ bool resolve_ipv4(const std::string& name_in, uint8_t ip[4], const char** how) {
         if (key == name) {
             if (parse_ipv4(v, ip)) return said("hosts");
         } else if (key.size() > 2 && key.compare(0, 2, "*.") == 0) {
-            const std::string suffix = key.substr(1);   // ".example.com"
+            const std::string suffix = key.substr(1);
             if (name.size() > suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0 && suffix.size() > best) {
                 best = suffix.size();
                 best_ip = v;
@@ -956,4 +954,4 @@ void reset() {
     }
 }
 
-}  // namespace nxrt::services::nethost
+}

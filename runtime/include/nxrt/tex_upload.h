@@ -55,13 +55,13 @@ void texture_upload_unsubscribe(int handle);
 void texture_upload_changed();
 
 struct TexUploadStats {
-    uint64_t edits = 0;          // edited data made (any thread)
-    uint64_t reuses = 0;         // uploads served from the kept data
-    uint64_t rebuilds = 0;       // texture_upload_changed passes finished
+    uint64_t edits = 0;
+    uint64_t reuses = 0;
+    uint64_t rebuilds = 0;
     double last_edit_ms = 0;     // the last edit: decode, subscriber's edit, encode of the whole chain
     double last_rebuild_ms = 0;  // the last pass of texture_upload_changed: all textures, before they are uploaded again
     uint32_t last_rebuild_textures = 0;
 };
 TexUploadStats texture_upload_stats();
 
-}  // namespace nxrt::gfx
+}

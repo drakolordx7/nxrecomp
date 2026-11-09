@@ -34,7 +34,7 @@ struct ModuleSymbol {
 struct TlsInfo {
     uint64_t init_addr = 0;    // absolute address of the initial image (.tdata)
     uint64_t file_size = 0;
-    uint64_t mem_size = 0;     // .tdata + .tbss
+    uint64_t mem_size = 0;
     uint64_t align = 1;
     uint64_t tp_offset = 0;    // offset of the block from the thread pointer (AArch64 variant I: 16 rounded up to align)
     bool present() const { return mem_size != 0; }
@@ -53,7 +53,7 @@ struct RelocStats {
     size_t out_of_range = 0;        // relocation target outside the image (skipped)
 };
 
-struct FuncEntry {                  // one lifted function: absolute guest address and its host implementation
+struct FuncEntry {
     uint64_t addr;
     GuestFn fn;
 };
@@ -62,7 +62,7 @@ struct LoadOptions {
     std::string name;               // defaults to the file name
     uint64_t base = 0;              // load address; 0 = mem::kMainBase for the first module, then the next 64 KiB boundary after the previous one
     uint64_t max_image_size = 0x40000000ull;   // refuse images bigger than this (1 GiB)
-    bool protect = true;            // apply segment protections after linking
+    bool protect = true;
 };
 
 class Module {
@@ -70,12 +70,12 @@ public:
     const std::string& name() const { return name_; }
     uint64_t base() const { return base_; }
     uint64_t size() const { return size_; }                   // page-rounded span of the image
-    uint64_t entry() const { return entry_; }                 // absolute address of e_entry, 0 if none
+    uint64_t entry() const { return entry_; }
     bool linked() const { return linked_; }
     bool contains(uint64_t addr) const { return addr - base_ < size_; }
     const std::vector<ModuleSymbol>& symbols() const { return symbols_; }
-    uint64_t find_symbol(const char* sym) const;              // absolute address of a defined symbol or 0
-    const std::vector<uint64_t>& init_array() const { return init_; }   // absolute addresses, after linking
+    uint64_t find_symbol(const char* sym) const;
+    const std::vector<uint64_t>& init_array() const { return init_; }
     const std::vector<uint64_t>& fini_array() const { return fini_; }
     uint64_t init_function() const { return init_fn_ ? bias_ + init_fn_ : 0; }   // DT_INIT / DT_FINI, absolute, 0 if none
     uint64_t fini_function() const { return fini_fn_ ? bias_ + fini_fn_ : 0; }
@@ -97,12 +97,12 @@ private:
     struct Seg { uint64_t vaddr, memsz, filesz, offset; uint32_t flags; };
     std::vector<Seg> segs_;
     uint64_t relro_start_ = 0, relro_size_ = 0;
-    uint64_t rela_ = 0, rela_sz_ = 0, jmprel_ = 0, jmprel_sz_ = 0;     // vaddrs from the dynamic section
+    uint64_t rela_ = 0, rela_sz_ = 0, jmprel_ = 0, jmprel_sz_ = 0;
     uint64_t relr_ = 0, relr_sz_ = 0;                                 // DT_RELR (SDK 20 modules: packed RELATIVE relocations)
     std::vector<uint64_t> init_rel_, fini_rel_;                       // module-relative init/fini entries read before relocation
     uint64_t init_arr_ = 0, init_arr_sz_ = 0, fini_arr_ = 0, fini_arr_sz_ = 0;
-    uint64_t init_fn_ = 0, fini_fn_ = 0;                              // DT_INIT / DT_FINI
-    mutable std::once_flag index_once_;                               // name -> first global/weak definition, built on the first find_symbol
+    uint64_t init_fn_ = 0, fini_fn_ = 0;
+    mutable std::once_flag index_once_;
     mutable std::unordered_map<std::string, uint32_t> index_;
 };
 
@@ -124,7 +124,7 @@ bool module_link_all();
 bool module_protect_all();
 // Lifted code: registers each entry in the call_indirect table. Entries outside the module's image are rejected (counted, logged).
 size_t module_register_functions(Module* m, const FuncEntry* table, size_t count);
-size_t module_register_functions(Module* m, const ::FnEntry* table, size_t count);   // the lifter's FnEntry (same layout)
+size_t module_register_functions(Module* m, const ::FnEntry* table, size_t count);
 // Registers a lifted module's tables (NxModule from nxrecomp/ctx.h, ABI 2) with the ABI version this runtime implements: its functions
 // go to the call table and its tables to the registry (nxmodule.h: import resolution, unwinder). Returns the number of functions
 // registered, 0 when the module is refused. `m` is the mapped image (null: the NxModule's own base/text_end range is trusted).
@@ -134,7 +134,6 @@ size_t module_register_nxmodule(Module* m, const NxModule* nx);
 bool module_run_init(Module* m, ::Ctx* ctx);
 bool module_run_fini(Module* m, ::Ctx* ctx);       // fini_array in reverse order, then DT_FINI
 
-// Lookup across modules.
 Module* module_at(uint64_t addr);
 Module* module_by_name(const char* name);
 std::vector<Module*> modules();
@@ -143,7 +142,7 @@ std::string module_describe(uint64_t addr);        // "name+0xoff (symbol+0x10)"
 // Forces every relocation against `sym` (defined anywhere or not) to the HLE thunk of that name: the replacement of a recompiled
 // function by host code ("nn:: import replacement where hot"). Register the handler with hle_register first. Set before module_link_all.
 void module_override_symbol(const char* sym);
-bool module_symbol_overridden(const char* sym);    // was module_override_symbol(sym) called
+bool module_symbol_overridden(const char* sym);
 // Host-provided data for imported data symbols: the symbol resolves to `addr` (set before module_link_all).
 void module_provide_data(const char* sym, uint64_t addr);
 // The TLS template of the first loaded module with a PT_TLS segment; threads copy it into their TLS block (kernel.h).
@@ -152,4 +151,4 @@ const TlsInfo& module_tls_template();
 // Tests: unmap and forget every module (also clears the function table registrations made through module_register_functions).
 void modules_unload_all();
 
-}  // namespace nxrt
+}

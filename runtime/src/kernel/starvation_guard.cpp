@@ -47,7 +47,7 @@ struct ThreadRec {
 static_assert(sizeof(ThreadRec) == 0x50, "SYSTEM_THREAD_INFORMATION");
 struct ProcRec {
     ULONG next_entry_offset, number_of_threads;
-    uint8_t body[0x100 - 8];       // the rest of SYSTEM_PROCESS_INFORMATION up to the thread array
+    uint8_t body[0x100 - 8];
 };
 static_assert(sizeof(ProcRec) == 0x100, "SYSTEM_PROCESS_INFORMATION");
 constexpr ULONG kStateReady = 1;
@@ -75,7 +75,7 @@ struct Seen {
     int boost_polls = 0;
     bool boosted = false;
 };
-constexpr int kBoostPolls = 3;     // a boost lasts three polls (450 ms)
+constexpr int kBoostPolls = 3;
 
 void loop(Guard* g, int poll_ms, int need_polls) {
     log_set_thread_name("starve-guard");
@@ -83,7 +83,7 @@ void loop(Guard* g, int poll_ms, int need_polls) {
     NtQuery nt_query = reinterpret_cast<NtQuery>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation"));
     if (!nt_query) return;
     std::vector<uint8_t> buf(1 << 20);
-    std::unordered_map<uint32_t, Seen> seen;       // by host thread id
+    std::unordered_map<uint32_t, Seen> seen;
     const uint32_t pid = GetCurrentProcessId();
     for (;;) {
         {
@@ -127,7 +127,7 @@ void loop(Guard* g, int poll_ms, int need_polls) {
             else s.ready_polls = ready ? 1 : 0;
             s.switches = r.context_switches;
             HANDLE h = static_cast<HANDLE>(t->host_handle);
-            if (s.boosted) {                                    // boosted: keep it for boost_polls polls, then back to its band
+            if (s.boosted) {
                 if (++s.boost_polls >= kBoostPolls) {
                     SetThreadPriority(h, sched_host_priority(t->prio));
                     t->aged = false;
@@ -148,7 +148,7 @@ void loop(Guard* g, int poll_ms, int need_polls) {
     }
 }
 
-}  // namespace
+}
 
 void starvation_guard_start() {
     if (!config_get_bool("sched", "starvation_guard", true)) {
@@ -180,11 +180,10 @@ void starvation_guard_stop() {
 uint64_t starvation_boosts() { return guard().boosts.load(); }
 
 namespace {
-// Gauge (include/nxrt/gauge.h). The guard object is never destroyed (see guard()), so the callback stays valid through exit.
 const bool g_gauge_boosts_registered = [] {
     nxrt::gauge_register("kernel.starvation_boosts", [] { return static_cast<int64_t>(starvation_boosts()); });
     return true;
 }();
-}  // namespace
+}
 
-}  // namespace nxrt::kernel
+}

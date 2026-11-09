@@ -19,27 +19,19 @@ class SplitterContext;
 // C# StructLayout Size 0x20, Pack 0x10.
 class alignas(0x10) SplitterState {
   public:
-    // C# public const int Alignment = 0x10.
     static constexpr int32_t Alignment = 0x10;
 
-    // The unique id of this SplitterState.
     int32_t Id = 0;
-    // Target sample rate to use on the splitter.
     uint32_t SampleRate = 0;
-    // Count of splitter destinations.
     int32_t DestinationCount = 0;
-    // Set to true if the splitter has a new connection.
     bool HasNewConnection = false;
 
     SplitterState() = default;
 
-    // Create a new SplitterState.
     explicit SplitterState(int32_t id) : Id(id) {}
 
-    // First element of the linked list of splitter destinations data.
     SplitterDestination Destination() const { return SplitterDestination(_destinationDataV1, _destinationDataV2); }
 
-    // The splitter destination at the given index of the list (or the last one reached, if the list is shorter).
     SplitterDestination GetData(int32_t index) const {
         int32_t i = 0;
 
@@ -57,24 +49,19 @@ class alignas(0x10) SplitterState {
         return result;
     }
 
-    // Clear the new connection flag.
     void ClearNewConnectionFlag() { HasNewConnection = false; }
 
-    // Update the SplitterState from user parameter. Defined at the end of SplitterContext.h.
     void Update(SplitterContext& context, const SplitterInParameter& parameter, SequenceReader& input);
 
-    // Set the head of the linked list of Destination.
     void SetDestination(SplitterDestination newValue) {
         _destinationDataV1 = newValue.GetV1RefOrNull();
         _destinationDataV2 = newValue.GetV2RefOrNull();
     }
 
-    // Update the internal state of this instance.
     void UpdateInternalState() const {
         ForEachDestination([](SplitterDestination destination, int32_t) { destination.UpdateInternalState(); });
     }
 
-    // Clear all links from the Destination.
     void ClearLinks() {
         ForEachDestination([](SplitterDestination destination, int32_t) { destination.Unlink(); });
 
@@ -82,7 +69,6 @@ class alignas(0x10) SplitterState {
         _destinationDataV2 = nullptr;
     }
 
-    // Initialize all the given SplitterState.
     static void InitializeSplitters(Span<SplitterState> splitters) {
         for (SplitterState& splitter : splitters) {
             splitter._destinationDataV1 = nullptr;
@@ -114,10 +100,8 @@ class alignas(0x10) SplitterState {
         }
     }
 
-    // First element of the linked list of version 1 splitter destinations (C# _destinationDataV1).
     SplitterDestinationVersion1* _destinationDataV1 = nullptr;
-    // First element of the linked list of version 2 splitter destinations (C# _destinationDataV2).
     SplitterDestinationVersion2* _destinationDataV2 = nullptr;
 };
 
-}  // namespace nxrt::audren
+}

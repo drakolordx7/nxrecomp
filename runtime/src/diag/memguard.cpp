@@ -30,8 +30,8 @@ struct Settings {
     void* user;
 };
 
-std::mutex g_ctl;             // serialises start / stop / running
-std::mutex g_mu;              // guards g_stop and the poll wait
+std::mutex g_ctl;
+std::mutex g_mu;
 std::condition_variable g_cv;
 bool g_stop = false;          // guarded by g_mu
 std::thread g_thread;         // guarded by g_ctl
@@ -58,7 +58,6 @@ void guard_loop(Settings s) {
     auto next_log = Clock::now() + std::chrono::seconds(30);
     std::unique_lock<std::mutex> lk(g_mu);
     for (;;) {
-        // Returns true as soon as g_stop is set (memguard_stop notifies), so stop is prompt.
         if (g_cv.wait_for(lk, std::chrono::milliseconds(s.poll_ms), [] { return g_stop; })) return;
         lk.unlock();
 
@@ -88,7 +87,7 @@ void guard_loop(Settings s) {
     }
 }
 
-}  // namespace
+}
 
 uint64_t memguard_footprint() {
     PROCESS_MEMORY_COUNTERS_EX pmc{};
@@ -114,7 +113,7 @@ double memguard_limit_gb(const char* env_text) {
 
 void memguard_start(const MemGuardOptions& opt) {
     std::lock_guard<std::mutex> ctl(g_ctl);
-    if (g_thread.joinable()) return;  // already running: ignored
+    if (g_thread.joinable()) return;
 
     Settings s{};
     s.limit = opt.limit_bytes ? opt.limit_bytes : gb_to_bytes(memguard_limit_gb(config_get_str("memory", "limit_gb", "8").c_str()));
@@ -152,4 +151,4 @@ uint64_t memguard_peak() { return g_peak.load(); }
 
 bool memguard_tripped() { return g_tripped.load(); }
 
-}  // namespace nxrt
+}

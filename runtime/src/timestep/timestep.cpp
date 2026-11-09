@@ -39,7 +39,6 @@ const char* mode_name(Mode m) {
     return "?";
 }
 
-// A [time] fix switch: `key`, else its old name `alias`, else on.
 static bool fix_flag(const char* key, const char* alias) {
     return config_get_bool("time", key, config_get_bool("time", alias, true));
 }
@@ -91,7 +90,7 @@ double Stepper::step(double elapsed) {
     frames_++;
     if (c_.mode == Mode::Off) return dt_ = static_cast<double>(kGameStep);
     if (c_.mode == Mode::Fixed) return dt_ = 1.0 / c_.rate;
-    if (elapsed < 0.0) return dt_;                         // first frame: the game's own step until a frame time exists
+    if (elapsed < 0.0) return dt_;
     const double lo = 1.0 / c_.max_rate, hi = 1.0 / c_.min_rate;
     const double e = std::clamp(elapsed, lo, hi);
     if (e != elapsed) clamped_++;
@@ -100,7 +99,7 @@ double Stepper::step(double elapsed) {
         double sum = 0;
         for (int i = 0; i < n_; i++) sum += ring_[i];
         const double mean = sum / n_;
-        if (std::fabs(e - mean) > 0.5 * mean) {            // a hitch or a rate change: the old window no longer describes the frame time
+        if (std::fabs(e - mean) > 0.5 * mean) {
             n_ = 0;
             head_ = 0;
             restarts_++;
@@ -137,39 +136,35 @@ double qpc_seconds() {
 }
 
 struct G {
-    std::mutex mu;                      // statistics and the csv
+    std::mutex mu;
     Config cfg;
     Stepper stepper;
     bool installed = false;
     std::vector<uint32_t> hooks;
 
     ClockFn test_clock = nullptr;
-    double det_step_test = 0;           // set_deterministic_for_tests
-    bool det = false;                   // this run is deterministic
+    double det_step_test = 0;
+    bool det = false;
     double det_step = 1.0 / 60.0;
-    double det_now = 0;                 // virtual time: frames * det_step
+    double det_now = 0;
 
-    std::atomic<uint32_t> dt_bits{0};   // the step as the float the game loads
+    std::atomic<uint32_t> dt_bits{0};
     std::atomic<bool> active{false};
     float dt = kGameStep;
 
-    // frame timing (main thread)
     bool have_last = false;
     double last_start = 0, next_target = 0;
     uint64_t frame = 0;
 
-    // movie
     bool have_movie = false;
     double movie_last = 0;
 
-    // render timings
     bool render_init = false;
     double render_frames = 0;
-    double sampler_acc = 0.0;        // game time since the last sampler sample
+    double sampler_acc = 0.0;
     uint64_t render_addr = 0;
     double render_wrap = 0;            // the game's wrap of the render-timing counter (Sites::render_counter_wrap)
 
-    // statistics
     Stats st;
     double sum_elapsed = 0;
     uint64_t n_elapsed = 0;
@@ -192,7 +187,6 @@ double clock_now() {
     return s.test_clock ? s.test_clock() : qpc_seconds();
 }
 
-// Waits until the clock reaches target (seconds): a high-resolution timer for the bulk, a spin for the last part.
 void wait_until(double target) {
     static HANDLE timer = [] {
         HANDLE h = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
@@ -245,7 +239,7 @@ void begin_frame() {
         s.active.store(!retail);
     } else {
         now = clock_now();
-        const bool grid = c.mode == Mode::Fixed || retail;       // a steady schedule instead of "one period after the last frame"
+        const bool grid = c.mode == Mode::Fixed || retail;
         const double period = retail ? 1.0 / c.off_rate : s.stepper.min_period();
         if (c.pace && s.have_last && period > 0.0) {
             const double target = grid ? s.next_target : s.last_start + period;
@@ -261,7 +255,7 @@ void begin_frame() {
         if (grid) {
             const double p = retail ? 1.0 / c.off_rate : 1.0 / c.rate;
             s.next_target = (s.have_last ? s.next_target : now) + p;
-            if (now > s.next_target + p) s.next_target = now + p;      // fell behind by more than a frame: do not queue up catch-up frames
+            if (now > s.next_target + p) s.next_target = now + p;
         }
         s.last_start = now;
         s.have_last = true;
@@ -375,7 +369,7 @@ int hook_tick_sampler(::Ctx*, uint64_t, void*) {
         return 0;
     }
     s.sampler_acc += dt;
-    if (s.sampler_acc < static_cast<double>(kGameStep) - 1e-5) return 1;        // too early for a sample: handled, x0 (this) is the result
+    if (s.sampler_acc < static_cast<double>(kGameStep) - 1e-5) return 1;
     s.sampler_acc -= kGameStep;
     if (s.sampler_acc > kGameStep) s.sampler_acc = 0.0;
     return 0;
@@ -414,7 +408,7 @@ void add_hooks(const Config& c) {
     E(sites->per_tick_sampler, &hook_tick_sampler);
 }
 
-}  // namespace
+}
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // Public API
@@ -512,10 +506,10 @@ void set_run_rate(double hz) {
         s.det_step = 1.0 / hz;
         s.det = true;
     } else {
-        s.det = tt::deterministic() || s.det_step_test > 0;     // back to what the run was configured with
+        s.det = tt::deterministic() || s.det_step_test > 0;
         if (s.det_step_test > 0) s.det_step = s.det_step_test;
-        s.have_last = false;                                     // no frame time across the switch
+        s.have_last = false;
     }
 }
 
-}  // namespace nxrt::timestep
+}

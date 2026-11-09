@@ -13,10 +13,8 @@ namespace nxrt::audren {
 
 class LimiterEffect : public BaseEffect {
   public:
-    // The limiter parameter (C# LimiterParameter Parameter; default-initialised).
     LimiterParameter Parameter{};
 
-    // The limiter state (C# Memory<LimiterState>, one element).
     Span<LimiterState> State;
 
   private:
@@ -80,4 +78,4 @@ class LimiterEffect : public BaseEffect {
     void UpdateResultState(EffectResultState& destState, EffectResultState& srcState) override { destState = srcState; }
 };
 
-}  // namespace nxrt::audren
+}

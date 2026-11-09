@@ -76,13 +76,10 @@ class BiquadFilterAndMixCommand : public ICommand {
         Span<float> outputBuffer = context.GetBuffer(OutputBufferIndex);
 
         if (NeedInitialization) {
-            // If there is no previous state, initialize to zero.
             BiquadFilterState[0] = ::nxrt::audren::BiquadFilterState{};
         } else if (IsFirstMixBuffer) {
-            // This is the first buffer, set previous state to current state.
             PreviousBiquadFilterState[0] = BiquadFilterState[0];
         } else {
-            // Rewind the current state by copying back the previous state.
             BiquadFilterState[0] = PreviousBiquadFilterState[0];
         }
 
@@ -98,4 +95,4 @@ class BiquadFilterAndMixCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -8,10 +8,10 @@
 namespace nxrt::platform {
 
 struct InitOptions {
-    bool gamepads = true;       // init the joystick/gamepad subsystems and open pads as they are plugged in
+    bool gamepads = true;
 };
 bool init(const InitOptions& opt = {});   // idempotent; sets the SDL hints (raw mouse), SDL_Init(VIDEO|EVENTS|JOYSTICK|GAMEPAD)
-void shutdown();                           // closes the window and every opened gamepad, SDL_Quit
+void shutdown();
 bool initialised();
 
 struct WindowDesc {
@@ -24,10 +24,10 @@ bool create_window(const WindowDesc& desc);   // Vulkan-capable window (SDL_WIND
 void destroy_window();
 bool has_window();
 void* native_window();                        // SDL_Window*
-void* native_hwnd();                          // the Win32 HWND of the window (null when there is none)
+void* native_hwnd();
 void set_window_title(const char* title);
 void pixel_size(int* w, int* h);              // client size in pixels (0, 0 while minimised)
-bool set_window_size(int w, int h);           // windowed size in screen coordinates
+bool set_window_size(int w, int h);
 bool minimized();
 bool focused();
 bool visible();
@@ -38,7 +38,7 @@ enum class FullscreenMode { Windowed, Borderless, Exclusive };
 // reports the new state or ~2 s.
 bool set_fullscreen(FullscreenMode mode, int w = 0, int h = 0, float hz = 0.f);
 FullscreenMode fullscreen_mode();
-float display_refresh_hz();                   // refresh rate of the display the window is on (desktop mode), 0 if unknown
+float display_refresh_hz();
 
 // Relative mouse mode: raw, unaccelerated deltas (SDL_SetWindowRelativeMouseMode with SDL_HINT_MOUSE_RELATIVE_SYSTEM_SCALE
 // forced to "0" and SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE to "1"). The cursor is hidden and confined while it is on.
@@ -62,7 +62,7 @@ struct GamepadRaw {
     uint8_t face_label[4] = {0, 1, 2, 3};   // what is printed on SOUTH, EAST, WEST, NORTH: 0 = A, 1 = B, 2 = X, 3 = Y
                                         // (PlayStation cross, circle, square, triangle count as A, B, X, Y; a Nintendo pad prints B, A, Y, X)
 };
-bool gamepad_poll(uint32_t id, GamepadRaw* out);                       // false when no such pad is open
+bool gamepad_poll(uint32_t id, GamepadRaw* out);
 bool gamepad_sensors(uint32_t id, float accel[3], float gyro[3]);      // latest accelerometer (m/s^2) and gyro (rad/s) in SDL's axes; false without both sensors
 bool gamepad_rumble(uint32_t id, uint16_t low, uint16_t high, uint32_t duration_ms);   // 0..65535 per motor; (0, 0) stops it; false when unsupported
 
@@ -73,7 +73,7 @@ bool quit_requested();
 void clear_quit();
 void request_quit();
 
-uint64_t ticks_ns();                          // SDL_GetTicksNS
+uint64_t ticks_ns();
 
 // Vulkan: the instance extensions SDL needs (VK_KHR_surface + the platform one) and surface creation/destruction. The Vulkan
 // handles are passed as integers so that this header needs no Vulkan include.
@@ -81,4 +81,4 @@ const char* const* vulkan_instance_extensions(uint32_t* count);
 bool create_vulkan_surface(void* vk_instance, uint64_t* surface_out);
 void destroy_vulkan_surface(void* vk_instance, uint64_t surface);
 
-}  // namespace nxrt::platform
+}

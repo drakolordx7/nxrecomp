@@ -29,7 +29,7 @@ void svc_send_sync_request_with_user_buffer(::Ctx* c) {
     svc_ret(c, ipc::send_sync_request(c, session, c->x[0], c->x[1]));
 }
 
-}  // namespace
+}
 
 void svc_register_ipc_group() {
     svc_register(0x1F, svc_connect_to_named_port);
@@ -37,4 +37,4 @@ void svc_register_ipc_group() {
     svc_register(0x22, svc_send_sync_request_with_user_buffer);
 }
 
-}  // namespace nxrt
+}

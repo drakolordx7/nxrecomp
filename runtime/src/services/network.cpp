@@ -52,19 +52,18 @@ constexpr uint32_t kLdnStateNone = 0, kLdnStateInitialized = 1;   // nn::ldn::St
 // ---- process state -----------------------------------------------------------------------------------------------------------------------
 struct NetState {
     std::mutex mu;
-    std::set<std::string> seen;          // "<service> <cmd>" already logged
-    uint32_t next_client_id = 1;         // nifm ClientId, one per IGeneralService
-    uint32_t next_cancel_handle = 1;     // sfdnsres cancel handle
-    uint64_t next_pki_id = 1;            // ssl Import*/Register* ids
+    std::set<std::string> seen;
+    uint32_t next_client_id = 1;
+    uint32_t next_cancel_handle = 1;
+    uint64_t next_pki_id = 1;
     uint32_t ldn_state = kLdnStateNone;
-    int ssl_contexts = 0;                // live ISslContext objects
+    int ssl_contexts = 0;
 };
 NetState& st() {
     static NetState s;
     return s;
 }
 
-// Logs the first use of a command. One line per (service, command) for the life of the process (network_reset() clears it).
 void note(const char* svc, uint32_t id, const char* name) {
     NetState& s = st();
     {
@@ -93,23 +92,23 @@ uint32_t alloc_cancel_handle() {
 // ---- command tables -----------------------------------------------------------------------------------------------------------------------
 // The common answer shapes. Rows are the commands whose answer is fixed (no state, no object, no event).
 enum class K : uint8_t {
-    Ok,       // result 0, no output (accepted and ignored)
-    U8,       // result 0, one u8 = v
-    U32,      // result 0, one u32 = v
-    S32,      // result 0, one s32 = v
-    U64,      // result 0, one u64 = v
-    Fail,     // result v (no network, no such object ...)
-    Zeros,    // result 0, n zero bytes of output
-    BufZero,  // result 0, n zero bytes written into the output buffer
-    Errno,    // BSD: (i32 ret = -1, u32 errno = ENETDOWN, then n u32 zeros)
-    ErrnoOk,  // BSD: (i32 ret = 0, u32 errno = 0)
+    Ok,
+    U8,
+    U32,
+    S32,
+    U64,
+    Fail,
+    Zeros,
+    BufZero,
+    Errno,
+    ErrnoOk,
 };
 struct Row {
     uint32_t id;
     const char* name;
     K k;
-    uint64_t v = 0;   // U8/U32/S32/U64 value, Fail result
-    uint32_t n = 0;   // Zeros/BufZero byte count, Errno: extra u32 zeros
+    uint64_t v = 0;
+    uint32_t n = 0;
 };
 
 uint32_t run(const Row& r, ipc::Request& req, ipc::Response& rsp) {
@@ -139,7 +138,6 @@ uint32_t run(const Row& r, ipc::Request& req, ipc::Response& rsp) {
     return 0;
 }
 
-// One command with its own handler; logs the first use.
 void cmd(ipc::Service& s, const char* svc, uint32_t id, const char* name, ipc::Handler h) {
     s.add_cmd(id, name, [svc, id, name, h = std::move(h)](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
         note(svc, id, name);
@@ -147,7 +145,6 @@ void cmd(ipc::Service& s, const char* svc, uint32_t id, const char* name, ipc::H
     });
 }
 
-// Every row of a table becomes a command.
 void rows(ipc::Service& s, const char* svc, std::initializer_list<Row> list) {
     for (const Row& r : list) {
         Row row = r;
@@ -176,7 +173,6 @@ std::shared_ptr<ipc::Service> tracked(const char* name, std::function<void()> re
 // Copy handles belong to the client (HIPC copies them: the guest closes its own afterwards), so there is nothing to close here (debug note 122).
 void close_copied(const ipc::Request&) {}
 
-// Event pairs held by the object that hands them out.
 struct TwoEvents {
     ServiceEvent a;
     ServiceEvent b;
@@ -383,7 +379,7 @@ std::shared_ptr<ipc::Service> make_nifm_static() {
 std::shared_ptr<ipc::Service> make_bsd() {
     return make_iface("nn::socket::sf::IClient", [](ipc::Service& s) {
         cmd(s, "bsd", 0, "RegisterClient", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
-            close_copied(req);                  // the transfer memory is not used
+            close_copied(req);
             rsp.push(static_cast<uint32_t>(0));
             return 0;
         });
@@ -452,7 +448,7 @@ std::shared_ptr<ipc::Service> make_ssl_context() {
         std::lock_guard<std::mutex> lk(s.mu);
         s.ssl_contexts++;
     }
-    auto conns = std::make_shared<int>(0);     // live connections of this context
+    auto conns = std::make_shared<int>(0);
     return tracked(
         "nn::ssl::sf::ISslContext",
         [] {
@@ -578,7 +574,7 @@ std::shared_ptr<ipc::Service> make_ssl_service() {
 // empty body as a failed request, so the default body is not empty.
 struct ShopAsync {
     std::mutex mu;
-    ServiceEvent done;           // signalled when the request has completed
+    ServiceEvent done;
     std::string path, body;
 };
 
@@ -1204,7 +1200,6 @@ void write_text(const ipc::Buffer& out, const std::string& text) {
     buf_write(out, z.data(), z.size());
 }
 
-// The host name of a lookup (input buffer 0).
 std::string lookup_name(const ipc::Request& req) {
     const ipc::Buffer b = req.in_buf(0);
     if (!b.addr || !b.size) return {};
@@ -1283,7 +1278,6 @@ std::string ip_text(const uint8_t ip[4]) {
     return std::to_string(ip[0]) + "." + std::to_string(ip[1]) + "." + std::to_string(ip[2]) + "." + std::to_string(ip[3]);
 }
 
-// Resolves the lookup's name and logs the answer once per name. False: not found (the offline answer is then given).
 bool host_lookup(const ipc::Request& req, const char* what, bool with_service, uint8_t ip[4], std::string* name) {
     *name = lookup_name(req);
     const char* how = nullptr;
@@ -1392,7 +1386,7 @@ uint32_t name_info(ipc::Request& req, ipc::Response& rsp, bool with_options) {
     if (n >= 8 && sa[1] == 2) {
         std::snprintf(host, sizeof host, "%u.%u.%u.%u", sa[4], sa[5], sa[6], sa[7]);
     } else if (n >= 24 && sa[1] == 28) {
-        int o = 0;   // full form, eight hex groups (no :: shortening)
+        int o = 0;
         for (int g = 0; g < 8; ++g)
             o += std::snprintf(host + o, sizeof host - o, g ? ":%x" : "%x", (unsigned{sa[8 + g * 2]} << 8) | sa[9 + g * 2]);
     } else {
@@ -1482,7 +1476,7 @@ std::shared_ptr<ipc::Service> make_resolver() {
         });
         s.add_cmd(7, "GetNameInfoRequest", [](ipc::Request& q, ipc::Response& r) { return name_info(q, r, false); });
         s.add_cmd(13, "GetNameInfoRequestWithOptions", [](ipc::Request& q, ipc::Response& r) { return name_info(q, r, true); });
-        if (nethost::sockets_host()) {   // real answers from [net] hosts (then the PC's resolver with [net] dns = host)
+        if (nethost::sockets_host()) {
             s.add_cmd(2, "GetHostByNameRequest", [](ipc::Request& q, ipc::Response& r) { return host_gethostbyname(q, r, false); });
             s.add_cmd(10, "GetHostByNameRequestWithOptions", [](ipc::Request& q, ipc::Response& r) { return host_gethostbyname(q, r, true); });
             s.add_cmd(6, "GetAddrInfoRequest", [](ipc::Request& q, ipc::Response& r) { return host_getaddrinfo(q, r, false); });
@@ -1564,7 +1558,7 @@ std::shared_ptr<ipc::Service> make_notif() {
     });
 }
 
-}  // namespace
+}
 
 // =============================================================================================================================================
 // Registration and reset.
@@ -1608,4 +1602,4 @@ void network_reset() {
     nethost::reset();
 }
 
-}  // namespace nxrt::services
+}

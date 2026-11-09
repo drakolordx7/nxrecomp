@@ -8,23 +8,14 @@ namespace nxrt::audren {
 
 #pragma pack(push, 1)
 struct PerformanceFrameHeaderVersion2 {
-    // The magic of the performance header.
     uint32_t Magic;
-    // The total count of entries in this frame.
     int32_t EntryCount;
-    // The total count of detailed entries in this frame.
     int32_t EntryDetailCount;
-    // The offset of the next performance header.
     int32_t NextOffset;
-    // The total time taken by all the commands profiled.
     int32_t TotalProcessingTime;
-    // The count of voices that were dropped.
     uint32_t VoiceDropCount;
-    // The start ticks of the audio processor (before sending commands).
     uint64_t StartRenderingTicks;
-    // The index of this performance frame.
     uint32_t Index;
-    // If set to true, the DSP is running behind.
     bool IsDspRunningBehind;
     // Trailing padding up to the C# Size (0x30).
     uint8_t Padding[11];
@@ -47,4 +38,4 @@ struct PerformanceFrameHeaderVersion2 {
 static_assert(sizeof(PerformanceFrameHeaderVersion2) == 0x30);
 static_assert(IPerformanceHeader<PerformanceFrameHeaderVersion2>);
 
-}  // namespace nxrt::audren
+}

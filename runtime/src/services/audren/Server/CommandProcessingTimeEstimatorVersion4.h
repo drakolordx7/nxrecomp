@@ -9,7 +9,6 @@ class CommandProcessingTimeEstimatorVersion4 : public CommandProcessingTimeEstim
   public:
     CommandProcessingTimeEstimatorVersion4(uint32_t sampleCount, uint32_t bufferCount) : CommandProcessingTimeEstimatorVersion3(sampleCount, bufferCount) {}
 
-    // Keeps the version 3 overloads visible next to the ones overridden here (C# inherits them).
     using CommandProcessingTimeEstimatorVersion3::Estimate;
 
     uint32_t Estimate(const MultiTapBiquadFilterCommand& command) override {
@@ -41,4 +40,4 @@ class CommandProcessingTimeEstimatorVersion4 : public CommandProcessingTimeEstim
     }
 };
 
-}  // namespace nxrt::audren
+}

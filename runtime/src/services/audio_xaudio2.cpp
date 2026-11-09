@@ -29,7 +29,7 @@
 namespace nxrt::audio {
 namespace {
 
-constexpr uint32_t kSlots = 16;          // buffers in the pool
+constexpr uint32_t kSlots = 16;
 constexpr uint32_t kSlotFrames = 1024;   // frames per buffer (about 21 ms at 48 kHz)
 constexpr UINT32 kMaxQueued = 12;        // beyond this many queued buffers write() drops the new frames
 
@@ -89,9 +89,9 @@ public:
 
 private:
     struct Slot {
-        std::vector<int16_t> pcm;   // kSlotFrames * channels values
+        std::vector<int16_t> pcm;
         uint32_t frames = 0;
-        bool busy = false;          // submitted and not yet finished by the voice
+        bool busy = false;
     };
 
     // The voice callback. XAudio2 calls it on its own thread. OnBufferEnd returns a buffer to the pool; OnVoiceProcessingPassStart
@@ -116,10 +116,10 @@ private:
     void release_slot(uint32_t idx);
     void on_pass_start(UINT32 bytes_required) noexcept;
     void note_queued(uint32_t buffers) noexcept;
-    uint32_t queued_now() noexcept;                  // submitted frames minus the frames the device has played
-    void note_queue_frames(bool playing) noexcept;   // peak and low water marks of queued_now()
+    uint32_t queued_now() noexcept;
+    void note_queue_frames(bool playing) noexcept;
     uint32_t submit(const int16_t* pcm, uint32_t frames);
-    void teardown();   // destroys the voices and the engine and undoes our COM initialisation; safe when nothing is open
+    void teardown();
 
     IXAudio2* engine_ = nullptr;
     IXAudio2MasteringVoice* master_ = nullptr;
@@ -129,21 +129,20 @@ private:
     DWORD com_thread_ = 0;            // the thread that did, so CoUninitialize runs there
     uint32_t channels_ = 0;
     uint32_t rate_ = 48000;
-    float applied_volume_ = 1.0f;     // the volume last set on the source voice (write thread)
+    float applied_volume_ = 1.0f;
 
-    std::mutex mu_;                   // guards slots_ (write, queued_frames and the callback)
+    std::mutex mu_;
     std::vector<Slot> slots_ = std::vector<Slot>(kSlots);
 
-    // Counters for stats(). They are not reset by open().
     std::atomic<uint64_t> frames_written_{0};
     std::atomic<uint64_t> frames_accepted_{0};
     std::atomic<uint64_t> frames_dropped_{0};
     std::atomic<uint64_t> underruns_{0};
     std::atomic<uint32_t> queued_peak_{0};
-    std::atomic<uint64_t> submitted_frames_{0};          // frames handed to the voice since open()
+    std::atomic<uint64_t> submitted_frames_{0};
     std::atomic<uint32_t> queue_peak_frames_{0};
     std::atomic<uint32_t> queue_low_frames_{0xffffffffu};
-    std::atomic<bool> started_{false};   // a buffer has been submitted since open()
+    std::atomic<bool> started_{false};
     std::atomic<bool> starved_{false};   // the device is out of buffers now; an underrun is counted once per such stretch
 };
 
@@ -311,7 +310,7 @@ uint32_t XAudio2Sink::submit(const int16_t* pcm, uint32_t frames) {
                     break;
                 }
             }
-            if (idx == kSlots) break;   // pool empty: the voice has not returned buffers yet
+            if (idx == kSlots) break;
             Slot& s = slots_[idx];
             s.busy = true;
             s.frames = n;
@@ -373,7 +372,7 @@ void XAudio2Sink::note_queue_frames(bool playing) noexcept {
     uint32_t peak = queue_peak_frames_.load(std::memory_order_relaxed);
     while (q > peak && !queue_peak_frames_.compare_exchange_weak(peak, q, std::memory_order_relaxed)) {
     }
-    if (playing && q > 0 && submitted_frames_.load(std::memory_order_relaxed) > rate_ / 2 + q) {   // not the start-up fill: after half a second played
+    if (playing && q > 0 && submitted_frames_.load(std::memory_order_relaxed) > rate_ / 2 + q) {
         uint32_t low = queue_low_frames_.load(std::memory_order_relaxed);
         while (q < low && !queue_low_frames_.compare_exchange_weak(low, q, std::memory_order_relaxed)) {
         }
@@ -410,7 +409,7 @@ void XAudio2Sink::release_slot(uint32_t idx) {
     slots_[idx].frames = 0;
 }
 
-}  // namespace
+}
 
 std::shared_ptr<AudioSink> make_xaudio2_sink() {
     // The sink is only useful when the system XAudio2 DLL is there; the device is opened later in open().
@@ -420,4 +419,4 @@ std::shared_ptr<AudioSink> make_xaudio2_sink() {
     return std::make_shared<XAudio2Sink>();
 }
 
-}  // namespace nxrt::audio
+}

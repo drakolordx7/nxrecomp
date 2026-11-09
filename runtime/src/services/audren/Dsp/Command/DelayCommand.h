@@ -38,7 +38,6 @@ class DelayCommand : public ICommand {
     DelayCommand()
         : OutputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0), InputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0) {}
 
-    // C# `public DelayParameter Parameter => _parameter;`
     DelayParameter Parameter() const { return _parameter; }
 
     DelayCommand& Initialize(uint32_t bufferOffset, DelayParameter parameter, Span<DelayState> state, bool isEnabled, CpuAddress workBuffer,
@@ -271,4 +270,4 @@ class DelayCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

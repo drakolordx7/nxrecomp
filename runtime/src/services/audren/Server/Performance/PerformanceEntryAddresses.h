@@ -8,7 +8,7 @@ namespace nxrt::audren {
 
 class PerformanceEntryAddresses {
   public:
-    Span<int32_t> BaseMemory;   // the memory storing the performance entry
+    Span<int32_t> BaseMemory;
     uint32_t StartTimeOffset = 0;
     uint32_t EntryCountOffset = 0;
     uint32_t ProcessingTimeOffset = 0;
@@ -22,4 +22,4 @@ class PerformanceEntryAddresses {
     void Clear() {}
 };
 
-}  // namespace nxrt::audren
+}

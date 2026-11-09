@@ -59,7 +59,6 @@ constexpr uint32_t kMiiInvalidArgument = res(126, 1);
 constexpr uint32_t kAocNoPurchase = res(164, 400);
 constexpr uint32_t kAocNotConnected = res(110, 300);
 
-// Sizes
 constexpr uint64_t kCharInfoSize = 0x58;          // nn::mii::CharInfo (ScarletNX misc.swipc)
 constexpr uint64_t kAocBaseIdOffset = 0x1000;     // add-on content base id = application id + 0x1000
 constexpr uint32_t kOpusWorkBufferSize = 0x8000;  // fixed size reported by GetWorkBufferSize* (page aligned, as Switchbrew says)
@@ -71,7 +70,6 @@ void zero_buffer(const ipc::Buffer& b) {
     if (b.addr && b.size) std::memset(buf_mut(b), 0, static_cast<size_t>(b.size));
 }
 
-// A command that is accepted and ignored (logged at Debug).
 Handler accept(const char* tag, const char* what) {
     return [tag, what](Request& req, Response&) -> uint32_t {
         NXLOG_D(tag, "%s (cmd %u) accepted and ignored", what, req.cmd);
@@ -79,7 +77,6 @@ Handler accept(const char* tag, const char* what) {
     };
 }
 
-// A command that answers with an error result (logged at Warn).
 Handler refuse(uint32_t rc, const char* tag, const char* what) {
     return [rc, tag, what](Request& req, Response&) -> uint32_t {
         NXLOG_W(tag, "%s (cmd %u) answered with 0x%X", what, req.cmd, rc);
@@ -141,7 +138,7 @@ std::shared_ptr<Service> make_ro() {
 // request and read back. Nothing is clocked here.
 struct MmSlot {
     bool used = false;
-    bool by_module = false;   // the old forms key the slot by module, the new ones by request id
+    bool by_module = false;
     uint32_t key = 0;
     uint32_t module = 0;
     uint32_t current = 0;
@@ -483,7 +480,7 @@ std::shared_ptr<Service> make_irs() {
         });
         s.add_cmd(310, "RunTeraPluginProcessor", accept("irs", "RunTeraPluginProcessor"));
         s.add_cmd(311, "GetNpadIrCameraHandle", [](Request&, Response& rsp) -> uint32_t {
-            rsp.push<uint32_t>(0);   // no camera: handle 0
+            rsp.push<uint32_t>(0);
             return 0;
         });
         s.add_cmd(314, "CheckFirmwareVersion", accept("irs", "CheckFirmwareVersion"));
@@ -503,7 +500,7 @@ std::shared_ptr<Service> make_nfc_user() {
         s.add_cmd(0, "InitializeOld", accept("nfc", "InitializeOld"));
         s.add_cmd(1, "FinalizeOld", accept("nfc", "FinalizeOld"));
         s.add_cmd(2, "GetStateOld", [](Request&, Response& rsp) -> uint32_t {
-            rsp.push<uint32_t>(0);   // NonInitialized
+            rsp.push<uint32_t>(0);
             return 0;
         });
         s.add_cmd(3, "IsNfcEnabledOld", [](Request&, Response& rsp) -> uint32_t {
@@ -663,7 +660,7 @@ std::shared_ptr<Service> make_olsc() {
 std::shared_ptr<Service> make_ectx_registrar() {
     return make_iface("nn::err::context::IContextRegistrar", [](Service& s) {
         s.add_cmd(0, "Complete", [](Request&, Response& rsp) -> uint32_t {
-            rsp.push<int32_t>(0);   // context_descriptor
+            rsp.push<int32_t>(0);
             return 0;
         });
     });
@@ -717,7 +714,7 @@ CmdNames htcs_cmds() {
 }
 CmdNames htc_tenv_cmds() { return {{0, "GetServiceInterface"}}; }
 
-}  // namespace
+}
 
 // ---- registration ------------------------------------------------------------------------------------------------------------------
 void register_misc() {
@@ -742,7 +739,6 @@ void register_misc() {
     add("olsc:u", [] { return make_olsc(); });
 }
 
-// Process-wide state back to its start-up value: the clock requests, and the events (cleared).
 void misc_reset() {
     {
         MmState& s = mm_state();
@@ -761,4 +757,4 @@ void misc_reset() {
     e.nfp_deactivate.clear();
 }
 
-}  // namespace nxrt::services
+}

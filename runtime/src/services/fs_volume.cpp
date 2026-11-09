@@ -40,7 +40,6 @@ std::string parent_of(const std::string& path) {
     return i == 0 || i == std::string::npos ? std::string("/") : path.substr(0, i);
 }
 
-// Positioned I/O on a Win32 handle (several threads may call it at once).
 class HostFile final : public VFile {
 public:
     HostFile(HANDLE h, uint32_t mode, bool windowed = false, uint64_t base = 0, uint64_t length = 0)
@@ -52,7 +51,7 @@ public:
         *got = 0;
         if (offset < 0) return rc::kOutOfRange;
         if (!(mode_ & kModeRead)) return rc::kReadNotPermitted;
-        if (windowed_) {   // a member of a packed image: the window is [base_, base_ + length_) of the host file
+        if (windowed_) {
             if (static_cast<uint64_t>(offset) >= length_) return 0;
             size = std::min<uint64_t>(size, length_ - static_cast<uint64_t>(offset));
         }
@@ -127,7 +126,6 @@ private:
     std::mutex size_mu_;
 };
 
-// A read-only file whose content a game module generated in memory (fs_mods.h ModsIndexEdit::replace_file).
 class MemFile final : public VFile {
 public:
     explicit MemFile(std::shared_ptr<const std::vector<uint8_t>> data) : data_(std::move(data)) {}
@@ -231,7 +229,7 @@ int apply_marker(const stdfs::path& marker, int stop_after = 0) {
     return n;
 }
 
-}  // namespace
+}
 
 // ---- path hygiene ----------------------------------------------------------------------------------------------------------------
 
@@ -243,7 +241,7 @@ bool normalize_path(const char* raw, size_t max_len, std::string* out, uint32_t*
     }
     size_t n = 0;
     while (n < max_len && raw[n]) n++;
-    if (n == max_len) {   // no terminator inside the buffer
+    if (n == max_len) {
         *err = rc::kTooLongPath;
         return false;
     }
@@ -296,7 +294,7 @@ struct Volume::Impl {
 
     // The committed layer shows `path` unless it or one of its parents was deleted since the last commit.
     bool committed_visible(const std::string& path) const {
-        if (!journal) return false;   // direct volumes have one layer (wpath == cpath)
+        if (!journal) return false;
         for (size_t i = 1; i <= path.size(); ++i)
             if (i == path.size() || path[i] == '/')
                 if (tomb.count(path.substr(0, i))) return false;
@@ -307,7 +305,7 @@ struct Volume::Impl {
     struct Found {
         bool exists = false, is_dir = false, in_work = false;
         stdfs::path host;
-        std::shared_ptr<const std::vector<uint8_t>> mem;   // generated content (no host file)
+        std::shared_ptr<const std::vector<uint8_t>> mem;
         bool windowed = false;      // a member of a packed image: only [window_off, window_off + window_len) of `host` is the file
         uint64_t window_off = 0, window_len = 0;
     };
@@ -352,7 +350,6 @@ struct Volume::Impl {
         return f;
     }
 
-    // The parents of `path` exist as directories (in some layer); creates them in the work layer.
     uint32_t ensure_parents(const std::string& path) {
         const std::string par = parent_of(path);
         const Found f = lookup(par);
@@ -362,7 +359,6 @@ struct Volume::Impl {
         return ec ? rc::kGenericFailure : 0;
     }
 
-    // Makes sure a committed file also exists in the work layer (copy on write).
     uint32_t materialize_file(const std::string& path) {
         std::error_code ec;
         if (!journal || stdfs::exists(wpath(path), ec)) return 0;
@@ -372,7 +368,6 @@ struct Volume::Impl {
         return ec ? rc::kGenericFailure : 0;
     }
 
-    // Copies the visible committed subtree under `path` into the work layer (before a directory rename).
     uint32_t materialize_tree(const std::string& path) {
         std::vector<DirItem> items;
         if (const uint32_t r = list(path, &items)) return r;
@@ -423,7 +418,7 @@ struct Volume::Impl {
                         if (!src) continue;
                         d.size = static_cast<int64_t>(src->size);
                     }
-                    m[d.name] = d;   // the mod's entry replaces the game's of the same name
+                    m[d.name] = d;
                 }
             }
         }
@@ -491,7 +486,6 @@ void Volume::recover(const std::string& root_s) {
         const int n = apply_marker(marker);
         NXLOG_W("fs", "a commit of %s was interrupted after it was decided: finished now (%d changes)", root_s.c_str(), n);
     }
-    // Work folders and journals of processes that no longer run.
     const stdfs::path dir = root.parent_path();
     const std::string stem = root.filename().string();
     for (stdfs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
@@ -614,7 +608,7 @@ uint32_t Volume::rename_dir(const std::string& from, const std::string& to) {
     const Impl::Found a = p_->lookup(from);
     if (from == "/" || !a.exists || !a.is_dir) return rc::kPathNotFound;
     if (from == to) return 0;
-    if (to.size() > from.size() && to.compare(0, from.size(), from) == 0 && to[from.size()] == '/') return rc::kInvalidArgument;   // into itself
+    if (to.size() > from.size() && to.compare(0, from.size(), from) == 0 && to[from.size()] == '/') return rc::kInvalidArgument;
     if (p_->lookup(to).exists) return rc::kPathAlreadyExists;
     if (const uint32_t r = p_->ensure_parents(to)) return r;
     if (const uint32_t r = p_->materialize_tree(from)) return r;
@@ -664,7 +658,7 @@ uint32_t Volume::file_times(const std::string& path, FileTimes* out) {
     std::lock_guard<std::mutex> lk(p_->mu);
     const Impl::Found f = p_->lookup(path);
     if (!f.exists) return rc::kPathNotFound;
-    if (f.mem) {   // generated: no host file to ask
+    if (f.mem) {
         *out = FileTimes{};
         return 0;
     }
@@ -737,9 +731,8 @@ uint32_t Volume::commit() {
         }
     }
     if (!MoveFileExW(s.journal_file.c_str(), s.marker.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return rc::kGenericFailure;
-    if (g_crash_point == 1) return rc::kGenericFailure;   // decided, nothing applied
+    if (g_crash_point == 1) return rc::kGenericFailure;
 
-    // Phase 2: apply. A crash in here is repaired by the next recover().
     const int applied = apply_marker(s.marker, g_crash_point == 2 ? 1 : 0);
     if (g_crash_point == 2) return rc::kGenericFailure;
     if (applied < 0) return rc::kGenericFailure;
@@ -750,4 +743,4 @@ uint32_t Volume::commit() {
     return 0;
 }
 
-}  // namespace nxrt::services::fs
+}

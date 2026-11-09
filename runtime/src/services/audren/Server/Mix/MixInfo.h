@@ -24,40 +24,26 @@ namespace nxrt::audren {
 // C# StructLayout Size 0x940, Pack 0x10.
 class alignas(0x10) MixInfo {
   public:
-    // C# public const uint InvalidDistanceFromFinalMix = 0x80000000.
     static constexpr uint32_t InvalidDistanceFromFinalMix = 0x80000000u;
 
-    // C# public const int Alignment = 0x10.
     static constexpr int32_t Alignment = 0x10;
 
-    // Base volume of the mix.
     float Volume = 0.0f;
-    // Target sample rate of the mix.
     uint32_t SampleRate = 0;
-    // Target buffer count.
     uint32_t BufferCount = 0;
-    // Set to true if in use.
     bool IsUsed = false;
-    // The id of the mix.
     int32_t MixId = 0;
-    // The mix node id.
     int32_t NodeId = 0;
-    // The buffer offset to use for command generation.
     uint32_t BufferOffset = 0;
-    // The distance of the mix from the final mix.
     uint32_t DistanceFromFinalMix = 0;
-    // The max element count that can be found in the effect processing order storage.
     uint32_t EffectProcessingOrderArrayMaxCount = 0;
-    // The mix to output the result of this mix.
     int32_t DestinationMixId = 0;
-    // The splitter to output the result of this mix.
     uint32_t DestinationSplitterId = 0;
     // If set to true, the long size pre-delay is supported on the reverb command.
     bool IsLongSizePreDelaySupported = false;
 
     MixInfo() = default;
 
-    // Create a new MixInfo. effectProcessingOrderArray comes from the work buffer.
     MixInfo(Span<int32_t> effectProcessingOrderArray, BehaviourInfo& behaviourInfo) {
         MixId = Constants::UnusedMixId;
 
@@ -76,11 +62,9 @@ class alignas(0x10) MixInfo {
         ClearEffectProcessingOrder();
     }
 
-    // Mix buffer volumes. Used when no splitter id is specified.
     Span<float> MixBufferVolume() { return Span<float>(_mixVolumeArray, kMixVolumeCount); }
     Span<const float> MixBufferVolume() const { return Span<const float>(_mixVolumeArray, kMixVolumeCount); }
 
-    // Get the volume for a given connection destination.
     float GetMixBufferVolume(int32_t sourceIndex, int32_t destinationIndex) const {
         return MixBufferVolume()[static_cast<size_t>(sourceIndex * Constants::MixBufferCountMax + destinationIndex)];
     }
@@ -94,19 +78,12 @@ class alignas(0x10) MixInfo {
         return Span<int32_t>(_effectProcessingOrderArrayPointer, static_cast<size_t>(EffectProcessingOrderArrayMaxCount));
     }
 
-    // Clear the DistanceFromFinalMix value to its default state.
     void ClearDistanceFromFinalMix() { DistanceFromFinalMix = InvalidDistanceFromFinalMix; }
 
-    // Clear the EffectProcessingOrderArray to its default state.
     void ClearEffectProcessingOrder() const { EffectProcessingOrderArray().Fill(-1); }
 
-    // Return true if the mix has any destinations.
     bool HasAnyDestination() const { return DestinationMixId != Constants::UnusedMixId || DestinationSplitterId != Constants::UnusedSplitterId; }
 
-    // Update the mix from user information.
-    // edgeMatrix: the adjacency matrix. parameter: the input parameter of the mix. effectContext: the effect context (see the note above).
-    // splitterContext: the splitter context. behaviourInfo: the behaviour context.
-    // Returns true if the mix was changed (the connection changed, or on a revision without splitters the destination changed).
     template <class TEffectContext>
     bool Update(EdgeMatrix& edgeMatrix, const MixParameter& parameter, TEffectContext& effectContext, SplitterContext& splitterContext,
                 BehaviourInfo& behaviourInfo) {
@@ -197,7 +174,6 @@ class alignas(0x10) MixInfo {
         return true;
     }
 
-    // Mix buffer volumes storage (C# MixVolumeArray, MixBufferCountMax * MixBufferCountMax floats).
     float _mixVolumeArray[kMixVolumeCount] = {};
     // The effect processing order storage (C# nint pointer, owned by the work buffer).
     int32_t* _effectProcessingOrderArrayPointer = nullptr;
@@ -205,4 +181,4 @@ class alignas(0x10) MixInfo {
 
 static_assert(sizeof(MixInfo) == 0x940);
 
-}  // namespace nxrt::audren
+}

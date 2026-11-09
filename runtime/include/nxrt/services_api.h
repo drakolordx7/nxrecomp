@@ -15,7 +15,7 @@ namespace fsapi {
 uint32_t ensure_account_save(uint64_t uid_hi, uint64_t uid_lo, bool* created);
 // Size and journal size of the account save data (the values nn::fs::GetSaveDataSize reports); the fs "path not found" result when absent.
 uint32_t account_save_size(uint64_t uid_hi, uint64_t uid_lo, int64_t* size, int64_t* journal);
-}  // namespace fsapi
+}
 
 // ---- am (am.cpp): console state changes from the host --------------------------------------------------------------------------------
 // Each call queues the matching AppletMessage for the guest (it sees them through ICommonStateGetter::ReceiveMessage, with the message
@@ -25,11 +25,11 @@ void set_docked(bool docked);          // OperationModeChanged (30) + Performanc
 void set_focus(bool in_focus);         // FocusStateChanged (15); GetCurrentFocusState: 1 = InFocus, 2 = OutOfFocus
 bool docked();
 bool in_focus();
-}  // namespace amctl
+}
 
 // ---- acc (acc.cpp) ----------------------------------------------------------------------------------------------------------------
 namespace accapi {
-void user_uid(uint64_t* hi, uint64_t* lo);   // the one local user (profile())
+void user_uid(uint64_t* hi, uint64_t* lo);
 }
 
-}  // namespace nxrt::services
+}

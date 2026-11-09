@@ -93,4 +93,4 @@ class DeviceSinkCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

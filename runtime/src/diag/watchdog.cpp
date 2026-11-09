@@ -33,7 +33,7 @@ constexpr size_t kMaxFrames = 48;
 using Clock = std::chrono::steady_clock;
 
 std::atomic<uint64_t> g_frames{0};
-std::atomic<uint64_t> g_progress{0};   // heartbeats that are not frames (diag_progress)
+std::atomic<uint64_t> g_progress{0};
 std::atomic<uint32_t> g_fires{0};
 std::atomic<bool> g_running{false};
 
@@ -42,7 +42,7 @@ enum class Status : uint8_t { NoSuspend, NoContext, Ok };
 // One registered thread as read by the dump. Phase one (suspend, read, resume) only writes into storage that was sized
 // before the first SuspendThread; formatting happens after every thread is running again.
 struct ThreadDump {
-    ThreadRecord rec;                    // copied from the registry before any suspension
+    ThreadRecord rec;
     Status status = Status::NoSuspend;
     bool have_guest = false;
     uint64_t guest_lr = 0, guest_sp = 0, guest_fp = 0;
@@ -51,7 +51,6 @@ struct ThreadDump {
     uint64_t frames[kMaxFrames] = {};
 };
 
-// Appends a formatted number (never a string argument: the buffer is fixed size).
 void appendf(std::string& out, const char* fmt, ...) {
     char b[256];
     va_list ap;
@@ -74,9 +73,9 @@ void collect_threads(std::vector<ThreadDump>& out) {
     out.clear();
     out.reserve(recs.size());
     for (ThreadRecord& r : recs) {
-        if (r.host_tid == self) continue;  // the calling thread is not dumped
+        if (r.host_tid == self) continue;
         out.emplace_back();
-        out.back().rec = r;                // copy: recs keeps the handle so the release above closes it
+        out.back().rec = r;
     }
     for (ThreadDump& d : out) {
         HANDLE h = static_cast<HANDLE>(d.rec.host_handle);
@@ -89,7 +88,7 @@ void collect_threads(std::vector<ThreadDump>& out) {
         }
         if (h == nullptr || SuspendThread(h) == static_cast<DWORD>(-1)) {
             d.status = Status::NoSuspend;
-            continue;  // not suspended, nothing to resume
+            continue;
         }
         CONTEXT tc{};
         tc.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
@@ -106,7 +105,7 @@ void collect_threads(std::vector<ThreadDump>& out) {
             gfp = fp(c);
             have_guest = true;
         }
-        ResumeThread(h);  // resumed before anything else touches the thread's data
+        ResumeThread(h);
         if (!got) {
             d.status = Status::NoContext;
             continue;
@@ -119,10 +118,9 @@ void collect_threads(std::vector<ThreadDump>& out) {
         d.guest_sp = gsp;
         d.guest_fp = gfp;
     }
-    for (ThreadDump& d : out) d.rec.host_handle = nullptr;   // the copies are about to dangle; phase two never needs them
+    for (ThreadDump& d : out) d.rec.host_handle = nullptr;
 }
 
-// Phase two: text for the collected threads. Runs with every thread resumed.
 std::string format_threads(const std::vector<ThreadDump>& threads) {
     std::string out;
     for (const ThreadDump& d : threads) {
@@ -187,7 +185,6 @@ std::string dump_text() {
     return out;
 }
 
-// Writes each line of the text to the log at Error level (tag "watchdog").
 void log_lines(const std::string& text) {
     size_t s = 0;
     while (s < text.size()) {
@@ -224,7 +221,6 @@ std::string extra_reports() {
     return out;
 }
 
-// Header line, then the thread dump. Goes to the log and the report file; returns the full text for on_fire.
 std::string emit_dump(const std::string& report_path, const std::string& header) {
     std::string text = header;
     text += '\n';
@@ -247,7 +243,6 @@ std::string exe_dir(const std::string& path) {
     return s == std::string::npos ? std::string() : path.substr(0, s);
 }
 
-// The exe path with its extension replaced by _freeze.txt.
 std::string default_report_path(const std::string& path) {
     std::string base = path;
     const size_t dot = path.find_last_of('.');
@@ -257,12 +252,11 @@ std::string default_report_path(const std::string& path) {
 }
 
 struct Control {
-    std::mutex ctl;  // serialises watchdog_start / watchdog_stop
-    std::mutex m;    // guards `stop`; the thread sleeps on `cv`
+    std::mutex ctl;
+    std::mutex m;
     std::condition_variable cv;
     bool stop = false;
     std::thread th;
-    // Parameters, written by watchdog_start before the thread is created.
     double threshold_s = 0;
     uint32_t poll_ms = 250;
     std::string report_path;   // "" = no file
@@ -279,7 +273,7 @@ Control& control() {
 
 void run_loop(Control* c) {
     log_set_thread_name("watchdog");
-    Clock::time_point last_change = Clock::now();  // idle time counts from the start, then from the last tick
+    Clock::time_point last_change = Clock::now();
     uint64_t last_seen = g_frames.load(std::memory_order_relaxed);
     uint64_t last_progress = g_progress.load(std::memory_order_relaxed);
     bool fired = false;
@@ -295,7 +289,7 @@ void run_loop(Control* c) {
             last_seen = frames;
             last_progress = progress;
             last_change = now;
-            fired = false;  // a tick (or a progress heartbeat) re-arms the watchdog
+            fired = false;
         }
         // <exe dir>\dump_threads (whichever process sees it first) or <exe dir>\dump_threads.<pid> (this process only)
         const std::string own_request = c->request_path + "." + std::to_string(GetCurrentProcessId());
@@ -305,7 +299,7 @@ void run_loop(Control* c) {
             std::string header;
             appendf(header, "THREAD DUMP REQUESTED (frame count %llu)", static_cast<unsigned long long>(frames));
             emit_dump(c->report_path, header);
-            const double resample = config_get_double("diag", "freeze_resample_s", 0.0);   // a second sample: what changed in the meantime
+            const double resample = config_get_double("diag", "freeze_resample_s", 0.0);
             if (resample > 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int64_t>(resample * 1000)));
                 std::string h2;
@@ -336,15 +330,15 @@ void run_loop(Control* c) {
     }
 }
 
-}  // namespace
+}
 
 void watchdog_start(const WatchdogOptions& opt) {
     Control& c = control();
     std::lock_guard<std::mutex> g(c.ctl);
-    if (c.th.joinable()) return;  // already running: ignored
-    if (opt.seconds < 0) return;  // disabled
+    if (c.th.joinable()) return;
+    if (opt.seconds < 0) return;
     const double secs = opt.seconds > 0 ? opt.seconds : config_get_double("diag", "watchdog_seconds", 10.0);
-    if (!(secs > 0)) return;      // disabled (also for a NaN value)
+    if (!(secs > 0)) return;
     const std::string exe = exe_path();
     c.threshold_s = secs;
     c.poll_ms = opt.poll_ms ? opt.poll_ms : 1;
@@ -400,4 +394,4 @@ void diag_add_report(std::string (*fn)()) {
     g_reports.push_back(fn);
 }
 
-}  // namespace nxrt
+}

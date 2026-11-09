@@ -15,7 +15,6 @@ struct Vector6 {
 
     Vector6() = default;
 
-    // C# Vector6(float value): all six components set to value.
     explicit Vector6(float value) : Vector6(value, value, value, value, value, value) {}
 
     Vector6(float x, float y, float z, float w, float v, float u) : X(x), Y(y), Z(z), W(w), V(v), U(u) {}
@@ -33,4 +32,4 @@ inline Vector6 operator*(const Vector6& left, const Vector6& right) {
 
 inline Vector6 operator*(const Vector6& left, float right) { return left * Vector6(right); }
 
-}  // namespace nxrt::audren
+}

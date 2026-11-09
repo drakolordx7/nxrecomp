@@ -10,8 +10,8 @@
 namespace nxrt::ipc {
 
 namespace detail {
-uint64_t note_unhandled(Service& s, uint32_t cmd);   // ipc.cpp: counts the command, returns the per-(service, cmd) count
-}  // namespace detail
+uint64_t note_unhandled(Service& s, uint32_t cmd);
+}
 
 uint32_t StubService::handle(Request& req, Response&) {
     // Bring-up probe ([ipc] stub_result / NXRT_IPC_STUB_RESULT): the Result every stub command answers. The default is the recognisable
@@ -19,9 +19,8 @@ uint32_t StubService::handle(Request& req, Response&) {
     // ones (the guest then reads zeros for every output, so what follows is only a map of which services it asks for, in what order).
     static const uint32_t answer = static_cast<uint32_t>(config_get_int("ipc", "stub_result", kernel::kStubService));
     const uint64_t n = detail::note_unhandled(*this, req.cmd);
-    // The first 20 calls per (service, command) are logged, then every 1000th.
     if (n <= 20 || n % 1000 == 0) {
-        char hex[2 * 32 + 1] = "";                              // the first 32 bytes of the raw arguments: what is needed to name the command
+        char hex[2 * 32 + 1] = "";
         for (size_t i = 0; i < req.in_size && i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", req.in[i]);
         NXLOG_W("ipc",
                 "STUB SERVICE %s cmd %u (in %zu bytes [%s], %zu copy, %zu move handles, buffers a%zu b%zu x%zu c%zu w%zu) -> 0x%x",
@@ -31,4 +30,4 @@ uint32_t StubService::handle(Request& req, Response&) {
     return answer;
 }
 
-}  // namespace nxrt::ipc
+}

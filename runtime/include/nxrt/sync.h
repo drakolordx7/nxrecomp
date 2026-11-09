@@ -42,8 +42,8 @@ void sem_release(uint64_t addr, int32_t n = 1);   // counts above max_count are 
 int32_t sem_count(uint64_t addr);
 
 // ---- housekeeping --------------------------------------------------------------------------------------------------
-void destroy(uint64_t addr);                      // forget the object at addr so a new one created there starts clean
+void destroy(uint64_t addr);
 size_t object_count();
 void reset_all();                                 // drop every object (tests only; no thread may be waiting)
 
-}  // namespace nxrt::sync
+}

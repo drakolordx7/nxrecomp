@@ -56,7 +56,7 @@ constexpr const char* kDumpNames[kFontCount] = {
 
 struct Slot {
     uint32_t offset = 0;   // offset of the font data in the shared memory (the 8-byte header is just before it)
-    uint32_t size = 0;     // font data size
+    uint32_t size = 0;
 };
 
 struct State {
@@ -124,7 +124,6 @@ std::filesystem::path exe_dir() {
 #endif
 }
 
-// The DejaVu Sans fallback: the first existing candidate wins.
 std::vector<uint8_t> load_fallback(const std::filesystem::path& dir) {
     std::error_code ec;
     std::vector<std::filesystem::path> cands;
@@ -151,7 +150,7 @@ void build(State& st) {
         return;
     }
     std::memset(mem, 0, kSharedSize);
-    static bool warned = false;   // process-wide: the warning is logged once
+    static bool warned = false;
     const std::filesystem::path dir = config_get_str("pl", "font_dir", "");
     const std::vector<uint8_t> fallback = load_fallback(dir);
     uint64_t cursor = 0;
@@ -287,7 +286,7 @@ std::shared_ptr<ipc::Service> make_pl(const char* name) {
     });
 }
 
-}  // namespace
+}
 
 void register_pl() {
     add("pl:u", [] { return make_pl("pl:u"); });
@@ -296,7 +295,7 @@ void register_pl() {
 
 void pl_reset() {
     std::lock_guard<std::mutex> lk(state_mu());
-    state_slot().reset();   // the next call builds the shared memory again, from the config as it is then
+    state_slot().reset();
 }
 
-}  // namespace nxrt::services
+}

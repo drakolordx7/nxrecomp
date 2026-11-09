@@ -33,13 +33,13 @@
 namespace nxrt::mem::ww {
 
 struct Region {
-    uint64_t base = 0;          // address of page 0
+    uint64_t base = 0;
     uint64_t npages = 0;
     uint64_t nwords = 0;
     std::unique_ptr<std::atomic<uint64_t>[]> prot, valid, written, ban;
     int slot = -1;
     SRWLOCK lock = SRWLOCK_INIT;
-    std::unique_ptr<std::atomic<uint16_t>[]> releasing;   // per page: releasers that saw it armed and have not finished its VirtualProtect (release_page)
+    std::unique_ptr<std::atomic<uint16_t>[]> releasing;
 };
 
 struct SharedLock {
@@ -58,12 +58,12 @@ namespace {
 constexpr const char* kTag = "mem.ww";
 constexpr int kSlots = 512;
 std::atomic<Region*> g_slots[kSlots];
-std::atomic<int> g_hi{0};              // slots [0, g_hi) may be in use
-std::atomic<int> g_busy{0};            // fault handlers and os-write calls looking at the table
+std::atomic<int> g_hi{0};
+std::atomic<int> g_busy{0};
 std::atomic<int> g_live{0};
 std::atomic<uint64_t> g_faults{0};
-std::atomic<uint64_t> g_waits{0};      // rounds a fault waited for another releaser (statistics, tests)
-std::mutex g_mu;                       // create / destroy
+std::atomic<uint64_t> g_waits{0};
+std::mutex g_mu;
 PVOID g_veh = nullptr;
 
 // Operating-system writes in progress (OsWriteScope): arm() leaves these ranges alone, so a page cannot become read-only between the
@@ -86,7 +86,6 @@ uint64_t bit(uint64_t page) { return uint64_t{1} << (page & 63); }
 
 bool test(const std::atomic<uint64_t>* bm, uint64_t page) { return (bm[page >> 6].load(std::memory_order_acquire) & bit(page)) != 0; }
 
-// Sets or clears the bits of pages [first, first + count) word by word.
 void set_bits(std::atomic<uint64_t>* bm, uint64_t first, uint64_t count, bool on) {
     uint64_t p = first;
     const uint64_t end = first + count;
@@ -155,7 +154,7 @@ bool release_page(Region* r, uint64_t page) {
         DWORD was = 0;
         if (!VirtualProtect(reinterpret_cast<void*>(addr), kPage, PAGE_READWRITE, &was)) {
             ok = false;
-        } else if ((was & 0xff) != PAGE_READONLY) {    // somebody else set this protection: give it back and let the fault through
+        } else if ((was & 0xff) != PAGE_READONLY) {
             DWORD tmp = 0;
             VirtualProtect(reinterpret_cast<void*>(addr), kPage, was, &tmp);
             ok = false;
@@ -163,7 +162,7 @@ bool release_page(Region* r, uint64_t page) {
         rel.fetch_sub(1, std::memory_order_seq_cst);
         return ok;
     }
-    if (armed) rel.fetch_sub(1, std::memory_order_seq_cst);   // lost the race for the bit: not a releaser (and must not make others wait for it)
+    if (armed) rel.fetch_sub(1, std::memory_order_seq_cst);
     // Not armed (any more): another releaser (also holding the lock shared) may be making it writable right now. Wait for it only while
     // such a release is in progress; with none, a read-only page is somebody else's and the fault goes on at once. The count is read before
     // the protection: a releaser that cleared the bit before our fetch_and has counted itself in before that, so a zero count means every
@@ -203,7 +202,6 @@ LONG CALLBACK on_fault(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_EXECUTION;
 }
 
-// Calls fn(region, first page, count) for the part of [addr, addr + size) inside every published region.
 template <class Fn>
 void for_regions(uint64_t addr, uint64_t size, Fn&& fn) {
     if (g_live.load(std::memory_order_acquire) == 0 || size == 0) return;
@@ -233,7 +231,7 @@ struct Gauges {
 };
 Gauges g_gauges;
 
-}  // namespace
+}
 
 Region* region_create(uint64_t addr, uint64_t size) {
     if (!size || !heap_exists()) return nullptr;
@@ -280,7 +278,6 @@ Region* region_create(uint64_t addr, uint64_t size) {
 
 void region_destroy(Region* r) {
     if (!r) return;
-    // Writable again first (faults on armed pages wait for the lock and then find the page writable), then out of the table.
     {
     ExclusiveLock lk(r);
     for (uint64_t p = 0; p < r->npages;) {
@@ -403,7 +400,7 @@ void forget(uint64_t addr, uint64_t size, bool ban) {
     for_regions(addr, size, [ban](Region* r, uint64_t first, uint64_t count) {
         if (ban) set_bits(r->ban.get(), first, count, true);
         if (!any_set(r->prot.get(), first, count) && !any_set(r->valid.get(), first, count)) return;
-        for (uint64_t q = first; q < first + count; ++q)           // armed pages go back to read-write (the caller may then set its own)
+        for (uint64_t q = first; q < first + count; ++q)
             if (test(r->prot.get(), q)) release_page(r, q);
         set_bits(r->valid.get(), first, count, false);
         set_bits(r->written.get(), first, count, true);
@@ -415,4 +412,4 @@ void ban_section(uint64_t offset, uint64_t size) { forget(kHeapBase + offset, si
 uint64_t faults() { return g_faults.load(std::memory_order_relaxed); }
 uint64_t fault_waits() { return g_waits.load(std::memory_order_relaxed); }
 
-}  // namespace nxrt::mem::ww
+}

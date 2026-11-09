@@ -60,8 +60,8 @@ struct StateField {
 };
 
 struct GameState {
-    bool have_world = false;       // world/area ids read
-    bool have_player = false;      // pos / yaw read
+    bool have_world = false;
+    bool have_player = false;
     bool have_igt = false;
     bool have_hp = false;
     uint8_t world[16] = {};        // memory order
@@ -69,9 +69,9 @@ struct GameState {
     float pos[3] = {};
     float vel[3] = {};             // the game's own velocity when have_vel; else the finite difference of pos between two frame boundaries, units per second at 60 frames/s (0 at the first sample)
     bool have_vel = false;
-    float yaw = 0;                 // radians
+    float yaw = 0;
     float hp = 0;
-    double igt = 0;                // in-game play time, seconds
+    double igt = 0;
     std::vector<StateField> fields;     // the game's own values, in the order they are printed and hashed
 
     void add_int(const char* key, int64_t v, bool shown = true, StateField::Hash h = StateField::Hash::Word, const char* status_key = nullptr) {
@@ -97,7 +97,7 @@ bool init();
 void shutdown();
 bool enabled();
 bool deterministic();
-uint64_t frame();                          // frame boundaries seen so far
+uint64_t frame();
 const std::string& out_dir();
 
 // ---- the frame boundary ---------------------------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ void install_game_hooks();
 // ---- state ---------------------------------------------------------------------------------------------------------------------------
 bool read_state(GameState* out, ::Ctx* c = nullptr);   // the game's probes, now (guest memory); false when nothing could be read. `c`: the hook's context, for probes that call guest functions
 const GameState& last_state();             // the state sampled at the last boundary (valid flags inside)
-uint64_t last_hash();                      // the per-frame hash of the last boundary
+uint64_t last_hash();
 uint64_t chain_hash();                     // running hash over every frame hash: what result.json calls final_hash
 // ---- input -----------------------------------------------------------------------------------------------------------------------------
 PadFrame current_pad();                    // the pad of the frame that just began (script / replay / last live pad)
@@ -142,7 +142,7 @@ void set_key_sink(KeySinkFn fn);
 // What happens when the run is over (default: flush files, TerminateProcess(code)). Tests install their own.
 using ExitFn = void (*)(int code);
 void set_exit_handler(ExitFn fn);
-bool finished();                           // the run has ended (result written)
+bool finished();
 int exit_code();
 // Ends the run now. verdict: "pass" "fail" "crash" "freeze" "timeout" "error". Writes result.json and calls the exit handler.
 void end_run(int code, const char* verdict, const std::string& message);
@@ -151,7 +151,7 @@ const std::vector<Checkpoint>& checkpoints();
 // frame_source=svc:N: tt installs on_svc as the kernel's SVC observer (kernel::set_svc_observer) for the length of the run.
 namespace detail {
 void on_svc(::Ctx* c);
-}  // namespace detail
+}
 
 // ---- the game's probes (nxrt/game.h Info::probes) -----------------------------------------------------------------------------------
 // What the test tooling knows of one game: its frame boundary hooks, how to read the state, and the script steps it adds (a name and a handler
@@ -193,6 +193,6 @@ struct GameProbes {
     size_t step_count = 0;
 };
 
-}  // namespace nxrt::tt
+}
 
 // The adapter to the hid service (S3c's input_source.h) lives in tt_hid.cpp and is compiled when that header exists.

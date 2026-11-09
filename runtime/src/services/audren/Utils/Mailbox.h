@@ -35,7 +35,6 @@ public:
     void Dispose() {}
 
 private:
-    // A bounded blocking FIFO (C# BlockingCollection<T>(capacity)).
     class BoundedQueue {
     public:
         explicit BoundedQueue(size_t capacity) : _capacity(capacity) {}
@@ -68,4 +67,4 @@ private:
     BoundedQueue _responseQueue{1};
 };
 
-}  // namespace nxrt::audren
+}

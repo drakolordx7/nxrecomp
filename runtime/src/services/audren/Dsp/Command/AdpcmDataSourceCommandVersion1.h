@@ -64,4 +64,4 @@ class AdpcmDataSourceCommandVersion1 : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

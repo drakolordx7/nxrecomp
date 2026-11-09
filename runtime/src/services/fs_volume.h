@@ -20,7 +20,7 @@
 
 namespace nxrt::services::fs {
 
-class ModOverlay;   // fs_mods.h
+class ModOverlay;
 
 // fs results (module 2: result = description << 9 | 2; https://switchbrew.org/wiki/Error_codes).
 namespace rc {
@@ -28,15 +28,14 @@ constexpr uint32_t kPathNotFound = 0x202, kPathAlreadyExists = 0x402, kTargetLoc
 constexpr uint32_t kTargetNotFound = 0x7D402, kPortSdCardNoDevice = 0xFA202, kNotImplemented = 0x177202, kOutOfRange = 0x177A02;
 constexpr uint32_t kInvalidArgument = 0x2EE202, kTooLongPath = 0x2EE602, kNoAppend = 0x307202, kReadNotPermitted = 0x307402;
 constexpr uint32_t kWriteNotPermitted = 0x307602, kReadOnlyFileSystem = 0x313802, kGenericFailure = 0x3E802;
-}  // namespace rc
+}
 
 enum OpenMode : uint32_t { kModeRead = 1, kModeWrite = 2, kModeAppend = 4 };
 
-// An open file. Positioned I/O, safe to call from several threads.
 class VFile {
 public:
     virtual ~VFile() = default;
-    virtual uint32_t read(int64_t offset, void* dst, uint64_t size, uint64_t* got) = 0;       // short at the end of the file
+    virtual uint32_t read(int64_t offset, void* dst, uint64_t size, uint64_t* got) = 0;
     virtual uint32_t write(int64_t offset, const void* src, uint64_t size) = 0;
     virtual uint32_t flush() = 0;
     virtual uint32_t set_size(int64_t size) = 0;
@@ -50,7 +49,7 @@ struct DirItem {
 };
 
 struct FileTimes {
-    int64_t created = 0, modified = 0, accessed = 0;   // posix seconds
+    int64_t created = 0, modified = 0, accessed = 0;
     bool valid = false;
 };
 
@@ -60,7 +59,7 @@ public:
     // `capacity`: bytes reported by GetTotalSpaceSize and enforced on growth for journalled volumes (0 = unlimited).
     Volume(const std::string& root, bool journal, bool read_only, uint64_t capacity);
     ~Volume();
-    bool ok() const;                                    // the root exists (or was created) and recovery finished
+    bool ok() const;
 
     uint32_t create_file(const std::string& path, int64_t size);
     uint32_t delete_file(const std::string& path);
@@ -72,13 +71,13 @@ public:
     uint32_t rename_dir(const std::string& from, const std::string& to);
     uint32_t entry_type(const std::string& path, uint32_t* type);   // 0 directory, 1 file
     uint32_t open_file(const std::string& path, uint32_t mode, std::shared_ptr<VFile>* out);
-    uint32_t list_dir(const std::string& path, std::vector<DirItem>* out);   // sorted by name
+    uint32_t list_dir(const std::string& path, std::vector<DirItem>* out);
     uint32_t file_times(const std::string& path, FileTimes* out);
     uint32_t commit();                                  // journalled volumes; a no-op for direct ones
     // Read-only direct volumes (the loose RomFS folder): the mods (fs_mods.h) replace and add files, merge into listings and hide the
     // entries their .stub markers name, so this view agrees with the RomFS image. Call before the volume is shared. Null: no mods.
     void set_overlay(std::shared_ptr<const ModOverlay> mods);
-    uint64_t used_bytes();                              // files in the visible tree
+    uint64_t used_bytes();
     uint64_t capacity() const { return capacity_; }
     void set_capacity(uint64_t c) { capacity_ = c; }
     bool journalled() const { return journal_; }
@@ -102,4 +101,4 @@ private:
 // characters, at most 0x300 bytes. Returns false with *err = a result code for a path that is not acceptable.
 bool normalize_path(const char* raw, size_t max_len, std::string* out, uint32_t* err);
 
-}  // namespace nxrt::services::fs
+}

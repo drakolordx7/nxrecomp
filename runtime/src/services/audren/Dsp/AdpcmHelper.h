@@ -184,9 +184,9 @@ struct AdpcmHelper {
 
   private:
     static int32_t Shl(int32_t value, int32_t shift) { return static_cast<int32_t>(static_cast<uint32_t>(value) << shift); }
-    static int32_t Sar(int32_t value, int32_t shift) { return value >> shift; }  // arithmetic shift (C++20 defines it)
+    static int32_t Sar(int32_t value, int32_t shift) { return value >> shift; }
     static int32_t WrapAdd(int32_t a, int32_t b) { return static_cast<int32_t>(static_cast<uint32_t>(a) + static_cast<uint32_t>(b)); }
     static int32_t WrapMul(int32_t a, int32_t b) { return static_cast<int32_t>(static_cast<uint32_t>(a) * static_cast<uint32_t>(b)); }
 };
 
-}  // namespace nxrt::audren
+}

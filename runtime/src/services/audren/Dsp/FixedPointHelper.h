@@ -22,4 +22,4 @@ struct FixedPointHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

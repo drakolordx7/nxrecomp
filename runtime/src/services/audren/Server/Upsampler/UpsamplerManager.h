@@ -15,17 +15,13 @@ namespace nxrt::audren {
 
 class UpsamplerManager {
   private:
-    // Work buffer for the upsampler (C# Memory<float>, non-owning).
     Span<float> _upSamplerWorkBuffer;
-    // Global lock of the object (C# Lock).
     std::mutex _lock;
     // The upsampler instances. A null slot is free. Owned here: Release() on an UpsamplerInfo frees its slot.
     std::vector<std::unique_ptr<UpsamplerInfo>> _upsamplers;
-    // The count of upsamplers.
     uint32_t _count;
 
   public:
-    // Create a new UpsamplerManager.
     UpsamplerManager(Span<float> upSamplerWorkBuffer, uint32_t count) : _upSamplerWorkBuffer(upSamplerWorkBuffer), _count(count) {
         _upsamplers.resize(_count);
     }
@@ -50,7 +46,6 @@ class UpsamplerManager {
         return nullptr;
     }
 
-    // Free the UpsamplerInfo at the given index. The object is destroyed.
     void Free(int32_t index) {
         std::lock_guard<std::mutex> guard(_lock);
         NXAUDREN_ASSERT(_upsamplers[static_cast<size_t>(index)] != nullptr);
@@ -62,4 +57,4 @@ class UpsamplerManager {
 // Defined here, not in UpsamplerInfo.h, because it needs the complete UpsamplerManager.
 inline void UpsamplerInfo::Release() { _manager->Free(_index); }
 
-}  // namespace nxrt::audren
+}

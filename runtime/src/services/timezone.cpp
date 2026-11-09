@@ -125,7 +125,6 @@ bool needs_extension(const RuleImage& r, int64_t t) {
     return (r.goahead && t < r.ats[0]) || (r.goback && t > r.ats[r.timecnt - 1]);
 }
 
-// Index into ttis for t, without the extension.
 int type_index(const RuleImage& r, int64_t t) {
     if (r.timecnt == 0 || t < r.ats[0]) return r.defaulttype;
     int low = 1;
@@ -206,7 +205,6 @@ bool calendar_of(const RuleImage& r, int64_t t, CalendarTime* cal, CalendarAddit
 // Returns the number of results (0..2) written to out, earliest first.
 int to_posix_impl(const RuleImage& r, const CalendarTime& cal, int64_t out[2]) {
     if (cal.month < 1 || cal.month > 12 || cal.day < 1 || cal.day > 31) return 0;
-    // Fields may be out of range; the arithmetic normalises them the way mktime does.
     const int64_t days = days_from_civil(cal.year, cal.month, 1) + (cal.day - 1);
     const int64_t naive = days * kSecondsPerDay + cal.hour * 3600 + cal.minute * 60 + cal.second;
 
@@ -302,8 +300,8 @@ struct HostType {
 
 struct HostTransition {
     int64_t at;
-    int before;   // type index in effect before `at`
-    int after;    // type index from `at` on
+    int before;
+    int after;
 };
 
 int find_or_add(std::vector<HostType>& types, int32_t utoff, bool isdst, const std::string& abbr) {
@@ -364,7 +362,7 @@ bool build_host_rule(RuleImage& img, std::string& name) {
         const int32_t dst_off = -(tzi.Bias + tzi.DaylightBias) * 60;
         const int std_ty = find_or_add(types, std_off, false, abbr_for(false, std_off));
         if (year == 1970) std_1970 = std_ty;
-        if (tzi.DaylightDate.wMonth == 0 || tzi.StandardDate.wMonth == 0) continue;   // no DST this year
+        if (tzi.DaylightDate.wMonth == 0 || tzi.StandardDate.wMonth == 0) continue;
         const int dst_ty = find_or_add(types, dst_off, true, abbr_for(true, dst_off));
         // DaylightDate is given in standard wall time, StandardDate in daylight wall time.
         const int64_t start = resolve_systemtime(tzi.DaylightDate, year) - std_off;
@@ -386,7 +384,6 @@ bool build_host_rule(RuleImage& img, std::string& name) {
     };
     std::swap(types[0], types[default_ty]);
 
-    // Drop transitions that do not change the type (keeps the table minimal and strictly increasing).
     std::vector<HostTransition> table;
     int state = remap(default_ty);
     for (const HostTransition& t : trans) {
@@ -398,7 +395,6 @@ bool build_host_rule(RuleImage& img, std::string& name) {
     }
     if (static_cast<int>(table.size()) > kMaxTimes) return false;
 
-    // Abbreviations into chars, NUL separated, each name stored once.
     std::string chars;
     std::vector<int32_t> desig(types.size(), 0);
     for (size_t i = 0; i < types.size(); ++i) {
@@ -437,14 +433,14 @@ bool build_host_rule(RuleImage& img, std::string& name) {
 }
 #endif
 
-}  // namespace
+}
 
 void make_utc_rule(uint8_t* out) {
     RuleImage img{};
     img.timecnt = 0;
     img.typecnt = 1;
     img.charcnt = 4;
-    std::memcpy(img.chars, "UTC", 4);   // "UTC" and its NUL
+    std::memcpy(img.chars, "UTC", 4);
     img.ttis[0].utoff = 0;
     img.ttis[0].isdst = 0;
     img.ttis[0].desigidx = 0;
@@ -483,4 +479,4 @@ int to_posix(const uint8_t* rule, const CalendarTime& cal, int64_t out[2]) {
     return to_posix_impl(*img, cal, out);
 }
 
-}  // namespace nxrt::services::tz
+}

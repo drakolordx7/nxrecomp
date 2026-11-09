@@ -11,7 +11,7 @@ namespace nxrt::kernel {
 namespace {
 std::atomic<const ClockProvider*> g_clock{nullptr};
 std::atomic<RngFillFn> g_rng{nullptr};
-}  // namespace
+}
 
 void set_clock_provider(const ClockProvider* p) { g_clock.store(p, std::memory_order_release); }
 void set_rng_provider(RngFillFn fn) { g_rng.store(fn, std::memory_order_release); }
@@ -30,7 +30,7 @@ uint64_t wall_filetime() {
 
 uint64_t system_tick() {
     if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->tick)
-        if (uint64_t vt; cp->tick(&vt)) return vt;           // a provider's clock (the test tooling's virtual clock)
+        if (uint64_t vt; cp->tick(&vt)) return vt;
     static const uint64_t freq = [] {
         LARGE_INTEGER f;
         QueryPerformanceFrequency(&f);
@@ -39,14 +39,14 @@ uint64_t system_tick() {
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
     const uint64_t v = static_cast<uint64_t>(c.QuadPart);
-    return (v / freq) * kTickHz + (v % freq) * kTickHz / freq;     // split so the multiplication cannot overflow
+    return (v / freq) * kTickHz + (v % freq) * kTickHz / freq;
 }
 
 // SleepThread takes nanoseconds and the console timer is good to a few microseconds. Sleep() counts whole milliseconds on a
 // 1 ms or 15.6 ms grid, so the wait runs on a high-resolution waitable timer (100 ns units); Sleep() is only the fallback.
 // A zero or negative span yields, as on the console.
 void sleep_ns(int64_t ns) {
-    if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->sleep && cp->sleep(ns)) return;   // a provider's sleep
+    if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->sleep && cp->sleep(ns)) return;
     static thread_local HANDLE timer = nullptr;
     static thread_local bool no_timer = false;
     if (ns <= 0) {
@@ -65,4 +65,4 @@ void sleep_ns(int64_t ns) {
         WaitForSingleObject(timer, INFINITE);
 }
 
-}  // namespace nxrt::kernel
+}

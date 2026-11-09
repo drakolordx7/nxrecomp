@@ -23,11 +23,11 @@ struct LogOptions {
 // NXRT_LOG is a short alias of NXRT_LOG_PATH and wins over it.
 // Calling logf before log_init initialises with defaults.
 void log_init(const LogOptions& opt = {});
-void log_shutdown();                   // flush and close the file
+void log_shutdown();
 void log_flush();
 void log_set_level(LogLevel l);
 LogLevel log_level();
-bool log_enabled(LogLevel l);          // l <= current level
+bool log_enabled(LogLevel l);
 const char* log_path();                // path of the file actually open ("" when none)
 void log_set_thread_name(const char* name);   // copied; shown in the line prefix of this thread
 const char* log_thread_name();
@@ -35,7 +35,7 @@ LogLevel log_parse_level(const char* s, LogLevel fallback);
 const char* log_level_name(LogLevel l);
 
 // Counters since log_init, for tests and the end-of-run summary.
-uint64_t log_count(LogLevel l);        // lines written at exactly this level
+uint64_t log_count(LogLevel l);
 // Test hook: every formatted line (without the trailing newline) is also passed to the sink. Null removes it.
 using LogSink = void (*)(LogLevel level, const char* line, void* user);
 void log_set_sink(LogSink sink, void* user);
@@ -53,4 +53,4 @@ void logf(LogLevel l, const char* tag, const char* fmt, ...)
 #define NXLOG_D(tag, ...) do { if (::nxrt::log_enabled(::nxrt::LogLevel::Debug)) ::nxrt::logf(::nxrt::LogLevel::Debug, tag, __VA_ARGS__); } while (0)
 #define NXLOG_T(tag, ...) do { if (::nxrt::log_enabled(::nxrt::LogLevel::Trace)) ::nxrt::logf(::nxrt::LogLevel::Trace, tag, __VA_ARGS__); } while (0)
 
-}  // namespace nxrt
+}

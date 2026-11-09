@@ -12,29 +12,22 @@ public:
 
     explicit BitArray(Span<uint8_t> storage) : _storage(storage) {}
 
-    // Test if the bit at the given index is set.
     bool Test(int32_t index) const {
         uint8_t mask = static_cast<uint8_t>(1u << ToBitPosition(index));
         return (_storage[ToPosition(index)] & mask) == mask;
     }
 
-    // Set the bit at the given index.
     void Set(int32_t index) { Set(index, true); }
 
-    // Reset the bit at the given index.
     void Reset(int32_t index) { Set(index, false); }
 
-    // Reset all bits in the storage.
     void Reset() { _storage.Clear(); }
 
 private:
-    // Get the byte position of a given bit index.
     static int32_t ToPosition(int32_t index) { return index / 8; }
 
-    // Get the bit position of a given bit index inside a byte.
     static int32_t ToBitPosition(int32_t index) { return index % 8; }
 
-    // Set a bit value at the given index.
     void Set(int32_t index, bool value) {
         uint8_t mask = static_cast<uint8_t>(1u << ToBitPosition(index));
         if (value) {
@@ -44,8 +37,7 @@ private:
         }
     }
 
-    // The backing storage of the BitArray.
     Span<uint8_t> _storage;
 };
 
-}  // namespace nxrt::audren
+}

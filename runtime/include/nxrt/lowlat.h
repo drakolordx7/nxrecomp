@@ -26,7 +26,6 @@ class LowLatency {
 public:
     enum class Backend : uint8_t { None = 0, Reflex, AntiLag };
 
-    // Reads the settings; the backend is the one the GPU supports (Reflex first) when the mode is not Off.
     explicit LowLatency(gfx::Device& dev);
     ~LowLatency();
     LowLatency(const LowLatency&) = delete;
@@ -95,4 +94,4 @@ void lowlat_set(LowLatency* l);
 // Frame trace probe (S18): the GPU submissions still unfinished, read at each simulation start (set by the NVN back end).
 void lowlat_set_backlog_fn(uint64_t (*fn)());
 
-}  // namespace nxrt::extras
+}

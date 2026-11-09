@@ -57,7 +57,6 @@ class Reverb3dCommand : public ICommand {
     Reverb3dCommand()
         : OutputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0), InputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0) {}
 
-    // C# `public Reverb3dParameter Parameter => _parameter;`
     Reverb3dParameter Parameter() const { return _parameter; }
 
     Reverb3dCommand& Initialize(uint32_t bufferOffset, Reverb3dParameter parameter, Span<Reverb3dState> state, bool isEnabled, CpuAddress workBuffer,
@@ -259,4 +258,4 @@ class Reverb3dCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

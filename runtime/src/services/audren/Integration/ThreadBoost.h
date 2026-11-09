@@ -67,4 +67,4 @@ class TimerResolutionScope {
     static inline std::atomic<int> _count{0};
 };
 
-}  // namespace nxrt::audren
+}

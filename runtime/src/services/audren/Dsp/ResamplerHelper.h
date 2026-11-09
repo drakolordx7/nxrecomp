@@ -12,14 +12,13 @@
 namespace nxrt::audren {
 
 namespace resampler_detail {
-// C# `x.Select(x => x / 32768f).ToArray()`, evaluated at compile time.
 template <size_t N>
 constexpr std::array<float, N> ScaleToFloat(const std::array<int16_t, N>& src) {
     std::array<float, N> dst{};
     for (size_t i = 0; i < N; i++) dst[i] = static_cast<float>(src[i]) / 32768.0f;
     return dst;
 }
-}  // namespace resampler_detail
+}
 
 class ResamplerHelper {
   private:
@@ -398,7 +397,6 @@ class ResamplerHelper {
             fraction += ratio;
             inputBufferIndex += static_cast<int32_t>(fraction);
 
-            // Only keep lower part (safe as fraction isn't supposed to be negative)
             fraction -= static_cast<float>(static_cast<int32_t>(fraction));
         }
     }
@@ -422,7 +420,6 @@ class ResamplerHelper {
             fraction += ratio;
             inputBufferIndex += static_cast<int32_t>(std::trunc(fraction));
 
-            // Only keep lower part (safe as fraction isn't supposed to be negative)
             fraction -= static_cast<float>(static_cast<int32_t>(fraction));
         }
     }
@@ -443,10 +440,9 @@ class ResamplerHelper {
             fraction += ratio;
             inputBufferIndex += static_cast<int32_t>(std::trunc(fraction));
 
-            // Only keep lower part (safe as fraction isn't supposed to be negative)
             fraction -= static_cast<float>(static_cast<int32_t>(fraction));
         }
     }
 };
 
-}  // namespace nxrt::audren
+}

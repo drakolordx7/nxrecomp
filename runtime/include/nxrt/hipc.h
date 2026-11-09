@@ -35,7 +35,7 @@ struct Message {
     uint16_t type = 0;
     bool has_pid = false;
     uint64_t pid = 0;
-    std::vector<uint32_t> copy, move;           // handles
+    std::vector<uint32_t> copy, move;
     std::vector<PtrDesc> ptrs;                  // X
     std::vector<BufDesc> send, recv, exch;      // A, B, W
     uint32_t recv_list_flags = 0;               // 0 none, 1 inline, 2 one buffer, n >= 3: n-2 buffers
@@ -48,7 +48,6 @@ struct Message {
     uint32_t pad_before = 0;
 };
 
-// Number of header words and flags helpers.
 inline bool is_tipc(uint16_t type) { return type >= kTipcBase; }
 inline bool has_aligned_raw(uint16_t type) { return type != kRelease && type < kTipcBase; }
 
@@ -58,7 +57,6 @@ bool parse(const uint32_t* words, size_t nwords, Message& out, std::string* err 
 // Serialises a message; returns the number of words written, or 0 when it does not fit in `cap_words` or has invalid fields
 // (counts over the 4-bit limits, handle counts over 15, raw payload over the 10-bit size limit).
 size_t build(const Message& m, uint32_t* out, size_t cap_words, std::string* err = nullptr);
-// Size in words build() would produce, or 0 for an invalid message.
 size_t built_size_words(const Message& m);
 
-}  // namespace nxrt::hipc
+}

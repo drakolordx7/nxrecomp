@@ -21,7 +21,6 @@ void install_bsd(ipc::Service& s);
 // `how` says where the answer came from ("hosts", "literal", "dns"). False: not found.
 bool resolve_ipv4(const std::string& name, uint8_t ip[4], const char** how = nullptr);
 
-// Closes every host socket and forgets the guest descriptors (network_reset()).
 void reset();
 
-}  // namespace nxrt::services::nethost
+}

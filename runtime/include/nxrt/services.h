@@ -26,9 +26,7 @@ namespace nxrt::services {
 // ---- registration ---------------------------------------------------------------------------------------------------------
 // Registers every service in this library with ipc::register_service. Safe to call again after ipc::registry_reset().
 void register_all();
-// Puts the process-wide state of every service back to its start-up value (tests, a restart of the guest).
 void reset_all();
-// Names of the services register_all() registers (sorted).
 std::vector<std::string> registered_names();
 
 // ---- result codes ---------------------------------------------------------------------------------------------------------
@@ -104,7 +102,6 @@ struct TitleProfile {
     uint64_t cache_save_size = 0, cache_save_journal = 0;     // none
     uint64_t main_thread_stack = 0x100000;                 // main.npdm default stack size
     int main_thread_priority = 44, main_thread_core = 0;   // main.npdm
-    // console
     Language language = Language::AmericanEnglish;         // [system] language (name, e.g. AmericanEnglish)
     int region = 1;                                        // [system] region: Japan 0, USA 1, Europe 2, Australia 3, HongKongTaiwanKorea 4, China 5 (name or number; Switchbrew RegionCode)
     std::string firmware = "12.1.0";                       // [system] firmware  (set:sys GetFirmwareVersion)
@@ -114,8 +111,8 @@ struct TitleProfile {
     uint64_t user_uid_hi = 0x0000000000000001ull, user_uid_lo = 0x6e78727475736572ull;   // [account] uid = 32 hex digits ("nxrtuser")
 };
 uint64_t program_id_now();               // [process] program_id if set, else [title] program_id, else the game's title id; read from the config on every call
-const TitleProfile& profile();           // loaded from the config on first use
-void profile_reload();                   // tests: re-read the config
+const TitleProfile& profile();
+void profile_reload();
 const char* language_code(Language l);   // "en-US", "ja", ... (the 8-byte LanguageCode string)
 uint64_t language_code_u64(Language l);  // the same string as the little-endian u64 the settings services return
 
@@ -124,4 +121,4 @@ uint64_t language_code_u64(Language l);  // the same string as the little-endian
 std::string romfs_dir();
 std::string save_dir();
 
-}  // namespace nxrt::services
+}

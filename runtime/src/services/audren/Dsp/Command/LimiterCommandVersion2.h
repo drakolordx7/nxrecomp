@@ -34,7 +34,6 @@ class LimiterCommandVersion2 : public ICommand {
     LimiterCommandVersion2()
         : OutputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0), InputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0) {}
 
-    // C# `public LimiterParameter Parameter => _parameter;`
     LimiterParameter Parameter() const { return _parameter; }
 
     LimiterCommandVersion2& Initialize(uint32_t bufferOffset, LimiterParameter parameter, Span<LimiterState> state, Span<EffectResultState> resultState,
@@ -82,7 +81,6 @@ class LimiterCommandVersion2 : public ICommand {
   private:
     static bool IsChannelCountValid(uint16_t channelCount) { return channelCount == 1 || channelCount == 2 || channelCount == 4 || channelCount == 6; }
 
-    // C# LimiterStatistics.Reset(): InputMax cleared, CompressionGainMin filled with 1.
     static void ResetStatistics(LimiterStatistics& statistics) {
         for (size_t i = 0; i < 6; i++) {
             statistics.input_max[i] = 0.0f;
@@ -169,4 +167,4 @@ class LimiterCommandVersion2 : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -51,15 +51,15 @@ bool is_named(uint64_t ti, const char* name) { return std::strcmp(ti_name(ti), n
 
 // ---- derived-to-base search (libc++abi has_unambiguous_public_base) -------------------------------------------------------------------
 struct Search {
-    uint64_t target;                // typeinfo of the class the handler names
-    bool have_object;               // true: look through the object's vtables for virtual bases
-    uint64_t found_ptr = 0;         // address of the matching subobject (first find)
+    uint64_t target;
+    bool have_object;
+    uint64_t found_ptr = 0;
     uint64_t found_cookie = 0;
-    uint64_t cookie = 0;            // name of the innermost virtual base on the path (no object only)
-    int number = 0;                 // finds so far (distinct subobjects)
+    uint64_t cookie = 0;
+    int number = 0;
     int path = kUnknown;
     bool done = false;
-    int budget = 4096;              // guard against pathological/corrupt hierarchies (visits, and depth below)
+    int budget = 4096;
     int depth = 0;
 };
 
@@ -70,9 +70,9 @@ void found(Search& s, uint64_t ptr, int path_below) {
         s.found_cookie = s.cookie;
         s.number = 1;
     } else if (s.found_cookie == s.cookie && s.found_ptr == ptr) {
-        if (s.path == kNotPublic) s.path = path_below;      // the same subobject on a more public path
+        if (s.path == kNotPublic) s.path = path_below;
     } else {
-        s.number += 1;                                       // two different subobjects of the target type: ambiguous
+        s.number += 1;
         s.path = kNotPublic;
         s.done = true;
     }
@@ -100,13 +100,13 @@ void search(Search& s, uint64_t ti, uint64_t ptr, int path_below) {
                 uint64_t base = rd64(e);
                 int64_t offset_flags = static_cast<int64_t>(rd64(e + 8));
                 bool is_virtual = (offset_flags & kBaseVirtual) != 0;
-                int64_t off = offset_flags >> kBaseOffsetShift;     // arithmetic shift: the offset is signed
+                int64_t off = offset_flags >> kBaseOffsetShift;
                 uint64_t sub = ptr;
                 uint64_t saved_cookie = s.cookie;
                 if (s.have_object) {
                     if (is_virtual) off = static_cast<int64_t>(rd64(rd64(ptr) + static_cast<uint64_t>(off)));   // vbase offset stored in the vtable
                 } else if (is_virtual) {
-                    s.cookie = name_ptr(base);            // no object: identify the virtual base by its name pointer
+                    s.cookie = name_ptr(base);
                     sub = 0;
                     off = 0;
                 }
@@ -116,11 +116,10 @@ void search(Search& s, uint64_t ti, uint64_t ptr, int path_below) {
             break;
         }
         default:
-            break;                                              // a class without bases (or not a class): nothing below it
+            break;
     }
 }
 
-// Is `target` an unambiguous public base of `from` (or equal)? On success *ptr is the subobject's address.
 bool derived_to_base(uint64_t target, uint64_t from, uint64_t* ptr, bool have_object) {
     Search s;
     s.target = target;
@@ -165,7 +164,7 @@ bool pointer_can_catch(uint64_t catch_ti, uint64_t thrown_ti, uint64_t* adjusted
         return true;
     }
     if (tk != TiKind::Pointer) return false;
-    if (*adjusted) *adjusted = rd64(*adjusted);                                                         // the exception object holds the pointer
+    if (*adjusted) *adjusted = rd64(*adjusted);
     uint32_t cf = rd32(catch_ti + kOffPbaseFlags), tf = rd32(thrown_ti + kOffPbaseFlags);
     if (tf & ~cf & kNoRemove) return false;                                                             // bullet 3B/3C: qualifiers may be added, not removed
     if (cf & ~tf & kNoAdd) return false;
@@ -199,7 +198,7 @@ bool member_pointer_can_catch(uint64_t catch_ti, uint64_t thrown_ti, uint64_t* a
     return ti_equal(rd64(catch_ti + kOffPmContext), rd64(thrown_ti + kOffPmContext));
 }
 
-}  // namespace
+}
 
 // ---- configuration and basic queries ---------------------------------------------------------------------------------------------------
 void set_typeinfo_vtables(const TypeinfoVtables& v) { g_vt = v; }
@@ -274,7 +273,7 @@ std::string ti_demangle_hint(uint64_t ti) {
 }
 
 bool can_catch(uint64_t catch_ti, uint64_t thrown_ti, uint64_t* adjusted) {
-    if (!catch_ti) return true;                               // catch (...)
+    if (!catch_ti) return true;
     if (!thrown_ti) return false;                             // foreign exception: only catch (...)
     uint64_t scratch = 0;
     if (!adjusted) adjusted = &scratch;
@@ -284,7 +283,7 @@ bool can_catch(uint64_t catch_ti, uint64_t thrown_ti, uint64_t* adjusted) {
             return ti_equal(catch_ti, thrown_ti);
         case TiKind::Array:
         case TiKind::Function:
-            return false;                                     // never thrown, so never caught
+            return false;
         case TiKind::Class:
         case TiKind::SiClass:
         case TiKind::VmiClass: {
@@ -301,8 +300,8 @@ bool can_catch(uint64_t catch_ti, uint64_t thrown_ti, uint64_t* adjusted) {
             return member_pointer_can_catch(catch_ti, thrown_ti, adjusted);
         case TiKind::Unknown:
         default:
-            return ti_equal(catch_ti, thrown_ti);             // a kind we cannot read: identity is all we can say
+            return ti_equal(catch_ti, thrown_ti);
     }
 }
 
-}  // namespace nxrt::eh
+}

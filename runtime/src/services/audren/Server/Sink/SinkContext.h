@@ -17,13 +17,10 @@ namespace nxrt::audren {
 
 class SinkContext {
   private:
-    // Storage for BaseSink (C# BaseSink[]).
     std::vector<std::unique_ptr<BaseSink>> _sinks;
-    // The total sink count.
     uint32_t _sinkCount = 0;
 
   public:
-    // Initialize the SinkContext: every slot starts as a plain BaseSink.
     void Initialize(uint32_t sinksCount) {
         _sinkCount = sinksCount;
         _sinks.clear();
@@ -34,17 +31,14 @@ class SinkContext {
         }
     }
 
-    // Get the total sink count.
     uint32_t GetCount() const { return _sinkCount; }
 
-    // Get a reference to the BaseSink at the given id.
     BaseSink& GetSink(int32_t id) {
         NXAUDREN_ASSERT(id >= 0 && static_cast<uint32_t>(id) < _sinkCount);
 
         return *_sinks[static_cast<size_t>(id)];
     }
 
-    // Get the slot holding the BaseSink at the given id (C# `ref BaseSink` that can be reassigned).
     std::unique_ptr<BaseSink>& GetSinkSlot(int32_t id) {
         NXAUDREN_ASSERT(id >= 0 && static_cast<uint32_t>(id) < _sinkCount);
 
@@ -52,4 +46,4 @@ class SinkContext {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -32,10 +32,9 @@ class IDelayLine {
         return workBuffer[static_cast<size_t>(targetIndex)];
     }
 
-    // C# (uint)MathF.Round(sampleRate * delayTime): round half to even.
     static uint32_t GetSampleCount(uint32_t sampleRate, float delayTime) {
         return static_cast<uint32_t>(std::nearbyint(static_cast<float>(sampleRate) * delayTime));
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -21,8 +21,8 @@ namespace nxrt {
 namespace {
 std::mutex g_sysreg_lock;
 std::set<uint32_t> g_sysregs_seen;
-}  // namespace
-}  // namespace nxrt
+}
+}
 
 extern "C" {
 
@@ -86,4 +86,4 @@ void stx_diag(Ctx* c, uint64_t a, uint64_t expected, uint64_t seen, uint64_t v, 
                 static_cast<unsigned long long>(seen), static_cast<unsigned long long>(v), bits < 0 ? "monitor lost, " : "", bits < 0 ? -bits : bits);
 }
 
-}  // extern "C"
+}

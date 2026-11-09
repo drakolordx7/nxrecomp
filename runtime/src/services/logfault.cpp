@@ -56,7 +56,6 @@ enum : uint64_t {
     kChunkProcessName = 10,
 };
 
-// LEB128 unsigned. False when the data ends inside the number or the number is longer than 64 bits.
 bool read_uleb(const uint8_t*& p, const uint8_t* end, uint64_t& out) {
     out = 0;
     unsigned shift = 0;
@@ -69,14 +68,12 @@ bool read_uleb(const uint8_t*& p, const uint8_t* end, uint64_t& out) {
     }
 }
 
-// A numeric chunk: little-endian, as many bytes as the chunk has (the first 8 count).
 uint64_t read_le(const uint8_t* d, size_t n) {
     uint64_t v = 0;
     for (size_t i = 0; i < n && i < 8; ++i) v |= static_cast<uint64_t>(d[i]) << (8 * i);
     return v;
 }
 
-// Trailing blanks and NULs removed, control characters made printable (a line stays one line).
 std::string clean(const std::string& in) {
     std::string s;
     s.reserve(in.size());
@@ -102,7 +99,6 @@ LogLevel level_of(uint8_t severity) {
     }
 }
 
-// One message while its packets arrive.
 struct Message {
     bool open = false;
     uint8_t severity = 1;
@@ -146,7 +142,6 @@ void emit(const Message& m) {
     logf(level_of(m.severity), "guestlog", "%s", s.c_str());
 }
 
-// Reads the TLV chunks of one packet into the open message. A malformed chunk stops the packet (what was read stays).
 void parse_chunks(Message& m, const uint8_t* p, const uint8_t* end) {
     while (p < end) {
         uint64_t type = 0, size = 0;
@@ -176,7 +171,6 @@ void parse_chunks(Message& m, const uint8_t* p, const uint8_t* end) {
     }
 }
 
-// One ILogger's message assembly. Shared by the command handlers of that logger session.
 struct LoggerState {
     std::mutex mu;
     Message msg;
@@ -225,7 +219,7 @@ struct LoggerState {
 struct State {
     std::mutex mu;
     uint32_t destination = 1;      // ILogger SetDestination mask (TMA); stored as a global value, nothing else reads it
-    ServiceEvent fatal_event;      // fatal:p GetFatalEvent; ThrowFatal* signals it
+    ServiceEvent fatal_event;
 };
 State& state() {
     static State s;
@@ -281,7 +275,6 @@ uint64_t rd64(const uint8_t* p, size_t off) {
     return v;
 }
 
-// <exe path without extension>_fatal.txt, the way the crash handler names its file.
 std::string default_report_path() {
     char exe[1024] = {};
     const DWORD n = GetModuleFileNameA(nullptr, exe, sizeof exe);
@@ -307,7 +300,6 @@ std::string format_result(uint64_t code) {
     return b;
 }
 
-// The report text. `ctx` is the 0x250-byte CPU context, or null when the caller did not supply one.
 std::string build_report(uint64_t code, uint32_t policy, uint64_t pid, const uint8_t* ctx) {
     std::string out;
     char b[256];
@@ -369,7 +361,6 @@ void write_file(const std::string& path, const std::string& text) {
     std::fclose(f);
 }
 
-// The whole flow of a fatal throw: report (log, file), fatal event, terminate unless [fatal] terminate is false.
 uint32_t throw_fatal(uint64_t code, uint32_t policy, uint64_t pid, const uint8_t* ctx) {
     const std::string report = build_report(code, policy, pid, ctx);
     size_t s = 0;
@@ -393,7 +384,6 @@ uint32_t throw_fatal(uint64_t code, uint32_t policy, uint64_t pid, const uint8_t
     return 0;
 }
 
-// Reads the CPU context buffer; false when it is absent or shorter than 0x250 bytes (a note goes to the log).
 bool read_context(const ipc::Request& req, uint8_t* out) {
     const ipc::Buffer b = req.in_buf(0);
     if (!b.addr || b.size < kCpuContextSize) {
@@ -449,9 +439,8 @@ std::shared_ptr<ipc::Service> make_lm() {
     });
 }
 
-}  // namespace
+}
 
-// Test hook: the destination mask last set by SetDestination (default TMA).
 uint32_t logfault_destination() {
     State& g = state();
     std::lock_guard<std::mutex> lk(g.mu);
@@ -471,4 +460,4 @@ void logfault_reset() {
     g.fatal_event.clear();
 }
 
-}  // namespace nxrt::services
+}

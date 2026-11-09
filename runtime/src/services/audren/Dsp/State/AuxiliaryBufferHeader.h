@@ -61,4 +61,4 @@ struct AuxiliaryBufferHeader {
 static_assert(sizeof(AuxiliaryBufferHeader::AuxiliaryBufferInfo) == 0x40);
 static_assert(sizeof(AuxiliaryBufferHeader) == 0x80);
 
-}  // namespace nxrt::audren
+}

@@ -20,9 +20,9 @@ std::mutex gSinkMutex;
 std::shared_ptr<::nxrt::audio::AudioSink> gOpenSink;
 uint32_t gOpenRate = 0;
 uint32_t gOpenChannels = 0;
-uint64_t gFramesSinceReport = 0;   // frames written since the last periodic counters line (a minute of audio)
+uint64_t gFramesSinceReport = 0;
 
-}  // namespace
+}
 
 HostAudioDevice::HostAudioDevice(uint32_t sampleRate, uint32_t channelCount) : _sampleRate(sampleRate), _channelCount(channelCount) {
     NXAUDREN_ASSERT(channelCount == 2 || channelCount == 6);
@@ -45,7 +45,6 @@ void HostAudioDevice::AppendBuffer(Span<const int16_t> data, uint32_t channelCou
         return;
     }
 
-    // Interleaved, scaled, at this device's channel count.
     std::vector<int16_t> out(frames * _channelCount, 0);
 
     const uint32_t copyChannels = channelCount < _channelCount ? channelCount : _channelCount;
@@ -54,7 +53,6 @@ void HostAudioDevice::AppendBuffer(Span<const int16_t> data, uint32_t channelCou
         for (uint32_t c = 0; c < copyChannels; c++) {
             const int16_t sample = data[frame * channelCount + c];
 
-            // C# PcmHelper.Saturate(sample * volume) for the scaled case; the unit volume is a copy.
             out[frame * _channelCount + c] = _volume == 1.0f ? sample : PcmHelper::Saturate(static_cast<float>(sample) * _volume);
         }
     }
@@ -64,7 +62,6 @@ void HostAudioDevice::AppendBuffer(Span<const int16_t> data, uint32_t channelCou
     std::shared_ptr<::nxrt::audio::AudioSink> sink = ::nxrt::audio::sink();
 
     if (sink != gOpenSink || _sampleRate != gOpenRate || _channelCount != gOpenChannels) {
-        // A new sink object was installed with set_sink (it closes the previous one), or the stream format changed: (re)open.
         if (gOpenSink != nullptr && sink == gOpenSink) {
             gOpenSink->close();
         }
@@ -110,4 +107,4 @@ std::unique_ptr<IHardwareDevice> HostAudioDeviceDriver::OpenHardwareDevice(uint3
 
 bool HostAudioDeviceDriver::SupportsChannelCount(uint32_t channelCount) const { return channelCount == _configuredChannels; }
 
-}  // namespace nxrt::audren
+}

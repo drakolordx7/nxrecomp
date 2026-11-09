@@ -61,10 +61,8 @@ AccState& state() {
     return s;
 }
 
-// Only one user exists: the local one.
 bool user_exists(const Uid& u) { return !u.null() && u == local_uid(); }
 
-// Writes a Uid as 16 bytes: hi then lo, each little-endian (the host and the guest are little-endian x64).
 void put_uid(uint8_t* p, const Uid& u) {
     std::memcpy(p, &u.hi, 8);
     std::memcpy(p + 8, &u.lo, 8);
@@ -73,10 +71,8 @@ void push_uid(ipc::Response& rsp, const Uid& u) {
     rsp.push<uint64_t>(u.hi);
     rsp.push<uint64_t>(u.lo);
 }
-// A Uid argument at `off` of the raw request data.
 Uid arg_uid(const ipc::Request& req, size_t off) { return Uid{req.arg<uint64_t>(off), req.arg<uint64_t>(off + 8)}; }
 
-// Fills the user array the guest gave (zeros after the users) with `users`, up to what the buffer holds.
 void write_user_list(const ipc::Request& req, const std::vector<Uid>& users) {
     const ipc::Buffer out = req.out_buf(0);
     if (!out.addr) return;
@@ -282,7 +278,7 @@ void setup_sys(ipc::Service& s) {
     });
 }
 
-}  // namespace
+}
 
 void register_acc() {
     add("acc:u0", [] { return make_iface("acc:u0", setup_app); });
@@ -300,6 +296,6 @@ void user_uid(uint64_t* hi, uint64_t* lo) {
     if (hi) *hi = p.user_uid_hi;
     if (lo) *lo = p.user_uid_lo;
 }
-}  // namespace accapi
+}
 
-}  // namespace nxrt::services
+}

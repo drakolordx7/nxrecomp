@@ -49,10 +49,10 @@ struct FsState {
     std::mutex mu;
     std::shared_ptr<fs::RomfsImage> rom;
     bool rom_failed = false;
-    std::shared_ptr<const fs::ModOverlay> mods;           // the loaded mods (null: none)
+    std::shared_ptr<const fs::ModOverlay> mods;
     bool mods_loaded = false;
-    std::map<std::string, std::weak_ptr<Volume>> saves;   // key -> open volume (one at a time per save)
-    std::map<uint64_t, std::string> ids;                  // SaveDataId -> key, for the commands that name a save by id
+    std::map<std::string, std::weak_ptr<Volume>> saves;
+    std::map<uint64_t, std::string> ids;
 };
 FsState& st() {
     static FsState s;
@@ -115,7 +115,7 @@ std::string save_key(const SaveAttr& a) {
 }
 
 uint64_t save_id_of(const std::string& key) {
-    uint64_t h = 1469598103934665603ull;   // FNV-1a
+    uint64_t h = 1469598103934665603ull;
     for (unsigned char c : key) h = (h ^ c) * 1099511628211ull;
     return h;
 }
@@ -214,10 +214,9 @@ bool get_path(const Request& req, size_t n, std::string* out, uint32_t* err) {
         if (!get_path(req, n, &var, &perr)) return perr; \
     }
 
-// Gauges (include/nxrt/gauge.h). An open file or directory counts while its service object lives: the command handlers hold OpenCount.
 GaugeCounter g_open_files("fs.open_files");
 GaugeCounter g_open_dirs("fs.open_dirs");
-GaugeCounter g_bytes_read("fs.bytes_read");   // bytes returned by IFile::Read so far
+GaugeCounter g_bytes_read("fs.bytes_read");
 struct OpenCount {
     explicit OpenCount(GaugeCounter& g) : c(g) { c.add(1); }
     ~OpenCount() { c.sub(1); }
@@ -487,7 +486,6 @@ std::shared_ptr<Service> make_multi_commit() {
             return 0;
         });
         s.add_cmd(2, "Commit", [list](Request&, Response&) -> uint32_t {
-            // The file systems were added as objects; each one commits through its own Commit command.
             for (auto& fsys : *list) {
                 ipc::Request r;
                 r.cmd = 10;
@@ -784,7 +782,7 @@ std::shared_ptr<Service> make_fsp() {
     return s;
 }
 
-}  // namespace
+}
 
 void register_fs() {
     add("fsp-srv", [] { return make_fsp(); });
@@ -834,6 +832,6 @@ uint32_t account_save_size(uint64_t uid_hi, uint64_t uid_lo, int64_t* size, int6
     return 0;
 }
 
-}  // namespace fsapi
+}
 
-}  // namespace nxrt::services
+}

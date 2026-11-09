@@ -123,4 +123,4 @@ class CommandProcessingTimeEstimatorVersion1 : public ICommandProcessingTimeEsti
     uint32_t Estimate(const FillBufferCommand& command) override { return 0; }
 };
 
-}  // namespace nxrt::audren
+}

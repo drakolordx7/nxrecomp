@@ -149,7 +149,6 @@ class CommandProcessingTimeEstimatorVersion3 : public ICommandProcessingTimeEsti
         return estimator_detail::FloatToUInt32(1853.2f);
     }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const DelayCommand& command) override {
         NXAUDREN_ASSERT(estimator_detail::IsSampleCountSupported(SampleCount));
         const uint16_t channelCount = command.Parameter().channel_count;
@@ -169,7 +168,6 @@ class CommandProcessingTimeEstimatorVersion3 : public ICommandProcessingTimeEsti
         return estimator_detail::SelectByChannelCount(channelCount, 997.67f, 977.63f, 792.30f, 875.43f);
     }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const ReverbCommand& command) override {
         NXAUDREN_ASSERT(estimator_detail::IsSampleCountSupported(SampleCount));
         const uint16_t channelCount = command.Parameter().channel_count;
@@ -189,7 +187,6 @@ class CommandProcessingTimeEstimatorVersion3 : public ICommandProcessingTimeEsti
         return estimator_detail::SelectByChannelCount(channelCount, 617.64f, 659.54f, 711.43f, 778.07f);
     }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const Reverb3dCommand& command) override {
         NXAUDREN_ASSERT(estimator_detail::IsSampleCountSupported(SampleCount));
         const uint16_t channelCount = command.Parameter().channel_count;
@@ -428,23 +425,17 @@ class CommandProcessingTimeEstimatorVersion3 : public ICommandProcessingTimeEsti
         return estimator_detail::SelectByChannelCount(parameter.channel_count, 33526.0f, 43549.0f, 52190.0f, 85527.0f);
     }
 
-    // C# `public virtual` (version 4 overrides it).
     uint32_t Estimate(const MultiTapBiquadFilterCommand& command) override { return 0; }
 
-    // C# `public virtual` (version 4 overrides it).
     uint32_t Estimate(const CaptureBufferCommand& command) override { return 0; }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const CompressorCommand& command) override { return 0; }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const BiquadFilterAndMixCommand& command) override { return 0; }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const MultiTapBiquadFilterAndMixCommand& command) override { return 0; }
 
-    // C# `public virtual` (version 5 overrides it).
     uint32_t Estimate(const FillBufferCommand& command) override { return 0; }
 };
 
-}  // namespace nxrt::audren
+}

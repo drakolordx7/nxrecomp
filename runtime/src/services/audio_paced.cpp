@@ -51,7 +51,7 @@ public:
         if (take < frames) frames_dropped_ += frames - take;
         frames_accepted_ += take;
         if (!running_) {
-            running_ = true;           // playback starts with the first frames, as a voice does
+            running_ = true;
             last_ = Clock::now();
             if (t_first_ == Clock::time_point{}) t_first_ = last_;
         }
@@ -120,8 +120,8 @@ private:
     uint64_t frames_written_ = 0, frames_accepted_ = 0, frames_dropped_ = 0, underruns_ = 0;
 };
 
-}  // namespace
+}
 
 std::shared_ptr<AudioSink> make_paced_sink(double skew_ppm) { return std::make_shared<PacedSink>(skew_ppm); }
 
-}  // namespace nxrt::audio
+}

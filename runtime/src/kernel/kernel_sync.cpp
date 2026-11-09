@@ -26,10 +26,10 @@ namespace detail {
 SRWLOCK g_k = SRWLOCK_INIT;
 
 namespace {
-std::vector<KThread*> g_sync_waiters;    // in WaitSynchronization: woken by any change of waitable state
-std::vector<KThread*> g_mutex_waiters;   // waiting for a guest mutex word to be handed over
-std::vector<KThread*> g_cv_waiters;      // waiting on a process-wide key
-std::vector<KThread*> g_addr_waiters;    // WaitForAddress
+std::vector<KThread*> g_sync_waiters;
+std::vector<KThread*> g_mutex_waiters;
+std::vector<KThread*> g_cv_waiters;
+std::vector<KThread*> g_addr_waiters;
 
 struct Guard {
     Guard() { AcquireSRWLockExclusive(&g_k); }
@@ -44,7 +44,6 @@ bool cas32(uint64_t a, uint32_t expected, uint32_t v) {
     return __atomic_compare_exchange_n(reinterpret_cast<uint32_t*>(a), &expected, v, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
-// The calling guest thread, or a per-host-thread stand-in (tests and host threads that call kernel functions directly).
 KThread& self() {
     if (KThread* t = current_thread()) return *t;
     static thread_local KThread host;
@@ -59,7 +58,6 @@ KThread* pick_best(std::vector<KThread*>& v, uint64_t KThread::*field, uint64_t 
     return best;
 }
 
-// Hands the mutex word at addr to its best waiter (or clears it). g_k held.
 void unlock_mutex(uint64_t addr) {
     KThread* next = pick_best(g_mutex_waiters, &KThread::wait_mutex, addr);
     if (!next) {
@@ -74,15 +72,13 @@ void unlock_mutex(uint64_t addr) {
     wake_thread(*next);
 }
 
-// Monotonic nanoseconds from the 19.2 MHz tick (1 tick = 625/12 ns).
 int64_t now_ns() {
     const uint64_t t = system_tick();
     return static_cast<int64_t>(t / 12 * 625 + t % 12 * 625 / 12);
 }
 
-}  // namespace
+}
 
-// Waits (g_k held, released while sleeping) until t.wake or the timeout; false on timeout.
 bool block_on_wake(KThread& t, int64_t timeout_ns) {
     const int64_t until = timeout_ns < 0 ? 0 : now_ns() + timeout_ns;
     while (!t.wake) {
@@ -118,7 +114,7 @@ void sync_reset() {
     g_addr_waiters.clear();
 }
 
-}  // namespace detail
+}
 
 using namespace detail;
 
@@ -200,7 +196,6 @@ uint32_t signal_process_wide_key(uint64_t key, int32_t count) {
         if (!t) break;
         remove_from(g_cv_waiters, t);
         n++;
-        // Try to give it the mutex right away.
         for (;;) {
             uint32_t v = load32(t->wait_mutex);
             if (v == 0) {
@@ -349,7 +344,6 @@ void notify_waitable_changed() {
 
 // ---- gauges (include/nxrt/gauge.h): wait-queue lengths ----
 namespace {
-// Removes its gauge when the file's statics are torn down (declared after the wait queues, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
@@ -368,6 +362,6 @@ GaugeHook gauge_wait_sync("kernel.waiters_sync", [] { return queue_len(g_sync_wa
 GaugeHook gauge_wait_mutex("kernel.waiters_mutex", [] { return queue_len(g_mutex_waiters); });
 GaugeHook gauge_wait_cv("kernel.waiters_cv", [] { return queue_len(g_cv_waiters); });
 GaugeHook gauge_wait_addr("kernel.waiters_addr", [] { return queue_len(g_addr_waiters); });
-}  // namespace
+}
 
-}  // namespace nxrt::kernel
+}
