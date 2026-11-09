@@ -26,7 +26,7 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py` (HIPC vectors); for the lifted tests: `guest_build.py`, `make_sites.py`, `unicorn_expect.py`, `native_check.cmd`, `dump_results.py` |
 | `docs` | `S3.md`, `S3b.md`, `S4b.md`, `S4d.md` and `S4e.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
-| `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_scene_shaders.py` (test-scene SPIR-V), `nvn_unit.ps1` (build and run one NVN unit test without CMake), `gen_present_shaders.py`, `gen_mask_clear_shaders.py` (SPIR-V of the present pass and the masked clear), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
+| `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_shaders.py` (SPIR-V of the runtime's own shaders in src/gfx/shaders: test scene, output pass, FSR 1, masked clear; uses `VULKAN_SDK`), `nvn_unit.ps1` (build and run one NVN unit test without CMake), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
 
 ## Build and test
 
@@ -164,7 +164,7 @@ Third-party code fetched at configure time (graphics shell). Each archive is dow
 | VulkanMemoryAllocator | v3.4.0 | github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator tag archive, ce9a61ea5e72284ac9ccc152c214eef381ab57bfd7383f20232e5a652e3afda6 | MIT |
 | Dear ImGui | v1.92.9b | github.com/ocornut/imgui tag archive, e1c46d676c2bcb7ced847ba27f50553e33a19db97b3cadaec7f8be64449139f8 | MIT |
 
-The Vulkan SDK (validation layer, `glslc` for `scripts/gen_scene_shaders.py`) is a development tool and is not shipped.
+The Vulkan SDK (validation layer, `glslc` and `spirv-val` for `scripts/gen_shaders.py`) is a development tool and is not shipped.
 
 External specifications used as references:
 
