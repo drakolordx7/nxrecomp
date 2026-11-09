@@ -55,7 +55,7 @@ bool decompress_zstd(const u8* in, size_t in_len, u8* out, size_t out_len) {
     (void)in_len;
     (void)out;
     (void)out_len;
-    return false;   // read_pack() refuses method-1 entries in this build, so this is not reached
+    return false;
 #endif
 }
 
@@ -285,7 +285,6 @@ ShaderInstallResult install_shader_cache(const std::string& src_utf8, const std:
         if (present && !verify) {
             ++res.files_skipped;
         } else {
-            // The source is read and checked before the destination is touched.
             std::vector<u8> data = folder ? load_folder_entry(it) : load_pack_entry(*pack, it);
             const std::array<u8, 32> digest = digest_of(data);
             if (it.has_hash && digest != it.hash)

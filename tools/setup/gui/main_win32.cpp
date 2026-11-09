@@ -45,7 +45,6 @@ using nxs::Stage;
 using nxs::u64;
 using nxs::widen;
 
-// Control ids. The close button uses IDCANCEL.
 enum ControlId : int {
     IDC_DUMP_LABEL = 100, IDC_DUMP_EDIT, IDC_DUMP_BROWSE, IDC_DUMP_STATUS,
     IDC_KEYS_LABEL, IDC_KEYS_EDIT, IDC_KEYS_BROWSE, IDC_KEYS_HINT,
@@ -257,7 +256,6 @@ CmdLine parse_command_line() {
     return c;
 }
 
-// Text helpers for sizes and times.
 std::wstring size_text(u64 bytes) {
     const double b = static_cast<double>(bytes);
     if (b >= 1e9) return std::format(L"{:.1f} GB", b / 1e9);
@@ -478,7 +476,7 @@ private:
     void browse_keys();
     void browse_folder();
     void set_dump(const std::wstring& path);
-    void add_dumps(const std::vector<std::wstring>& paths);   // appends to the list, skipping files already in it
+    void add_dumps(const std::vector<std::wstring>& paths);
     void set_keys(const std::wstring& path, const std::wstring& source);
     void update_keys_hint();
     void request_inspect();
@@ -513,14 +511,12 @@ private:
     std::vector<int> quality_values_;
     COLORREF status_color_ = kGray;
 
-    // Inputs.
     std::wstring dump_path_;
     std::vector<std::wstring> extra_keys_;   // keys given on the command line after the first
     std::wstring auto_keys_source_;          // set when the keys were found automatically
     bool programmatic_ = false;              // true while the window sets an edit's text itself
     bool auto_start_pending_ = false;
 
-    // Inspection.
     std::thread inspect_thread_;
     bool inspect_running_ = false;
     bool inspect_again_ = false;
@@ -528,7 +524,6 @@ private:
     nxs::InputSummary summary_;
     bool supported_ = false;
 
-    // Run.
     std::thread run_thread_;
     RunShared shared_;
     bool running_ = false;

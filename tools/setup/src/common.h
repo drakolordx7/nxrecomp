@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Shared basics for the setup tool: integer names, one error type, hex and UTF-8 helpers.
 #pragma once
 #include <array>
 #include <cstddef>

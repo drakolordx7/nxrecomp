@@ -15,7 +15,6 @@ constexpr u64 kFileFixed = 0x20;   // parent, next sibling, data offset, data si
 u32 rd32(const u8* p) { return u32(p[0]) | u32(p[1]) << 8 | u32(p[2]) << 16 | u32(p[3]) << 24; }
 u64 rd64(const u8* p) { return u64(rd32(p)) | u64(rd32(p + 4)) << 32; }
 
-// off + len lies inside total. Written so no sum can overflow.
 bool fits(u64 off, u64 len, u64 total) { return off <= total && len <= total - off; }
 
 // Name rules for folders and files below the root. The root itself has an empty name and is not checked.
@@ -45,7 +44,6 @@ struct FileRec {
     std::string name;
 };
 
-// Walks the tree from the root using only the child and sibling links. Every entry may be visited once, which rules out loops.
 class Walker {
 public:
     Walker(StoragePtr image, u64 dir_off, u64 dir_size, u64 file_off, u64 file_size, u64 data_off)
@@ -109,7 +107,6 @@ private:
         file_seen_[o] = true;
     }
 
-    // Files of this folder first (sibling order), then each subfolder depth first.
     void walk(const DirRec& d, const std::string& path, unsigned depth) {
         for (u32 f = d.first_child_file; f != kNone;) {
             const FileRec fr = read_file(f);

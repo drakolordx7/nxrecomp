@@ -110,7 +110,6 @@ void check_small_tree() {
     for (const auto& f : in) total += f.second.size();
     CHECK_EQ(r->total_file_bytes(), total);
 
-    // Each file's bytes come back exactly, matched by path.
     for (const RomfsFile& f : r->files()) {
         bool matched = false;
         for (const auto& in_f : in) {

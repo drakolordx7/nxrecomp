@@ -791,7 +791,7 @@ void case_textures_empty_hook() {
     CHECK_EQ(rr.rep.textures_converted, u32(0));
     CHECK_EQ(rr.rep.textures_failed, u32(0));
     check_installed(out, d.build_id, files);
-    CHECK(has(as_text(read_bytes((fs::path(out) / o.profile.game_ini).string())), "[game]\nhook_line = 1\n"));   // the hook's ini lines
+    CHECK(has(as_text(read_bytes((fs::path(out) / o.profile.game_ini).string())), "[game]\nhook_line = 1\n"));
 }
 
 // A game with no hook: no Textures stage even when textures are not skipped, and no program list.

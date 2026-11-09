@@ -71,7 +71,6 @@ std::string tid_hex(u64 t) {
     return b;
 }
 
-// A content id (16 bytes) from a seed, as 32 lower-case hex digits.
 std::string cid(int seed) {
     uint8_t b[16];
     for (int i = 0; i < 16; ++i) b[i] = uint8_t(seed * 31 + i * 17 + 1);
@@ -394,7 +393,6 @@ void test_pipeline(const Game& g) {
     CHECK(err.empty());
     log_close();
 
-    // version messages
     SetupOptions base_only = o;
     base_only.input_paths = {g.base_only};
     base_only.out_dir = g.dir + "/out2";

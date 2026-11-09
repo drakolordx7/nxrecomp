@@ -41,7 +41,6 @@ namespace {
 using Clock = std::chrono::steady_clock;
 double secs_since(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
 
-// What the hook says its stages write (nothing without a hook); the shader cache defaults to the size of the pack file.
 DiskEstimate disk_estimate_of(const SetupOptions& o, const std::string& shader_src) {
     DiskEstimate e;
     if (o.hook && o.hook->disk_estimate) e = o.hook->disk_estimate();
@@ -139,7 +138,7 @@ private:
             }
             if (first) {
                 first = false;
-                if (f.size() < 2 || (f[0] != kStateMagic && f[0] != kStateMagicLegacy) || f[1] != "1") return;   // other version: start fresh
+                if (f.size() < 2 || (f[0] != kStateMagic && f[0] != kStateMagicLegacy) || f[1] != "1") return;
                 continue;
             }
             if (f.size() >= 3 && f[0] == "meta") meta[f[1]] = f[2];
@@ -185,7 +184,6 @@ std::string norm_build(std::string b) {
     return b;
 }
 
-// The releases setup accepts: the profile's builds, build ids padded to 40 digits.
 std::vector<Supported> supported_builds(const SetupOptions& o) {
     std::vector<Supported> v;
     for (const GameBuild& b : o.profile.builds) v.push_back({norm_build(b.build_id), b.version ? b.version : ""});
@@ -405,7 +403,6 @@ int remove_files_not_in(const std::string& out, const std::vector<std::string>& 
     return n;
 }
 
-// Is `dest` (relative name `rel`) already the file we would write? Size always; hash too when verifying.
 bool file_is_done(const std::string& dest, const std::string& rel, u64 size, State& st, bool verify, const IStorage* src,
                   const std::function<bool()>& cancelled, std::string& sha_out) {
     if (!file_size_is(dest, size)) return false;
@@ -441,10 +438,8 @@ bool shader_install_present(const SetupOptions& o, State& st) {
     return path_exists(path_join(path_join(o.out_dir, "shader_cache\\spirv"), "results.tsv"));
 }
 
-// The game ships a shader pack (its manifest names one) or one was asked for with --shader-pack.
 bool shaders_wanted(const SetupOptions& o) { return *o.profile.shader_pack || !o.shader_cache_src.empty(); }
 
-// The run can go on without a pack: the game has none, a pack was found, an earlier run installed the shaders, or --no-shaders was given.
 bool shaders_available(const SetupOptions& o, State& st) {
     return !shaders_wanted(o) || !find_shader_source(o).empty() || shader_install_present(o, st) || o.allow_no_shaders;
 }
@@ -489,7 +484,6 @@ void write_program_list(const SetupOptions& o, const std::function<bool()>& canc
             NXS_LOGI("Shader program list already present (%zu programs).", have.size());
             return;
         }
-        // missing or damaged: scan again
     }
     const auto t0 = Clock::now();
     try {

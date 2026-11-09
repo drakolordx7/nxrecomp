@@ -153,7 +153,6 @@ a2b_status ensure_transcoder() {
     return status;
 }
 
-// Removes a claimed key again unless the file for it was written (or already existed).
 struct Claim {
     std::mutex& m;
     std::set<u64>& keys;
@@ -323,7 +322,6 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
     if (init != A2B_OK)
         fail(Fail::Generic, "The ASTC transcoder is not available (%s).", a2b_status_string(init));
 
-    // untile into a tight linear buffer (the same layout the runtime's untile produces)
     const tegra::LevelLayout& last = L.layout.levels.back();
     const u64 lin_total = last.linear_offset + last.linear_slice_size * L.layers;
     std::vector<u8> lin(static_cast<size_t>(lin_total));
@@ -332,11 +330,10 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
 
     a2b_options opt{};
     opt.quality = quality;
-    opt.threads = 1;             // callers parallelise over textures
+    opt.threads = 1;
     opt.perceptual = 0;
     opt.allow_opaque_mode6 = 0;
 
-    // The footprint input for the library, and where slice z of a layer of level i sits in the ASTC data.
     const auto astc_in = [&](size_t i, a2b_input& in) {
         const tegra::LevelLayout& g = L.layout.levels[i];
         in = a2b_input{};
@@ -360,7 +357,6 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
             fail(Fail::Generic, "Texture %s: ASTC decode failed (%s).", info.name.c_str(), a2b_status_string(st));
     };
 
-    // Level 0 decoded once: it decides the kind of the entry.
     const tegra::LevelLayout& g0 = L.layout.levels[0];
     const u64 px0 = static_cast<u64>(g0.width) * g0.height;
     const u32 slices0 = L.layers * g0.depth;
@@ -370,7 +366,7 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
 
     std::vector<u8> data(static_cast<size_t>(data_bytes));
     TexCacheKind kind = TexCacheKind::Bc7;
-    const u64 bc_slice0 = plan.level[0].size / L.layers / g0.depth;   // bytes of one BC7/BC5 slice of level 0
+    const u64 bc_slice0 = plan.level[0].size / L.layers / g0.depth;
     if (!info.srgb && is_two_channel(rgba0)) {
         kind = TexCacheKind::Bc5;
     } else {
@@ -386,7 +382,7 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
     std::vector<TexOutLevel> table = plan.level;
     u64 file_bytes = plan.file_bytes;
     u32 out_vk = plan.vk_format;
-    std::vector<u8> tmp;   // one decoded slice of a lower level
+    std::vector<u8> tmp;
     switch (kind) {
         case TexCacheKind::Bc7:
             for (size_t i = 1; i < L.layout.levels.size(); ++i) {
@@ -448,7 +444,6 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
         }
     }
 
-    // header and level table (cache_write), little endian
     std::vector<u8> out;
     out.reserve(static_cast<size_t>(file_bytes));
     std::vector<nxfmt::Bc7Level> head_levels;
@@ -476,7 +471,6 @@ bool texcache_file_valid(const std::string& path_utf8, const TexCachePlan& plan,
     const u8* p = head.data();
     if (!nxfmt::bc7_head_matches(p, head.size(), plan.key)) return false;
 
-    // the format the header declares decides the level table and the size the file must have
     const bool srgb = plan.vk_format == kVkBc7Srgb;
     const u32 vk = get32(p + 16);
     TexCacheKind kind;
@@ -521,7 +515,6 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, std::vector<AstcText
     if (const a2b_status st = ensure_transcoder(); st != A2B_OK)
         fail(Fail::Generic, "The ASTC transcoder is not available (%s).", a2b_status_string(st));
 
-    // the textures, largest first
     struct Job {
         AstcTexture info;
         u64 weight;
@@ -538,7 +531,6 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, std::vector<AstcText
     u64 total_weight = 0, done_weight = 0;
     for (const Job& j : jobs) total_weight += j.weight;
 
-    // 3. convert in parallel, largest first
     std::mutex m;                    // guards claimed, the counters, disk_error and the progress callback
     std::set<u64> claimed;           // keys claimed by a job in this run
     std::atomic<size_t> next{0};
@@ -565,7 +557,7 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, std::vector<AstcText
         }
         {
             std::lock_guard<std::mutex> lk(m);
-            if (!claimed.insert(plan.key).second) return {Outcome::Skipped, 0};   // same texture in another pak
+            if (!claimed.insert(plan.key).second) return {Outcome::Skipped, 0};
         }
         Claim claim{m, claimed, plan.key};
         const std::string path = texcache_path(o.cache_dir, plan.key);

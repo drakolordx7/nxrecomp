@@ -181,7 +181,6 @@ void put_entry(std::vector<u8>& o, u64 offset, u64 size, u64 type, const u8 key[
     put_bytes(o, counter, 16);
 }
 
-// Builds the NCZ file for one body mode.
 std::vector<u8> build_ncz(const Fixture& f, Mode m) {
     std::vector<u8> out(f.plain.begin(), f.plain.begin() + static_cast<std::ptrdiff_t>(kHdr));
     put_bytes(out, "NCZSECTN", 8);
@@ -281,7 +280,7 @@ void variant_tests(const Fixture& f, Mode m) {
     StoragePtr nca = open_ncz(mem(build_ncz(f, m)));
     CHECK_EQ(nca->size(), size);
 
-    CHECK(check_range(*nca, expect, 0, expect.size()));   // whole file in one read
+    CHECK(check_range(*nca, expect, 0, expect.size()));
 
     const u64 bs = (m == Mode::Block14) ? (u64(1) << 14) : (u64(1) << 16);
     for (const auto& [off, len] : special_reads(f, bs, size)) CHECK(check_range(*nca, expect, off, len));

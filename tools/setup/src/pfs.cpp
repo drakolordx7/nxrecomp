@@ -14,7 +14,6 @@ constexpr u64 kHfsEntrySize = 0x40;
 u32 rd32(const u8* p) { return u32(p[0]) | u32(p[1]) << 8 | u32(p[2]) << 16 | u32(p[3]) << 24; }
 u64 rd64(const u8* p) { return u64(rd32(p)) | u64(rd32(p + 4)) << 32; }
 
-// off + len lies inside total. Written so no sum can overflow.
 bool fits(u64 off, u64 len, u64 total) { return off <= total && len <= total - off; }
 
 bool valid_name(std::string_view n) {
@@ -91,7 +90,6 @@ std::unique_ptr<Pfs> Pfs::open(StoragePtr storage) {
         if (!valid_name(pe.name))
             fail(Fail::Input, "The package is damaged: file number %u has an invalid name (\"%s\").", i, pe.name.c_str());
 
-        // Data starts right after the header; the file must fit inside the package.
         if (!fits(header_size, rel, total) || !fits(header_size + rel, sz, total))
             fail(Fail::Input, "The package is damaged: file \"%s\" runs past the end of the package (its data is at byte %llu, %llu bytes long, the package is %llu bytes).",
                  pe.name.c_str(), (unsigned long long)(header_size + rel), (unsigned long long)sz, (unsigned long long)total);

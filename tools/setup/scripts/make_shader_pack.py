@@ -70,7 +70,6 @@ def main(argv):
     names.remove(RESULTS)
     names = [RESULTS] + names
 
-    # The table size depends only on the names, so the data can start at a known offset.
     name_bytes = [n.encode("ascii") for n in names]
     table_size = sum(2 + len(nb) + 8 + 8 + 8 + 32 + 1 for nb in name_bytes)
     data_start = nx_formats.SHADER_PACK_HEAD_BYTES + table_size
@@ -80,7 +79,7 @@ def main(argv):
     records = []   # (name bytes, sha256 of raw, raw size, method, data offset, stored size)
     tmp = out + ".part"
     with open(tmp, "wb") as f:
-        f.write(b"\0" * data_start)   # header and table are filled in once every entry is known
+        f.write(b"\0" * data_start)
         offset = data_start
         for n, nb in zip(names, name_bytes):
             with open(os.path.join(src, n), "rb") as s:

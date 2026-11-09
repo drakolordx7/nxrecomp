@@ -57,7 +57,6 @@ void test_programs() {
     std::memcpy(b.data(), "MPRPRG01", 8);
     CHECK(programs_decode(b.data(), b.size(), back) == nullptr);
     CHECK(back == progs);
-    // refusals
     std::vector<uint8_t> bad = b;
     bad[0] = 'X';
     CHECK(programs_decode(bad.data(), bad.size(), back) != nullptr);

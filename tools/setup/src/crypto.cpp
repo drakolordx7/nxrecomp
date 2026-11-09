@@ -4,7 +4,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include <bcrypt.h>
-#include <stdlib.h>   // _byteswap_uint64
+#include <stdlib.h>
 
 #include "crypto.h"
 
@@ -20,7 +20,6 @@ namespace {
     fail(Fail::Generic, "%s (Windows crypto status 0x%08lX)", what, static_cast<unsigned long>(st));
 }
 
-// dst[i] ^= src[i], 64-bit words where possible. memcpy keeps it free of alignment and aliasing UB.
 void xor_into(u8* dst, const u8* src, size_t n) {
     size_t i = 0;
     for (; i + 8 <= n; i += 8) {
@@ -33,7 +32,6 @@ void xor_into(u8* dst, const u8* src, size_t n) {
     for (; i < n; ++i) dst[i] ^= src[i];
 }
 
-// Big-endian 64-bit load/store. Windows on x64 is little-endian, so a byte swap is the conversion.
 u64 load_be64(const u8* p) {
     u64 v;
     std::memcpy(&v, p, 8);
@@ -130,10 +128,10 @@ void Aes128Ecb::decrypt(const void* in, void* out, size_t len) const {
 void aes_ctr_crypt(const u8 key[16], const u8 counter[16], void* data, size_t len) {
     if (len == 0) return;
     Aes128Ecb aes(key);
-    constexpr size_t kChunk = 64 * 1024;   // multiple of 16; keystream for one chunk is built and encrypted in one call
+    constexpr size_t kChunk = 64 * 1024;
     std::vector<u8> ks(kChunk);
-    u64 hi = load_be64(counter);       // the counter block as one 128-bit big-endian integer: hi = bytes 0..7
-    u64 lo = load_be64(counter + 8);   //                                                       lo = bytes 8..15
+    u64 hi = load_be64(counter);
+    u64 lo = load_be64(counter + 8);
     u8* p = static_cast<u8*>(data);
     while (len > 0) {
         const size_t n = std::min(len, kChunk);
@@ -141,10 +139,10 @@ void aes_ctr_crypt(const u8 key[16], const u8 counter[16], void* data, size_t le
         for (size_t b = 0; b < blocks; ++b) {
             store_be64(&ks[b * 16], hi);
             store_be64(&ks[b * 16 + 8], lo);
-            if (++lo == 0) ++hi;   // carry from the low half into the high half
+            if (++lo == 0) ++hi;
         }
         aes.encrypt(ks.data(), ks.data(), blocks * 16);
-        xor_into(p, ks.data(), n);   // a partial last block only uses the first n % 16 key stream bytes
+        xor_into(p, ks.data(), n);
         p += n;
         len -= n;
     }
@@ -163,7 +161,7 @@ void xts_nintendo(const u8 key1[16], const u8 key2[16], u64 first_sector, u32 se
              static_cast<unsigned long>(sector_size));
     Aes128Ecb data_key(key1);
     Aes128Ecb tweak_key(key2);
-    std::vector<u8> tw(sector_size);   // T_j for every block of the current sector
+    std::vector<u8> tw(sector_size);
     u8* p = static_cast<u8*>(data);
     const size_t sectors = len / sector_size;
     for (size_t s = 0; s < sectors; ++s) {
@@ -226,7 +224,7 @@ std::array<u8, 32> Sha256::finish() {
     std::array<u8, 32> out{};
     NTSTATUS st = BCryptFinishHash(static_cast<BCRYPT_HASH_HANDLE>(hash_), out.data(), 32, 0);
     BCryptDestroyHash(static_cast<BCRYPT_HASH_HANDLE>(hash_));
-    hash_ = nullptr;   // spent
+    hash_ = nullptr;
     if (!BCRYPT_SUCCESS(st)) cng_fail("SHA-256 finish failed", st);
     return out;
 }
@@ -259,7 +257,7 @@ std::array<u8, 20> Sha1::finish() {
     std::array<u8, 20> out{};
     NTSTATUS st = BCryptFinishHash(static_cast<BCRYPT_HASH_HANDLE>(hash_), out.data(), 20, 0);
     BCryptDestroyHash(static_cast<BCRYPT_HASH_HANDLE>(hash_));
-    hash_ = nullptr;   // spent
+    hash_ = nullptr;
     if (!BCRYPT_SUCCESS(st)) cng_fail("SHA-1 finish failed", st);
     return out;
 }

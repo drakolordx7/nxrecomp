@@ -271,8 +271,8 @@ def _ssim_luma(A: np.ndarray, B: np.ndarray, valid: np.ndarray, notes: List[str]
 
 
 def _hist_vector(X: np.ndarray, valid: np.ndarray) -> np.ndarray:
-    px = X[valid].astype(np.int64)                 # (N,3)
-    bins = (px * HIST_BINS) // 256                 # 0..HIST_BINS-1
+    px = X[valid].astype(np.int64)
+    bins = (px * HIST_BINS) // 256
     h = np.zeros((3, HIST_BINS), dtype=np.float64)
     for c in range(3):
         h[c] = np.bincount(bins[:, c], minlength=HIST_BINS)[:HIST_BINS]
@@ -325,7 +325,7 @@ def compare(a: ImageSrc, b: ImageSrc, masks: Any = None, size: Sequence[int] = D
     if "ssim" in metrics:
         res.ssim = _ssim_luma(A, B, valid, notes)
     if "mae" in metrics or "changed_frac" in metrics:
-        diff = np.abs(A.astype(np.int16) - B.astype(np.int16))   # (H,W,3)
+        diff = np.abs(A.astype(np.int16) - B.astype(np.int16))
         if "mae" in metrics:
             res.mae = float(diff[valid].mean())
         if "changed_frac" in metrics:

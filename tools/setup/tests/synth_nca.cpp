@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Builders for synthetic Switch dumps. See synth_nca.h. Layout facts come from src/nca.cpp, src/container.cpp, src/keys.cpp
-// (and switchbrew for the ticket rights id offset, which the reader does not follow; see the test report).
+// (and switchbrew for the ticket rights id offset).
 #include "synth_nca.h"
 
 #include <algorithm>
@@ -485,7 +485,6 @@ std::vector<uint8_t> nso_file(const std::vector<uint8_t>& build20, uint32_t seed
     return n;
 }
 
-// 16 lower-case hex digits of a title id, most significant first.
 std::string title_hex(uint64_t t) {
     uint8_t b[8];
     put64(b, t);
@@ -597,7 +596,7 @@ SynthNcaBuild synth_nca_build(const SynthNcaSpec& sp) {
             for (int j = 0; j < 8; ++j) sh[0x140 + j] = hi[7 - j];   // stored reversed (reader: ctr_hi[k] = header[0x147 - k])
             uint8_t ctr[16];
             std::memcpy(ctr, hi, 8);
-            for (int j = 0; j < 8; ++j) ctr[8 + j] = uint8_t((pos / 16) >> (56 - 8 * j));   // big-endian block number
+            for (int j = 0; j < 8; ++j) ctr[8 + j] = uint8_t((pos / 16) >> (56 - 8 * j));
             ctr_crypt(content_key.data(), ctr, enc.data(), enc.size());
         } else if (s.enc_type == 4) {
             if (s.fs_type != 0) throw std::invalid_argument("synth_nca: a patch section must be RomFS");

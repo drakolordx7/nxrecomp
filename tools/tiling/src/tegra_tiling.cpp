@@ -28,22 +28,22 @@ void convert_level(const TextureDesc& d, const LevelLayout& lv, uint8_t* tiled_r
     const uint64_t row_bytes = (uint64_t)lv.blocks_x * bpb;
     const uint32_t gobs_x = (uint32_t)div_up(row_bytes, kGobWidth);
     const uint32_t mgy = lv.gob_blocks_y, mgz = lv.gob_blocks_z;
-    const uint64_t block_bytes = (uint64_t)kGobBytes * mgy * mgz;           // one block of GOBs
-    const uint64_t rob_size = gobs_x * block_bytes;                         // one row of blocks
+    const uint64_t block_bytes = (uint64_t)kGobBytes * mgy * mgz;
+    const uint64_t rob_size = gobs_x * block_bytes;
     const uint64_t slice_size = div_up(lv.blocks_y, kGobRows * mgy) * rob_size;
     const uint32_t zs = log2u(mgz), ys = log2u(mgy);
 
     for (uint32_t z = 0; z < lv.depth; z++) {
         const uint64_t z_base = (uint64_t)(z >> zs) * slice_size;
         const uint32_t zm = z & (mgz - 1);
-        for (uint32_t gy = 0; gy < div_up(lv.blocks_y, kGobRows); gy++) {   // GOB rows
+        for (uint32_t gy = 0; gy < div_up(lv.blocks_y, kGobRows); gy++) {
             const uint64_t rob_base = z_base + (uint64_t)(gy >> ys) * rob_size;
             const uint32_t gob_in_block = zm * mgy + (gy & (mgy - 1));
             const uint32_t rows = std::min<uint32_t>(kGobRows, lv.blocks_y - gy * kGobRows);
             for (uint32_t gx = 0; gx < gobs_x; gx++) {
                 const uint64_t gob = rob_base + (uint64_t)gx * block_bytes + (uint64_t)gob_in_block * kGobBytes;
                 const uint64_t x0 = (uint64_t)gx * kGobWidth;
-                const uint64_t valid = std::min<uint64_t>(kGobWidth, row_bytes - x0);  // bytes of this GOB row in the image
+                const uint64_t valid = std::min<uint64_t>(kGobWidth, row_bytes - x0);
                 for (uint32_t y = 0; y < rows; y++) {
                     const uint64_t lin = lv.linear_slice_size / lv.depth * z + (uint64_t)(gy * kGobRows + y) * lv.linear_row_stride + x0;
                     if (valid == kGobWidth) {
@@ -166,7 +166,7 @@ bool tile(const TextureDesc& d, const Layout& l, const uint8_t* linear, uint8_t*
 }
 
 uint64_t tiled_address(const LevelLayout& lv, uint32_t bpb, uint32_t bx, uint32_t by, uint32_t z, uint32_t byte) {
-    const uint64_t x = (uint64_t)bx * bpb + byte;  // byte x
+    const uint64_t x = (uint64_t)bx * bpb + byte;
     const uint32_t mgy = lv.gob_blocks_y, mgz = lv.gob_blocks_z;
     const uint64_t gobs_x = div_up((uint64_t)lv.blocks_x * bpb, kGobWidth);
     const uint64_t rob = gobs_x * mgy * mgz * kGobBytes;

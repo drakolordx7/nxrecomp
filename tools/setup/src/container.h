@@ -27,9 +27,8 @@ struct Container {
 // anything else ("This is not a Switch game dump").
 std::unique_ptr<Container> open_container(const std::string& utf8_path);
 
-// What was found in the dump for the given title.
 struct DumpTitle {
-    std::unique_ptr<Nca> program;        // the program NCA
+    std::unique_ptr<Nca> program;
     u64 title_id = 0;
     u32 title_version = 0;               // from the CNMT, 0 if it could not be read
     bool have_version = false;
@@ -67,7 +66,7 @@ struct DumpSet {
     u64 title_id = 0;
     std::unique_ptr<Nca> base;           // the Application's program NCA
     u32 base_version = 0;
-    bool have_version = false;           // a CNMT for the base was found
+    bool have_version = false;
     std::unique_ptr<Nca> patch;          // the newest Patch's program NCA, or null
     u32 patch_version = 0;
     std::unique_ptr<Nca> control;        // the control NCA of the update, else of the base (may be null)

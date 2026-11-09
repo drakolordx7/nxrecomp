@@ -175,7 +175,6 @@ private:
         }
     }
 
-    // Plain body bytes [bpos, bpos + len) from block-compressed data.
     void block_read(u64 bpos, u8* out, size_t len) const {
         while (len > 0) {
             const u64 idx = bpos / block_size_;

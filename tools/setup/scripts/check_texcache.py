@@ -42,8 +42,8 @@ ORACLE = ROOT / "tools/textures/oracle"
 try:
     import numpy as np
     sys.path.insert(0, str(ORACLE))
-    import metrics  # oracle/metrics.py: psnr, ssim, decode_dds, metrics
-    import run_oracle  # oracle/run_oracle.py: make_dds (DX10 DDS header)
+    import metrics
+    import run_oracle
 except ImportError as exc:  # pragma: no cover
     print(f"FAIL: python dependency missing: {exc}")
     sys.exit(2)
@@ -184,7 +184,7 @@ def main(argv=None):
                     raise ValueError("3D level 0 is not sampled")
                 dec = decode_entry(vk, w, h, layer0, td, path.stem, bc7dec)
                 m = metrics.metrics(ref, dec)
-            except Exception as exc:  # report and count as a failure
+            except Exception as exc:
                 failures.append(f"{name}: {exc}")
                 print(f"  {name}: ERROR {exc}")
                 continue

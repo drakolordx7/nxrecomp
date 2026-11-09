@@ -62,7 +62,7 @@ void ctr_read(const IStorage& raw, const Key128& key, const u8 hi[8], u64 abs_of
         raw.read(off, buf, len);
         aes_ctr_crypt(key.data(), ctr, buf, len);
     } else {
-        std::vector<u8> tmp(extra + len);   // the leading bytes only position the key stream
+        std::vector<u8> tmp(extra + len);
         raw.read(off, tmp.data() + extra, len);
         aes_ctr_crypt(key.data(), ctr, tmp.data(), tmp.size());
         std::memcpy(buf, tmp.data() + extra, len);

@@ -36,7 +36,6 @@ std::array<u8, 16> arr16(const std::vector<u8>& v) {
     return a;
 }
 
-// Adds n to a 128-bit big-endian counter (carry through all 16 bytes).
 std::array<u8, 16> ctr_add(std::array<u8, 16> c, u64 n) {
     unsigned carry = 0;
     for (int i = 15; i >= 0; --i) {
@@ -74,7 +73,6 @@ void test_ecb() {
     aes.decrypt(ct, back, 16);
     CHECK(std::memcmp(back, pt.data(), 16) == 0);
 
-    // in place
     u8 buf[16];
     std::memcpy(buf, pt.data(), 16);
     aes.encrypt(buf, buf, 16);
@@ -82,7 +80,6 @@ void test_ecb() {
     aes.decrypt(buf, buf, 16);
     CHECK(std::memcmp(buf, pt.data(), 16) == 0);
 
-    // multi-block: one call equals block-by-block calls, in-place equals out-of-place, and decrypt inverts it
     std::vector<u8> multi(80);
     for (size_t i = 0; i < multi.size(); ++i) multi[i] = static_cast<u8>(i * 29 + 3);
     std::vector<u8> one(80), per(80), inplace = multi, rt(80);
@@ -93,14 +90,12 @@ void test_ecb() {
     CHECK(inplace == one);
     aes.decrypt(one.data(), rt.data(), 80);
     CHECK(rt == multi);
-    // first block of a multi-block buffer that starts with the FIPS-197 plaintext
     std::vector<u8> fips_multi(pt);
     fips_multi.resize(32, 0xAA);
     std::vector<u8> fips_ct(32);
     aes.encrypt(fips_multi.data(), fips_ct.data(), 32);
     CHECK_EQ(hex_encode(fips_ct.data(), 16), std::string("69c4e0d86a7b0430d8cdb78070b4c55a"));
 
-    // lengths that are not a multiple of 16 throw
     CHECK_THROWS(aes.encrypt(buf, buf, 17));
     CHECK_THROWS(aes.decrypt(buf, buf, 15));
     CHECK_THROWS(aes.encrypt(buf, buf, 1));
@@ -128,11 +123,9 @@ void test_ctr() {
     aes_ctr_crypt(key.data(), ctr.data(), d.data(), d.size());
     CHECK_EQ(hex(d), expect_hex);
 
-    // encrypting again restores the plaintext
     aes_ctr_crypt(key.data(), ctr.data(), d.data(), d.size());
     CHECK(d == pt);
 
-    // a 37-byte (partial block) call equals the first 37 bytes of the 48-byte result
     std::vector<u8> part(pt.begin(), pt.begin() + 37);
     aes_ctr_crypt(key.data(), ctr.data(), part.data(), 37);
     CHECK(part == std::vector<u8>(expect.begin(), expect.begin() + 37));
@@ -157,7 +150,6 @@ void test_ctr() {
     aes_ctr_crypt(key.data(), cA.data(), got48.data(), got48.size());
     CHECK(got48 == ref48);
 
-    // chunk boundary: 200000 bytes in one call equals two calls with the counter advanced by hand at a 16-byte multiple
     const size_t N = 200000, S = 100000;   // S = 6250 blocks
     std::vector<u8> big(N);
     for (size_t i = 0; i < N; ++i) big[i] = static_cast<u8>(i * 7 + i / 251);
@@ -184,7 +176,6 @@ void test_ctr() {
     const auto t1 = std::chrono::steady_clock::now();
     const double secs = std::chrono::duration<double>(t1 - t0).count();
     std::printf("AES-CTR speed: %.0f MB/s (%zu MiB in %.3f s)\n", (huge.size() / 1e6) / secs, huge.size() >> 20, secs);
-    // round trip on the same buffer restores 0x5a everywhere
     aes_ctr_crypt(key.data(), ctr.data(), huge.data(), huge.size());
     CHECK(std::count(huge.begin(), huge.end(), static_cast<u8>(0x5a)) == static_cast<std::ptrdiff_t>(huge.size()));
 }
@@ -239,12 +230,10 @@ void test_xts() {
         std::vector<u8> lib = plain;
         aes_xts_encrypt_nintendo(k1.data(), k2.data(), c.first, c.ss, lib.data(), len);
         CHECK(lib == ref);
-        // decrypt inverts it
         aes_xts_decrypt_nintendo(k1.data(), k2.data(), c.first, c.ss, lib.data(), len);
         CHECK(lib == plain);
     }
 
-    // length that is not a whole number of sectors throws
     std::vector<u8> odd(100, 0);
     CHECK_THROWS(aes_xts_encrypt_nintendo(k1.data(), k2.data(), 0, 0x20, odd.data(), odd.size()));
 
@@ -266,7 +255,6 @@ void test_sha256() {
     const auto one_shot = sha256(million.data(), million.size());
     CHECK_EQ(hexa(one_shot), std::string("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"));
 
-    // incremental, split at odd points, equals one-shot
     const std::vector<u8> data = xts_pattern(5000);
     const auto want = sha256(data.data(), data.size());
     Sha256 h;

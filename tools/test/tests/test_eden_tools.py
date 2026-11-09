@@ -157,8 +157,6 @@ class SetValuesTests(unittest.TestCase):
 
     
     def test_default_line_not_duplicated_when_no_value_line_exists(self):
-        # BUG (expected failure): a key that has a \default line but no value line gets its
-        # \default line written twice, because the default-line branch does not mark the key as seen.
         lines = ["[Debugging]", "use_gdbstub\\default=true"]
         out = eden_config.set_values(lines, {"Debugging.use_gdbstub": "false"})
         self.assertEqual(out, ["[Debugging]", "use_gdbstub\\default=false", "use_gdbstub=false"])

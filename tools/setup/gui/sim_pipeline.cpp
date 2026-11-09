@@ -32,7 +32,6 @@ constexpr u64 kShaderBytes = 40'000'000;
 constexpr u32 kTextures = 4369;
 constexpr u64 kNeededBytes = 13'000'000'000;
 
-// True when the file name (not the folder) contains the word, case-insensitively.
 bool file_name_has(const std::string& path, const wchar_t* word) {
     std::wstring name = fs::path(widen(path)).filename().wstring();
     for (auto& c : name) c = static_cast<wchar_t>(std::towlower(c));

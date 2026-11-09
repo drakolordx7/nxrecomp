@@ -202,7 +202,6 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
             NXS_LOGW("Could not read a content list in the dump: %s", ex.what());
         }
     }
-    // Newest first, so the first match of a title wins.
     std::stable_sort(metas.begin(), metas.end(), [](const Meta& a, const Meta& b) { return a.m.version > b.m.version; });
 
     DumpSet r;
@@ -225,7 +224,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
         Item* pick = nullptr;
         for (Item& it : items)
             if (it.nca && it.input == mt.input && fits(*it.nca)) {
-                if (pick) return nullptr;   // more than one: cannot tell
+                if (pick) return nullptr;
                 pick = &it;
             }
         if (!pick) return nullptr;
@@ -253,7 +252,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
         r.control = take(mt, 3, "base game control data", [&](const Nca& n) { return is_control(n, false); });
         break;
     }
-    if (!r.base) {   // no content list: the first base program of the game
+    if (!r.base) {
         for (Item& it : items)
             if (it.nca && is_program(*it.nca, false) && it.nca->program_id() == want) {
                 r.input_used[it.input] = true;

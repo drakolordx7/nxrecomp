@@ -32,7 +32,6 @@
 
 namespace nxs {
 
-// The target of an ASTC texture the cache can hold.
 enum class TexTarget { D2, D3, Cube, D2Array, Unsupported };   // Unsupported: a kind the cache cannot hold (rejected with a reason)
 
 // One ASTC texture, as the game's hook describes it.
@@ -98,7 +97,6 @@ constexpr int kTextureEncoderRev = 3;
 // ASTC textures of the first game (4,413 of them) at quality 3: a white-noise lookup texture 19.2 dB, every other texture 33.6 dB or more.
 constexpr double kRgba8PsnrDb = 28.0;
 
-// The format class of a cache entry.
 enum class TexCacheKind { Bc7, Bc5, Rgba8 };
 
 // Level 0, layer 0, slice 0 of an ASTC texture as raw ASTC blocks (untiled, tightly packed), with its footprint. For quality
