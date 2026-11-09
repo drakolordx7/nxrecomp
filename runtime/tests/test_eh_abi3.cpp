@@ -26,7 +26,6 @@ constexpr uint64_t B3 = 0x7300000000ull;
 constexpr uint64_t B4 = 0x7310000000ull;
 constexpr uint64_t kPadMain = B3 + 0x1a0;
 
-// typeinfos: kind Unknown (no vtables configured), identity by name
 struct Ti { const void* vptr; const char* name; };
 Ti g_ti_a = {nullptr, "1A"}, g_ti_b = {nullptr, "1B"};
 const uint64_t kA = reinterpret_cast<uint64_t>(&g_ti_a), kB = reinterpret_cast<uint64_t>(&g_ti_b);
@@ -67,12 +66,10 @@ bool register_provider() {
     return NXRT_REGISTER_NXMODULE(nullptr, mod2).ok();
 }
 
-// a guest stack in host memory
 alignas(16) uint64_t g_stack[512];
 uint64_t stack_top() { return reinterpret_cast<uint64_t>(g_stack + 512); }
 void put(uint64_t addr, uint64_t v) { std::memcpy(reinterpret_cast<void*>(addr), &v, 8); }
 
-// observations made by the host "guest code"
 struct Seen {
     int body_calls = 0, handler_runs = 0;
     uint64_t pad = 0, x0 = 0, x1 = 0, x19 = 0, x20 = 0, d8 = 0, sp = 0;
@@ -103,7 +100,6 @@ uint64_t guest_throw(::Ctx* c, uint64_t ret_in_caller, uint64_t exc, uint64_t ty
     return nxrt::eh::raise(c, make_thrown(exc, type));
 }
 
-// Fmain body: pad 0 = normal entry, else the landing pad.
 void fmain_body(::Ctx* c, uint64_t pad) {
     g_seen.body_calls++;
     if (pad) {
@@ -128,7 +124,6 @@ void fmain_body(::Ctx* c, uint64_t pad) {
     c->x[30] = B3 + 0x144;                         // Fmain calls Fthrow at B3+0x140
     uint64_t type = g_seen.thrown_kind == 0 ? kA : g_seen.thrown_kind == 1 ? kB : 0;
     uint64_t r = guest_throw(c, B3 + 0x144, 0x7777, type);
-    // returns only when nothing caught it
     g_seen.x0 = r;
 }
 

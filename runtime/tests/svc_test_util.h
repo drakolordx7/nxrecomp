@@ -33,7 +33,6 @@ namespace nxsvc {
 constexpr uint32_t kSfci = 0x49434653u;
 constexpr uint32_t kSfco = 0x4F434653u;
 
-// Request arguments: raw data in order, plus handles and buffers.
 struct Args {
     std::vector<uint8_t> raw;
     std::vector<uint32_t> copy, move;
@@ -192,7 +191,6 @@ public:
         return rep;
     }
 
-    // The interface returned as the n-th move handle of a reply (non-domain session).
     Session sub(const Reply& r, size_t n = 0) const { return Session(n < r.move.size() ? r.move[n] : 0); }
 
     // ConvertCurrentObjectToDomain (control message type 5); afterwards call() addresses objects by id (this one is object 1).

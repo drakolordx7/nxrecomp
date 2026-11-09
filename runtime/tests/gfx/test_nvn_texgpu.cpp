@@ -177,7 +177,6 @@ bool roundtrip(Device& dev, const char* what, const TextureBuilderInfo& b, uint3
     return read && diff < 0;
 }
 
-// Per-case device: created with validation, torn down after every texture of the case is gone.
 struct Rig {
     std::unique_ptr<Device> dev;
     uint64_t baseline_allocs = 0;
@@ -203,7 +202,6 @@ bool bring_up(Rig& r) {
     return true;
 }
 
-// Frees what the module keeps, shuts the back end down, then checks validation and the allocation count.
 void teardown(Rig& r) {
     if (!r.dev) return;
     gpu::finish();
@@ -928,7 +926,6 @@ uint64_t get64(const uint8_t* p) {
     return v;
 }
 
-// A new cache folder for one case, set as the cache folder (the env var wins over the config; no_cache() undoes it).
 fs::path new_cache_dir(const char* tag) {
     const fs::path dir = fs::temp_directory_path() /
                          (std::string("nxrt_texgpu_") + tag + "_" +
@@ -945,7 +942,6 @@ fs::path new_cache_dir(const char* tag) {
     return dir;
 }
 
-// Level table of a tight cache entry: RGBA8 texels (4 bytes each) or 4x4 blocks (16 bytes each); all layers of a level back to back.
 std::vector<be::PreparedLevel> tight_table(const TexLayout& L, bool rgba8) {
     std::vector<be::PreparedLevel> v;
     uint64_t off = 0;
@@ -964,7 +960,6 @@ std::vector<be::PreparedLevel> tight_table(const TexLayout& L, bool rgba8) {
     return v;
 }
 
-// The RGBA8 image of a 2D texture (one layer, one slice): texel (x, y) of level i is (x, y, i, 255).
 std::vector<uint8_t> rgba8_pattern(const TexLayout& L) {
     const std::vector<be::PreparedLevel> t = tight_table(L, true);
     std::vector<uint8_t> v(static_cast<size_t>(t.back().offset + t.back().size));

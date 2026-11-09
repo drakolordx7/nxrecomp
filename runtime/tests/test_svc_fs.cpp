@@ -191,14 +191,12 @@ NXTEST(rom_file_system_read_only) {
     Reply r = s.call(2);                     // OpenDataFileSystemByCurrentProcess
     REQUIRE(r.ok());
     Session fsys = s.sub(r);
-    // GetEntryType
     r = fs_call_path(fsys, 7, "/a.bin");
     CHECK(r.ok());
     CHECK_EQ(r.get<uint32_t>(0), 1u);
     r = fs_call_path(fsys, 7, "/Worlds");
     CHECK_EQ(r.get<uint32_t>(0), 0u);
     CHECK_EQ(fs_call_path(fsys, 7, "/nope").result, kPathNotFound);
-    // OpenFile + Read
     r = fs_call_path(fsys, 8, "/Worlds/b.pak", Args().u32(1));
     REQUIRE(r.ok());
     Session file = fsys.sub(r);
@@ -208,9 +206,7 @@ NXTEST(rom_file_system_read_only) {
     CHECK_EQ(r.get<uint64_t>(0), 3u);
     CHECK_EQ(std::string(buf, 3), std::string("bee"));
     CHECK_EQ(file.call(4).get<int64_t>(0), 3);
-    // refuses writes
     CHECK_EQ(fs_call_path(fsys, 1, "/a.bin").result, 0x313802u);
-    // OpenDirectory (files and directories), read entries
     r = fs_call_path(fsys, 9, "/", Args().u32(3));
     REQUIRE(r.ok());
     Session dir = fsys.sub(r);

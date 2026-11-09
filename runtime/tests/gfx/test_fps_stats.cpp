@@ -12,7 +12,6 @@ namespace {
 
 using nxrt::gfx::FpsStats;
 
-// Pushes frames of dt_ms after t, one every dt_ms, up to and including t_end. Returns the time of the last frame.
 double run_steady(FpsStats& s, double t, double t_end, double dt_ms) {
     const double dt = dt_ms / 1000.0;
     const long n = static_cast<long>(std::floor((t_end - t) / dt + 1e-6));

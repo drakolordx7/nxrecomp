@@ -119,7 +119,6 @@ struct Rig {
     MaskClear mc;
 };
 
-// Headless device with validation on, and the masked clear initialised on it.
 bool make_rig(Rig& r) {
     DeviceDesc dd;
     dd.validation = 1;
@@ -134,7 +133,6 @@ bool make_rig(Rig& r) {
     return r.mc.init(*r.dev);
 }
 
-// Shuts the pass down, then checks the validation counters and that the device holds no allocation.
 void teardown(Rig& r) {
     if (!r.dev) return;
     r.dev->wait_idle();

@@ -33,7 +33,6 @@ const HipcVec* find_vec(const char* name) {
     return nullptr;
 }
 
-// The Message a vector describes: raw = the vector's payload bytes, no out-pointer sizes.
 Message message_from_vec(const HipcVec& v) {
     Message m;
     m.type = v.type;
@@ -64,7 +63,6 @@ bool same_list(const std::vector<T>& a, const std::vector<T>& b) {
     return true;
 }
 
-// Empty when every field of m matches the vector v, otherwise the name of the first field that differs.
 std::string vec_mismatch(const Message& m, const HipcVec& v) {
     const Message e = message_from_vec(v);
     if (m.type != e.type) return "type";
@@ -123,7 +121,6 @@ std::string roundtrip_mismatch(const Message& m, const Message& p) {
     return "";
 }
 
-// Random message within the encoder's documented ranges.
 Message random_message(std::mt19937& rng) {
     auto U = [&rng](uint64_t lo, uint64_t hi) { return std::uniform_int_distribution<uint64_t>(lo, hi)(rng); };
     Message m;
@@ -174,7 +171,6 @@ public:
     GuardedPages& operator=(const GuardedPages&) = delete;
 
     bool ok() const { return base_ != nullptr; }
-    // First word address of the guard page.
     uint32_t* guard_words() const { return reinterpret_cast<uint32_t*>(base_ + kPage); }
 
 private:
@@ -282,7 +278,6 @@ NXTEST(truncated_input_never_reads_past_end) {
     for (std::size_t i = 0; i < nxrt_test::kHipcVectorCount; ++i) {
         const HipcVec& v = nxrt_test::kHipcVectors[i];
         const std::size_t n = v.n_words;
-        // The words end exactly where the guard page starts.
         uint32_t* at = gp.guard_words() - n;
         std::memcpy(at, v.words, n * sizeof(uint32_t));
         std::string why;
@@ -419,7 +414,6 @@ NXTEST(build_rejects_out_of_range_fields) {
     m.raw.assign(4080, 0);  // 8 + 4080 + 8 = 4096 bytes = 1024 words, one over the 10-bit size field
     expect_build_rejects("payload 4080 bytes (raw 1024 words)", m);
 
-    // Accepted boundaries.
     Message edge = base;
     edge.ptrs.assign(15, PtrDesc{0x1000, 0x10, 15});
     std::vector<uint32_t> buf(2048, 0);

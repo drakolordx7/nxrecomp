@@ -28,7 +28,6 @@ uint32_t bits(float f) {
 NXTEST(all_entry_points_registered) {
     setup();
     const char* names[] = {
-        // builder: 25
         "nvnSamplerBuilderSetDevice", "nvnSamplerBuilderGetDevice", "nvnSamplerBuilderSetDefaults",
         "nvnSamplerBuilderSetMinMagFilter", "nvnSamplerBuilderGetMinMagFilter", "nvnSamplerBuilderSetWrapMode",
         "nvnSamplerBuilderGetWrapMode", "nvnSamplerBuilderSetLodClamp", "nvnSamplerBuilderGetLodClamp",
@@ -38,7 +37,6 @@ NXTEST(all_entry_points_registered) {
         "nvnSamplerBuilderGetBorderColorui", "nvnSamplerBuilderSetMaxAnisotropy", "nvnSamplerBuilderGetMaxAnisotropy",
         "nvnSamplerBuilderSetReductionFilter", "nvnSamplerBuilderGetReductionFilter", "nvnSamplerBuilderSetLodSnap",
         "nvnSamplerBuilderGetLodSnap",
-        // sampler: 15
         "nvnSamplerInitialize", "nvnSamplerFinalize", "nvnSamplerSetDebugLabel", "nvnSamplerGetMinMagFilter",
         "nvnSamplerGetWrapMode", "nvnSamplerGetLodClamp", "nvnSamplerGetLodBias", "nvnSamplerGetCompare",
         "nvnSamplerGetBorderColor", "nvnSamplerGetBorderColori", "nvnSamplerGetBorderColorui", "nvnSamplerGetMaxAnisotropy",

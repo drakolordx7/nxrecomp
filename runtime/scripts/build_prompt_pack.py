@@ -32,13 +32,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 ICON = 36
 BOX = 33                    # icon content is fitted into a BOX x BOX square
-BLOCK = ICON * ICON * 4     # 5184 bytes per icon
+BLOCK = ICON * ICON * 4
 MAGIC = b"MPIP"
 VERSION = 1
 HEADER_FMT = "<4sIIIII"
 ENTRY_FMT = "<40sII"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)   # 24
-ENTRY_SIZE = struct.calcsize(ENTRY_FMT)     # 48
+HEADER_SIZE = struct.calcsize(HEADER_FMT)
+ENTRY_SIZE = struct.calcsize(ENTRY_FMT)
 NAME_FIELD = 40
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -77,7 +77,6 @@ PS_MAP = {
     "ps/dpad": "playstation_dpad",
 }
 
-# Mouse plus the last-resort generic key.
 OTHER_KBM_MAP = {
     "kbm/mouse1": "mouse_left",
     "kbm/mouse2": "mouse_scroll",

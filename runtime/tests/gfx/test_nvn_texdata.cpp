@@ -46,7 +46,6 @@ void fill_random(std::vector<uint8_t>& v, uint32_t seed) {
     for (uint8_t& b : v) b = static_cast<uint8_t>(rng());
 }
 
-// Sets an environment variable; an empty value removes it (both on Windows and POSIX).
 void set_env(const char* name, const char* value) {
 #ifdef _WIN32
     _putenv_s(name, value);
@@ -129,7 +128,6 @@ void build_pitch(Built& bt, const TextureBuilderInfo& info, uint32_t seed) {
     make_texture(bt, info);
 }
 
-// A texture with storage but no image, for the failure paths.
 Ref<Texture> bare_texture(const TextureBuilderInfo& info, std::vector<uint8_t>& buf) {
     buf.assign(1 << 16, 0);
     Ref<Texture> t(new Texture());
@@ -575,7 +573,6 @@ uint64_t get64(const uint8_t* p) {
     return v;
 }
 
-// A new cache folder for one test, set as the [nvn] bc7_cache folder (the env var wins over the config).
 fs::path new_cache_dir(const char* tag) {
     const fs::path dir = fs::temp_directory_path() /
                          (std::string("nxrt_texdata_") + tag + "_" +

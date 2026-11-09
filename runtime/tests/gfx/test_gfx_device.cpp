@@ -55,7 +55,6 @@ NXTEST(gpu_rule_on_fake_lists) {
     CHECK_EQ(pick_gpu({igpu, dgpu, dgpu2}, "", nullptr), 2u);         // two discrete: more video memory
     CHECK_EQ(pick_gpu({}, "", nullptr), 0u);
 
-    // overrides
     CHECK_EQ(pick_gpu({dgpu, igpu}, "integrated", &matched), 1u);
     CHECK(matched);
     CHECK_EQ(pick_gpu({igpu, dgpu}, "discrete", &matched), 1u);

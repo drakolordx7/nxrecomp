@@ -41,7 +41,6 @@ struct SinkGuard {
     ~SinkGuard() { log_set_sink(nullptr, nullptr); }
 };
 
-// Log to the sink only: no file, no stderr, empty config, every level (so Trace lines are visible too).
 void quiet_log() {
     config_clear();
     LogOptions o;
@@ -52,7 +51,6 @@ void quiet_log() {
     log_init(o);
 }
 
-// Number of captured lines that contain `needle`; index of the first such line in *at (or -1).
 int count_lines(const Capture& c, const std::string& needle, int* at = nullptr) {
     int n = 0;
     for (size_t i = 0; i < c.lines.size(); ++i) {
@@ -94,7 +92,6 @@ void chunk_bytes(std::vector<uint8_t>& v, uint8_t key, std::vector<uint8_t> data
     v.insert(v.end(), data.begin(), data.end());
 }
 
-// Opens a logger through lm (OpenLogger(u64 pid) -> ILogger, move handle). Returns the logger session.
 nxsvc::Session open_logger(nxsvc::Session& lm, uint32_t& rc) {
     nxsvc::Reply r = lm.call(0, nxsvc::Args().u64(0x1234));
     rc = r.result;

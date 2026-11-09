@@ -58,28 +58,22 @@ bool all_bytes_are(const T& o, unsigned char v) {
 NXTEST(every_listed_function_is_registered) {
     setup();
     const char* names[] = {
-        // device builder
         "nvnDeviceBuilderSetDefaults", "nvnDeviceBuilderSetFlags", "nvnDeviceBuilderGetFlags",
-        // queue builder
         "nvnQueueBuilderSetDevice", "nvnQueueBuilderGetDevice", "nvnQueueBuilderSetDefaults", "nvnQueueBuilderSetFlags",
         "nvnQueueBuilderGetFlags", "nvnQueueBuilderSetCommandMemorySize", "nvnQueueBuilderGetCommandMemorySize",
         "nvnQueueBuilderSetComputeMemorySize", "nvnQueueBuilderGetComputeMemorySize", "nvnQueueBuilderSetControlMemorySize",
         "nvnQueueBuilderGetControlMemorySize", "nvnQueueBuilderGetQueueMemorySize", "nvnQueueBuilderSetQueueMemory",
         "nvnQueueBuilderGetMemory", "nvnQueueBuilderGetMemorySize", "nvnQueueBuilderSetCommandFlushThreshold",
         "nvnQueueBuilderGetCommandFlushThreshold", "nvnQueueBuilderSetQueuePriority", "nvnQueueBuilderGetQueuePriority",
-        // window builder
         "nvnWindowBuilderSetDevice", "nvnWindowBuilderGetDevice", "nvnWindowBuilderSetDefaults",
         "nvnWindowBuilderSetNativeWindow", "nvnWindowBuilderGetNativeWindow", "nvnWindowBuilderSetTextures",
         "nvnWindowBuilderGetNumTextures", "nvnWindowBuilderGetTexture", "nvnWindowBuilderSetPresentInterval",
         "nvnWindowBuilderGetPresentInterval", "nvnWindowBuilderSetNumActiveTextures",
-        // memory pool builder
         "nvnMemoryPoolBuilderSetDevice", "nvnMemoryPoolBuilderGetDevice", "nvnMemoryPoolBuilderSetDefaults",
         "nvnMemoryPoolBuilderSetStorage", "nvnMemoryPoolBuilderGetMemory", "nvnMemoryPoolBuilderGetSize",
         "nvnMemoryPoolBuilderSetFlags", "nvnMemoryPoolBuilderGetFlags",
-        // buffer builder
         "nvnBufferBuilderSetDevice", "nvnBufferBuilderGetDevice", "nvnBufferBuilderSetDefaults", "nvnBufferBuilderSetStorage",
         "nvnBufferBuilderGetMemoryOffset", "nvnBufferBuilderGetSize",
-        // event builder
         "nvnEventBuilderSetDefaults", "nvnEventBuilderSetStorage", "nvnEventBuilderGetMemoryPool",
         "nvnEventBuilderGetMemoryOffset",
     };

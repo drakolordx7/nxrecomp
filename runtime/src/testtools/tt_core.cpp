@@ -44,7 +44,7 @@ enum class Source { Hook, Tick, Svc, Manual };
 struct Region { uint64_t addr = 0, size = 0; std::string module; };
 
 struct State {
-    std::recursive_mutex mu;                 // the boundary may be entered from a hook while a test calls in; also end_run from other threads
+    std::recursive_mutex mu;
     bool inited = false, on = false, det = false, script_mode = false, finished = false;
     int exit_code = -1;
     std::string out, script, regions_file, trace_path, record_path, replay_path;
@@ -63,7 +63,7 @@ struct State {
     std::atomic<uint64_t> vticks{0};         // virtual clock (19.2 MHz ticks)
     std::atomic<DWORD> frame_tid{0};         // the host thread that runs the frame boundary (the one whose sleeps move the clock)
     std::atomic<uint64_t> rng_ctr{0};
-    uint64_t vbase = 19200000ull * 100;      // the virtual clock starts at "100 seconds"
+    uint64_t vbase = 19200000ull * 100;
     uint64_t chain = 0xcbf29ce484222325ull;
     uint64_t last_hash = 0;
     GameState gs;
@@ -73,10 +73,10 @@ struct State {
 
     FILE* trace = nullptr;
     bool trace_header = false;
-    InputTrace rec;                          // what is recorded
-    InputTrace play;                         // what is replayed
+    InputTrace rec;
+    InputTrace play;
     bool replaying = false, recording = false;
-    PadFrame pad;                            // pad of the current frame
+    PadFrame pad;
     PadFrame live_pad;
     std::vector<Checkpoint> cps;
     std::vector<std::string> shots, missing_shots;
@@ -105,7 +105,7 @@ struct State {
 };
 
 State& S() {
-    static State* s = new State;                  // never destroyed: threads may still touch it at exit
+    static State* s = new State;
     return *s;
 }
 
@@ -206,7 +206,7 @@ void parse_regions(State& s, const std::string& spec) {
 
 uint64_t hash_region_memory(State& s, uint64_t h) {
     for (const Region& r : s.hash_regions) {
-        std::vector<std::pair<uint64_t, uint64_t>> spans;     // [addr, size) readable pieces
+        std::vector<std::pair<uint64_t, uint64_t>> spans;
         uint64_t lo = r.addr, hi = r.addr + r.size;
         bool rw_only = false;
         if (!r.module.empty()) {
@@ -588,7 +588,6 @@ void rng_fill(void* p, size_t n) {
         }
         return;
     }
-    // host entropy: RtlGenRandom
     using Fn = BOOLEAN(WINAPI*)(PVOID, ULONG);
     static Fn fn = reinterpret_cast<Fn>(GetProcAddress(LoadLibraryA("advapi32.dll"), "SystemFunction036"));
     if (fn) fn(p, static_cast<ULONG>(n));
@@ -711,13 +710,11 @@ void frame_boundary(::Ctx* c) {
     s.frames.store(k + 1);
     s.frame_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     diag_frame_tick_nolisten();
-    // 1. virtual clock
     if (s.det) {
         const uint64_t target = s.vbase + k * s.step_ticks;
         uint64_t cur = s.vticks.load();
         while (cur < target && !s.vticks.compare_exchange_weak(cur, target)) {}
     }
-    // 2. state, hash, trace
     detail::install_input();
     GameState g;
     const bool valid = read_state(&g, c);
@@ -741,7 +738,6 @@ void frame_boundary(::Ctx* c) {
     } else {
         write_trace_line(s, k, h, g, valid, ms, 0);
     }
-    // 3. the pad of frame k
     PadFrame live;
     const bool have_live = detail::sample_live(&live);
     if (!have_live) live = s.live_pad;
@@ -759,7 +755,6 @@ void frame_boundary(::Ctx* c) {
         s.pad = live;
     }
     if (s.recording) s.rec.record(k, s.recording && (s.replaying || s.runner_on) ? s.pad : live);
-    // 4. publish
     detail::publish_pad(s.pad, s.replaying || s.runner_on, s.runner_on && s.runner.has_key_steps());
     if ((s.pad.mouse_dx != 0 || s.pad.mouse_dy != 0) && s.mouse_sink && (s.replaying || s.runner_on)) s.mouse_sink(s.pad.mouse_dx, s.pad.mouse_dy);
     if (s.max_frames && k + 1 >= s.max_frames && !s.finished) end_run(1, "fail", "frame budget (max_frames) exhausted");

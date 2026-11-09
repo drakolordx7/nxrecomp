@@ -67,7 +67,6 @@ bool near(double a, double b) { return std::fabs(a - b) < 1e-12; }
 
 bool starts_with(const std::string& s, const std::string& prefix) { return s.compare(0, prefix.size(), prefix) == 0; }
 
-// The action bound to `input` in `c` (first match), or Act::kCount when there is no such binding.
 Act act_at(const Settings& s, const char* input, Ctx c) {
     InputId id;
     if (!parse_input(input, &id)) return Act::kCount;

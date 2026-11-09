@@ -28,7 +28,7 @@ constexpr uint64_t kFakeGuestAddr = 0x7100001000ull;
 volatile int g_fake_mode = 0;             // 0: the fake guest writes through null, 1: it reads through null
 uint64_t* volatile g_null_ptr = nullptr;  // a null pointer the compiler cannot see through
 int* volatile g_null_int = nullptr;
-std::string g_report;                     // filled by crash_test_capture
+std::string g_report;
 
 bool has(const std::string& s, const char* needle) { return s.find(needle) != std::string::npos; }
 
@@ -37,7 +37,6 @@ void ensure_symbols() {
     CHECK_MSG(loaded, "nxrt_tests.map not loaded (symbols needed for the report)");
 }
 
-// The register set and frame chain the fake guest runs with.
 struct GuestFixture {
     ::Ctx ctx{};
     uint64_t frames[6] = {};
@@ -76,7 +75,6 @@ extern "C" __declspec(noinline) void crash_test_fake_guest_fn(::Ctx* c) {
 // Filter-expression helper: the report is built while the exception context is still live.
 __declspec(noinline) void crash_test_capture(EXCEPTION_POINTERS* ep) { g_report = nxrt::crash_build_report(ep); }
 
-// The __try functions hold no C++ objects.
 __declspec(noinline) void run_fake_guest_guarded(::Ctx* c) {
     __try {
         crash_test_fake_guest_fn(c);
@@ -101,7 +99,6 @@ __declspec(noinline) void null_write_guarded() {
     }
 }
 
-// Registers the fixture on this thread, runs the fake guest with `mode`, returns the captured report.
 static std::string run_guest_fault(int mode) {
     ensure_symbols();
     GuestFixture fx;
@@ -249,7 +246,6 @@ std::string read_file(const std::string& path) {
     return ss.str();
 }
 
-// Starts this exe as `--child <mode> <report>` with NXRT_LOG pointing at `log`, waits up to 30 s.
 bool run_child(const char* mode, const std::string& report, const std::string& log, DWORD& exit_code) {
     char exe[MAX_PATH * 4] = {};
     GetModuleFileNameA(nullptr, exe, sizeof exe);

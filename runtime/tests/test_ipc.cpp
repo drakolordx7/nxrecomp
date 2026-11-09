@@ -40,7 +40,6 @@ constexpr uint64_t kAddr39 = 1ull << 39;
 
 uint32_t g_copy_handle = 0;   // handed back as a copy handle by test:svc command 7 when non-zero
 
-// A 16-byte aligned 0x1000-byte message buffer, like the TLS region.
 struct Buf {
     uint32_t* p;
     Buf() : p(static_cast<uint32_t*>(_aligned_malloc(0x1000, 16))) { std::memset(p, 0, 0x1000); }
@@ -71,7 +70,6 @@ std::vector<uint8_t> raw_sfci(uint32_t method, const std::vector<uint8_t>& paylo
     return v;
 }
 
-// A CMIF request (message type 4) for `method`.
 Message cmif(uint32_t method, const std::vector<uint8_t>& payload = {}) {
     Message m;
     m.type = nxrt::hipc::kInvoke2MethodOld;
@@ -91,7 +89,6 @@ Message domain_msg(uint32_t target, uint8_t kind, uint32_t method, const std::ve
     return m;
 }
 
-// Writes the message into `b` without sending it.
 bool build_into(Buf& b, const Message& m) {
     std::string err;
     if (nxrt::hipc::build(m, b.p, kMsgWords, &err) != 0) return true;
@@ -232,7 +229,6 @@ void register_test_services() {
     nxrt::ipc::register_service("test:big", [] { return make_big_service(); });
 }
 
-// Every case starts from an empty registry and handle table, with the test services registered.
 void fresh() {
     nxrt::ipc::registry_reset();
     nxrt::kernel::handles_reset();

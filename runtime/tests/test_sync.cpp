@@ -51,7 +51,6 @@ void join_watched(const char* test, Threads& ts) {
     for (auto& t : ts) t.join();
 }
 
-// Waits (on the test thread, bounded to 5 s) until pred() holds. Returns the final pred() value.
 template <class F>
 bool wait_for(F pred) {
     const auto limit = Clock::now() + std::chrono::seconds(5);

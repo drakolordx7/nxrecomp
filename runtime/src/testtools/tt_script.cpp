@@ -58,7 +58,6 @@ std::string first_word(const std::string& s) {
     return s.substr(0, e);
 }
 
-// The text after the first word, trimmed (used by @hash, @log, @fail).
 std::string rest_after_first_word(const std::string& body) {
     return trim(body.substr(first_word(body).size()));
 }
@@ -82,7 +81,6 @@ int hex_value(char c) {
     return -1;
 }
 
-// Non-negative integer: decimal, or 0x hex. The whole token must be consumed.
 bool parse_count(const std::string& tok, int64_t* v) {
     if (tok.empty()) return false;
     std::size_t i = 0;
@@ -97,14 +95,13 @@ bool parse_count(const std::string& tok, int64_t* v) {
         int d = hex_value(tok[i]);
         if (d < 0 || (base == 10 && d > 9)) return false;
         uint64_t du = static_cast<uint64_t>(d);
-        if (acc > (max - du) / base) return false;  // overflow
+        if (acc > (max - du) / base) return false;
         acc = acc * base + du;
     }
     *v = static_cast<int64_t>(acc);
     return true;
 }
 
-// Floating-point number via strtod. The whole token must be consumed and the value must be finite.
 bool parse_real(const std::string& tok, double* v) {
     if (tok.empty()) return false;
     char* end = nullptr;
@@ -149,7 +146,6 @@ constexpr ButtonName kButtons[] = {
     {"LEFT", 12},  {"UP", 13},     {"RIGHT", 14}, {"DOWN", 15},
 };
 
-// "A+B+X" -> bit mask. Unknown or empty names are errors.
 bool keys_mask(const std::string& keys, uint64_t* mask, std::string& msg) {
     uint64_t m = 0;
     std::size_t i = 0;
@@ -186,7 +182,6 @@ constexpr FieldName kFields[] = {
     {"vy", AssertField::VelY},     {"vz", AssertField::VelZ},      {"speed", AssertField::Speed},
 };
 
-// The keys the game declares for its own state fields (GameProbes::state_keys), matched without case.
 const char* game_state_key(const std::string& name) {
     const game::Info& g = game::info();
     if (!g.probes || !g.probes->state_keys) return nullptr;
@@ -195,7 +190,6 @@ const char* game_state_key(const std::string& name) {
     return nullptr;
 }
 
-// The registered game's script step for a keyword written with its '@' (lower case), or null.
 const GameStepDef* find_game_step(const std::string& kw) {
     const game::Info& g = game::info();
     if (!g.probes || !g.probes->steps) return nullptr;
@@ -228,7 +222,6 @@ bool resolve_id(const std::string& tok, const RegionTable* regions, bool want_ar
     return true;
 }
 
-// Splits trailing "timeout=N" tokens off a positional argument list.
 bool take_timeout(const std::vector<std::string>& t, std::size_t from, std::vector<std::string>& positional,
                   int64_t* timeout, std::string& msg) {
     bool seen = false;
@@ -244,7 +237,6 @@ bool take_timeout(const std::vector<std::string>& t, std::size_t from, std::vect
     return true;
 }
 
-// Parses "<field> <op> <value>" at t[i..i+2] into s.field / s.op / s.x / s.id / s.text (shared by @assert and @mash).
 bool parse_condition(const std::vector<std::string>& t, std::size_t i, const RegionTable* rt, Step* sp, std::string& msg) {
     Step& s = *sp;
     std::string field_name = lower(t[i]);
@@ -286,8 +278,6 @@ bool parse_condition(const std::vector<std::string>& t, std::size_t i, const Reg
     return true;
 }
 
-// Parses one logical line (comment already removed, trimmed) into zero or more steps.
-// `body` is the trimmed line, `t` its whitespace-separated tokens (t is never empty).
 bool parse_stmt(const std::string& body, const std::vector<std::string>& t, const RegionTable* rt,
                 std::vector<Step>& out, std::string& msg) {
     const std::string kw = lower(t[0]);
@@ -379,7 +369,6 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         if (takes_for) {
             std::vector<std::string> tk = split_ws(name);
             if (tk.size() >= 2 && lower(tk[tk.size() - 2]) == "for") {
-                // name is trimmed, so the last token ends the string; skip the blanks before it to reach the "for" token
                 std::size_t p = name.size() - tk.back().size();
                 while (p > 0 && is_ws(name[p - 1])) p--;
                 const std::size_t for_at = p - tk[tk.size() - 2].size();
@@ -612,7 +601,6 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
-    // A step the game registered: its parser gets the line; the base only records which step it was.
     if (const GameStepDef* gs = find_game_step(kw)) {
         Step s = make(StepKind::Game);
         s.game = gs;

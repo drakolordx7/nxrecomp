@@ -22,7 +22,6 @@ using nxrt::input::MouseDelta;
 namespace platform = nxrt::platform;
 namespace input = nxrt::input;
 
-// Takes every queued input event, oldest first.
 std::vector<Event> drain_all() {
     std::vector<Event> all;
     Event buf[64];
@@ -34,7 +33,6 @@ std::vector<Event> drain_all() {
     return all;
 }
 
-// Pumps SDL until pred() holds or timeout_ms passes. Returns pred()'s last value.
 template <class Pred>
 bool pump_until(Pred pred, uint64_t timeout_ms) {
     const Uint64 deadline = SDL_GetTicks() + timeout_ms;

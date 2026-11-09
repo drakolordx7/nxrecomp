@@ -29,7 +29,6 @@ std::string trim(const std::string& s) {
     return s.substr(b, e - b);
 }
 
-// ASCII lower case, for section and key names.
 std::string lower(std::string s) {
     for (char& c : s) {
         if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
@@ -50,7 +49,6 @@ bool utf8_to_wide(const std::string& in, std::wstring* out) {
     return true;
 }
 
-// A name from the registered game (UTF-8) as a wide string; empty when there is none.
 std::wstring brand(const char* utf8) {
     std::wstring w;
     if (utf8 && *utf8) utf8_to_wide(utf8, &w);
@@ -124,7 +122,6 @@ bool path_exists(const fs::path& p) {
     return fs::exists(p, ec);
 }
 
-// True when the folder exists and has at least one entry.
 bool has_entries(const fs::path& dir) {
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return false;
@@ -190,7 +187,7 @@ std::wstring launcher_exe_dir() {
     for (;;) {
         const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
         if (n == 0) return {};
-        if (n < buf.size()) break;   // fits (n is the length without the terminator)
+        if (n < buf.size()) break;
         if (buf.size() >= 65536) return {};
         buf.resize(buf.size() * 2);
     }
@@ -252,7 +249,7 @@ bool parse_launcher_config(const std::string& utf8_text, LauncherConfig* out) {
         if (section != "launcher" || lower(trim(t.substr(0, eq))) != "game_dir") continue;
 
         const std::string value = parse_value(t.substr(eq + 1));
-        if (value.empty()) continue;   // empty value keeps the default
+        if (value.empty()) continue;
         std::wstring w;
         if (!utf8_to_wide(value, &w)) return false;
         game_dir = w;
@@ -352,7 +349,6 @@ bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* er
 
 namespace {
 
-// A plain decimal count: digits only, at most 18 of them.
 bool parse_count(const std::string& s, unsigned long long* out) {
     if (s.empty() || s.size() > 18) return false;
     unsigned long long v = 0;

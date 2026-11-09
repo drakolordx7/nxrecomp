@@ -46,7 +46,6 @@ void Page::store(Settings* s) {
 
 // ---- PageWindow: the child window a page lives in ----------------------------------------------------------------------
 
-// The wndproc needs the private members of Page, so it is a static member of the friend class.
 class PageWindowProc {
 public:
     static Page::Binder* find_binder(std::vector<Page::Binder>& v, int id) {
@@ -191,7 +190,7 @@ void Form::next_cell(int row_h) {
 }
 
 void Form::columns(int n) {
-    if (col_ != 0) {   // finish a half-filled row
+    if (col_ != 0) {
         col_ = 0;
         y_ += row_h_ + env_.S(kRowGap);
         row_h_ = 0;
@@ -452,7 +451,6 @@ bool capture_input(HWND owner, const Env& env, const std::wstring& what, nxrt::p
                                nullptr, env.inst, nullptr);
     if (!dlg) return false;
     SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
-    // The client area is a little smaller than the window; the text fills it.
     RECT crc{};
     GetClientRect(dlg, &crc);
     const std::wstring text = L"Press the key or mouse button for\r\n\r\n" + what + L"\r\n\r\nClick inside this window to use a mouse button. Escape cancels.";
@@ -488,7 +486,7 @@ constexpr wchar_t kPadNoPadText[] = L"No controller found. Connect one and press
 struct PadCaptureState {
     PadCapture* pad = nullptr;
     HWND text = nullptr;
-    bool shown_no_pad = false;   // which of the two texts the window shows
+    bool shown_no_pad = false;
     bool done = false;
     int source = -1;             // the row pressed, or -1 when cancelled
 };
@@ -565,7 +563,6 @@ bool capture_pad_button(HWND owner, const Env& env, int* out_source) {
                                owner, nullptr, env.inst, nullptr);
     if (!dlg) return false;
     SetWindowLongPtrW(dlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&st));
-    // The client area is a little smaller than the window; the text fills it.
     RECT crc{};
     GetClientRect(dlg, &crc);
     st.text = CreateWindowExW(0, L"STATIC", st.shown_no_pad ? kPadNoPadText : kPadPressText, WS_CHILD | WS_VISIBLE | SS_CENTER | SS_NOPREFIX, env.S(12),

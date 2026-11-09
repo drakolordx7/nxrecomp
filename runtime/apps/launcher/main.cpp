@@ -180,7 +180,7 @@ private:
     HWND hwnd_ = nullptr;
     HWND version_ = nullptr, title_ = nullptr, status_ = nullptr, folder_label_ = nullptr, folder_ = nullptr, change_ = nullptr, setup_btn_ = nullptr;
     HWND tabs_ = nullptr, reset_ = nullptr, note_ = nullptr, save_ = nullptr, play_ = nullptr;
-    HWND prep_text_ = nullptr, prep_bar_ = nullptr, prep_cancel_ = nullptr;   // shader preparation row, shown while it runs
+    HWND prep_text_ = nullptr, prep_bar_ = nullptr, prep_cancel_ = nullptr;
     HFONT title_font_ = nullptr;
     std::vector<std::unique_ptr<Page>> pages_;
     int current_page_ = 0;
@@ -250,7 +250,7 @@ void App::on_create() {
     prep_text_ = mk(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, IDC_PREP_TEXT);
     prep_bar_ = mk(L"msctls_progress32", L"", 0, IDC_PREP_BAR);
     prep_cancel_ = mk(L"BUTTON", L"Cancel", BS_PUSHBUTTON | WS_TABSTOP, IDC_PREP_CANCEL);
-    for (HWND h : {prep_text_, prep_bar_, prep_cancel_}) ShowWindow(h, SW_HIDE);   // shown while shaders are prepared
+    for (HWND h : {prep_text_, prep_bar_, prep_cancel_}) ShowWindow(h, SW_HIDE);
     apply_fonts();
 
     pages_.push_back(make_display_page());
@@ -258,7 +258,7 @@ void App::on_create() {
     pages_.push_back(make_controls_page());
     pages_.push_back(make_keys_page());
     pages_.push_back(make_pad_page());
-    if (const GameLauncher* gl = game_launcher())   // the game's own tabs
+    if (const GameLauncher* gl = game_launcher())
         for (unsigned i = 0; i < gl->tab_count; ++i) pages_.push_back(gl->tabs[i]());
     for (size_t i = 0; i < pages_.size(); ++i) {
         TCITEMW it{};
@@ -295,7 +295,6 @@ void App::layout() {
     put(play_, right - env_.S(100), by, env_.S(100), env_.S(28));
     put(save_, right - env_.S(100) - gap - env_.S(90), by, env_.S(90), env_.S(28));
     put(note_, S_16 + env_.S(150), by + env_.S(5), right - env_.S(200) - gap - env_.S(90) - (S_16 + env_.S(150)), env_.S(20));
-    // shader preparation row, between the tabs and the buttons: status text, progress bar, Cancel
     const int py = rc.bottom - env_.S(80);
     const int text_w = env_.S(300);
     put(prep_text_, S_16, py + env_.S(4), text_w, env_.S(20));
@@ -304,7 +303,6 @@ void App::layout() {
     put(prep_cancel_, right - env_.S(100), py, env_.S(100), env_.S(26));
     for (HWND h : {prep_text_, prep_bar_, prep_cancel_}) ShowWindow(h, prep_showing_ ? SW_SHOW : SW_HIDE);
 
-    // pages sit in the display area of the tab control
     RECT tr{};
     GetWindowRect(tabs_, &tr);
     TabCtrl_AdjustRect(tabs_, FALSE, &tr);
@@ -351,7 +349,7 @@ void App::show_page(int i) {
         HWND h = pages_[k]->hwnd();
         if (!h) continue;
         if (static_cast<int>(k) == current_page_) {
-            SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);   // above the tab control
+            SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         } else {
             ShowWindow(h, SW_HIDE);
         }
@@ -563,7 +561,6 @@ void App::on_prepare_update() {
     SetWindowTextW(prep_text_, (L"Preparing shaders: " + with_commas(p.done) + L" of " + with_commas(p.total)).c_str());
 }
 
-// The child has exited and its output is read: join the worker, then say what happened.
 void App::on_prepare_finished() {
     prep_.finish();
     const bool cancelled = prep_.cancel_requested();
@@ -605,7 +602,7 @@ void App::on_prepare_finished() {
 
 void App::cancel_prepare() {
     if (!prep_.active()) return;
-    prep_.cancel();   // TerminateProcess of the preparation child only
+    prep_.cancel();
     SetWindowTextW(prep_text_, L"Cancelling...");
     refresh_buttons();
 }
@@ -707,7 +704,6 @@ LRESULT CALLBACK App::wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 int App::run() {
-    // game folder: --game, else the saved one, else the folder of the launcher
     LauncherConfig cfg;
     load_launcher_config(launcher_config_path(), &cfg);
     std::wstring dir = cfg.game_dir.empty() ? default_game_dir() : cfg.game_dir;
@@ -716,7 +712,7 @@ int App::run() {
         game_dir_pinned_ = true;
     }
 
-    if (cmd_.auto_play) {   // scripted start: no window, settings untouched
+    if (cmd_.auto_play) {
         std::wstring err;
         if (cmd_.auto_prepare && !cmd_.no_prepare && shader_prepare_available(dir) && !shader_prepare_done(dir) && !prepare_blocking(dir, &err)) {
             OutputDebugStringW(err.c_str());
@@ -765,7 +761,6 @@ int App::run() {
     layout();
     current_page_ = cmd_.page;
     game_dir_ = dir;
-    // settings first, then the pages are built from them
     {
         std::string err;
         Settings s;

@@ -35,7 +35,6 @@ uint64_t bit(int n) {
     return 1ull << n;
 }
 
-// Parses text as file "t.txt". Records a failure carrying the parser's message if it does not parse.
 bool parse_ok(const std::string& text, Script& sc, const RegionTable* rt = nullptr) {
     std::string err;
     if (parse_script(text, "t.txt", rt, &sc, &err)) return true;
@@ -542,7 +541,6 @@ NXTEST(guid_round_trip_and_hex) {
     CHECK_EQ(tt_guid_hex(b), std::string(kHex1));
     CHECK_EQ(tt_guid_to_text(b), std::string(kGuid1));
 
-    // Upper case in, lower case out.
     uint8_t c[16];
     REQUIRE(tt_guid_to_bytes("FEDCBA98-7654-3210-FEDC-BA9876543210", c));
     CHECK_EQ(tt_guid_to_text(c), std::string(kGuid2));

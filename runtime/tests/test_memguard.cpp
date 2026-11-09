@@ -26,7 +26,6 @@ std::atomic<int> g_calls{0};
 void set_flag_cb(uint64_t, uint64_t, void*) { g_trip_flag.store(true); }
 void count_cb(uint64_t, uint64_t, void*) { g_calls.fetch_add(1); }
 
-// Commits and touches kTouchBytes of private memory; returns the block (null on failure).
 void* commit_and_touch() {
     void* p = VirtualAlloc(nullptr, kTouchBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (p) std::memset(p, 0xA5, kTouchBytes);

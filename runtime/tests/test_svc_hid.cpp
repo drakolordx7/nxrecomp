@@ -69,11 +69,9 @@ int32_t rd32s(const uint8_t* p, uint64_t off) {
     return v;
 }
 
-// Address of the latest entry of a ring whose entries are `stride` bytes apart.
 const uint8_t* latest_entry(const uint8_t* ring, uint64_t stride) {
     return ring + kRingEntries + rd64(ring, kRingIndex) * stride;
 }
-// Address of the entry `back` samples before the latest one.
 const uint8_t* entry_back(const uint8_t* ring, uint64_t stride, uint64_t back) {
     const uint64_t idx = (rd64(ring, kRingIndex) + 17 - back) % 17;
     return ring + kRingEntries + idx * stride;

@@ -152,7 +152,6 @@ def scan_file(path):
             return raw[a + 1:b - 1]
         return None
 
-    # Top-level function definitions (column 0, depth 0 or inside one namespace).
     fns = []
     for mt in re.finditer(r"^[A-Za-z_][^\n]*", m, re.M):
         text = mt.group(0)
@@ -234,7 +233,6 @@ def scan_file(path):
             q = mt.end() + pm.end() - 1
             cmds.append({"iface": iface, "id": pm.group(1), "name": lit(q), "status": "(loop)", "line": line_of(q)})
 
-    # add("service", ...): service names registered with the service manager.
     for mt in re.finditer(r"\badd\(\s*\"", m):
         names.append(lit(mt.end() - 1))
 
@@ -322,7 +320,7 @@ def main():
     for path in sorted(glob.glob(os.path.join(SRC, "*.cpp"))):
         try:
             results.append(scan_file(path))
-        except Exception as e:  # keep going: report the file instead of stopping
+        except Exception as e:
             rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
             results.append({"file": rel, "cmds": [], "names": [], "unparsed": [(rel, 0, f"scan failed: {e}")]})
     text = render(results)

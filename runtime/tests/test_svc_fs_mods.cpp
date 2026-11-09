@@ -114,7 +114,6 @@ struct Env {
     std::string base_s() const { return u8s(base); }
 };
 
-// Log lines of a test, with their levels.
 struct Cap {
     std::mutex mu;
     std::vector<std::pair<LogLevel, std::string>> lines;
@@ -133,7 +132,6 @@ struct Cap {
         nxrt::log_set_sink(nullptr, nullptr);
         nxrt::log_set_level(old);
     }
-    // Lines at `level` (or any level when `any`) that contain every needle.
     int count(std::initializer_list<const char*> needles, LogLevel level, bool all_levels = false) {
         std::lock_guard<std::mutex> lk(mu);
         int n = 0;
@@ -275,7 +273,6 @@ private:
     std::vector<uint8_t> meta_;
 };
 
-// Image plus its reader, built over the env's game folder with the given mods.
 struct Built {
     RomfsImage img;
     Img r{img};

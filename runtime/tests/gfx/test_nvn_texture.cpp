@@ -93,7 +93,6 @@ struct Pool {
 };
 
 struct Api {
-    // builder
     decltype(abi::proc<PFNNVNTEXTUREBUILDERSETDEFAULTSPROC>("")) bdefaults = abi::proc<PFNNVNTEXTUREBUILDERSETDEFAULTSPROC>("nvnTextureBuilderSetDefaults");
     decltype(abi::proc<PFNNVNTEXTUREBUILDERSETTARGETPROC>("")) btarget = abi::proc<PFNNVNTEXTUREBUILDERSETTARGETPROC>("nvnTextureBuilderSetTarget");
     decltype(abi::proc<PFNNVNTEXTUREBUILDERSETSIZE2DPROC>("")) bsize2d = abi::proc<PFNNVNTEXTUREBUILDERSETSIZE2DPROC>("nvnTextureBuilderSetSize2D");
@@ -109,11 +108,9 @@ struct Api {
     decltype(abi::proc<PFNNVNTEXTUREBUILDERGETSTORAGECLASSPROC>("")) bget_class = abi::proc<PFNNVNTEXTUREBUILDERGETSTORAGECLASSPROC>("nvnTextureBuilderGetStorageClass");
     decltype(abi::proc<PFNNVNTEXTUREBUILDERGETSPARSETILELAYOUTPROC>("")) bget_sparse = abi::proc<PFNNVNTEXTUREBUILDERGETSPARSETILELAYOUTPROC>("nvnTextureBuilderGetSparseTileLayout");
     decltype(abi::proc<PFNNVNTEXTUREBUILDERGETZCULLSTORAGESIZEPROC>("")) bget_zcull = abi::proc<PFNNVNTEXTUREBUILDERGETZCULLSTORAGESIZEPROC>("nvnTextureBuilderGetZCullStorageSize");
-    // view
     decltype(abi::proc<PFNNVNTEXTUREVIEWSETDEFAULTSPROC>("")) vdefaults = abi::proc<PFNNVNTEXTUREVIEWSETDEFAULTSPROC>("nvnTextureViewSetDefaults");
     decltype(abi::proc<PFNNVNTEXTUREVIEWSETLEVELSPROC>("")) vlevels = abi::proc<PFNNVNTEXTUREVIEWSETLEVELSPROC>("nvnTextureViewSetLevels");
     decltype(abi::proc<PFNNVNTEXTUREVIEWSETLAYERSPROC>("")) vlayers = abi::proc<PFNNVNTEXTUREVIEWSETLAYERSPROC>("nvnTextureViewSetLayers");
-    // texture
     decltype(abi::proc<PFNNVNTEXTUREINITIALIZEPROC>("")) init = abi::proc<PFNNVNTEXTUREINITIALIZEPROC>("nvnTextureInitialize");
     decltype(abi::proc<PFNNVNTEXTUREFINALIZEPROC>("")) finalize = abi::proc<PFNNVNTEXTUREFINALIZEPROC>("nvnTextureFinalize");
     decltype(abi::proc<PFNNVNTEXTURESETDEBUGLABELPROC>("")) label = abi::proc<PFNNVNTEXTURESETDEBUGLABELPROC>("nvnTextureSetDebugLabel");

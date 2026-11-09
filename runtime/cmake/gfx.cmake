@@ -72,5 +72,4 @@ if(NXRT_BUILD_TESTS)
     endif()
 endif()
 
-# The launcher (apps/launcher).
 include(${CMAKE_CURRENT_LIST_DIR}/launcher.cmake)

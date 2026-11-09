@@ -34,7 +34,6 @@ bool read_all(const std::filesystem::path& p, std::vector<uint8_t>& out) {
     return f.good() || f.gcount() == n;
 }
 
-// Points the service at a folder and makes the next call build the shared memory from it.
 void use_fonts(const char* dir) {
     nxrt::config_clear();
     nxrt::config_set("pl", "font_dir", dir);

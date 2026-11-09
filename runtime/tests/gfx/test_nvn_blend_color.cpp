@@ -125,7 +125,6 @@ NXTEST(blend_state_round_trip) {
         CHECK_EQ(static_cast<int>(get_overlap(&s)), static_cast<int>(o));
     }
 
-    // booleans
     for (NVNboolean v : {NVNboolean(0), NVNboolean(1), NVNboolean(0)}) {
         set_premult(&s, v);
         CHECK_EQ(static_cast<int>(get_premult(&s)), static_cast<int>(v));

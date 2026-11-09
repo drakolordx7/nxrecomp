@@ -30,7 +30,7 @@ NXTEST(paced_has_a_device_clock_and_the_null_sink_does_not) {
 NXTEST(paced_queue_drains_at_the_sample_rate) {
     auto p = audio::make_paced_sink();
     REQUIRE(p->open(kRate, 2));
-    std::vector<int16_t> pcm(static_cast<size_t>(kRate / 10) * 2, 0);   // 100 ms
+    std::vector<int16_t> pcm(static_cast<size_t>(kRate / 10) * 2, 0);
     CHECK_EQ(p->write(pcm.data(), kRate / 10), kRate / 10);
     CHECK(p->queued_frames() > kRate / 10 - 480);   // just written: still about 100 ms
     sleep_ms(50);
@@ -45,13 +45,13 @@ NXTEST(paced_queue_drains_at_the_sample_rate) {
 NXTEST(paced_counts_one_underrun_per_dry_stretch) {
     auto p = audio::make_paced_sink();
     REQUIRE(p->open(kRate, 2));
-    std::vector<int16_t> pcm(static_cast<size_t>(480) * 2, 0);          // 10 ms
+    std::vector<int16_t> pcm(static_cast<size_t>(480) * 2, 0);
     p->write(pcm.data(), 480);
     sleep_ms(60);                                                       // the queue is empty for 50 ms: one underrun
     CHECK_EQ(p->queued_frames(), 0u);
     CHECK_EQ(p->queued_frames(), 0u);                                   // asking again does not count again
     CHECK_EQ(p->stats().underruns, 1ull);
-    p->write(pcm.data(), 480);                                          // playback resumes
+    p->write(pcm.data(), 480);
     sleep_ms(60);
     CHECK_EQ(p->stats().underruns, 2ull);
     p->close();

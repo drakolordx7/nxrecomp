@@ -239,7 +239,6 @@ NXTEST(alias_commit_through_alias_view_is_seen_by_primary) {
     CHECK(mem::heap_create(kHeapSmall));
     const uint64_t a = mem::heap_alias(0, kGr, 0, mem::Prot::RW);
     CHECK(a != 0);
-    // Commit the range through the alias view itself, bypassing heap_commit.
     CHECK(VirtualAlloc(reinterpret_cast<void*>(a), static_cast<SIZE_T>(kGr), MEM_COMMIT, PAGE_READWRITE) != nullptr);
     word_at(a)[7] = 0xCAFE0001u;
     CHECK_EQ(word_at(mem::kHeapBase)[7], 0xCAFE0001u);  // visible through the primary view

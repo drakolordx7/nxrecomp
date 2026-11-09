@@ -42,7 +42,6 @@ Num parse_dec(const std::string& s, uint64_t& out) {
     return Num::ok;
 }
 
-// "0x" followed by hex digits (either case).
 Num parse_hex(const std::string& s, uint64_t& out) {
     if (s.size() < 3 || s[0] != '0' || (s[1] != 'x' && s[1] != 'X')) return Num::bad;
     uint64_t v = 0;
@@ -60,7 +59,6 @@ Num parse_hex(const std::string& s, uint64_t& out) {
     return Num::ok;
 }
 
-// Optional sign, decimal digits, must lie in -32767..32767.
 Num parse_stick(const std::string& s, int& out) {
     size_t i = 0;
     bool neg = false;
@@ -110,7 +108,6 @@ void InputTrace::record(uint64_t frame, const PadFrame& pad) {
 }
 
 PadFrame InputTrace::at(uint64_t frame) const {
-    // Find the first entry with entry.frame > frame; the one before it is the last entry at or before frame.
     size_t lo = 0, hi = entries.size();
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
@@ -173,7 +170,7 @@ bool InputTrace::from_text(const std::string& text, std::string* err) {
         lineno++;
 
         std::vector<std::string> t = split_tokens(line);
-        if (t.empty()) continue;  // blank
+        if (t.empty()) continue;
 
         if (!header_seen) {
             if (t.size() != 3 || t[0] != "#" || t[1] != "nxin" || t[2] != "1")
@@ -181,7 +178,7 @@ bool InputTrace::from_text(const std::string& text, std::string* err) {
             header_seen = true;
             continue;
         }
-        if (t[0][0] == '#') continue;  // comment
+        if (t[0][0] == '#') continue;
 
         if (t[0] == "end") {
             if (have_end) return fail(lineno, "duplicate 'end' line");
@@ -220,7 +217,6 @@ bool InputTrace::from_text(const std::string& text, std::string* err) {
 
     if (!header_seen) return fail(1, "missing header '# nxin 1'");
 
-    // Success: replace the contents and resynchronise the recording state with the loaded entries.
     entries = std::move(ents);
     end_frame = have_end ? end : 0;
     if (!entries.empty()) {

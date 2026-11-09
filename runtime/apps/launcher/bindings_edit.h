@@ -10,14 +10,12 @@
 
 namespace nxl {
 
-// One row of the keyboard list: the action, its name on the list and the group heading it sits under.
 struct KeyRow {
     nxrt::play::Act act;
     const wchar_t* label;   // "Jump"
     const wchar_t* group;   // "Combat"
 };
 
-// The rows shown, in list order.
 const std::vector<KeyRow>& key_rows();
 
 // The inputs bound to `a` in the factory layer, in file order.

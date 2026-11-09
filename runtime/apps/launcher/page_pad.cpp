@@ -19,7 +19,6 @@ using nxrt::play::kPadDefault;
 using nxrt::play::kPadSrcCount;
 namespace hid = nxrt::hid;
 
-// The single Switch buttons a layout combo can press, in the order of the combo.
 struct Choice {
     const wchar_t* name;
     hid::NpadButtonBit bit;
@@ -61,21 +60,18 @@ std::vector<std::wstring> layout_items() {
     return items;
 }
 
-// The value a combo item stores (not for Custom).
 uint64_t value_of_item(int item) {
     if (item == 0) return kPadDefault;
     if (item == kNothingItem) return 0;
     return hid::btn(kChoices[item - 2].bit);
 }
 
-// The item that shows a stored value, or Custom when no item above holds it.
 int item_of_value(uint64_t v) {
     for (int i = 0; i < kCustomItem; ++i)
         if (value_of_item(i) == v) return i;
     return kCustomItem;
 }
 
-// The slider position that shows a value (percent), kept inside the slider's range.
 int position_of(double v, int lo, int hi) {
     return std::clamp(static_cast<int>(std::lround(v * 100.0)), lo, hi);
 }
@@ -170,7 +166,7 @@ public:
     }
 
 private:
-    int deadzone_pos_ = 10;       // slider positions the values read in load()
+    int deadzone_pos_ = 10;
     int right_deadzone_pos_ = 10;
     int trigger_pos_ = 35;
     int look_pos_ = 100;

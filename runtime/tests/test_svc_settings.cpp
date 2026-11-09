@@ -24,14 +24,13 @@ void code_bytes(uint8_t out[8], const char* name) {
     std::memcpy(out, name, std::strlen(name));
 }
 
-// True when the reply's output is exactly the LanguageCode `name`.
 bool out_is_code(const nxsvc::Reply& r, const char* name) {
     uint8_t want[8];
     code_bytes(want, name);
     return r.out.size() >= 8 && std::memcmp(r.out.data(), want, 8) == 0;
 }
 
-// No configuration overrides (the profile is the Metroid Prime Remastered defaults).
+// No configuration overrides: the base's default profile.
 void default_profile() {
     config_clear();
     services::profile_reload();

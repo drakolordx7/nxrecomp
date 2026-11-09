@@ -40,7 +40,7 @@ public:
     size_t steps_total() const { return script_.steps.size(); }
     size_t steps_done() const { return idx_; }
     int fail_line() const { return fail_line_; }
-    bool has_key_steps() const { return has_keys_ || !live_path_.empty(); }    // the loaded script has at least one key / keydown / keyup step
+    bool has_key_steps() const { return has_keys_ || !live_path_.empty(); }
 
 private:
     Script script_;
@@ -53,7 +53,7 @@ private:
     uint64_t next_mash_ms_ = 0, mash_release_ms_ = 0;
     int64_t default_timeout_ = 3600;
     uint64_t held_ = 0, pressing_ = 0;
-    int16_t stick_[2][2] = {{0, 0}, {0, 0}};            // persistent [which][x,y]
+    int16_t stick_[2][2] = {{0, 0}, {0, 0}};
     bool stick_override_ = false;
     int16_t stick_tmp_[2] = {0, 0};
     int stick_tmp_which_ = 0;
@@ -76,8 +76,8 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
-bool poke_memory(const std::string& in_path, std::string* err);   // tt_game.cpp: @poke
-bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err);   // tt_game.cpp: @peek
+bool poke_memory(const std::string& in_path, std::string* err);
+bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err);
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
 bool sample_live(PadFrame* out);           // the pad of the live source (the one installed before ours); false when there is none

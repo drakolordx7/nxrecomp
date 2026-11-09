@@ -29,13 +29,11 @@ constexpr uint64_t kMiB = 0x100000;
 constexpr uint32_t kRcCa01 = 0xCA01, kRcCc01 = 0xCC01, kRcD001 = 0xD001, kRcD401 = 0xD401, kRcD801 = 0xD801, kRcE401 = 0xE401;
 constexpr uint32_t kTypeFree = 0x00, kTypeHeap = 0x05, kTypeStack = 0x0B, kTypeTransfer = 0x0D, kTypeAlias = 0x0E;
 
-// Output of the SVC: w0 result and x1.
 struct Call {
     uint32_t rc;
     uint64_t x1;
 };
 
-// Runs one SVC through the dispatcher. x0..x3 are the inputs in ABI order.
 Call svc(uint32_t num, uint64_t x0 = 0, uint64_t x1 = 0, uint64_t x2 = 0, uint64_t x3 = 0) {
     ::Ctx c{};
     c.x[0] = x0;
@@ -92,7 +90,6 @@ __declspec(noinline) int touch(uint64_t addr, bool write) {
 
 uint32_t* word_at(uint64_t addr) { return reinterpret_cast<uint32_t*>(addr); }
 
-// Each case starts from a fresh memory module, a fresh handle table and fresh SVC state.
 void setup() {
     nxrt::svc_memory_reset_for_tests();
     mem::shutdown();

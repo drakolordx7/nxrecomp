@@ -140,7 +140,6 @@ bool file_exists(const std::wstring& p) {
     const DWORD a = GetFileAttributesW(p.c_str());
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
-// Absolute form of a path given on the command line, resolved against the current directory (before it is changed).
 std::string absolute_utf8(const std::string& p) {
     const std::wstring w = widen_utf8(p);
     std::wstring buf(32768, L'\0');
@@ -316,7 +315,6 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "%s: unknown argument %s\n", gi.id, argv[i]); return 2; }
     }
 
-    // Installed layout: work from the game folder (see the file comment).
     std::string ini_abs, log_abs;
     bool installed = false;
     {
@@ -367,7 +365,7 @@ int main(int argc, char** argv) {
             const bool headless = gfxmode != "window";
             nxrt::play::DisplayConfig disp;
             if (!headless) {
-                disp = nxrt::play::display();       // controls.ini: window size, present mode, frame cap
+                disp = nxrt::play::display();
                 nxrt::platform::init();
                 nxrt::platform::WindowDesc wd;
                 wd.title = gi.title;
@@ -391,7 +389,7 @@ int main(int argc, char** argv) {
             bd.device = g_gfx_device.get();
             bd.renderer = g_gfx_renderer.get();
             if (!headless) {
-                bd.limiter = nxrt::play::limiter();        // the frame limiter paces the presenting thread
+                bd.limiter = nxrt::play::limiter();
                 bd.keep_aspect = disp.keep_aspect;
             }
             if (!nxrt::nvn::install_backend(bd)) die("NVN back end failed to start (see the log)");
@@ -411,7 +409,6 @@ int main(int argc, char** argv) {
         nxrt::play::start(po);
     }
 
-    // 1. map
     for (const GameModule& g : kModules) {
         nxrt::LoadOptions lo;
         lo.name = g.file;

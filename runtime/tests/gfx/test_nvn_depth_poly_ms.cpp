@@ -19,17 +19,14 @@ void setup() {
 }
 
 const char* const kNames[] = {
-    // depth-stencil state (13)
     "nvnDepthStencilStateSetDefaults", "nvnDepthStencilStateSetDepthTestEnable", "nvnDepthStencilStateSetDepthWriteEnable",
     "nvnDepthStencilStateSetDepthFunc", "nvnDepthStencilStateSetStencilTestEnable", "nvnDepthStencilStateSetStencilFunc",
     "nvnDepthStencilStateSetStencilOp", "nvnDepthStencilStateGetDepthTestEnable", "nvnDepthStencilStateGetDepthWriteEnable",
     "nvnDepthStencilStateGetDepthFunc", "nvnDepthStencilStateGetStencilTestEnable", "nvnDepthStencilStateGetStencilFunc",
     "nvnDepthStencilStateGetStencilOp",
-    // polygon state (9)
     "nvnPolygonStateSetDefaults", "nvnPolygonStateSetCullFace", "nvnPolygonStateSetFrontFace", "nvnPolygonStateSetPolygonMode",
     "nvnPolygonStateSetPolygonOffsetEnables", "nvnPolygonStateGetCullFace", "nvnPolygonStateGetFrontFace",
     "nvnPolygonStateGetPolygonMode", "nvnPolygonStateGetPolygonOffsetEnables",
-    // multisample state (23)
     "nvnMultisampleStateSetDefaults", "nvnMultisampleStateSetMultisampleEnable", "nvnMultisampleStateSetSamples",
     "nvnMultisampleStateSetAlphaToCoverageEnable", "nvnMultisampleStateSetAlphaToCoverageDither",
     "nvnMultisampleStateGetMultisampleEnable", "nvnMultisampleStateGetSamples", "nvnMultisampleStateGetAlphaToCoverageEnable",
@@ -82,7 +79,6 @@ NXTEST(depth_stencil_defaults_and_round_trip) {
     get_so(&s, NVN_FACE_BACK, &fail, &dfail, &dpass);
     CHECK_EQ(static_cast<int>(fail), static_cast<int>(NVN_STENCIL_OP_KEEP));
 
-    // booleans
     set_dt(&s, 1);
     CHECK_EQ(static_cast<int>(get_dt(&s)), 1);
     set_dt(&s, 0);

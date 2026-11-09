@@ -35,7 +35,6 @@ void spit(const std::string& p, const std::string& t, bool append = false) {
     f << t;
 }
 
-// The status file's text once it contains `what`; empty after about 10 s.
 std::string wait_status(const std::string& status, const char* what) {
     for (int waited = 0; waited < 10000; waited += 10) {
         const std::string s = slurp(status);
@@ -45,7 +44,6 @@ std::string wait_status(const std::string& status, const char* what) {
     return std::string();
 }
 
-// the number after "key": in a status line, -1 when absent
 long long field(const std::string& s, const char* key) {
     const std::string k = std::string("\"") + key + "\":";
     const size_t p = s.find(k);

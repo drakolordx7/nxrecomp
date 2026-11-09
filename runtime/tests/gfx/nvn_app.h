@@ -91,7 +91,6 @@ struct Pool {
     size_t bump = 0;
     uint8_t* base() const { return mem.view; }
     size_t size() const { return mem.size; }
-    // Bump allocation inside the pool: offset aligned to `align`.
     size_t take(size_t n, size_t align = 256) {
         bump = (bump + align - 1) & ~(align - 1);
         const size_t at = bump;
@@ -184,7 +183,6 @@ public:
         pool_desc = make_pool(1u << 20);
         control_mem.assign(1u << 20, 0);
 
-        // descriptor pools
         tex_pool = std::make_unique<NVNtexturePool>();
         smp_pool = std::make_unique<NVNsamplerPool>();
         std::memset(tex_pool.get(), 0, sizeof(NVNtexturePool));
@@ -197,7 +195,6 @@ public:
         std::memset(sync.get(), 0, sizeof(NVNsync));
         api.nvnSyncInitialize(sync.get(), device.get());
 
-        // window: display textures
         std::vector<NVNtexture*> tp;
         for (int i = 0; i < o.window_textures; ++i) {
             auto t = make_texture_2d(NVN_FORMAT_RGBA8, static_cast<int>(o.width), static_cast<int>(o.height), NVN_TEXTURE_FLAGS_DISPLAY | NVN_TEXTURE_FLAGS_COMPRESSIBLE, 1, false);
@@ -263,7 +260,6 @@ public:
         return t;
     }
 
-    // Registers a sampler (built with the defaults plus whatever `setup` does) and returns its pool id.
     template <class F>
     int make_sampler(F&& setup) {
         NVNsamplerBuilder sb;
@@ -360,7 +356,6 @@ public:
     }
     void finish() { api.nvnQueueFinish(queue.get()); }
 
-    // Acquire the next window texture; returns its index.
     int acquire() {
         int idx = -1;
         api.nvnWindowAcquireTexture(window.get(), sync.get(), &idx);
