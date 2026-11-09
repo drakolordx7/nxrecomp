@@ -17,7 +17,9 @@ import subprocess
 import sys
 import time
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# ROOT is the game folder (games/<id>, holding work/ and game/): NX_GAME_DIR, else the current folder. NX is the NX folder (toolchain/).
+ROOT = os.path.abspath(os.environ.get("NX_GAME_DIR") or os.getcwd())
+NX = os.path.abspath(os.environ.get("NX_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 
 # What the harness wants, section.key = value.
 HARNESS_SETTINGS = {
@@ -90,7 +92,7 @@ def set_values(lines, settings):
 
 def setup(eden_dir, keys_dir, nsp):
     eden_dir = os.path.abspath(eden_dir)
-    src = os.path.join(ROOT, "toolchain", "eden")
+    src = os.path.join(NX, "toolchain", "eden")
     for sub in ("keys", "config", "log", "screenshots", "nand", "sdmc", "dump"):
         os.makedirs(os.path.join(eden_dir, "user", sub), exist_ok=True)
     for exe in ("eden.exe", "eden-cli.exe"):

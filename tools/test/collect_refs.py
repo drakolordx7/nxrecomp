@@ -12,7 +12,7 @@ import sys
 
 from PIL import Image, ImageStat
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOT = os.path.abspath(os.environ.get("NX_GAME_DIR") or os.getcwd())   # the game folder (games/<id>)
 
 
 def main(argv=None):

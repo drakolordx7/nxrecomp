@@ -1,4 +1,4 @@
-"""Run Metroid Prime Remastered in the portable Eden under work/eden unattended and collect frames (work area S5).
+"""Run a game in the portable Eden under work/eden unattended and collect frames (work area S5).
 
 Frames come from the LunarG screenshot layer (VK_LAYER_LUNARG_screenshot, in the Vulkan SDK): it writes the swapchain image of chosen present numbers as PPM,
 independent of any desktop, so it works in a disconnected session where screen capture is black. A converter thread turns each PPM into a PNG and deletes it.
@@ -25,11 +25,18 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+# ROOT is the game folder (games/<id>, holding work/ and game/): NX_GAME_DIR, else the current folder.
+ROOT = os.path.abspath(os.environ.get("NX_GAME_DIR") or os.getcwd())
 sys.path.insert(0, HERE)
+# edengdb holds the game's code addresses, so it lives in the game's own tools/test folder.
+sys.path.insert(1, os.path.join(ROOT, "tools", "test"))
 
-import edengdb  # noqa: E402
 import edeninput  # noqa: E402
+
+
+def _edengdb():
+    import edengdb
+    return edengdb
 
 DEFAULT_NSP = os.environ.get("MPR_DUMP", "")   # your own .nsp; or pass --nsp
 VK_SDK = os.path.join(os.environ.get("VULKAN_SDK", ""), "Bin")   # the Vulkan SDK installer sets VULKAN_SDK
@@ -104,14 +111,14 @@ def run(args):
         # release the start-up wait: connect, look up the modules, continue
         for _ in range(60):
             try:
-                g0 = edengdb.Gdb(port=args.port)
+                g0 = _edengdb().Gdb(port=args.port)
                 break
             except OSError:
                 time.sleep(0.5)
         else:
             proc.kill()
             raise SystemExit("gdb stub did not come up")
-        base = edengdb.main_base(g0)
+        base = _edengdb().main_base(g0)
         g0.cont()
         g0.close()
     index.t0 = time.time()
@@ -139,12 +146,12 @@ def run(args):
                 elif "trace" in ev:
                     try:
                         if not mgr:
-                            gdb = edengdb.Gdb(port=args.port)
-                            mgr = edengdb.capture_manager(gdb, base, 30.0)
+                            gdb = _edengdb().Gdb(port=args.port)
+                            mgr = _edengdb().capture_manager(gdb, base, 30.0)
                             gdb.close()
                             gdb = None
-                        g = edengdb.Gdb(port=args.port)
-                        ev["frames_written"] = edengdb.trace(g, base, os.path.join(out, "trace_%s.jsonl" % ev.get("name", "eden")), int(ev["trace"]), mgr)
+                        g = _edengdb().Gdb(port=args.port)
+                        ev["frames_written"] = _edengdb().trace(g, base, os.path.join(out, "trace_%s.jsonl" % ev.get("name", "eden")), int(ev["trace"]), mgr)
                         g.close()
                     except Exception as e:  # noqa: BLE001
                         ev["error"] = str(e)
@@ -152,15 +159,15 @@ def run(args):
                     try:
                         dump = {"main_base": hex(base)}
                         for attempt in range(int(ev.get("attempts", 6))):
-                            gdb = edengdb.Gdb(port=args.port)
-                            mgr = mgr or edengdb.capture_manager(gdb, base, 30.0)
+                            gdb = _edengdb().Gdb(port=args.port)
+                            mgr = mgr or _edengdb().capture_manager(gdb, base, 30.0)
                             gdb.close()
                             if mgr:
                                 break
                         dump["mgr"] = hex(mgr)
                         if mgr:
-                            g = edengdb.Gdb(port=args.port)
-                            dump["regions"] = edengdb.raw_dump(g, base, mgr)
+                            g = _edengdb().Gdb(port=args.port)
+                            dump["regions"] = _edengdb().raw_dump(g, base, mgr)
                             g.cont()
                             g.close()
                         with open(os.path.join(out, "raw_%s.json" % ev["raw"]), "w") as f:
@@ -170,12 +177,12 @@ def run(args):
                 elif "state" in ev:
                     try:
                         if not mgr:
-                            gdb = edengdb.Gdb(port=args.port)
-                            mgr = edengdb.capture_manager(gdb, base, 20.0)
+                            gdb = _edengdb().Gdb(port=args.port)
+                            mgr = _edengdb().capture_manager(gdb, base, 20.0)
                             gdb.close()
                             gdb = None
-                        g = edengdb.Gdb(port=args.port)
-                        st = edengdb.read_state(g, base, mgr, debug=True)
+                        g = _edengdb().Gdb(port=args.port)
+                        st = _edengdb().read_state(g, base, mgr, debug=True)
                         g.cont()
                         g.close()
                         st["_wall_s"] = round(now, 2)

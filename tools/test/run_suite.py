@@ -2,7 +2,7 @@
 """Run a TOML suite of scripted runs against the game exe, headless, and print one PASS/FAIL table.
 
 Usage:
-    python run_suite.py SUITE.toml [--only a,b] [--tag t] [--exe X] [--keep] [--list] [--jobs N]
+    python run_suite.py SUITE.toml [--only a,b] [--tag t] [--exe X] [--log NAME] [--keep] [--list] [--jobs N]
 
 Exit:
     0  every selected run is PASS
@@ -10,7 +10,7 @@ Exit:
     2  suite file / usage error (nothing was run)
 
 Outputs:
-    <out_root>\\<run>[_<n>]\\   one dir per attempt (stdout.txt, stderr.txt, mpr.log, result.json, ...)
+    <out_root>\\<run>[_<n>]\\   one dir per attempt (stdout.txt, stderr.txt, <log>, result.json, ...)
     <out_root>\\suite_result.json   list of per-run dicts
 
 Suite format and the exit-code contract of the game exe are described in the
@@ -44,6 +44,7 @@ TOTALS_LABELS = {
     "FREEZE": "freeze", "TIMEOUT": "timeout", "ERROR": "error",
 }
 DEFAULT_TIMEOUT = 300.0
+DEFAULT_LOG = "game.log"
 DEFAULT_MIN_SSIM = 0.85
 NOTE_MAX = 70
 RUN_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -71,6 +72,7 @@ class RunSpec:
     ref_trace: Optional[dict]          # {"ref": Path, "tol": {name: float}, "align": str}
     ref_shots: dict                    # shotname -> {"ref": Path, "min_ssim": float, "mask": Any}
     tags: list
+    log: str = DEFAULT_LOG             # name of the game's log file in each run folder (suite key `log`, or --log)
 
 
 @dataclass
@@ -251,6 +253,7 @@ def load_suite(path: Path, exe_override: Optional[str] = None):
             ref_trace=ref_trace,
             ref_shots=ref_shots,
             tags=_as_str_list(raw.get("tags", []), "tags") if raw.get("tags") else [],
+            log=str(get("log", DEFAULT_LOG)),
         ))
     return out_root, specs
 
@@ -278,7 +281,7 @@ def build_env(spec: RunSpec, outdir: Path) -> dict:
     env["NXRT_TEST_SCRIPT"] = str(spec.script)
     env["NXRT_TEST_OUT"] = str(outdir)
     env["NXRT_TEST_DETERMINISTIC"] = "1" if spec.deterministic else "0"
-    env["NXRT_LOG_PATH"] = str(outdir / "mpr.log")
+    env["NXRT_LOG_PATH"] = str(outdir / spec.log)
     if spec.regions is not None:
         env["NXRT_TEST_REGIONS"] = str(spec.regions)
     else:
@@ -582,6 +585,7 @@ def main(argv=None) -> int:
     ap.add_argument("--only", default="", help="comma-separated run names to run")
     ap.add_argument("--tag", action="append", default=[], help="run only runs carrying this tag (repeatable)")
     ap.add_argument("--exe", help="override the exe for every run (one path)")
+    ap.add_argument("--log", help="log file name for every run (default: the suite's `log`, else game.log)")
     ap.add_argument("--keep", action="store_true",
                     help="do not clear existing run output folders before running")
     ap.add_argument("--list", action="store_true", help="print the selected run names and exit")
@@ -595,6 +599,9 @@ def main(argv=None) -> int:
         if not suite_path.is_file():
             raise SuiteError(f"suite file not found: {suite_path}")
         out_root, specs = load_suite(suite_path, args.exe)
+        if args.log:
+            for s in specs:
+                s.log = args.log
         only = [n for n in args.only.split(",")] if args.only else None
         chosen = select_runs(specs, only, args.tag)
         if not chosen:

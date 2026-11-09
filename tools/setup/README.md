@@ -35,7 +35,7 @@ mpr_setup_cli --input "Metroid Prime Remastered.nsp" --out D:\MPR [--keys prod.k
 mpr_setup_cli --input base.xci --input update.nsp --input dlc.nsp --out D:\Game   # base game + update + DLC (or --input a,b,c)
 mpr_setup_cli --input dump.nsp --check            # only look at the dump, write nothing
 mpr_setup_cli --find-keys                         # list key files it can find
-mpr_setup_cli --input dump.nsp --out D:\MPR --shader-pack D:\packs\shader_cache.mprshc   # pack from another place (--shader-cache also works)
+mpr_setup_cli --input dump.nsp --out D:\MPR --shader-pack D:\packs\shader_cache.mprshc   # pack from another place
 mpr_setup_cli --input dump.nsp --out D:\MPR --no-shaders   # developer only: install without shaders; the game draws nothing
 ```
 

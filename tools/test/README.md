@@ -3,17 +3,13 @@
 Host-side half of the test tooling. The runtime half (scripted runs, traces, deterministic mode, record/replay) is `runtime/docs/S5.md`. Python is `tools\.venv\Scripts\python` (numpy and Pillow only); tests are stdlib `unittest`:
 
     cd tools\test
-    ..\.venv\Scripts\python -I -m unittest discover -s tests -v        everything below (163 tests, no game needed)
+    ..\.venv\Scripts\python -I -m unittest discover -s tests -v        everything below (no game needed)
 
-## Scripted runs against mpr.exe
+## Scripted runs against the game exe
 
 | Tool | What it does |
 |---|---|
-| `run_suite.py SUITE.toml [--only a,b] [--tag t] [--exe path] [--jobs N] [--list]` | Runs each `[[run]]` of a suite against the game exe headless and prints one PASS/FAIL table (PASS, FAIL, CRASH, FREEZE, TIMEOUT, ERROR). Exit code 0 only when every run passes. A run can repeat (the final hashes must match), compare its trace with a reference (`ref_trace`), compare screenshots (`ref_shots`) and expect failure (`expect_exit = 1`). Format and exit-code contract: top of the file. |
-| `suites/boot.toml`, `scripts/*.nxs` | What runs today (bring-up determinism) and the first gameplay script (warp to the Frigate, walk). The DSL is documented in `runtime/include/nxrt/tt_script.h`. |
-| `regions.tsv`, `gen_regions.py` | World and area names for `@warp` / `@area`, generated from the practice mod's `RegionEntries.h` (284 rows). |
-| `phys_table.py --exe DIR [--rates 60,120,144,240] [--scenarios walk,half,jump,rjump,ball] [--tag t]` | Physics table (S22): walk and ball speed, jump height and air time at each step rate, from the player's position in the trace, one game process per rate with `@rate`. Prints the deviation from the first rate. Tests: `tests/test_phys_table.py`. |
-| `keys_check.py [--exe DIR]` | Presses the keyboard beam and visor keys in the game and prints the beam and visor numbers the game reports; exit 0 when they are the expected ones. |
+| `run_suite.py SUITE.toml [--only a,b] [--tag t] [--exe path] [--log NAME] [--jobs N] [--list]` | Runs each `[[run]]` of a suite against the game exe headless and prints one PASS/FAIL table (PASS, FAIL, CRASH, FREEZE, TIMEOUT, ERROR). Exit code 0 only when every run passes. A run can repeat (the final hashes must match), compare its trace with a reference (`ref_trace`), compare screenshots (`ref_shots`) and expect failure (`expect_exit = 1`). The game log name comes from the suite (`log`) or `--log`. Format and exit-code contract: top of the file. |
 
 ## Comparators
 
@@ -34,9 +30,10 @@ Eden v0.2.1 (`toolchain/eden`) runs in portable mode from `work\eden` (a `user\`
 | `eden_config.py setup` | Creates the portable folder, installs the keys, writes the harness settings (GDB stub on port 6543, null audio, 1x resolution) into `user\config\sdl2-config.ini`. |
 | `eden_run.py --out DIR --every N --seconds S [--timeline t.json]` | Launches `eden-cli` on the NSP with the LunarG screenshot layer, converts the captured frames to PNG, posts timed key presses, optionally samples game state over GDB. |
 | `edeninput.py` | Posts WM_KEYDOWN/UP to the Eden window (works in a disconnected session, where SendInput does not). Switch buttons map to Eden's default keyboard profile. |
-| `edengdb.py info\|state\|trace` | GDB remote client for Eden's stub. `state` reads the same fields as the runtime's probes (same offsets), `trace` writes a per-frame JSONL by breaking on `CGameArchitectureSupport::Update`. |
 | `wincap.py` | Window capture (PrintWindow / BitBlt / screen). Only useful in an interactive session: in a disconnected one Eden's window comes out black, which is why frames come from the Vulkan layer. |
 
 Facts the harness is built on (research notes in `runtime/docs/debug/10x.md`): a GDB client connecting pauses the game and it stays paused until a continue; `monitor get info` prints the module list (main is the module `GameFramework.nss`); `monitor` replies are hex-encoded text; the screenshot layer is driven by `VK_SCREENSHOT_FRAMES` (a comma list of present numbers) and `VK_SCREENSHOT_DIR`; with the GDB stub switched on Eden WAITS at start for a client (eden_run.py switches it on only for runs that sample state); the main module base changes from run to run (ASLR), `edengdb` asks for it.
 
 Reference captures: `collect_refs.py timelines/refs_session1.json` copies named frames from the exploration sessions into `work\eden_refef` (boot logo, title, main menu, file select, difficulty, loading, the Frigate intro cinematic, an attract-mode gameplay clip, plus a GDB state read `eden_state_frigate_hangar.json` and a per-frame GDB trace). `contact_sheet.py` makes one overview image of a session. Timeline files: `timelines/*.json`. A new game takes 12 to 35 minutes of wall time to reach the Frigate in Eden on this machine (level loading, shader building), so a session is long; first gameplay frames were not reached (see the S5 report).
+
+Game-specific test content (suites, scripts, timelines, region tables, `gameplay.py`, `edengdb.py`, `phys_table.py`, `sweep.py`, the S11/S13 probes) lives in each game: `games/<id>/tools/test`. `eden_run.py`, `eden_config.py` and `collect_refs.py` take the game folder from `NX_GAME_DIR` (default: the current folder) and load `edengdb` from `<game>/tools/test`.
