@@ -2,6 +2,16 @@
 // The script steps Metroid Prime Remastered registers with the test tooling (nxrt/tt.h GameProbes::steps). The base's grammar (tt_script.h) has
 // no game in it: these lines parse only with this module registered, and run in the frame hook with the live context.
 //
+//   @area <id> [timeout=<n>]  wait until the current area id equals <id> (GUID text 8-4-4-4-12, or a name from the region table)
+//   @world <id> [timeout=<n>] the same for the world id
+//   @pos <x> <y> <z> [<r>] [timeout=<n>]   wait until the player is within r (default 1.0) world units of the point
+//   @igt <seconds> [timeout=<n>]           wait until the in-game play time is >= seconds
+//   @run <seconds> [timeout=<n>] [soft]    wait until the in-game play time has advanced by <seconds> since this step began (the game clock stands
+//                             still while an area loads, so this is "the game ran for that long"). `soft`: when the timeout runs out, log
+//                             "SOFT-TIMEOUT" and go on instead of failing the run
+//   @mash <keys> <period_ms> area|world <id> [timeout=<ms>]
+//                             press the buttons for 250 ms of host time every <period_ms> until the area (or world) becomes current: gets through the
+//                             front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
 //   @warp <world> <area>      warp to the area (the practice mod's sequence, mpr_tt_probe.cpp); then waits until that area is current. The warp waits
 //                             until the game's resource loader has been idle for 10 frames ([test] warp_wait_loader, default on; S42: the warp's QuitGame
 //                             tears the game instance down while the loader may still be building assets for it), or [test] warp_loader_max_ms (30000)
@@ -19,14 +29,18 @@
 //   @probe <in> <out>         the player's own collision box against the static world at positions: in = lines `x y z`, out = `0` free / `1` collides per line
 //   @watch on [vely|posy|both] | off   hardware write watch (debug registers) on the player's physics velocity.y and/or transform position.y; every write is
 //                             logged with the writing instruction, the frame and the value (lines `watch:` in the log); off stops it and logs how many hits were seen
-// The state keys @assert and @mashuntil take besides the base fields: state spd pitch cam morph orbit camyaw campitch beam visor msl (mpr_tt_probe.cpp).
+// The state keys @assert and @mashuntil take (mpr_tt_probe.cpp): area world (ids, == and != only), igt health px py pz vx vy vz speed, state spd pitch cam
+// morph orbit camyaw campitch beam visor msl.
 #include <windows.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "nxrt/config.h"
 #include "nxrt/log.h"
@@ -35,6 +49,17 @@
 namespace nxrt::tt::mpr {
 
 namespace {
+
+std::string low(std::string v) {
+    for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return v;
+}
+
+// A readable field of the state.
+const StateField* readable(const StepRun& r, const char* key) {
+    const StateField* f = r.valid ? r.state.field(key) : nullptr;
+    return f && f->shown ? f : nullptr;
+}
 
 // EItemType (CPlayerStateMP1::EItemType, docs/mpr/enums.json): name (case and underscores ignored) or number -> id; -1 when unknown. The one table
 // @give and @grant read.
@@ -63,6 +88,77 @@ bool split_files(const std::string& text, std::string* in, std::string* out) {
     if (sp == std::string::npos) return false;
     *in = text.substr(0, sp);
     *out = text.substr(sp + 1);
+    return true;
+}
+
+// <id> [timeout=<n>] for @area (want_area) and @world.
+bool parse_where(const StepLine& l, Step* s, std::string* err, bool want_area) {
+    std::vector<std::string> pos;
+    int64_t timeout = -1;
+    if (!l.take_timeout(&pos, &timeout, err)) return false;
+    if (pos.size() != 1) return l.usage(want_area ? "@area <id> [timeout=<n>]" : "@world <id> [timeout=<n>]", err);
+    if (!l.id(pos[0], want_area, s->id, err)) return false;
+    s->name1 = pos[0];
+    s->text = want_area ? "area" : "world";
+    s->timeout = timeout;
+    return true;
+}
+bool parse_area(const StepLine& l, Step* s, std::string* err) { return parse_where(l, s, err, true); }
+bool parse_world(const StepLine& l, Step* s, std::string* err) { return parse_where(l, s, err, false); }
+
+bool parse_pos(const StepLine& l, Step* s, std::string* err) {
+    std::vector<std::string> pos;
+    int64_t timeout = -1;
+    if (!l.take_timeout(&pos, &timeout, err)) return false;
+    if (pos.size() != 3 && pos.size() != 4) return l.usage("@pos <x> <y> <z> [<r>] [timeout=<n>]", err);
+    if (!l.real(pos[0], &s->x, err) || !l.real(pos[1], &s->y, err) || !l.real(pos[2], &s->z, err)) return false;
+    s->r = 1.0;
+    if (pos.size() == 4) {
+        if (!l.real(pos[3], &s->r, err)) return false;
+        if (s->r < 0.0) { *err = "@pos radius must be >= 0, got '" + pos[3] + "'"; return false; }
+    }
+    s->timeout = timeout;
+    return true;
+}
+
+bool parse_igt(const StepLine& l, Step* s, std::string* err) {
+    std::vector<std::string> pos;
+    int64_t timeout = -1;
+    if (!l.take_timeout(&pos, &timeout, err)) return false;
+    if (pos.size() != 1) return l.usage("@igt <seconds> [timeout=<n>]", err);
+    if (!l.real(pos[0], &s->x, err)) return false;
+    if (s->x < 0.0) { *err = "@igt seconds must be >= 0, got '" + pos[0] + "'"; return false; }
+    s->timeout = timeout;
+    return true;
+}
+
+bool parse_run(const StepLine& l, Step* s, std::string* err) {
+    std::vector<std::string> pos;
+    int64_t timeout = -1;
+    if (!l.take_timeout(&pos, &timeout, err)) return false;
+    s->count = 0;                                    // 1: soft
+    if (pos.size() == 2 && low(pos[1]) == "soft") { s->count = 1; pos.pop_back(); }
+    if (pos.size() != 1) return l.usage("@run <seconds> [timeout=<n>] [soft]", err);
+    if (!l.real(pos[0], &s->x, err)) return false;
+    if (s->x < 0.0) { *err = "@run seconds must be >= 0, got '" + pos[0] + "'"; return false; }
+    s->timeout = timeout;
+    return true;
+}
+
+bool parse_mash(const StepLine& l, Step* s, std::string* err) {
+    const char* form = "@mash <keys> <period_ms> area|world <id> [timeout=<ms>]";
+    std::vector<std::string> pos;
+    int64_t timeout = -1;
+    if (!l.take_timeout(&pos, &timeout, err)) return false;
+    if (pos.size() != 4) return l.usage(form, err);
+    if (!l.keys(pos[0], &s->buttons, err)) return false;
+    if (!l.real(pos[1], &s->x, err)) return false;
+    const std::string what = low(pos[2]);
+    if (what != "area" && what != "world") return l.usage(form, err);
+    s->text = what;
+    if (!l.id(pos[3], what == "area", s->id, err)) return false;
+    s->name1 = pos[3];
+    s->timeout = timeout;
     return true;
 }
 
@@ -190,10 +286,92 @@ StepStatus run_warp(StepRun& r) {
         if (r.timed_out()) { *r.error = "cannot warp: no state manager seen (the game is not in a level, or the hooks are not built in)"; return StepStatus::Fail; }
         return StepStatus::Wait;
     }
-    const GameState& s = r.state;
-    const bool met = r.valid && s.have_world && std::memcmp(s.area, st.id, 16) == 0 && std::memcmp(s.world, st.id2, 16) == 0;
+    const StateField* area = readable(r, "area");
+    const StateField* world = readable(r, "world");
+    const bool met = area && world && std::memcmp(area->id, st.id, 16) == 0 && std::memcmp(world->id, st.id2, 16) == 0;
     if (met) { w.warped = false; return StepStatus::Done; }
     if (r.timed_out()) { *r.error = "timeout waiting for the warp target area to become current"; return StepStatus::Fail; }
+    return StepStatus::Wait;
+}
+
+// A wait of the base's kind: done when `met`, a failure naming `what` after the step's timeout in frames.
+StepStatus wait_cond(StepRun& r, bool met, const std::string& what) {
+    if (met) return StepStatus::Done;
+    if (r.timed_out()) { *r.error = "timeout after " + std::to_string(r.timeout) + " frames waiting for " + what; return StepStatus::Fail; }
+    return StepStatus::Wait;
+}
+
+std::string id_label(const Step& st) { return st.text + " " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1); }
+
+StepStatus run_where(StepRun& r) {
+    const StateField* f = readable(r, r.step.text.c_str());
+    return wait_cond(r, f && std::memcmp(f->id, r.step.id, 16) == 0, id_label(r.step));
+}
+
+StepStatus run_pos(StepRun& r) {
+    const Step& st = r.step;
+    const StateField* f = readable(r, "pos");
+    bool met = false;
+    if (f) {
+        const double dx = f->vec[0] - st.x, dy = f->vec[1] - st.y, dz = f->vec[2] - st.z;
+        met = std::sqrt(dx * dx + dy * dy + dz * dz) <= st.r;
+    }
+    char b[96];
+    std::snprintf(b, sizeof b, "position (%.2f, %.2f, %.2f) within %.2f", st.x, st.y, st.z, st.r);
+    return wait_cond(r, met, b);
+}
+
+StepStatus run_igt(StepRun& r) {
+    const StateField* f = readable(r, "igt");
+    return wait_cond(r, f && f->value >= r.step.x, "the in-game time");
+}
+
+double g_run_base = -1;                              // @run: the play time at the first readable frame of the step
+
+StepStatus run_run(StepRun& r) {
+    const Step& st = r.step;
+    if (r.first) g_run_base = -1;
+    bool met = false;
+    if (const StateField* f = readable(r, "igt")) {
+        if (g_run_base < 0 || f->value < g_run_base) g_run_base = f->value;
+        met = f->value - g_run_base >= st.x;
+    }
+    char b[64];
+    std::snprintf(b, sizeof b, "%.1f s of play time", st.x);
+    if (st.count && !met) {
+        if (r.timed_out()) {
+            NXLOG_W("script", "SOFT-TIMEOUT line %d: no %s within %lld frames, going on", st.line, b, static_cast<long long>(r.timeout));
+            return StepStatus::Done;
+        }
+        return StepStatus::Wait;
+    }
+    return wait_cond(r, met, b);
+}
+
+struct MashState { uint64_t start_ms = 0, next_ms = 0, release_ms = 0; bool down = false; };
+MashState g_mash;
+
+StepStatus run_mash(StepRun& r) {
+    const Step& st = r.step;
+    const uint64_t now_ms = GetTickCount64();
+    if (r.first) g_mash = MashState{now_ms, now_ms, 0, false};
+    const StateField* f = readable(r, st.text.c_str());
+    if (f && std::memcmp(f->id, st.id, 16) == 0) { *r.press = 0; return StepStatus::Done; }
+    const int64_t to_ms = st.timeout < 0 ? 600000 : st.timeout;
+    if (to_ms > 0 && static_cast<int64_t>(now_ms - g_mash.start_ms) >= to_ms) {
+        *r.press = 0;
+        *r.error = "timeout waiting for " + id_label(st);
+        return StepStatus::Fail;
+    }
+    // The press lasts 250 ms of host time: in deterministic mode a frame is a tiny slice of host time and the front end runs on the host clock.
+    if (g_mash.down) {
+        if (now_ms >= g_mash.release_ms) { g_mash.down = false; *r.press = 0; }
+    } else if (now_ms >= g_mash.next_ms) {
+        *r.press = st.buttons;
+        g_mash.down = true;
+        g_mash.release_ms = now_ms + 250;
+        g_mash.next_ms = now_ms + static_cast<uint64_t>(st.x);
+    }
     return StepStatus::Wait;
 }
 
@@ -252,6 +430,12 @@ StepStatus run_watch(StepRun& r) {
 }
 
 const GameStepDef kSteps[] = {
+    {"@area", &parse_area, &run_where},
+    {"@world", &parse_world, &run_where},
+    {"@pos", &parse_pos, &run_pos},
+    {"@igt", &parse_igt, &run_igt},
+    {"@run", &parse_run, &run_run},
+    {"@mash", &parse_mash, &run_mash},
     {"@warp", &parse_warp, &run_warp},
     {"@give", &parse_give, &run_give},
     {"@grant", &parse_grant, &run_grant},

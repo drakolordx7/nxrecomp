@@ -208,12 +208,14 @@ NXTEST(probes_read_the_fake_game) {
     begin(r, {{"trace", "none"}, {"deterministic", "1"}});
     GameState g;
     REQUIRE(read_state(&g));
-    CHECK(g.have_world && g.have_player && g.have_igt && g.have_hp);
-    CHECK_EQ(tt_guid_to_text(g.world), std::string(kWorld));
-    CHECK_EQ(tt_guid_to_text(g.area), std::string(kAreaA));
-    CHECK(g.pos[0] == 1.5f && g.pos[1] == -2.0f && g.pos[2] == 3.25f);
-    CHECK(g.hp == 99.0f);
-    CHECK(g.igt == 12.5);
+    const StateField *world = g.field("world"), *area = g.field("area"), *pos = g.field("pos"), *hp = g.field("health"), *igt = g.field("igt");
+    REQUIRE(world && area && pos && hp && igt);
+    CHECK(world->shown && pos->shown && igt->shown && hp->shown);
+    CHECK_EQ(tt_guid_to_text(world->id), std::string(kWorld));
+    CHECK_EQ(tt_guid_to_text(area->id), std::string(kAreaA));
+    CHECK(pos->vec[0] == 1.5f && pos->vec[1] == -2.0f && pos->vec[2] == 3.25f);
+    CHECK(hp->value == 99.0);
+    CHECK(igt->value == 12.5);
     shutdown();
 }
 
@@ -369,8 +371,13 @@ uint64_t legacy_bytes(uint64_t h, const void* p, size_t n) {
 }
 uint32_t legacy_fbits(float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; }
 uint64_t legacy_dbits(double f) { uint64_t u; std::memcpy(&u, &f, 8); return u; }
+bool shown(const GameState& g, const char* key) { const StateField* f = g.field(key); return f && f->shown; }
 uint64_t fv(const GameState& g, const char* key) {
     const StateField* f = g.field(key);
+    if (!*key) {                                      // the hash-only word of the readable groups is the last unnamed field
+        f = nullptr;
+        for (const StateField& x : g.fields) if (!*x.key) f = &x;
+    }
     return f ? static_cast<uint32_t>(static_cast<int64_t>(f->value)) : 0;
 }
 }
@@ -383,13 +390,15 @@ NXTEST(frame_hash_and_trace_keep_the_pre_generic_format) {
     const GameState& g = last_state();
     uint64_t h = 0xcbf29ce484222325ull;
     h = legacy_mix(h, 0);
-    h = legacy_mix(h, 1u | (g.have_world ? 2u : 0u) | (g.have_player ? 4u : 0u) | (g.have_igt ? 8u : 0u) | (g.have_hp ? 16u : 0u));
-    h = legacy_bytes(h, g.world, 16);
-    h = legacy_bytes(h, g.area, 16);
-    for (int i = 0; i < 3; i++) { h = legacy_mix(h, legacy_fbits(g.pos[i])); h = legacy_mix(h, legacy_fbits(g.vel[i])); }
-    h = legacy_mix(h, legacy_fbits(g.yaw));
-    h = legacy_mix(h, legacy_fbits(g.hp));
-    h = legacy_mix(h, legacy_dbits(g.igt));
+    h = legacy_mix(h, 1u | (shown(g, "world") ? 2u : 0u) | (shown(g, "pos") ? 4u : 0u) | (shown(g, "igt") ? 8u : 0u) | (shown(g, "hp") ? 16u : 0u));
+    h = legacy_bytes(h, g.field("world")->id, 16);
+    h = legacy_bytes(h, g.field("area")->id, 16);
+    const float* pos = g.field("pos")->vec;
+    const float* vel = g.field("vel")->vec;
+    for (int i = 0; i < 3; i++) { h = legacy_mix(h, legacy_fbits(pos[i])); h = legacy_mix(h, legacy_fbits(vel[i])); }
+    h = legacy_mix(h, legacy_fbits(static_cast<float>(g.field("yaw")->value)));
+    h = legacy_mix(h, legacy_fbits(static_cast<float>(g.field("hp")->value)));
+    h = legacy_mix(h, legacy_dbits(g.field("igt")->value));
     h = legacy_mix(h, fv(g, "state"));
     h = legacy_mix(h, fv(g, ""));
     h = legacy_mix(h, legacy_fbits(static_cast<float>(g.field("pitch")->value)));
@@ -398,11 +407,15 @@ NXTEST(frame_hash_and_trace_keep_the_pre_generic_format) {
     h = legacy_mix(h, fv(g, "visor") | fv(g, "msl") << 32);
     CHECK_EQ(last_hash(), h);
     shutdown();
-    // trace keys and their order: state, then pitch cam morph orbit (readable aim group), then hp and igt
+    // trace keys: world area pos vel yaw hp igt, then state, then pitch cam morph orbit (readable aim group)
     const std::string t = slurp(r.out + "/trace.jsonl");
+    const size_t w = t.find("\"world\":\"");
+    REQUIRE(w != std::string::npos);
+    const size_t v = t.find(",\"pos\":[", w);
+    CHECK(v != std::string::npos && t.find(",\"vel\":[", v) != std::string::npos);
+    CHECK(t.find("\"hp\":99", w) != std::string::npos);
+    CHECK(t.find("\"igt\":", w) != std::string::npos);
     const size_t a = t.find("\"state\":0,\"pitch\":0,\"cam\":0,\"morph\":");
     REQUIRE(a != std::string::npos);
     CHECK(t.find(",\"orbit\":", a) != std::string::npos);
-    CHECK(t.find("\"hp\":99", a) != std::string::npos);
-    CHECK(t.find("\"igt\":", a) != std::string::npos);
 }
