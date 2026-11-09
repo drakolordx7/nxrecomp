@@ -3,7 +3,8 @@
 // runtime: the launcher links this part alone.
 #include "mpr_game.h"
 #include "nx_game.h"     // generated from games/mpr/game.json (NXGAME_*)
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
+#include "mpr_settings.h"
 
 namespace nxrt::play {
 const GameDefaults& mpr_game_defaults();      // mpr_defaults.cpp
@@ -31,6 +32,7 @@ const game::Info& data_info() {
         g.shader_pack = NXGAME_SHADER_PACK;
         g.save_folder = NXGAME_SAVE_FOLDER;
         g.play_defaults = &play::mpr_game_defaults();
+        g.settings = &play::mpr_settings_section_data();
         return g;
     }();
     return info;

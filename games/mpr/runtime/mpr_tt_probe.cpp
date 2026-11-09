@@ -37,7 +37,10 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "mpr_sites.h"
-#include "tt_internal.h"
+#include "nxrt/game/tt_probe.h"
+#include "nxrt/memory.h"
+#include "nxrt/tt.h"
+#include "nxrt/tt_script.h"
 
 // The probes live in their own namespace and reach the test tooling through tt::GameProbes (nxrt/tt.h, mpr_game_probes() below). The memory
 // helpers they use are the base's (src/testtools/tt_game.cpp).
@@ -380,7 +383,7 @@ void set_debug_regs(bool on) {
 }
 }  // namespace
 
-void watch_stop();   // below; tt_internal.h used to declare it
+void watch_stop();   // below
 
 bool watch_start(::Ctx* c, int what) {
     uint64_t player = g_layout.player ? g_layout.player : g_player.load();

@@ -6,7 +6,7 @@
 #include <string>
 
 #include "play_aim.h"
-#include "play/play_camlook.h"
+#include "nxrt/game/play_camlook.h"
 
 NXTEST_GROUP(play_camlook)
 

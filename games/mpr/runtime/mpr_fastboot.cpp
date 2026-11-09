@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Start-up and menu tweaks of Metroid Prime Remastered (S46), see mpr_fastboot.h for the design and docs/S46.md for what was found in the game.
 #include "mpr_fastboot.h"
+#include "mpr_settings.h"
 
 #include <algorithm>
 #include <atomic>
@@ -16,7 +17,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "play_aim.h"
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxrt::play {
 
@@ -311,7 +312,7 @@ void fastboot_remove() {
 }
 
 void fastboot_set(const Settings& s) {
-    const FastbootSettings& f = s.fastboot;
+    const FastbootSettings& f = mpr_settings(s).fastboot;
     const bool was_intro = g.skip_intro.exchange(f.skip_intro), was_logos = g.skip_logos.exchange(f.skip_boot_logos);
     const double was_rate = g.menu_rate.exchange(fastboot_menu_rate(f));
     if (was_intro != f.skip_intro || was_logos != f.skip_boot_logos || was_rate != fastboot_menu_rate(f) || g.base == 0)

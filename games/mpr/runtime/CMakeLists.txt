@@ -5,17 +5,27 @@
 #   nxrt_game_mpr_data   identity, branding, factory controls.ini (pure data; the launcher links it)
 #   nxrt_game_mpr_core   + title facts, frame-step sites, test-tooling probes (links nxrt)
 #   nxrt_game_mpr        + play-mode hooks, button prompts, boot hook (links nxrt_gfx; only with NXRT_BUILD_GFX). mpr.exe links this one.
-# The headers of the base's play mode and test tooling are on the include path of all three (the hooks are written against them).
+#   nxrt_game_mpr_launcher  the data library + the launcher pages (Tweaks tab, language and start-up rows); only the launcher exe links it.
+# The module is written against the base's public SDK headers (include/nxrt/game/...) alone: no private src/ directory is on its path.
 set(_mpr "${CMAKE_CURRENT_SOURCE_DIR}")
 set(_rt "${NXRT_SOURCE_DIR}")
-set(NXRT_GAME_MPR_INCLUDES "${_rt}/include" "${_mpr}" "${NX_GAME_GENERATED_DIR}" "${_rt}/src/gfx" "${_rt}/src/gfx/play" "${_rt}/src/testtools")
+set(NXRT_GAME_MPR_INCLUDES "${_rt}/include" "${_mpr}" "${NX_GAME_GENERATED_DIR}")
+# What the tests of this module add: private headers of the base they check (the play engine, the NVN layer, the launcher's editors).
+set(NXRT_GAME_MPR_TEST_INCLUDES "${_rt}/src/gfx" "${_rt}/src/gfx/play" "${_rt}/src/gfx/nvn" "${_rt}/src/testtools" "${_rt}/apps/launcher")
 
-add_library(nxrt_game_mpr_data STATIC "${_mpr}/mpr_data.cpp" "${_mpr}/mpr_defaults.cpp" "${_mpr}/mpr_vocabulary.cpp")
+add_library(nxrt_game_mpr_data STATIC "${_mpr}/mpr_data.cpp" "${_mpr}/mpr_defaults.cpp" "${_mpr}/mpr_vocabulary.cpp"
+    "${_mpr}/mpr_settings.cpp" "${_mpr}/mpr_settings_fastboot.cpp")
 target_include_directories(nxrt_game_mpr_data PUBLIC ${NXRT_GAME_MPR_INCLUDES})
 target_compile_features(nxrt_game_mpr_data PUBLIC cxx_std_20)
 
 add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_tt_probe.cpp")
 target_link_libraries(nxrt_game_mpr_core PUBLIC nxrt_game_mpr_data nxrt)
+
+if(TARGET nxrt_launcher_core)
+    add_library(nxrt_game_mpr_launcher STATIC "${_mpr}/mpr_launcher.cpp" "${_mpr}/mpr_page_tweaks.cpp" "${_mpr}/mpr_page_fastboot.cpp")
+    target_link_libraries(nxrt_game_mpr_launcher PUBLIC nxrt_game_mpr_data)
+    target_compile_definitions(nxrt_game_mpr_launcher PUBLIC UNICODE _UNICODE)
+endif()
 
 if(TARGET nxrt_gfx)
     # The setup tool's Retro pak and TXTR readers (base tools/setup/src, MIT-derived format knowledge): the button prompts read the game's icon
@@ -32,7 +42,7 @@ if(TARGET nxrt_gfx)
         "${_mpr}/mpr_game.cpp" "${_mpr}/mpr_boot.cpp" "${_mpr}/mpr_play.cpp" "${_mpr}/mpr_ui.cpp" "${_mpr}/mpr_prompts.cpp" "${_mpr}/mpr_tonemap.cpp"
         "${_mpr}/display_hooks.cpp" "${_mpr}/menu_mouse_game.cpp" "${_mpr}/play_aim.cpp" "${_mpr}/play_ballcam.cpp" "${_mpr}/play_lockcam.cpp" "${_mpr}/play_lookrate.cpp"
         "${_mpr}/play_scenefix.cpp" "${_mpr}/play_jump.cpp" "${_mpr}/play_glow.cpp" "${_mpr}/play_glow_ui.cpp" "${_mpr}/mpr_fastboot.cpp"
-        "${_mpr}/mpr_tint.cpp" "${_mpr}/mpr_texedit.cpp")
+        "${_mpr}/mpr_tint.cpp" "${_mpr}/mpr_texedit.cpp" "${_mpr}/mpr_settings_ui.cpp" "${_mpr}/mpr_ui_fastboot.cpp")
     target_link_libraries(nxrt_game_mpr PUBLIC nxrt_game_mpr_core nxrt_gfx nxrt_mprpak)
 endif()
 
@@ -42,18 +52,18 @@ endif()
 if(NXRT_BUILD_TESTS)
     file(GLOB _mpr_core_tests CONFIGURE_DEPENDS "${_mpr}/tests/core/*.cpp")
     nxrt_add_test_exe(mpr_core_tests SOURCES ${_mpr_core_tests} LINK nxrt_game_mpr_core REGISTER nxrt_register_game_mpr_core
-                      INCLUDES "${_mpr}/tests" DEFINES NXRT_TEST_DATA_DIR="${_rt}/tests/data"
+                      INCLUDES "${_mpr}/tests" ${NXRT_GAME_MPR_TEST_INCLUDES} DEFINES NXRT_TEST_DATA_DIR="${_rt}/tests/data"
                       LINK_OPTIONS /MAP /STACK:67108864 /HIGHENTROPYVA:NO /DEBUG)
     if(TARGET nxrt_game_mpr)
         file(GLOB _mpr_gfx_tests CONFIGURE_DEPENDS "${_mpr}/tests/*.cpp")
         nxrt_add_test_exe(mpr_gfx_tests SOURCES ${_mpr_gfx_tests} LINK nxrt_game_mpr REGISTER nxrt_register_game_mpr
-                          INCLUDES "${_mpr}/tests" "${_rt}/tests/gfx" "${_rt}/src/gfx" "${_rt}/src/gfx/nvn"
+                          INCLUDES "${_mpr}/tests" "${_rt}/tests/gfx" ${NXRT_GAME_MPR_TEST_INCLUDES}
                           DEFINES NXRT_GFX_TEST_DATA_DIR="${_rt}/tests/data/gfx" TIMEOUT 300 ENVIRONMENT "NXRT_GFX_HIDDEN=1"
                           LINK_OPTIONS /MAP /STACK:8388608 /DEBUG)
     endif()
     file(GLOB _mpr_launcher_tests CONFIGURE_DEPENDS "${_mpr}/tests/launcher/*.cpp")
     if(_mpr_launcher_tests AND TARGET nxrt_launcher_core)
         nxrt_add_test_exe(mpr_launcher_tests SOURCES ${_mpr_launcher_tests} LINK nxrt_launcher_core nxrt_game_mpr_data
-                          REGISTER nxrt_register_game_mpr_data INCLUDES "${_mpr}/tests")
+                          REGISTER nxrt_register_game_mpr_data INCLUDES "${_mpr}/tests" ${NXRT_GAME_MPR_TEST_INCLUDES})
     endif()
 endif()

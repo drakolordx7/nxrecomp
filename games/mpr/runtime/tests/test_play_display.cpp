@@ -14,7 +14,7 @@
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/hooks.h"
 #include "display_hooks.h"
-#include "play/play_display.h"
+#include "nxrt/game/play_display.h"
 
 NXTEST_GROUP(play_display)
 

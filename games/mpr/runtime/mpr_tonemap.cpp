@@ -10,7 +10,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 
 namespace nxrt::extras {
 namespace {

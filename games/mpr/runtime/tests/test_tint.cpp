@@ -12,7 +12,7 @@
 #include "test_framework.h"
 
 #include "mpr_tint.h"
-#include "play/play_tweaks.h"
+#include "play_tweaks.h"
 
 NXTEST_GROUP(play_tint)
 

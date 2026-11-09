@@ -15,7 +15,7 @@
 #pragma once
 #include <cstdint>
 
-#include "menu_mouse.h"
+#include "nxrt/game/menu_mouse.h"
 
 namespace nxrt::play::mm {
 

@@ -11,7 +11,7 @@
 
 #include "nxrt/log.h"
 #include "pak.h"
-#include "prompt_resolve.h"
+#include "nxrt/game/prompt_resolve.h"
 #include "txtr.h"
 
 namespace nxrt::play {

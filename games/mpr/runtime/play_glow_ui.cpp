@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "mpr_tint.h"
 #include "play_glow.h"
+#include "mpr_settings.h"
 
 namespace nxrt::play {
 
@@ -46,7 +47,7 @@ bool part_combo(const char* label, GlowPart* p) {
 }  // namespace
 
 bool glow_tab(Settings& edit) {
-    TweakSettings& t = edit.tweaks;
+    TweakSettings& t = mpr_settings(edit).tweaks;
     bool changed = false;
     ImGui::TextUnformatted("Glow colour");
     ImGui::PushTextWrapPos(0.0f);

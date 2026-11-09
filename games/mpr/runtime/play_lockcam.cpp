@@ -417,9 +417,9 @@ void lockcam_remove() {
 }
 
 void lockcam_set(const Settings& s) {
-    g_h.gun_drives_view.store(s.camera.gun_drives_view, std::memory_order_relaxed);
+    g_h.gun_drives_view.store(s.camera.view_sway, std::memory_order_relaxed);
     g_h.margin.store(s.aim.free_lock_margin, std::memory_order_relaxed);
-    if (s.camera.gun_drives_view) lockcam_clear_gun_delta();
+    if (s.camera.view_sway) lockcam_clear_gun_delta();
     if (g_h.aim) g_h.aim->set_free_lock(s.aim.lock_mode == LockMode::Free);
     lockcam_frame();
 }

@@ -7,7 +7,7 @@
 // switches an input off in that context. The Switch side (what "fire" or "beam_2" press on the pad) is the [switch] table; the defaults
 // there are the Remastered "dual stick" layout: ZR fire, ZL lock on, R missile, B jump, Y morph ball, + map, - pause, X held with the
 // d-pad picks a beam, the d-pad alone picks a visor.
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxrt::play {
 

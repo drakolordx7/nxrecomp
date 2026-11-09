@@ -3,8 +3,9 @@
 // button prompts and the boot hook, which need the graphics library.
 #include "mpr_game.h"
 
-#include "play_game.h"
-#include "prompt_resolve.h"
+#include "nxrt/game/play_game.h"
+#include "nxrt/game/prompt_resolve.h"
+#include "mpr_settings.h"
 
 namespace nxrt::play {
 const GamePlay& mpr_game_play();          // mpr_play.cpp
@@ -21,6 +22,7 @@ const game::Info& full_info() {
     static const game::Info info = [] {
         game::Info g = core_info();
         g.play = &play::mpr_game_play();
+        g.settings = &play::mpr_settings_section();
         g.prompts = &play::mpr_prompt_game();
         g.boot = &boot;
         return g;

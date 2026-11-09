@@ -19,6 +19,7 @@
 #include "display_hooks.h"
 #include "menu_mouse_game.h"
 #include "mpr_fastboot.h"
+#include "mpr_settings.h"
 #include "mpr_tint.h"
 #include "mpr_tonemap.h"
 #include "nxrt/dispatch.h"
@@ -27,8 +28,8 @@
 #include "nxrt/log.h"
 #include "play_aim.h"
 #include "play_ballcam.h"
-#include "play_camlook.h"
-#include "play_game.h"
+#include "nxrt/game/play_camlook.h"
+#include "nxrt/game/play_game.h"
 #include "play_glow.h"
 #include "play_jump.h"
 #include "play_lockcam.h"
@@ -316,12 +317,12 @@ void install(uint64_t base, GameHost* host, const Settings& s) {
     jump_install(base);     // S50: the jump timer's last frame (play_jump.h)
     lockcam_set(s);
     glow_install(base);   // after lockcam: both hook CPlayerGunMP1::Update
-    glow_set(s.tweaks);
+    glow_set(mpr_settings(s).tweaks);
     mm::game_install(base);
     fastboot_install(base);
     fastboot_set(s);
     tint_install();
-    tint_set(s.tweaks);
+    tint_set(mpr_settings(s).tweaks);
 }
 
 void remove() {
@@ -344,8 +345,8 @@ void settings_changed(const Settings& s) {
     display_apply(s.display);
     lockcam_set(s);
     fastboot_set(s);
-    glow_set(s.tweaks);
-    tint_set(s.tweaks);
+    glow_set(mpr_settings(s).tweaks);
+    tint_set(mpr_settings(s).tweaks);
 }
 
 void frame_begin() {
@@ -422,7 +423,6 @@ const GamePlay& mpr_game_play() {
         p.status = &status;
         p.status_text = &status_text;
         p.mouse_tab = &mpr_mouse_tab;
-        p.tweaks_tab = &glow_tab;                      // play_glow_ui.cpp
         return p;
     }();
     return t;

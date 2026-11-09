@@ -14,7 +14,7 @@
 #include <vector>
 
 #include "nxrt/input_source.h"
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 #include "test_framework.h"
 NXTEST_GROUP(mpr_play_config)
 
@@ -93,7 +93,7 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
           ma.menu_cursor == mb.menu_cursor && ma.wheel_cycles == mb.wheel_cycles))
         return false;
-    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.gun_drives_view != b.camera.gun_drives_view)
+    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.view_sway != b.camera.view_sway)
         return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
@@ -269,7 +269,7 @@ NXTEST(camera_and_aim_defaults_are_free_and_on) {
     const Settings d = default_settings();
     CHECK(d.aim.lock_mode == LockMode::Free);
     CHECK(d.aim.free_lock_margin == 0.15);
-    CHECK(d.camera.gun_drives_view);
+    CHECK(d.camera.view_sway);
 }
 
 NXTEST(parse_errors_name_the_line) {

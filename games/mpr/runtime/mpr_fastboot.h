@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Start-up and menu tweaks of Metroid Prime Remastered (S46, docs/S46.md; the settings are play_fastboot.h, `[tweaks]` in controls.ini).
+// Start-up and menu tweaks of Metroid Prime Remastered (S46, docs/S46.md; the settings are mpr_settings_fastboot.h, `[tweaks]` in controls.ini).
 //
 //   skip_intro       The opening cutscene of a new game (the gunship landing on the Frigate Orpheon, Exterior Docking Hangar) is skipped through the
 //                    game's own cutscene skip, as if the skip button had been pressed the moment the game allows it:

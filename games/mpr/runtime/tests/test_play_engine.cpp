@@ -10,7 +10,7 @@
 
 #include "nxrt/input_source.h"
 #include "play/play_engine.h"
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 #include "test_framework.h"
 NXTEST_GROUP(mpr_play_engine)
 

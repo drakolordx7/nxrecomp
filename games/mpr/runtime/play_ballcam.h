@@ -19,7 +19,7 @@
 #pragma once
 #include <cstdint>
 
-#include "play_camlook.h"
+#include "nxrt/game/play_camlook.h"
 
 namespace nxrt::play {
 

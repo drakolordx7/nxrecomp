@@ -21,7 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "play/play_tweaks.h"
+#include "play_tweaks.h"
 
 namespace nxrt::play {
 

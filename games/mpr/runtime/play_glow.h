@@ -18,7 +18,8 @@
 #include <cstdint>
 
 #include "nxrt/abi.h"
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
+#include "play_tweaks.h"
 
 namespace nxrt::play {
 

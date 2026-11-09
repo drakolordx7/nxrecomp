@@ -15,7 +15,8 @@
 #include "nxrt/hooks.h"
 #include "nxrt/tt_script.h"
 #include "mpr_fastboot.h"
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
+#include "mpr_settings.h"
 
 NXTEST_GROUP(play_fastboot_hooks)
 
@@ -82,7 +83,7 @@ void setup(const play::FastbootSettings& f) {
         play::fastboot_install(kBase);
     }
     play::Settings s;
-    s.fastboot = f;
+    play::mpr_settings(s).fastboot = f;
     play::fastboot_set(s);
 }
 

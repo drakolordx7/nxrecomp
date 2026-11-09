@@ -2,7 +2,7 @@
 // Metroid Prime Remastered's words for play mode's generic slots (play_types.h GameVocabulary): the settings-file names and factory Switch
 // outputs of every action, the context names, the launcher's Keyboard rows and the keys of the morph ball and beam-cycling settings. These are
 // the names controls.ini has always used. Pure data: the launcher links it too.
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxrt::play {
 
@@ -110,9 +110,12 @@ const GameVocabulary& mpr_vocabulary() {
         g.key_alt_orbit = "ball_orbit";
         g.key_alt_camera = "ball_camera";
         g.key_alt_sens = "ball_sensitivity";
+        g.key_view_sway = "gun_drives_view";
         g.label_alt_camera_on = "Mouse and right stick turn the morph ball camera";
         g.label_alt_camera = "Morph ball camera";
         g.label_wheel_cycles = "Mouse wheel changes the beam";
+        g.label_view_sway = "Steady camera (walking bob and gun sway don't shake the view)";
+        g.keys_note = "The menu, map, gameplay, morph ball and scan keys are not touched.";
         return g;
     }();
     return v;

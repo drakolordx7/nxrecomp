@@ -179,10 +179,10 @@ NXTEST(config_defaults_and_keys) {
     CHECK_EXACT(d.max_rate, 480.0);
     CHECK_EXACT(d.min_rate, 30.0);
     CHECK(d.pace);
-    CHECK(d.fix_friction);
-    CHECK(d.fix_render_timings);
-    CHECK(d.fix_streaming);
-    CHECK(d.fix_budget);
+    CHECK(d.fix_scaled_float);
+    CHECK(d.fix_frame_counter);
+    CHECK(d.fix_stream_step);
+    CHECK(d.fix_scaled_reg);
     CHECK(d.movie_real);
 
     nxrt::config_load_string(
@@ -192,13 +192,20 @@ NXTEST(config_defaults_and_keys) {
     CHECK_EXACT(f.rate, 120.0);
     CHECK_EQ(f.smooth, 8);
     CHECK(!f.pace);
-    CHECK(!f.fix_friction);
-    CHECK(f.fix_render_timings);
-    CHECK(f.fix_streaming);
-    CHECK(f.fix_budget);
+    CHECK(!f.fix_scaled_float);
+    CHECK(f.fix_frame_counter);
+    CHECK(f.fix_stream_step);
+    CHECK(f.fix_scaled_reg);
     CHECK(f.movie_real);
     CHECK_EXACT(f.max_rate, 240.0);
     CHECK_EXACT(f.min_rate, 20.0);
+
+    // The mechanism names are the keys; the old names are aliases, and the new name wins when both are set.
+    nxrt::config_load_string("[time]\nfix_tick_sampler = 0\nfix_stuck_tracker = 1\nfix_budget = 0\n");
+    ts::Config a = ts::load_config();
+    CHECK(!a.fix_tick_sampler);
+    CHECK(!a.fix_scaled_reg);
+    CHECK(a.fix_scaled_float);
 
     nxrt::config_load_string("[time]\nmode = off\n");
     CHECK(ts::load_config().mode == ts::Mode::Off);
@@ -336,7 +343,7 @@ NXTEST(friction_hook) {
 
     // With fix_friction = 0 the game's 3.5 stays.
     ts::remove();
-    c.fix_friction = false;
+    c.fix_scaled_float = false;
     ts::install(c);
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 120.0;
@@ -379,7 +386,7 @@ NXTEST(streaming_hooks) {
 
     // With fix_streaming = 0 the registers are not touched.
     ts::remove();
-    c.fix_streaming = false;
+    c.fix_stream_step = false;
     ts::install(c);
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 240.0;
@@ -442,7 +449,7 @@ NXTEST(render_timings_hook) {
     std::memcpy(snap, buf, sizeof buf);
     ts::set_deterministic_for_tests(1.0 / 60.0);
     c = render_cfg(buf);
-    c.fix_render_timings = false;
+    c.fix_frame_counter = false;
     ts::install(c);
     CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
     CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 0);
@@ -647,7 +654,7 @@ NXTEST(stuck_tracker_off_by_config) {
     ts::set_clock_for_tests(&fake_clock);
     nxrt::config_load_string("[time]\nfix_stuck_tracker = 0\n");
     ts::Config c = ts::load_config();
-    CHECK(!c.fix_stuck_tracker);
+    CHECK(!c.fix_tick_sampler);
     // 1/240 s would be handled by 3 of 4 calls with the fix on; with the fix off every call goes through.
     ts::set_deterministic_for_tests(1.0 / 240.0);
     ts::install(c);

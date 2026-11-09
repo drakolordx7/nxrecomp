@@ -12,6 +12,7 @@
 void nxrt_register_game_mpr();
 void nxrt_register_game_mpr_core();
 void nxrt_register_game_mpr_data();
+void nxrt_register_game_mpr_launcher();    // mpr_launcher.cpp: the data module plus the launcher pages (the launcher exe)
 
 namespace nxrt::games::mpr {
 const game::Info& data_info();     // mpr_data.cpp

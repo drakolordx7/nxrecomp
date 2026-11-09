@@ -21,7 +21,7 @@
 #pragma once
 #include <cstdint>
 
-#include "play_display.h"
+#include "nxrt/game/play_display.h"
 
 namespace nxrt::play {
 
