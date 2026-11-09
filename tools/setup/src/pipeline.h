@@ -3,7 +3,8 @@
 //
 // Output layout (all under SetupOptions::out_dir; the game is started with this folder as its working directory):
 //   exefs/            the NSOs and main.npdm (rtld, main, sdk, subsdk0, main.npdm), byte-identical to the dump
-//   romfs/            the RomFS as loose files
+//   romfs/            the RomFS as loose files (with the update applied when one is given)
+//   aoc/<title id>/   the RomFS of each DLC (16 upper-case hex digits), for the runtime's add-on content service
 //   bc7_cache/        ASTC textures transcoded to BC7, one file per texture, in the runtime's cache format
 //   shader_cache/spirv/   translated shaders from the shader pack (setup stops without a pack, unless --no-shaders or an earlier run installed them)
 //   <game ini>        (game.h; mpr.ini) [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
@@ -25,6 +26,7 @@ const char* stage_name(Stage s);
 
 struct SetupOptions {
     std::string input_path;                 // .nsp .xci .nsz .xcz
+    std::vector<std::string> input_paths;   // more inputs (base game, update, DLC in any order); used together with input_path
     std::vector<std::string> key_files;     // prod.keys (and optionally title.keys); empty = look in the usual places
     std::string out_dir;
     int bc7_quality = 3;                    // 0..6; the runtime reads [nvn] bc7_quality and its cache keys include it. Default = runtime default.
@@ -37,14 +39,22 @@ struct SetupOptions {
     bool inspect_only = false;              // open, validate and size up; write nothing
     // Test hooks (the shipped tool always uses the defaults, those of the game it is built for: game.h).
     std::string expected_title_id = game().title_id;
-    std::string expected_build_id = game().build_id;   // main NSO build id, hex, first 20 bytes
+    std::string expected_build_id = game().build_id ? game().build_id : "";   // main NSO build id, hex, first 20 bytes
+    const GameBuild* builds = game().builds;   // supported releases ({nullptr, nullptr} ends it); used while expected_build_id is the default
 };
+
+// input_path (if set) followed by input_paths.
+std::vector<std::string> setup_inputs(const SetupOptions& o);
 
 struct InputSummary {
     std::string container;                  // "NSP", "XCI", "NSZ", "XCZ"
     std::string title_id;                   // 16 hex digits, upper case
     std::string version;                    // "1.0.0" style display version, or "" if unknown
     std::string build_id;                   // main NSO build id (40 hex digits) or ""
+    std::string update;                     // the update that is applied ("3.0.3" style, or "v<number>"), "" for none
+    u32 dlc_count = 0;                      // DLC found for the game
+    u64 dlc_bytes = 0;
+    std::vector<std::string> notes;         // things the player should see: an input that was not used, a DLC that cannot be read
     u64 romfs_bytes = 0;                    // total size of the RomFS files
     u64 exefs_bytes = 0;
     u32 romfs_files = 0;

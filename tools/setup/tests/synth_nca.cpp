@@ -3,6 +3,7 @@
 // (and switchbrew for the ticket rights id offset, which the reader does not follow; see the test report).
 #include "synth_nca.h"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -377,6 +378,95 @@ void build_section(const SynthSection& s, size_t index, const std::vector<SynthC
     if (has_corruption(corrupt, index, W::MasterHash)) hd[0xC0] ^= 0x01;
 }
 
+// ---- update (patch) sections ------------------------------------------------------------------------------------------------
+
+// A bucket tree: node 0 = {index 0, set count, end offset, first offset of each set}; set k = {k, count, end offset, entries}.
+std::vector<uint8_t> bucket_table(const std::vector<std::vector<uint8_t>>& entries, const std::vector<uint64_t>& starts,
+                                  size_t esz, uint64_t end) {
+    const size_t per = (0x4000 - 0x10) / esz;
+    const size_t sets = (entries.size() + per - 1) / per;
+    std::vector<uint8_t> t(0x4000 * (1 + sets), 0);
+    put32(t.data() + 4, uint32_t(sets));
+    put64(t.data() + 8, end);
+    for (size_t k = 0; k < sets; ++k) {
+        put64(t.data() + 0x10 + 8 * k, starts[k * per]);
+        uint8_t* n = t.data() + 0x4000 * (1 + k);
+        const size_t first = k * per, cnt = std::min(per, entries.size() - first);
+        put32(n, uint32_t(k));
+        put32(n + 4, uint32_t(cnt));
+        put64(n + 8, first + cnt < entries.size() ? starts[first + cnt] : end);
+        for (size_t e = 0; e < cnt; ++e) std::memcpy(n + 0x10 + esz * e, entries[first + e].data(), esz);
+    }
+    return t;
+}
+
+// Raw (encrypted) bytes of a patch section whose plain view is `virt`; fills the patch info and counter of the section header.
+std::vector<uint8_t> build_patch_raw(const std::vector<uint8_t>& virt, const std::vector<uint8_t>& base, uint64_t pos, size_t index,
+                                     const Bytes16& key, uint8_t* sh) {
+    const size_t G = 0x40;
+    std::vector<uint8_t> pdata;
+    std::vector<std::vector<uint8_t>> ind, ex;
+    std::vector<uint64_t> ind_start, ex_start;
+    std::vector<uint32_t> ex_gen;
+    for (size_t v = 0; v < virt.size(); v += G) {
+        const size_t n = std::min(G, virt.size() - v);
+        const bool same = v + n <= base.size() && std::memcmp(virt.data() + v, base.data() + v, n) == 0;
+        std::vector<uint8_t> e(0x14, 0);
+        put64(e.data(), v);
+        put64(e.data() + 8, same ? v : pdata.size());
+        put32(e.data() + 16, same ? 0 : 1);
+        ind.push_back(e);
+        ind_start.push_back(v);
+        if (!same) {
+            std::vector<uint8_t> x(0x10, 0);
+            const uint32_t gen = 1 + uint32_t(ex.size() % 3);
+            put64(x.data(), pdata.size());
+            put32(x.data() + 12, gen);
+            ex.push_back(x);
+            ex_start.push_back(pdata.size());
+            ex_gen.push_back(gen);
+            pdata.insert(pdata.end(), virt.begin() + v, virt.begin() + v + n);
+        }
+    }
+    if (ex.empty()) throw std::invalid_argument("synth: the patch changes nothing");
+    const uint64_t data_end = pdata.size();
+    const std::vector<uint8_t> it = bucket_table(ind, ind_start, 0x14, virt.size());
+    const std::vector<uint8_t> et = bucket_table(ex, ex_start, 0x10, data_end);
+    const uint64_t ind_off = roundup(data_end, 0x200), ex_off = ind_off + it.size();
+    std::vector<uint8_t> raw(size_t(roundup(ex_off + et.size(), 0x200)), 0);
+    std::memcpy(raw.data(), pdata.data(), pdata.size());
+    std::memcpy(raw.data() + ind_off, it.data(), it.size());
+    std::memcpy(raw.data() + ex_off, et.data(), et.size());
+
+    uint8_t hi[8];
+    fill_seeded(hi, 8, 0x200u + uint32_t(index));
+    hi[4] = hi[5] = hi[6] = 0;
+    hi[7] = 7;                                   // section generation 7 (tables)
+    for (int j = 0; j < 8; ++j) sh[0x140 + j] = hi[7 - j];
+    auto crypt = [&](uint64_t off, uint64_t len, uint32_t gen) {
+        uint8_t ctr[16];
+        std::memcpy(ctr, hi, 8);
+        for (int j = 0; j < 4; ++j) ctr[4 + j] = uint8_t(gen >> (24 - 8 * j));
+        for (int j = 0; j < 8; ++j) ctr[8 + j] = uint8_t(((pos + off) / 16) >> (56 - 8 * j));
+        ctr_crypt(key.data(), ctr, raw.data() + off, size_t(len));
+    };
+    for (size_t k = 0; k < ex_start.size(); ++k)
+        crypt(ex_start[k], (k + 1 < ex_start.size() ? ex_start[k + 1] : data_end) - ex_start[k], ex_gen[k]);
+    crypt(ind_off, raw.size() - ind_off, 7);
+
+    put64(sh + 0x100, ind_off);
+    put64(sh + 0x108, it.size());
+    std::memcpy(sh + 0x110, "BKTR", 4);
+    put32(sh + 0x114, 1);
+    put32(sh + 0x118, uint32_t(ind.size()));
+    put64(sh + 0x120, ex_off);
+    put64(sh + 0x128, et.size());
+    std::memcpy(sh + 0x130, "BKTR", 4);
+    put32(sh + 0x134, 1);
+    put32(sh + 0x138, uint32_t(ex.size()));
+    return raw;
+}
+
 // ---- NSO / ExeFS / cnmt -----------------------------------------------------------------------------------------------------
 
 std::vector<uint8_t> nso_file(const std::vector<uint8_t>& build20, uint32_t seed) {
@@ -509,8 +599,11 @@ SynthNcaBuild synth_nca_build(const SynthNcaSpec& sp) {
             std::memcpy(ctr, hi, 8);
             for (int j = 0; j < 8; ++j) ctr[8 + j] = uint8_t((pos / 16) >> (56 - 8 * j));   // big-endian block number
             ctr_crypt(content_key.data(), ctr, enc.data(), enc.size());
+        } else if (s.enc_type == 4) {
+            if (s.fs_type != 0) throw std::invalid_argument("synth_nca: a patch section must be RomFS");
+            enc = build_patch_raw(pl, s.patch_base, pos, i, content_key, sh);
         } else if (s.enc_type != 1) {
-            throw std::invalid_argument("synth_nca: enc_type must be 1 or 3");
+            throw std::invalid_argument("synth_nca: enc_type must be 1, 3 or 4");
         }
         put32(hdr.data() + 0x240 + 0x10 * i, uint32_t(pos / 0x200));
         put32(hdr.data() + 0x244 + 0x10 * i, uint32_t((pos + enc.size()) / 0x200));

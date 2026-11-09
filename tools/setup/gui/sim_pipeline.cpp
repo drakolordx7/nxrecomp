@@ -126,10 +126,18 @@ std::string sibling_title_keys(const std::string& prod_keys_path) {
     return fs::exists(t, ec) ? narrow(t.wstring()) : std::string();
 }
 
+std::vector<std::string> setup_inputs(const SetupOptions& o) {
+    std::vector<std::string> v;
+    if (!o.input_path.empty()) v.push_back(o.input_path);
+    for (const auto& p : o.input_paths) v.push_back(p);
+    return v;
+}
+std::string first_input(const SetupOptions& o) { auto v = setup_inputs(o); return v.empty() ? std::string() : v[0]; }
+
 InputSummary inspect_input(const SetupOptions& o) {
     std::this_thread::sleep_for(1s);
     InputSummary s;
-    s.container = container_for(o.input_path);
+    s.container = container_for(first_input(o));
     s.title_id = "010012101468C000";
     s.build_id = "67C9CA1428222752F951021464A7B3597EB98FEC";
     s.romfs_bytes = kRomfsBytes;
@@ -140,7 +148,7 @@ InputSummary inspect_input(const SetupOptions& o) {
     s.disk_needed = kNeededBytes;
     s.disk_free = free_bytes_for(o.out_dir);
 
-    if (file_name_has(o.input_path, L"bad")) {
+    if (file_name_has(first_input(o), L"bad")) {
         s.supported = false;
         s.problem = "This dump is the wrong game (title 0100ABCDEF000000). Choose the Metroid Prime Remastered dump.";
     } else if (s.disk_free && s.disk_free < s.disk_needed) {
@@ -154,8 +162,8 @@ InputSummary inspect_input(const SetupOptions& o) {
 
 SetupReport run_setup(const SetupOptions& o, Reporter& r) {
     const auto t0 = std::chrono::steady_clock::now();
-    const bool boom = file_name_has(o.input_path, L"boom");
-    MPRS_LOGI("Simulated setup (fake pipeline, nothing is written) for %s", o.input_path.c_str());
+    const bool boom = file_name_has(first_input(o), L"boom");
+    MPRS_LOGI("Simulated setup (fake pipeline, nothing is written) for %s", first_input(o).c_str());
 
     SetupReport rep;
     rep.seconds[static_cast<int>(Stage::Exefs)] =

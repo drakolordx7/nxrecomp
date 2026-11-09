@@ -6,6 +6,12 @@
 
 namespace mprs {
 
+// One release setup accepts: the main NSO build id (hex, first 20 bytes; shorter ids are padded with zeros) and its display version.
+struct GameBuild {
+    const char* build_id;
+    const char* version;
+};
+
 struct GameProfile {
     const char* id;            // "mpr"
     const char* title;         // the game's name in messages: "Metroid Prime Remastered"
@@ -15,8 +21,14 @@ struct GameProfile {
     const char* version;       // that release's display version: "1.0.0"
     const char* game_ini;      // the runtime's settings file setup writes into the game folder: "mpr.ini"
     const char* shader_pack;   // the shader pack next to the setup program: "shader_cache.mprshc"
+    // Optional: every supported release (base or base + update), ending with {nullptr, nullptr}. When null or empty, the single
+    // build_id / version above is the one supported release.
+    const GameBuild* builds = nullptr;
 };
 
 const GameProfile& game();     // src/games/<MPRS_GAME>.cpp
+
+// True when the profile lists its supported releases (GameProfile::builds); such a game may need an update.
+inline bool game_lists_builds() { return game().builds && game().builds[0].build_id; }
 
 }  // namespace mprs

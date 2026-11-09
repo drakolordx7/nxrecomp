@@ -2,7 +2,7 @@
 // The setup window: plain Win32 with Common Controls v6. The player picks the game dump and the Switch keys, picks the install
 // folder and presses Start. The pipeline runs on a worker thread and reports only by posting messages; every control is
 // touched on the window thread.
-//   mpr_setup.exe [--input <file>] [--keys <file>[,<file>]] [--out <dir>] [--quality N] [--auto-start] [--exit-when-done]
+//   mpr_setup.exe [--input <file>]... [--keys <file>[,<file>]] [--out <dir>] [--quality N] [--auto-start] [--exit-when-done]
 //                 [--no-message-box] [--shader-pack <file or folder>] [--no-shaders]
 // --exit-when-done closes the window when the run ends (exit code 0 on success, else the Fail kind; 10 if the dump is not
 // supported) and skips the success summary box. --no-message-box suppresses every MessageBox.
@@ -52,7 +52,7 @@ enum ControlId : int {
     IDC_OUT_LABEL, IDC_OUT_EDIT, IDC_OUT_BROWSE, IDC_OUT_DISK,
     IDC_QUALITY_LABEL, IDC_QUALITY, IDC_QUALITY_NOTE,
     IDC_START, IDC_OPEN_FOLDER, IDC_OPEN_LOG,
-    IDC_STAGE_TITLE, IDC_STAGE_DETAIL, IDC_STAGE_BAR, IDC_OVERALL_TEXT, IDC_OVERALL_BAR, IDC_LOG,
+    IDC_STAGE_TITLE, IDC_STAGE_DETAIL, IDC_STAGE_BAR, IDC_OVERALL_TEXT, IDC_OVERALL_BAR, IDC_LOG, IDC_DUMP_CLEAR,
 };
 
 // Window messages posted from worker threads. Payloads are heap objects owned by the handler (see post_owned).
@@ -78,7 +78,8 @@ constexpr wchar_t kClassName[] = L"MprSetupWindow";
 #ifndef MPR_VERSION
 #define MPR_VERSION "dev"
 #endif
-constexpr wchar_t kDumpHint[] = L"Pick your own game dump (.nsp, .xci, .nsz or .xcz), or drag it onto this window.";
+constexpr wchar_t kDumpHint[] =
+    L"Pick your own game dump (.nsp, .xci, .nsz or .xcz), or drag it onto this window. Pick the update and DLC files with it if you have them.";
 constexpr wchar_t kKeysHint[] =
     L"Browse to your prod.keys (dumped from your own Switch with Lockpick_RCM). Nothing is uploaded; the file is only read.";
 constexpr wchar_t kIdleTitle[] = L"Choose your game dump and keys, then click Start setup.";
@@ -166,6 +167,29 @@ std::wstring exe_folder() {
     return std::filesystem::path(std::wstring(buf.data(), n)).parent_path().wstring();
 }
 
+// The dump field holds one or more paths joined by " | " ('|' cannot be part of a Windows path).
+constexpr wchar_t kPathSep[] = L" | ";
+std::vector<std::wstring> split_dump_paths(const std::wstring& s) {
+    std::vector<std::wstring> out;
+    size_t p = 0;
+    while (p <= s.size()) {
+        size_t q = s.find(L'|', p);
+        if (q == std::wstring::npos) q = s.size();
+        std::wstring one = trim_path(s.substr(p, q - p));
+        if (!one.empty()) out.push_back(one);
+        p = q + 1;
+    }
+    return out;
+}
+std::wstring join_dump_paths(const std::vector<std::wstring>& v) {
+    std::wstring s;
+    for (const auto& x : v) {
+        if (!s.empty()) s += kPathSep;
+        s += x;
+    }
+    return s;
+}
+
 std::vector<std::wstring> split_commas(const std::wstring& s) {
     std::vector<std::wstring> out;
     std::wstring cur;
@@ -190,7 +214,8 @@ CmdLine parse_command_line() {
         const std::wstring a = argv[i];
         auto value = [&]() -> std::wstring { return i + 1 < argc ? std::wstring(argv[++i]) : std::wstring(); };
         if (a == L"--input") {
-            c.input = trim_path(value());
+            const std::wstring v = trim_path(value());
+            if (!v.empty()) c.input += (c.input.empty() ? L"" : kPathSep) + v;
         } else if (a == L"--out") {
             c.out = trim_path(value());
         } else if (a == L"--keys") {
@@ -211,7 +236,15 @@ CmdLine parse_command_line() {
         }
     }
     LocalFree(argv);
-    for (auto* p : {&c.input, &c.out, &c.shader_pack}) {
+    {
+        std::vector<std::wstring> in = split_dump_paths(c.input);
+        for (auto& x : in) {
+            std::error_code ec;
+            x = std::filesystem::absolute(x, ec).wstring();
+        }
+        c.input = join_dump_paths(in);
+    }
+    for (auto* p : {&c.out, &c.shader_pack}) {
         if (!p->empty()) {
             std::error_code ec;
             *p = std::filesystem::absolute(*p, ec).wstring();
@@ -267,6 +300,36 @@ const wchar_t* title_for(Fail k) {
         case Fail::Cancelled: return L"Stopped";
         default: return L"Setup failed";
     }
+}
+
+// Picks one or more files with IFileOpenDialog. Empty when cancelled.
+std::vector<std::wstring> pick_files(HWND owner, const wchar_t* title, const COMDLG_FILTERSPEC* specs, UINT count) {
+    std::vector<std::wstring> out;
+    IFileOpenDialog* raw = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&raw)))) return out;
+    ComPtr<IFileOpenDialog> dlg(raw);
+    FILEOPENDIALOGOPTIONS opts = 0;
+    dlg->GetOptions(&opts);
+    dlg->SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_ALLOWMULTISELECT);
+    if (specs) dlg->SetFileTypes(count, specs);
+    dlg->SetTitle(title);
+    if (dlg->Show(owner) != S_OK) return out;
+    IShellItemArray* arr_raw = nullptr;
+    if (FAILED(dlg->GetResults(&arr_raw))) return out;
+    ComPtr<IShellItemArray> arr(arr_raw);
+    DWORD n = 0;
+    arr->GetCount(&n);
+    for (DWORD i = 0; i < n; ++i) {
+        IShellItem* item_raw = nullptr;
+        if (FAILED(arr->GetItemAt(i, &item_raw))) continue;
+        ComPtr<IShellItem> item(item_raw);
+        PWSTR path = nullptr;
+        if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path) {
+            out.push_back(path);
+            CoTaskMemFree(path);
+        }
+    }
+    return out;
 }
 
 // Picks a file or folder with IFileOpenDialog. Empty string when cancelled.
@@ -421,6 +484,7 @@ private:
     void browse_keys();
     void browse_folder();
     void set_dump(const std::wstring& path);
+    void add_dumps(const std::vector<std::wstring>& paths);   // appends to the list, skipping files already in it
     void set_keys(const std::wstring& path, const std::wstring& source);
     void update_keys_hint();
     void request_inspect();
@@ -445,7 +509,7 @@ private:
     std::vector<HWND> bold_;
     std::vector<HWND> gray_;
 
-    HWND dump_label_ = nullptr, dump_edit_ = nullptr, dump_browse_ = nullptr, dump_status_ = nullptr;
+    HWND dump_label_ = nullptr, dump_edit_ = nullptr, dump_browse_ = nullptr, dump_clear_ = nullptr, dump_status_ = nullptr;
     HWND keys_label_ = nullptr, keys_edit_ = nullptr, keys_browse_ = nullptr, keys_hint_ = nullptr;
     HWND out_label_ = nullptr, out_edit_ = nullptr, out_browse_ = nullptr, out_disk_ = nullptr;
     HWND quality_label_ = nullptr, quality_ = nullptr, quality_note_ = nullptr;
@@ -629,6 +693,7 @@ void App::create_controls() {
     dump_label_ = add_label(L"Your game dump", IDC_DUMP_LABEL, true);
     dump_edit_ = add(L"EDIT", L"", edit | ES_READONLY, IDC_DUMP_EDIT);
     dump_browse_ = add(L"BUTTON", L"Browse...", button, IDC_DUMP_BROWSE);
+    dump_clear_ = add(L"BUTTON", L"Clear", button, IDC_DUMP_CLEAR);
     dump_status_ = add_label(L"", IDC_DUMP_STATUS);
 
     keys_label_ = add_label(L"Your Switch keys", IDC_KEYS_LABEL, true);
@@ -706,7 +771,8 @@ void App::layout() {
     int y = S(12);
     put(dump_label_, x0, y, w, S(18));
     y += S(22);
-    put(dump_edit_, x0, y, ew, S(26));
+    put(dump_edit_, x0, y, ew - S(70) - gap, S(26));
+    put(dump_clear_, x0 + ew - S(70), y, S(70), S(26));
     put(dump_browse_, xb, y, bw, S(26));
     y += S(32);
     put(dump_status_, x0, y, w, S(34));      // two lines of the status text (the keys message wraps)
@@ -811,6 +877,9 @@ void App::on_command(int id, int code) {
         case IDC_DUMP_BROWSE:
             if (code == BN_CLICKED) browse_dump();
             break;
+        case IDC_DUMP_CLEAR:
+            if (code == BN_CLICKED) set_dump(L"");
+            break;
         case IDC_KEYS_BROWSE:
             if (code == BN_CLICKED) browse_keys();
             break;
@@ -856,22 +925,23 @@ void App::on_command(int id, int code) {
 }
 
 void App::on_drop(HDROP drop) {
-    std::wstring path;
-    const UINT len = DragQueryFileW(drop, 0, nullptr, 0);
-    if (len > 0) {
+    std::vector<std::wstring> dumps;
+    std::wstring keys;
+    const UINT n = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    for (UINT i = 0; i < n; ++i) {
+        const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+        if (len == 0) continue;
         std::wstring buf(len + 1, L'\0');
-        DragQueryFileW(drop, 0, buf.data(), len + 1);
+        DragQueryFileW(drop, i, buf.data(), len + 1);
         buf.resize(len);
-        path = buf;
+        if (lower(std::filesystem::path(buf).extension().wstring()) == L".keys") keys = buf;
+        else dumps.push_back(buf);
     }
     DragFinish(drop);
-    if (running_ || path.empty()) return;
-    if (lower(std::filesystem::path(path).extension().wstring()) == L".keys") {
-        set_keys(path, L"");
-        request_inspect();
-    } else {
-        set_dump(path);
-    }
+    if (running_) return;
+    if (!keys.empty()) set_keys(keys, L"");
+    if (!dumps.empty()) add_dumps(dumps);
+    else if (!keys.empty()) request_inspect();
 }
 
 void App::on_timer(UINT_PTR id) {
@@ -1079,7 +1149,7 @@ std::string App::current_key() const {
 
 mprs::SetupOptions App::make_options() const {
     mprs::SetupOptions o;
-    o.input_path = narrow(dump_path_);
+    for (const auto& p : split_dump_paths(dump_path_)) o.input_paths.push_back(narrow(p));
     for (const auto& k : keys_for_run()) o.key_files.push_back(narrow(k));
     o.out_dir = narrow(out_text());
     o.bc7_quality = quality_value();
@@ -1101,7 +1171,7 @@ bool App::can_start() const {
 void App::update_controls() {
     if (!start_) return;
     const bool idle = !running_;
-    for (HWND h : {dump_browse_, keys_edit_, keys_browse_, out_edit_, out_browse_, quality_}) EnableWindow(h, idle);
+    for (HWND h : {dump_browse_, dump_clear_, keys_edit_, keys_browse_, out_edit_, out_browse_, quality_}) EnableWindow(h, idle);
     if (running_) {
         set_text(start_, stop_requested_ ? L"Stopping..." : L"Stop");
         EnableWindow(start_, !stop_requested_);
@@ -1118,8 +1188,8 @@ void App::browse_dump() {
         {L"Switch game dumps (*.nsp;*.xci;*.nsz;*.xcz)", L"*.nsp;*.xci;*.nsz;*.xcz"},
         {L"All files (*.*)", L"*.*"},
     };
-    const std::wstring p = pick_path(hwnd_, false, L"Choose your game dump", specs, 2);
-    if (!p.empty()) set_dump(p);
+    const std::vector<std::wstring> p = pick_files(hwnd_, L"Choose your game dump (and its update and DLC)", specs, 2);
+    if (!p.empty()) add_dumps(p);
 }
 
 void App::browse_keys() {
@@ -1146,6 +1216,16 @@ void App::set_dump(const std::wstring& path) {
     dump_path_ = trim_path(path);
     set_text(dump_edit_, dump_path_);
     request_inspect();
+}
+
+void App::add_dumps(const std::vector<std::wstring>& paths) {
+    std::vector<std::wstring> v = split_dump_paths(dump_path_);
+    for (const auto& p : paths) {
+        const std::wstring t = trim_path(p);
+        if (t.empty()) continue;
+        if (std::none_of(v.begin(), v.end(), [&](const std::wstring& x) { return lower(x) == lower(t); })) v.push_back(t);
+    }
+    set_dump(join_dump_paths(v));
 }
 
 void App::set_keys(const std::wstring& path, const std::wstring& source) {
@@ -1201,9 +1281,14 @@ void App::start_inspect(const std::string& key) {
 
 void App::show_inspect_result() {
     if (summary_.supported) {
-        set_dump_status(std::format(L"{} found ({}). Needs {}, {} free.", widen(mprs::game().title), widen(summary_.container),
-                                    size_text(summary_.disk_needed), size_text(summary_.disk_free)),
-                        kGreen);
+        std::wstring extra;
+        if (!summary_.update.empty()) extra += L", update " + widen(summary_.update);
+        if (summary_.dlc_count) extra += std::format(L", {} DLC ({})", summary_.dlc_count, size_text(summary_.dlc_bytes));
+        std::wstring text = std::format(L"{} found ({}{}). Needs {}, {} free.", widen(mprs::game().title), widen(summary_.container), extra,
+                                        size_text(summary_.disk_needed), size_text(summary_.disk_free));
+        if (!summary_.notes.empty())
+            text += L" Note: " + widen(summary_.notes[0]) + (summary_.notes.size() > 1 ? L" (more in the log)" : L"");
+        set_dump_status(text, kGreen);
         set_disk_line(std::format(L"This folder needs about {} (free: {}).", size_text(summary_.disk_needed),
                                   size_text(summary_.disk_free)));
     } else {
@@ -1225,7 +1310,7 @@ void App::start_run() {
     }
     mprs::log_open(narrow(out) + "\\setup.log");
     mprs::SetupOptions o = make_options();
-    MPRS_LOGI("Setup started: input %s, folder %s, texture quality %d", o.input_path.c_str(), o.out_dir.c_str(), o.bc7_quality);
+    MPRS_LOGI("Setup started: input %s, folder %s, texture quality %d", narrow(dump_path_).c_str(), o.out_dir.c_str(), o.bc7_quality);
 
     shared_.cancel = false;
     shared_.done = 0;

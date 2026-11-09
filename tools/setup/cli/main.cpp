@@ -36,8 +36,10 @@ BOOL WINAPI on_ctrl(DWORD type) {
 
 void usage() {
     std::puts(
-        "Usage: mpr_setup_cli --input <dump.nsp|xci|nsz|xcz> --out <game folder> [options]\n"
+        "Usage: mpr_setup_cli --input <dump.nsp|xci|nsz|xcz> [--input <update or DLC> ...] --out <game folder> [options]\n"
         "\n"
+        "  --input <file>[,<file>]             the base game, and optionally its update and DLC (repeat --input or give a comma list,\n"
+        "                                      any order). The newest update is applied; DLC goes to aoc\\<title id>.\n"
         "  --keys <prod.keys>[,<title.keys>]   keys file(s); default: look in the usual emulator folders\n"
         "  --quality <0-6>                     texture conversion quality (default 3; the game reads the same value from mpr.ini)\n"
         "  --threads <n>                       worker threads (default: all)\n"
@@ -50,7 +52,7 @@ void usage() {
         "  --verify-output                     re-hash files that already exist instead of trusting their size\n"
         "  --check                             open and validate the dump, print what it is, write nothing\n"
         "  --find-keys                         list key files found in the usual places and exit\n"
-        "  --title-id <16 hex> --build-id <40 hex>   (testing) accept another game\n"
+        "  --title-id <16 hex> --build-id <hex>      (testing) accept another game (a shorter build id is padded with zeros)\n"
         "\n"
         "Exit codes: 0 done, 1 error, 2 bad dump or missing shader pack, 3 keys, 4 disk, 5 stopped (Ctrl+C; run again to continue).");
 }
@@ -139,7 +141,11 @@ int wmain(int argc, wchar_t** wargv) {
             if (i + 1 >= args.size()) { std::fprintf(stderr, "missing value for %s\n", a.c_str()); std::exit(1); }
             return args[++i];
         };
-        if (a == "--input") o.input_path = val();
+        if (a == "--input") {
+            const std::string v = val();
+            if (GetFileAttributesW(widen(v).c_str()) != INVALID_FILE_ATTRIBUTES) o.input_paths.push_back(v);   // a name with a comma
+            else for (auto& p : split_commas(v)) o.input_paths.push_back(p);
+        }
         else if (a == "--out") o.out_dir = val();
         else if (a == "--keys") o.key_files = split_commas(val());
         else if (a == "--quality") o.bc7_quality = std::atoi(val().c_str());
@@ -163,7 +169,7 @@ int wmain(int argc, wchar_t** wargv) {
         if (k.empty()) std::puts("no key files found");
         return 0;
     }
-    if (o.input_path.empty() || (o.out_dir.empty() && !check)) { usage(); return 1; }
+    if (setup_inputs(o).empty() || (o.out_dir.empty() && !check)) { usage(); return 1; }
     if (o.bc7_quality < 0 || o.bc7_quality > 6) { std::fprintf(stderr, "--quality must be 0..6\n"); return 1; }
     SetConsoleCtrlHandler(on_ctrl, TRUE);
 
@@ -173,8 +179,9 @@ int wmain(int argc, wchar_t** wargv) {
     try {
         if (check) {
             InputSummary s = inspect_input(o);
-            std::printf("container: %s\ntitle id: %s\nversion: %s\nbuild id: %s\nRomFS: %u files, %.2f GB\n", s.container.c_str(),
-                        s.title_id.c_str(), s.version.c_str(), s.build_id.c_str(), s.romfs_files, s.romfs_bytes / 1e9);
+            std::printf("container: %s\ntitle id: %s\nversion: %s\nupdate: %s\nbuild id: %s\nRomFS: %u files, %.2f GB\nDLC: %u, %.2f GB\n",
+                        s.container.c_str(), s.title_id.c_str(), s.version.c_str(), s.update.empty() ? "none" : s.update.c_str(),
+                        s.build_id.c_str(), s.romfs_files, s.romfs_bytes / 1e9, s.dlc_count, s.dlc_bytes / 1e9);
             if (!o.out_dir.empty())
                 std::printf("disk: needs %.1f GB, %.1f GB free\n", s.disk_needed / 1e9, s.disk_free / 1e9);
             if (!s.supported) { std::printf("NOT SUPPORTED: %s\n", s.problem.c_str()); return 2; }

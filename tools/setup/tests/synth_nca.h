@@ -40,8 +40,12 @@ void synth_aes128_encrypt_block(const uint8_t key[16], uint8_t block[16]);
 
 struct SynthSection {
     uint8_t fs_type = 1;         // 0 RomFS (IVFC, hash_type 3), 1 PFS0 (hierarchical SHA-256, hash_type 2)
-    uint8_t enc_type = 3;        // 1 none, 3 AES-CTR
+    uint8_t enc_type = 3;        // 1 none, 3 AES-CTR, 4 AES-CTR-EX (an update's RomFS: fs 0 only, needs patch_base)
     std::vector<uint8_t> data;   // the PFS0 image (fs 1) or the RomFS image (fs 0)
+    // enc_type 4: the base NCA's plain RomFS section (SynthNcaBuild::plain of the base). The section stores only the 0x40-byte
+    // pieces of the new section that differ from it, plus the IndirectStorage and AES-CTR-EX bucket trees; the pieces use
+    // counter generations 1..3 in turn. plain[] of the build holds the patched (virtual) section.
+    std::vector<uint8_t> patch_base;
 };
 
 // Damage applied to the plain section before it is encrypted (MasterHash changes the master hash in the section header).

@@ -28,6 +28,14 @@ struct NcaSection {
     u8 fs_type = 0;                    // 0 RomFS, 1 PFS0
     u8 hash_type = 0;                  // 2 hierarchical SHA-256 (PFS0), 3 hierarchical integrity (IVFC, RomFS)
     u8 enc_type = 0;                   // 1 none, 2 AES-XTS, 3 AES-CTR, 4 AES-CTR-EX (patch)
+    u8 meta_hash_type = 0;             // 0 none, 1 an integrity tree over the patch tables (newer SDKs; not needed to read)
+    u64 indirect_off = 0, indirect_size = 0;       // patch: the IndirectStorage table (BKTR), inside the section
+    u32 indirect_count = 0;
+    u64 aes_ctr_ex_off = 0, aes_ctr_ex_size = 0;   // patch: the AES-CTR-EX table (BKTR)
+    u32 aes_ctr_ex_count = 0;
+    u16 sparse_generation = 0;         // non-zero: the section is stored sparse (not read by this setup)
+    u64 compression_size = 0;          // non-zero: the section has a compression table (not read by this setup)
+    bool is_patch() const { return indirect_size != 0; }
     std::array<u8, 8> ctr_hi{};        // upper half of the CTR counter (section header +0x140 reversed)
     std::array<u8, 0x200> header{};    // the decrypted section header
 };
@@ -53,15 +61,18 @@ public:
     const StoragePtr& file() const { return file_; }
 
     // The decrypted bytes of a whole section (what the hash layers describe). Throws Error(Keys) when the key is unavailable
-    // (no ticket / title key), Error(Input) for unsupported encryption (patch NCAs).
-    StoragePtr open_section(int i) const;
+    // (no ticket / title key), Error(Input) for unsupported encryption. A patch section (an update's RomFS) needs `base`, the
+    // base game's program NCA: the result is the updated section, the update's data laid over the base RomFS section.
+    StoragePtr open_section(int i, const Nca* base = nullptr) const;
     // PFS0 file system of a section (hash_type 2). The returned Pfs's entry offsets are relative to the PFS0 start.
     std::unique_ptr<Pfs> open_pfs0(int i) const;
     // RomFS image of a section (hash_type 3): the data level of the integrity tree.
-    StoragePtr open_romfs_image(int i) const;
+    StoragePtr open_romfs_image(int i, const Nca* base = nullptr) const;
     // Verifies the whole hash tree of a section against the stored hashes (reads and hashes the entire section data).
     // Throws Error(Input) naming the damaged area on mismatch. Returns the number of bytes hashed.
-    u64 verify_section(int i, const ProgressFn& progress, const CancelFn& cancelled) const;
+    u64 verify_section(int i, const ProgressFn& progress, const CancelFn& cancelled, const Nca* base = nullptr) const;
+    // Index of the first RomFS section (fs 0, IVFC), or -1.
+    int romfs_section() const;
 
 private:
     Key128 section_key(const NcaSection& s) const;
