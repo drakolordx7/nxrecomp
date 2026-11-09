@@ -1,7 +1,6 @@
 # sub-repos and local-only folders
 /recomp/
 /runtime/
-/tools/
 /refs/
 /toolchain/
 /game/
