@@ -57,12 +57,11 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
 // The format the disk cache entry of an ASTC texture holds when that is not BC7: R8G8B8A8 (UNORM or SRGB as the texture) or BC5_UNORM (a
 // two-channel normal map). VK_FORMAT_UNDEFINED: no entry, or a BC7 entry. The GPU layer makes the image in this format (docs/S4f.md).
 VkFormat cache_entry_format(const Texture& t);
-// Texture content override (nxrt/tex_override.h). apply: when a hook is set and it answers for the texture, replaces bc7 (the tight
-// linear BC7 blocks of the w x h texture) with the encoded answer.
-bool texture_override_active();
-bool texture_override_apply(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& bc7);
+// Texture upload hook (nxrt/tex_upload.h; nvn_tex_upload.cpp). A single-level BC7 sRGB texture of at most 128 x 128: when a subscriber answers for it,
+// replaces bc7 (the tight linear BC7 blocks of the w x h texture) with the encoded answer and returns true.
+bool tex_upload_bc7(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& bc7);
 
-// Texture pixel edit (nxrt/tex_edit.h; nvn_tex_edit.cpp). prepare_texture asks match for 2D ASTC textures it transcodes or decodes; for a
+// The ASTC half of it. prepare_texture asks match for 2D ASTC textures it transcodes or decodes; for a
 // non-zero id it serves the kept data of (id, generation, format) or makes it (decode, the host's edit per level, encode at tex_edit_quality)
 // and keeps it; edited data never reaches the BC7 disk cache.
 struct TexEditKey {
@@ -75,7 +74,7 @@ TexEditKey tex_edit_match(const Texture& t, const uint8_t* src);
 bool tex_edit_lookup(const TexEditKey& k, VkFormat f, std::vector<uint8_t>& data);
 void tex_edit_store(const TexEditKey& k, VkFormat f, const std::vector<uint8_t>& data, double ms);
 void tex_edit_abandon(const TexEditKey& k, VkFormat f);
-void tex_edit_level(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba);
+bool tex_edit_level(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba);
 void tex_edit_note(const Texture& t);   // the texture was given edited data (uploaded again when the answers change)
 int tex_edit_quality();                 // [nvn] tex_edit_quality, bc7e preset 0..6 (default 1)
 

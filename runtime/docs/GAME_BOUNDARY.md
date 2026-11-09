@@ -36,6 +36,7 @@ a log line). It is header-only, so the launcher can use it without linking the r
 | `play_defaults` (`play::GameDefaults`) | (b) | factory `controls.ini`, the defaults revision and the bindings added by each revision |
 | `play` (`play::GamePlay`) | (c) behind a generic API | play mode's game half: input and camera hooks, display hooks, menus, status, the F1 page's Tweaks tab |
 | `prompts` (`play::PromptGame`) | (b) | button prompt icons: the table of icons, how to scan the game's textures, icon size, orientation |
+| `render` (`game::GameRender`, `nxrt/game_render.h`) | (b) | the tone-map shader predicate and its HDR patch, which render targets the HDR scene keeps as float16, the scene pre-exposure scale, the scene-scale hook, the NVN object sizes the game's classes fix. The base keeps the mechanism (float16 promotion, variant pipelines, the FSR 1 pass before a draw); with no table HDR and scene upscale stay off. Textures a game changes at upload go through `nxrt/tex_upload.h` (subscribe; any number of subscribers) |
 
 A game module registers its Info before `nxrt::init()`. The Metroid module is `runtime/games/mpr` and comes as three libraries, each
 a superset of the one before, so each program links only what it needs:

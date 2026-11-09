@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Test tooling core (S5): a fake game whose memory has exactly the shape the registered test game's probes read (games/mpr/mpr_tt_probe.cpp), driven frame by frame
-// through tt::frame_boundary. Covers scripted runs (pass, wait timeout, assert), record -> replay determinism, the virtual clock and RNG,
-// memory-region hashing, the warp sequence (host functions registered at the guest addresses of the real functions) and @shot.
+// Test tooling core (S5): a toy game registered through tt::GameProbes (a world id, a position, hp and play time in host memory, one game field and
+// one game step), driven frame by frame through tt::frame_boundary. Covers scripted runs (pass, wait timeout, assert), the virtual clock and RNG,
+// memory-region hashing, @shot, key steps, and the game side of the interface: its state fields in the hash and the trace, its steps and state keys.
+// The tables of a real game are tested in that game's folder (games/<id>/runtime/tests).
 #include "test_framework.h"
 
 #include <windows.h>
@@ -18,7 +19,9 @@
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
+#include "nxrt/game.h"
 #include "nxrt/tt.h"
+#include "fixture_game.h"
 
 NXTEST_GROUP(tt_core)
 
@@ -26,108 +29,93 @@ namespace {
 
 using namespace nxrt::tt;
 
-constexpr uint64_t kBase = 0x5000000000ull;          // the fake "main module" base: only a key for fn_register / hook addresses
 const char* kWorld = "4b5e8635-0f43-4ffb-9427-2e62186e517d";
 const char* kAreaA = "4ca69978-0000-4000-8000-000000000001";
 const char* kAreaB = "4ca69978-0000-4000-8000-000000000002";
 
-// A fake game whose memory has the shape the probes read: gpGameState -> CGameStateMP1 -> world array; CStateManager -> CGameState (igt),
-// GameLogic -> player -> transform. The toy simulation: UP walks +y, left stick strafes +x, A raises z, igt counts.
+// A toy game: its state lives in this struct (the probes read it), its simulation is step(): UP walks +y, the left stick strafes +x, A raises z, igt counts.
+// Registers itself as the game while it lives (the base tests run with the neutral fixture game otherwise).
 struct Rig {
-    alignas(16) uint8_t gs[0x40] = {};
-    alignas(16) uint8_t worlds[2 * 0x50] = {};
-    alignas(16) uint8_t pstate[0x20] = {};
-    uint64_t gp = 0;
-    uint8_t* mgr;                // CStateManager, large enough for +0x4e0150
-    uint8_t* cgs;                // CGameState, 1 MiB
-    alignas(16) uint8_t cgsw[0x10] = {};
-    alignas(16) uint8_t logic[0x40] = {};
-    alignas(16) uint8_t player[0x400] = {};
-    alignas(16) uint8_t pa[0x40] = {};
-    alignas(16) uint8_t pb[0x80] = {};
-    float xf[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    uint8_t world[16] = {};
+    uint8_t area[16] = {};
+    float pos[3] = {0, 0, 0};
+    float hp = 99.0f;
     double igt = 0;
-    int warp_calls = 0;
-    uint64_t warp_world[2] = {}, warp_area[2] = {}, quit_reason = 0;
-    // S42 warp gate: the game globals -> CResourceFactory -> CResourceLoaderManager chain, with the queue counts IsThreadWorkDone reads
-    bool with_loader = false;
-    uint64_t globals = 0;
-    alignas(16) uint8_t factory[0x20] = {};
-    alignas(16) uint8_t loader[0x200] = {};
-    uint8_t pending_area[16] = {};
-    bool pending = false;
-    int pending_in = 0;
+    int32_t mode = 0;               // a game field: what the step @bump changes
+    int bumps = 0;
     std::string out;
     int exit_code_seen = -999;
+    const nxrt::game::Info* prev = nullptr;
+    nxrt::game::Info info;
     static Rig* cur;
 
-    explicit Rig(const char* name) {
-        cur = this;
-        out = std::string("tt_test_out\\") + name;
-        mgr = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x4f0000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        cgs = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x101000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        tt_guid_to_bytes(kWorld, gs);
-        std::memcpy(worlds, gs, 16);
-        tt_guid_to_bytes(kAreaA, worlds + 0x10);
-        const int32_t count = 1;
-        std::memcpy(gs + 0x10, &count, 4);
-        put(gs + 0x18, worlds);
-        put(gs + 0x20, pstate);
-        const float hp = 99.0f;
-        std::memcpy(pstate + 0xc, &hp, 4);
-        gp = reinterpret_cast<uint64_t>(gs);
-        put(mgr + 8, cgsw);
-        put(cgsw + 8, cgs);
-        put(mgr + 0x4e0150, logic);
-        put(logic + 0x18, player);
-        put(player + 8, pa);
-        put(pa + 0x20, pb);
-        put(pb + 0x40, xf);
-        put(factory + 0x10, loader);
-        globals = reinterpret_cast<uint64_t>(factory);
-        set_igt(0);
-    }
-    void set_loader_queue(int32_t n) { std::memcpy(loader + 0xe8, &n, 4); }      // the load list count
+    explicit Rig(const char* name);
     ~Rig() {
-        VirtualFree(mgr, 0, MEM_RELEASE);
-        VirtualFree(cgs, 0, MEM_RELEASE);
+        nxrt::game::set_current(prev);
         cur = nullptr;
-    }
-    static void put(uint8_t* where, const void* ptr) { const uint64_t v = reinterpret_cast<uint64_t>(ptr); std::memcpy(where, &v, 8); }
-    void set_igt(double v) { igt = v; std::memcpy(cgs + 0xffb08, &v, 8); }
-    void layout() {
-        ProbeLayout l;
-        l.game_state_global = reinterpret_cast<uint64_t>(&gp);
-        l.state_manager = reinterpret_cast<uint64_t>(mgr);
-        if (with_loader) l.game_globals = reinterpret_cast<uint64_t>(&globals);
-        set_probe_layout(l);
     }
     // one frame of the toy game, using the pad of the frame that just began
     void step(const PadFrame& p) {
-        if (p.buttons & (1ull << 13)) xf[7] += 0.5f;
-        xf[3] += static_cast<float>(p.lx) / 32767.0f * 0.25f;
-        if (p.buttons & 1ull) xf[11] += 0.125f;
-        set_igt(igt + 1.0 / 60.0);
-        if (pending && --pending_in <= 0) {              // a warp "loads" for 3 frames
-            std::memcpy(worlds + 0x10, pending_area, 16);
-            pending = false;
-        }
+        if (p.buttons & (1ull << 13)) pos[1] += 0.5f;
+        pos[0] += static_cast<float>(p.lx) / 32767.0f * 0.25f;
+        if (p.buttons & 1ull) pos[2] += 0.125f;
+        igt += 1.0 / 60.0;
     }
 };
 Rig* Rig::cur = nullptr;
 
-void fake_set_world(::Ctx* c) { Rig* r = Rig::cur; r->warp_calls++; r->warp_world[0] = c->x[1]; r->warp_world[1] = c->x[2]; std::memcpy(r->gs, &c->x[1], 8); std::memcpy(r->gs + 8, &c->x[2], 8); }
-void fake_current_ws(::Ctx* c) { c->x[0] = reinterpret_cast<uint64_t>(Rig::cur->worlds); }
-void fake_set_desired(::Ctx* c) { Rig* r = Rig::cur; r->warp_area[0] = c->x[1]; r->warp_area[1] = c->x[2]; }
-void fake_continue(::Ctx* c) {
+bool toy_read_state(GameState* g, ::Ctx*) {
     Rig* r = Rig::cur;
-    std::memcpy(r->pending_area, reinterpret_cast<void*>(c->x[1]), 16);
-    int32_t slot;
-    std::memcpy(&slot, reinterpret_cast<uint8_t*>(c->x[1]) + 16, 4);
-    if (slot != -1 || c->x[0] != reinterpret_cast<uint64_t>(r->cgs)) r->warp_calls += 1000;     // wrong arguments are visible in the count
+    if (!r) return false;
+    std::memcpy(g->world, r->world, 16);
+    std::memcpy(g->area, r->area, 16);
+    g->have_world = g->have_player = g->have_igt = g->have_hp = true;
+    for (int i = 0; i < 3; i++) g->pos[i] = r->pos[i];
+    g->hp = r->hp;
+    g->igt = r->igt;
+    g->add_int("mode", r->mode);
+    g->add_float("fuel", 0.5 * r->mode, r->mode != 0, StateField::Hash::None);       // printed only once the mode is set; not hashed
+    g->add_int("lives", 3, true, StateField::Hash::High);                              // shares the word of "mode"
+    return true;
 }
-void fake_gis(::Ctx* c) { c->x[0] = 0x1234000; }
-void fake_quit(::Ctx* c) { Rig* r = Rig::cur; r->quit_reason = c->x[1]; r->pending = true; r->pending_in = 3; }
+
+// @bump <n>: adds n to the game's mode (parse: a count; run: at once). @lift: waits until z >= 0.25, fails after the timeout.
+bool toy_parse_bump(const StepLine& l, Step* s, std::string* err) {
+    if (l.t.size() != 2) return l.usage("@bump <n>", err);
+    return l.count(l.t[1], &s->count, err);
+}
+StepStatus toy_run_bump(StepRun& r) {
+    Rig::cur->mode += static_cast<int32_t>(r.step.count);
+    Rig::cur->bumps++;
+    return StepStatus::Done;
+}
+bool toy_parse_lift(const StepLine&, Step*, std::string*) { return true; }
+StepStatus toy_run_lift(StepRun& r) {
+    if (Rig::cur->pos[2] >= 0.25f) return StepStatus::Done;
+    if (r.timed_out()) { *r.error = "never lifted"; return StepStatus::Fail; }
+    return StepStatus::Wait;
+}
+const GameStepDef kToySteps[] = {{"@bump", toy_parse_bump, toy_run_bump}, {"@lift", toy_parse_lift, toy_run_lift}};
+const char* const kToyKeys[] = {"mode", "fuel", nullptr};
+const GameProbes kToyProbes = [] {
+    GameProbes p;
+    p.read_state = toy_read_state;
+    p.state_keys = kToyKeys;
+    p.steps = kToySteps;
+    p.step_count = 2;
+    return p;
+}();
+
+Rig::Rig(const char* name) {
+    cur = this;
+    out = std::string("tt_test_out\\") + name;
+    tt_guid_to_bytes(kWorld, world);
+    tt_guid_to_bytes(kAreaA, area);
+    info = nxtest::fixture_game();
+    info.probes = &kToyProbes;
+    prev = nxrt::game::current();
+    nxrt::game::set_current(&info);
+}
 void on_exit_code(int code) { if (Rig::cur) Rig::cur->exit_code_seen = code; }
 
 std::string slurp(const std::string& p) {
@@ -151,11 +139,8 @@ void begin(Rig& r, std::initializer_list<std::pair<const char*, std::string>> kv
     set_exit_handler(on_exit_code);
     nxrt::config_set("test", "out", r.out.c_str());
     nxrt::config_set("test", "frame_source", "manual");
-    nxrt::config_set("test", "game_base", std::to_string(kBase).c_str());
     for (auto& p : kv) nxrt::config_set("test", p.first, p.second.c_str());
-    r.layout();
     r.exit_code_seen = -999;
-    r.pending = false;
     init();
 }
 
@@ -167,33 +152,6 @@ void run_frames(Rig& r, int max_frames) {
         r.step(current_pad());
     }
 }
-
-// the 'h' column of every frame line of a trace file
-std::vector<std::string> hashes_of(const std::string& trace) {
-    std::vector<std::string> v;
-    std::istringstream is(trace);
-    std::string line;
-    while (std::getline(is, line)) {
-        const size_t f = line.find("\"f\":"), h = line.find("\"h\":\"");
-        if (f == std::string::npos || h == std::string::npos) continue;
-        v.push_back(line.substr(f, line.find(',', f) - f) + line.substr(h, 22));
-    }
-    return v;
-}
-
-const char* kSession =
-    "# walk and hash\n"
-    "5\n"
-    "hold UP\n"
-    "20\n"
-    "release UP\n"
-    "stick left 1.0 0 for 10\n"
-    "press A for 3\n"
-    "mouse 4 -2 for 2\n"
-    "@hash walked\n"
-    "@assert health >= 90\n"
-    "@pos 2.5 10.0 0.375 0.01\n"
-    "@pass\n";
 
 }  // namespace
 
@@ -309,19 +267,6 @@ NXTEST(hash_regions_fold_memory_into_the_frame_hash) {
 }
 
 namespace {
-void register_warp_fakes() {
-    nxrt::fn_register(kBase + 0xc838e4, fake_set_world);
-    nxrt::fn_register(kBase + 0xc84478, fake_current_ws);
-    nxrt::fn_register(kBase + 0xc8275c, fake_set_desired);
-    nxrt::fn_register(kBase + 0x40a820, fake_continue);
-    nxrt::fn_register(kBase + 0xb01cc8, fake_gis);
-    nxrt::fn_register(kBase + 0x410544, fake_quit);
-    spit("tt_test_out\\regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
-}
-const char* kWarpScript = "2\n@warp frig frig_b\n@assert area == frig_b\n@pass\n";
-}  // namespace
-
-namespace {
 bool shot_ok(const char* path, void*) { spit(path, "PNG?"); return true; }
 }
 
@@ -372,7 +317,6 @@ NXTEST(watchdog_freeze_ends_a_scripted_run_with_code_5) {
     nxrt::config_set("test", "frame_source", "manual");
     nxrt::config_set("test", "script", s.c_str());
     nxrt::config_set("test", "freeze_exit", "1");
-    r.layout();
     r.exit_code_seen = -999;
     init();
     ::Ctx ctx{};
@@ -466,5 +410,119 @@ NXTEST(keys_still_down_are_released_when_the_script_passes) {
     CHECK(g_key_events[0].name == "Left Ctrl" && g_key_events[0].down && g_key_events[0].frame == 0);
     CHECK(g_key_events[1].name == "Left Ctrl" && !g_key_events[1].down && g_key_events[1].frame == 2);
     set_key_sink(nullptr);
+    shutdown();
+}
+
+// ---- the game side of the interface -----------------------------------------------------------------------------------------------
+
+NXTEST(game_fields_are_in_the_hash_and_the_trace) {
+    uint64_t h[3];
+    std::string trace;
+    for (int i = 0; i < 3; i++) {
+        Rig r("fields");
+        r.mode = i == 2 ? 5 : 1;
+        begin(r, {{"deterministic", "1"}});
+        ::Ctx ctx{};
+        frame_boundary(&ctx);
+        h[i] = last_hash();
+        shutdown();
+        if (i == 0) trace = slurp(r.out + "/trace.jsonl");
+    }
+    CHECK_EQ(h[0], h[1]);                    // the same state, the same hash
+    CHECK(h[0] != h[2]);                     // a game field changed
+    // printed in the order the game added them, before hp and igt; "fuel" is shown because the mode is set
+    CHECK(trace.find("\"mode\":1,\"fuel\":0.5,\"lives\":3,\"hp\":99") != std::string::npos);
+}
+
+NXTEST(a_game_field_that_is_not_shown_is_left_out_of_the_trace) {
+    Rig r("hidden");
+    r.mode = 0;
+    begin(r, {{"deterministic", "1"}});
+    ::Ctx ctx{};
+    frame_boundary(&ctx);
+    shutdown();
+    const std::string trace = slurp(r.out + "/trace.jsonl");
+    CHECK(trace.find("\"mode\":0,\"lives\":3") != std::string::npos);    // fuel is not shown at mode 0
+    CHECK(trace.find("fuel") == std::string::npos);
+}
+
+NXTEST(a_high_field_shares_the_word_of_the_field_before_it) {
+    // mode (Word) and lives (High) are one 64-bit word: the hash must equal the hand-folded one
+    Rig r("pack");
+    begin(r, {{"deterministic", "1"}, {"trace", "none"}});
+    ::Ctx ctx{};
+    frame_boundary(&ctx);
+    const uint64_t got = last_hash();
+    shutdown();
+    auto mix = [](uint64_t h, uint64_t w) { h = (h ^ w) * 0x100000001b3ull; return h ^ (h >> 29); };
+    auto bits = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return static_cast<uint64_t>(u); };
+    uint64_t h = 0xcbf29ce484222325ull;
+    h = mix(h, 0);
+    h = mix(h, 1u | 2u | 4u | 8u | 16u);
+    for (int i = 0; i < 16; i += 8) { uint64_t w; std::memcpy(&w, r.world + i, 8); h = mix(h, w); }
+    for (int i = 0; i < 16; i += 8) { uint64_t w; std::memcpy(&w, r.area + i, 8); h = mix(h, w); }
+    for (int i = 0; i < 3; i++) { h = mix(h, bits(r.pos[i])); h = mix(h, 0); }
+    h = mix(h, 0);                                       // yaw
+    h = mix(h, bits(r.hp));
+    uint64_t ig; std::memcpy(&ig, &r.igt, 8);
+    h = mix(h, ig);
+    h = mix(h, 0u | (3ull << 32));                       // mode | lives << 32
+    CHECK_EQ(got, h);
+}
+
+NXTEST(game_steps_parse_and_run_in_the_frame) {
+    Rig r("gamestep");
+    const std::string s = scriptfile("gamestep.nxs", "2\n@bump 3\n@BUMP 4\n1\n@assert mode == 7\n@assert FUEL > 3\n@mashuntil A every 5 until mode >= 7 timeout=20\n@pass\n");
+    begin(r, {{"script", s}});
+    run_frames(r, 50);
+    CHECK_EQ(r.exit_code_seen, 0);
+    CHECK_EQ(r.bumps, 2);
+    CHECK_EQ(r.mode, 7);
+    shutdown();
+}
+
+NXTEST(a_game_step_that_waits_blocks_until_done) {
+    Rig r("lift_ok");
+    begin(r, {{"script", scriptfile("lift_ok.nxs", "@lift\n@assert pz >= 0.25\n@pass\n")}});
+    run_frames(r, 5);
+    CHECK(!finished());                          // the step keeps waiting
+    r.pos[2] = 0.3f;
+    run_frames(r, 5);
+    CHECK_EQ(r.exit_code_seen, 0);
+    shutdown();
+}
+
+NXTEST(a_game_step_fails_the_run_with_its_message_after_the_timeout) {
+    Rig r("lift_fail");
+    begin(r, {{"script", scriptfile("lift_fail.nxs", "@timeout 5\n2\n@lift\n@pass\n")}});
+    run_frames(r, 30);
+    CHECK_EQ(r.exit_code_seen, 1);
+    const std::string res = slurp(r.out + "/result.json");
+    CHECK(res.find("lift_fail.nxs:3:") != std::string::npos);
+    CHECK(res.find("never lifted") != std::string::npos);
+    shutdown();
+}
+
+NXTEST(game_step_errors_name_the_script_line) {
+    Rig r("gameerr");
+    begin(r, {{"script", scriptfile("gameerr.nxs", "2\n@bump\n")}});
+    CHECK_EQ(r.exit_code_seen, 2);
+    const std::string res = slurp(r.out + "/result.json");
+    CHECK(res.find("gameerr.nxs:2:") != std::string::npos);
+    CHECK(res.find("@bump <n>") != std::string::npos);
+    shutdown();
+}
+
+NXTEST(a_game_step_is_unknown_to_a_game_without_it) {
+    Rig r("nostep");
+    r.info.probes = nullptr;                         // the game registers no steps and no state keys
+    begin(r, {{"script", scriptfile("nostep.nxs", "@bump 1\n")}});
+    CHECK_EQ(r.exit_code_seen, 2);
+    CHECK(slurp(r.out + "/result.json").find("unknown keyword '@bump'") != std::string::npos);
+    shutdown();
+    Rig q("nokey");
+    q.info.probes = nullptr;
+    begin(q, {{"script", scriptfile("nokey.nxs", "@assert mode == 1\n")}});
+    CHECK_EQ(q.exit_code_seen, 2);
     shutdown();
 }

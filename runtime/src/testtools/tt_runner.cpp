@@ -17,6 +17,7 @@
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/game.h"
 #include "nxrt/log.h"
 #include "tt_internal.h"
 
@@ -32,7 +33,7 @@ int16_t to_stick(double v) {
 
 bool Runner::load(const std::string& script_file, const RegionTable* regions, std::string* err) {
     script_ = Script();
-    idx_ = 0; started_ = false; done_ = false; warped_ = false; remaining_ = 0;
+    idx_ = 0; started_ = false; done_ = false; remaining_ = 0;
     default_timeout_ = 3600;
     held_ = pressing_ = 0;
     std::memset(stick_, 0, sizeof stick_);
@@ -43,9 +44,6 @@ bool Runner::load(const std::string& script_file, const RegionTable* regions, st
     has_keys_ = false;
     regions_ = regions;
     live_path_ = config_get_str("test", "live", "");
-    warp_wait_loader_ = config_get_bool("test", "warp_wait_loader", true);
-    warp_loader_max_ms_ = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("test", "warp_loader_max_ms", 30000)));
-    gate_open_ = false; idle_frames_ = 0; gate_start_ms_ = 0;
     live_off_ = 0;
     live_lines_ = 0;
     const bool ok = parse_script_file(script_file, regions, &script_, err);
@@ -90,7 +88,12 @@ bool Runner::eval_assert(const Step& st, const GameState& s, bool valid, std::st
             case AssertField::VelY: *v = s.vel[1]; return valid && s.have_player;
             case AssertField::VelZ: *v = s.vel[2]; return valid && s.have_player;
             case AssertField::Speed: *v = std::sqrt(double(s.vel[0]) * s.vel[0] + double(s.vel[1]) * s.vel[1] + double(s.vel[2]) * s.vel[2]); return valid && s.have_player;
-            case AssertField::State: *v = s.move_state; return valid && s.have_player;
+            case AssertField::Game: {
+                const StateField* f = s.field(st.name2);
+                if (!f || !f->shown) return false;
+                *v = f->value;
+                return valid;
+            }
             default: return false;
         }
     };
@@ -120,18 +123,24 @@ bool Runner::eval_assert(const Step& st, const GameState& s, bool valid, std::st
 bool Runner::write_live_status(uint64_t k, const GameState& s, bool valid, const char* note_in) {
     std::string note_s(note_in);
     for (char& ch : note_s) if (ch == 92 || ch == 34 || static_cast<unsigned char>(ch) < 32) ch = 32;       // keep the JSON line valid (paths have backslashes)
-    const char* note = note_s.c_str();
     char b[1024];
     std::snprintf(b, sizeof b,
-                  "{\"lines\":%d,\"frame\":%llu,\"valid\":%d,\"world\":\"%s\",\"area\":\"%s\",\"igt\":%.3f,\"hp\":%.1f,\"pos\":[%.3f,%.3f,%.3f],\"vel\":[%.3f,%.3f,%.3f],"
-                  "\"yaw\":%.4f,\"pitch\":%.4f,\"state\":%u,\"cam\":%d,\"morph\":%d,\"orbit\":%d,\"beam\":%d,\"visor\":%d,\"missiles\":%d,\"note\":\"%s\"}\n",
+                  "{\"lines\":%d,\"frame\":%llu,\"valid\":%d,\"world\":\"%s\",\"area\":\"%s\",\"igt\":%.3f,\"hp\":%.1f,\"pos\":[%.3f,%.3f,%.3f],\"vel\":[%.3f,%.3f,%.3f],\"yaw\":%.4f",
                   live_lines_, static_cast<unsigned long long>(k), valid ? 1 : 0, tt_guid_text_safe(s.world, s.have_world).c_str(), tt_guid_text_safe(s.area, s.have_world).c_str(),
-                  s.igt, s.hp, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.yaw, s.pitch, s.move_state, s.cam_state, s.morph_state, s.orbit_state,
-                  s.beam, s.visor, s.missiles, note);
+                  s.igt, s.hp, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.yaw);
+    std::string out = b;
+    for (const StateField& f : s.fields) {               // the game's own values, readable or not (a missing group shows its defaults)
+        if (!f.key[0]) continue;
+        const char* key = f.status_key ? f.status_key : f.key;
+        if (f.is_float) std::snprintf(b, sizeof b, ",\"%s\":%.4f", key, f.value);
+        else std::snprintf(b, sizeof b, ",\"%s\":%lld", key, static_cast<long long>(f.value));
+        out += b;
+    }
+    out += ",\"note\":\"" + note_s + "\"}\n";
     const std::string tmp = live_path_ + ".status.tmp", fin = live_path_ + ".status";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f << b;
+        f << out;
     }
     return MoveFileExA(tmp.c_str(), fin.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;       // fails while a reader has the old file open: the caller retries
 }
@@ -183,7 +192,7 @@ bool Runner::poll_live(uint64_t k, const GameState& s, bool valid) {
 
 void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
     if (done_) return;
-    detail::watch_flush(k);
+    if (const GameProbes* gp = game::info().probes; gp && gp->on_frame) gp->on_frame(k);
     mouse_x_ = mouse_y_ = 0;       // the impulse lasts for the frame of the step that sets it
     if (!live_path_.empty()) {         // express lane of live mode: a file <live>.shot holding a name asks for a screenshot now, whatever step is running
         const std::string abort_req = live_path_ + ".abort";       // drops every step that has not finished (a wait that can never be met), releases the pad
@@ -196,7 +205,6 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             held_ = pressing_ = 0;
             std::memset(stick_, 0, sizeof stick_);
             stick_override_ = false;
-            warped_ = false;
         }
         const std::string req = live_path_ + ".shot";
         if (GetFileAttributesA(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -313,78 +321,11 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 set_clock_rate(st.x);
                 advance();
                 continue;
-            case StepKind::Give:
-                if (!detail::give_item(static_cast<int>(st.x), static_cast<int>(st.y))) { fail(st, "@give: the player state is not readable yet"); return; }
-                advance();
-                continue;
             case StepKind::WaitMs: {
                 const uint64_t now_ms = GetTickCount64();
                 if (first) start_ms_ = now_ms;
                 if (static_cast<double>(now_ms - start_ms_) >= st.x) { advance(); continue; }
                 return;
-            }
-            case StepKind::Warp: {
-                if (!warped_ && first) { gate_open_ = !warp_wait_loader_; gate_logged_ = false; idle_frames_ = 0; gate_start_ms_ = GetTickCount64(); }
-                if (!warped_ && !gate_open_) {
-                    uint32_t pending = 0;
-                    const detail::LoaderState ls = detail::loader_state(&pending);
-                    const uint64_t waited = GetTickCount64() - gate_start_ms_;
-                    if (ls == detail::LoaderState::Unknown) {
-                        gate_open_ = true;                     // nothing readable to wait for (no game globals yet, or a test rig without them)
-                    } else if (ls == detail::LoaderState::Idle) {
-                        if (++idle_frames_ >= kWarpIdleFrames) {
-                            gate_open_ = true;
-                            if (waited >= 100) NXLOG_I("tt", "warp gate: the resource loader was idle after %llu ms", static_cast<unsigned long long>(waited));
-                        }
-                    } else {
-                        if (!gate_logged_) { gate_logged_ = true; NXLOG_I("tt", "warp gate: waiting for the resource loader (%u queued)", pending); }
-                        idle_frames_ = 0;
-                        if (waited >= warp_loader_max_ms_) {
-                            gate_open_ = true;
-                            NXLOG_W("tt", "warp gate: the resource loader is still busy after %llu ms (%u queued); warping anyway",
-                                    static_cast<unsigned long long>(waited), pending);
-                        }
-                    }
-                    if (!gate_open_) return;
-                }
-                if (!warped_) {
-                    if (detail::warp(c, st.id2, st.id)) {
-                        warped_ = true;
-                        start_frame_ = k;
-                        NXLOG_I("tt", "warp issued: world %s area %s (frame %llu)", tt_guid_to_text(st.id2).c_str(), tt_guid_to_text(st.id).c_str(), static_cast<unsigned long long>(k));
-                        return;                       // the quit is processed by the game over the next frames
-                    }
-                    const int64_t to = timeout_of();
-                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "cannot warp: no state manager seen (the game is not in a level, or the hooks are not built in)"); return; }
-                    return;
-                }
-                const bool met = valid && s.have_world && std::memcmp(s.area, st.id, 16) == 0 && std::memcmp(s.world, st.id2, 16) == 0;
-                if (met) { warped_ = false; advance(); continue; }
-                const int64_t to = timeout_of();
-                if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "timeout waiting for the warp target area to become current"); return; }
-                return;
-            }
-            case StepKind::Grant:
-                if (!detail::grant(st.count, static_cast<int32_t>(st.x), static_cast<int32_t>(st.y))) {
-                    const int64_t to = timeout_of();
-                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "@grant: the player state is not available"); return; }
-                    return;                       // retry next frame (the game may not have a player state yet)
-                }
-                NXLOG_I("tt", "grant %s: amount %d capacity %d", st.text.c_str(), static_cast<int>(st.x), static_cast<int>(st.y));
-                advance();
-                continue;
-            case StepKind::Objs: {
-                std::string why;
-                if (!detail::dump_objects(st.text, out_dir() + "/objs.txt", &why)) { fail(st, "@objs: " + why); return; }
-                advance();
-                continue;
-            }
-            case StepKind::Probe: {
-                std::string why;
-                const size_t sp = st.text.find(' ');
-                if (sp == std::string::npos || !detail::probe_positions(c, st.text.substr(0, sp), st.text.substr(sp + 1), &why)) { fail(st, "@probe: " + why); return; }
-                advance();
-                continue;
             }
             case StepKind::Poke: {
                 std::string why;
@@ -399,29 +340,15 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 advance();
                 continue;
             }
-            case StepKind::Rays: {
+            case StepKind::Game: {
                 std::string why;
-                const size_t sp = st.text.find(' ');
-                if (sp == std::string::npos || !detail::cast_rays(c, st.text.substr(0, sp), st.text.substr(sp + 1), &why)) { fail(st, "@rays: " + why); return; }
-                advance();
-                continue;
-            }
-            case StepKind::Watch:
-                if (st.text == "off") detail::watch_stop();
-                else if (!detail::watch_start(c, static_cast<int>(st.y))) { fail(st, "@watch: the player is not readable (not in a level, or not called from the game hook)"); return; }
-                advance();
-                continue;
-            case StepKind::Call: {
-                uint64_t res = 0;
-                std::string why;
-                if (!detail::call_guest(c, static_cast<uint64_t>(st.count), st.text, &res, &why)) {
-                    const int64_t to = timeout_of();
-                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) { fail(st, "@call: " + why); return; }
-                    return;
+                StepRun run{st, c, k, first, s, valid, timeout_of(), &start_frame_, &why};
+                switch (st.game->run(run)) {
+                    case StepStatus::Done: advance(); continue;
+                    case StepStatus::Wait: return;
+                    case StepStatus::Fail: fail(st, why.empty() ? st.game->name : why); return;
                 }
-                NXLOG_I("tt", "call main+0x%llx(%s) = 0x%llx", static_cast<unsigned long long>(st.count), st.text.c_str(), static_cast<unsigned long long>(res));
-                advance();
-                continue;
+                return;
             }
             case StepKind::PressUntil: {
                 std::string d;

@@ -13,6 +13,8 @@
 
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
+#include "nxrt/game.h"
+#include "nxrt/game_render.h"
 #include "nxrt/gfx.h"
 #include "nxrt/log.h"
 #include "nxrt/lowlat.h"
@@ -265,7 +267,11 @@ struct Renderer::Impl {
         const extras::Settings es = extras::settings();
         extras::HdrState hs;
         wanted = extras::OutputKind::Sdr8;
-        if (es.hdr.mode != extras::HdrMode::Off) {
+        // HDR needs the game's render table (nxrt/game_render.h): without a tone-map patch and a promotion rule the base cannot make the scene HDR
+        const game::GameRender* gr = game::info().render;
+        const bool game_hdr = gr && gr->tonemap_patch && gr->promote_target;
+        if (es.hdr.mode != extras::HdrMode::Off && !game_hdr) NXLOG_I(kTag, "HDR: the game has no render hooks for it: SDR output");
+        if (es.hdr.mode != extras::HdrMode::Off && game_hdr) {
             bool o10 = false, osc = false;
             extras::DisplayHdrInfo di;
             if (headless) {

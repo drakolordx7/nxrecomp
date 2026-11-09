@@ -190,7 +190,7 @@ Ref<Texture> texture_registry_find_alias(const Texture* t) {
     return Ref<Texture>();
 }
 
-void textures_mark_override_candidates_dirty() {
+void textures_mark_bc7_candidates_dirty() {
     std::vector<Ref<Texture>> hit;
     {
         std::lock_guard<std::mutex> lk(g_mu);
