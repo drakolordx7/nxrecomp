@@ -21,12 +21,15 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/tt.h"
+#include "mpr_tt_probe.h"
 
 NXTEST_GROUP(mpr_tt_core)
 
 namespace {
 
 using namespace nxrt::tt;
+using nxrt::tt::mpr::ProbeLayout;
+using nxrt::tt::mpr::set_probe_layout;
 
 constexpr uint64_t kBase = 0x5000000000ull;          // the fake "main module" base: only a key for fn_register / hook addresses
 const char* kWorld = "4b5e8635-0f43-4ffb-9427-2e62186e517d";
@@ -99,6 +102,7 @@ struct Rig {
     void set_igt(double v) { igt = v; std::memcpy(cgs + 0xffb08, &v, 8); }
     void layout() {
         ProbeLayout l;
+        l.game_base = kBase;
         l.game_state_global = reinterpret_cast<uint64_t>(&gp);
         l.state_manager = reinterpret_cast<uint64_t>(mgr);
         if (with_loader) l.game_globals = reinterpret_cast<uint64_t>(&globals);
@@ -153,7 +157,6 @@ void begin(Rig& r, std::initializer_list<std::pair<const char*, std::string>> kv
     set_exit_handler(on_exit_code);
     nxrt::config_set("test", "out", r.out.c_str());
     nxrt::config_set("test", "frame_source", "manual");
-    nxrt::config_set("test", "game_base", std::to_string(kBase).c_str());
     for (auto& p : kv) nxrt::config_set("test", p.first, p.second.c_str());
     r.layout();
     r.exit_code_seen = -999;
@@ -277,6 +280,19 @@ NXTEST(two_script_runs_have_the_same_final_hash) {
     CHECK_EQ(h[0], h[1]);
 }
 
+namespace {
+void register_warp_fakes() {
+    nxrt::fn_register(kBase + 0xc838e4, fake_set_world);
+    nxrt::fn_register(kBase + 0xc84478, fake_current_ws);
+    nxrt::fn_register(kBase + 0xc8275c, fake_set_desired);
+    nxrt::fn_register(kBase + 0x40a820, fake_continue);
+    nxrt::fn_register(kBase + 0xb01cc8, fake_gis);
+    nxrt::fn_register(kBase + 0x410544, fake_quit);
+    spit("tt_test_out\\regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
+}
+const char* kWarpScript = "2\n@warp frig frig_b\n@assert area == frig_b\n@pass\n";
+}  // namespace
+
 NXTEST(warp_runs_the_practice_mod_sequence) {
     Rig r("warp");
     nxrt::fn_register(kBase + 0xc838e4, fake_set_world);
@@ -341,3 +357,53 @@ NXTEST(warp_gate_can_be_turned_off_and_gives_up_after_its_limit) {
     }
 }
 
+
+// The frame hash and the trace line of Metroid Prime Remastered are what the tooling produced before the state went generic: the words the old
+// hash folded (state; which groups were readable; pitch; cam|morph; orbit|beam; visor|missiles) are the game's fields in the order it registers them.
+namespace {
+uint64_t legacy_mix(uint64_t h, uint64_t w) { h = (h ^ w) * 0x100000001b3ull; return h ^ (h >> 29); }
+uint64_t legacy_bytes(uint64_t h, const void* p, size_t n) {
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) { uint64_t w; std::memcpy(&w, b + i, 8); h = legacy_mix(h, w); }
+    return h;
+}
+uint32_t legacy_fbits(float f) { uint32_t u; std::memcpy(&u, &f, 4); return u; }
+uint64_t legacy_dbits(double f) { uint64_t u; std::memcpy(&u, &f, 8); return u; }
+uint64_t fv(const GameState& g, const char* key) {
+    const StateField* f = g.field(key);
+    return f ? static_cast<uint32_t>(static_cast<int64_t>(f->value)) : 0;
+}
+}  // namespace
+
+NXTEST(frame_hash_and_trace_keep_the_pre_generic_format) {
+    Rig r("legacy");
+    begin(r, {{"deterministic", "1"}});
+    ::Ctx ctx{};
+    frame_boundary(&ctx);
+    const GameState& g = last_state();
+    uint64_t h = 0xcbf29ce484222325ull;
+    h = legacy_mix(h, 0);
+    h = legacy_mix(h, 1u | (g.have_world ? 2u : 0u) | (g.have_player ? 4u : 0u) | (g.have_igt ? 8u : 0u) | (g.have_hp ? 16u : 0u));
+    h = legacy_bytes(h, g.world, 16);
+    h = legacy_bytes(h, g.area, 16);
+    for (int i = 0; i < 3; i++) { h = legacy_mix(h, legacy_fbits(g.pos[i])); h = legacy_mix(h, legacy_fbits(g.vel[i])); }
+    h = legacy_mix(h, legacy_fbits(g.yaw));
+    h = legacy_mix(h, legacy_fbits(g.hp));
+    h = legacy_mix(h, legacy_dbits(g.igt));
+    h = legacy_mix(h, fv(g, "state"));
+    h = legacy_mix(h, fv(g, ""));
+    h = legacy_mix(h, legacy_fbits(static_cast<float>(g.field("pitch")->value)));
+    h = legacy_mix(h, fv(g, "cam") | fv(g, "morph") << 32);
+    h = legacy_mix(h, fv(g, "orbit") | fv(g, "beam") << 32);
+    h = legacy_mix(h, fv(g, "visor") | fv(g, "msl") << 32);
+    CHECK_EQ(last_hash(), h);
+    shutdown();
+    // trace keys and their order: state, then pitch cam morph orbit (readable aim group), then hp and igt
+    const std::string t = slurp(r.out + "/trace.jsonl");
+    const size_t a = t.find("\"state\":0,\"pitch\":0,\"cam\":0,\"morph\":");
+    REQUIRE(a != std::string::npos);
+    CHECK(t.find(",\"orbit\":", a) != std::string::npos);
+    CHECK(t.find("\"hp\":99", a) != std::string::npos);
+    CHECK(t.find("\"igt\":", a) != std::string::npos);
+}
