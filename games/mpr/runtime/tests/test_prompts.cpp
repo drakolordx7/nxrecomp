@@ -427,12 +427,12 @@ NXTEST(real_icon_untiles_to_valid_blocks_with_the_console_rule) {
         nxtest::skip("the game's GuiSysMP1.pak is not here");
         return;
     }
-    auto pak = mprs::Pak::open(mprs::open_file_storage(pak_file.string()));
+    auto pak = nxs::Pak::open(nxs::open_file_storage(pak_file.string()));
     int tested = 0;
-    for (const mprs::PakEntry& e : pak->assets()) {
+    for (const nxs::PakEntry& e : pak->assets()) {
         if (std::strcmp(e.type, "TXTR") != 0 || e.id.str() != icon_asset_uuid(Icon::A)) continue;
-        const mprs::TxtrInfo info = mprs::txtr_read_info(*pak, e);
-        const std::vector<mprs::u8> tiled = mprs::txtr_read_tiled(*pak, e, info);
+        const nxs::TxtrInfo info = nxs::txtr_read_info(*pak, e);
+        const std::vector<nxs::u8> tiled = nxs::txtr_read_tiled(*pak, e, info);
         CHECK_EQ(info.width, 36u);
         CHECK_EQ(tiled.size(), size_t(3072));
         // untile with 1 GOB (the console rule) and with 2 GOBs (the old rule): a valid BC7 image has no all-zero blocks (mode bits 0 are
@@ -478,15 +478,15 @@ NXTEST(real_icon_ids_exist_in_both_interfaces) {
         return;
     }
     const auto count = [&](const char* rel, const std::set<std::string>& ids) {
-        auto pak = mprs::Pak::open(mprs::open_file_storage((romfs / rel).string()));
+        auto pak = nxs::Pak::open(nxs::open_file_storage((romfs / rel).string()));
         std::set<std::string> seen;
-        for (const mprs::PakEntry& e : pak->assets()) {
+        for (const nxs::PakEntry& e : pak->assets()) {
             if (std::strcmp(e.type, "TXTR") != 0 || !ids.count(e.id.str())) continue;
-            const mprs::TxtrInfo info = mprs::txtr_read_info(*pak, e);
+            const nxs::TxtrInfo info = nxs::txtr_read_info(*pak, e);
             CHECK_EQ(info.width, 36u);
             CHECK_EQ(info.height, 36u);
             CHECK_EQ(info.mips, 1u);
-            CHECK_EQ(mprs::txtr_read_tiled(*pak, e, info).size(), size_t(3072));
+            CHECK_EQ(nxs::txtr_read_tiled(*pak, e, info).size(), size_t(3072));
             seen.insert(e.id.str());
         }
         return seen.size();

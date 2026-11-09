@@ -192,7 +192,7 @@ Want want_of(const TweakSettings& t) {
 // Reads the targets from the player's paks: size and hash of each tiled buffer. Worker thread; announces itself with a re-upload when done.
 void scan_paks() {
     const std::string romfs = services::romfs_dir();
-    std::map<std::string, std::unique_ptr<mprs::Pak>> paks;
+    std::map<std::string, std::unique_ptr<nxs::Pak>> paks;
     Known found[kTargetCount];
     uint32_t n = 0;
     const auto t0 = std::chrono::steady_clock::now();
@@ -200,13 +200,13 @@ void scan_paks() {
         const Target& tg = kTargets[i];
         try {
             auto it = paks.find(tg.pak);
-            if (it == paks.end()) it = paks.emplace(tg.pak, mprs::Pak::open(mprs::open_file_storage((std::filesystem::path(romfs) / tg.pak).string()))).first;
-            for (const mprs::PakEntry& e : it->second->assets()) {
+            if (it == paks.end()) it = paks.emplace(tg.pak, nxs::Pak::open(nxs::open_file_storage((std::filesystem::path(romfs) / tg.pak).string()))).first;
+            for (const nxs::PakEntry& e : it->second->assets()) {
                 if (std::strcmp(e.type, "TXTR") != 0 || e.id.str() != tg.uuid) continue;
-                const mprs::TxtrInfo info = mprs::txtr_read_info(*it->second, e);
-                const mprs::TxtrFormat& f = mprs::txtr_format(info.format);
+                const nxs::TxtrInfo info = nxs::txtr_read_info(*it->second, e);
+                const nxs::TxtrFormat& f = nxs::txtr_format(info.format);
                 if (!f.astc || info.layers != 1) break;
-                const std::vector<mprs::u8> buf = mprs::txtr_read_tiled(*it->second, e, info);
+                const std::vector<nxs::u8> buf = nxs::txtr_read_tiled(*it->second, e, info);
                 Known& k = found[i];
                 k.gpu_size = buf.size();
                 k.hash = hash(buf.data(), buf.size());
