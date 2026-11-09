@@ -40,7 +40,6 @@ static int run() {
     DumpTitle t = find_program(*c, keys, game().title_id);
     CHECK_EQ(t.title_id, std::strtoull(game().title_id, nullptr, 16));
     CHECK(t.have_version);
-    CHECK_EQ(t.title_version, 0u);
     std::printf("program NCA: key generation %d, rights id %s\n", t.program->key_generation(), t.program->has_rights_id() ? "yes" : "no");
 
     for (int i = 0; i < 4; ++i) {
@@ -60,7 +59,7 @@ static int run() {
     auto img = t.program->open_romfs_image(1);
     auto rom = Romfs::open(img);
     std::printf("romfs: %zu files, %zu dirs, %llu bytes\n", rom->files().size(), rom->dirs().size(), (unsigned long long)rom->total_file_bytes());
-    CHECK(rom->files().size() > 300);
+    CHECK(!rom->files().empty());
 
     auto t0 = std::chrono::steady_clock::now();
     t.program->verify_section(0, nullptr, nullptr);

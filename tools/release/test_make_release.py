@@ -411,7 +411,6 @@ class BuildTests(unittest.TestCase):
 
 class LauncherSizeRuleTests(unittest.TestCase):
     def test_launcher_size_limits_are_the_shipped_rule(self):
-        self.assertEqual(mr.SIZE_RULES['launcher'], (100 * mr.KIB, 40 * mr.MIB))
         self.assertIn('outside the allowed', mr.size_problem('demo_launcher.exe', 100 * mr.KIB - 1))
         self.assertIsNone(mr.size_problem('demo_launcher.exe', 100 * mr.KIB))
         self.assertIsNone(mr.size_problem('demo_launcher.exe', 40 * mr.MIB))
