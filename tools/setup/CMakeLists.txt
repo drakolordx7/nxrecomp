@@ -46,6 +46,15 @@ set(MPRS_GAME "mpr" CACHE STRING "id of the game the setup tool is built for (sr
 if(NOT EXISTS ${S}/games/${MPRS_GAME}.cpp)
     message(FATAL_ERROR "MPRS_GAME=${MPRS_GAME}: src/games/${MPRS_GAME}.cpp not found")
 endif()
+# The setup programs are named after the game: <id>_setup.exe and <id>_setup_cli.exe (mpr_setup.exe for Metroid Prime Remastered).
+# Their file properties show the profile's product name (the third string of the GameProfile in src/games/<id>.cpp).
+set(MPRS_EXE "${MPRS_GAME}_setup")
+file(READ ${S}/games/${MPRS_GAME}.cpp _mprs_profile)
+set(MPRS_PRODUCT "${MPRS_GAME}")
+if(_mprs_profile MATCHES "GameProfile g\{[^\"]*\"[^\"]*\"[^\"]*\"[^\"]*\"[^\"]*\"([^\"]*)\"")
+    set(MPRS_PRODUCT "${CMAKE_MATCH_1}")
+endif()
+add_compile_definitions(MPRS_EXE_NAME="${MPRS_EXE}")
 mprs_lib(mprs_base util.cpp storage.cpp log.cpp games/${MPRS_GAME}.cpp)
 mprs_lib(mprs_crypto crypto.cpp fileio.cpp)
 if(TARGET mprs_crypto)
@@ -116,6 +125,7 @@ if(TARGET mprs_core)
         target_link_libraries(mpr_setup_cli PRIVATE mprs_core)
         target_compile_definitions(mpr_setup_cli PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
         target_compile_options(mpr_setup_cli PRIVATE ${MPRS_WARN})
+        set_target_properties(mpr_setup_cli PROPERTIES OUTPUT_NAME "${MPRS_EXE}_cli")
         foreach(isa avx2 sse4.1 sse2)
             add_custom_command(TARGET mpr_setup_cli POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:mpr_setup_cli>)
@@ -148,6 +158,8 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/gui/main_win32.cpp AND (MPRS_GUI_SIM OR TA
     target_compile_options(mpr_setup PRIVATE ${MPRS_WARN})
     target_include_directories(mpr_setup PRIVATE ${S})
     target_link_options(mpr_setup PRIVATE /MANIFEST:NO)   # gui/setup.rc carries the manifest
+    set_target_properties(mpr_setup PROPERTIES OUTPUT_NAME "${MPRS_EXE}")
+    set_source_files_properties(gui/setup.rc PROPERTIES COMPILE_DEFINITIONS "MPRS_RC_EXE=\"${MPRS_EXE}\";MPRS_RC_PRODUCT=\"${MPRS_PRODUCT}\"")
     if(NOT MPRS_GUI_SIM)
         foreach(isa avx2 sse4.1 sse2)
             add_custom_command(TARGET mpr_setup POST_BUILD

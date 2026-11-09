@@ -453,7 +453,7 @@ std::string shader_pack_missing_text() {
 
 std::string make_ini(int quality, bool with_shaders) {
     std::string s =
-        "; Written by mpr_setup. Setup rewrites this file only while this first line is present; delete the line to keep your edits.\n"
+        "; Written by " MPRS_EXE_NAME ". Setup rewrites this file only while this first line is present; delete the line to keep your edits.\n"
         "[fs]\nromfs = romfs\n"
         "[nvn]\nbc7_cache = bc7_cache\nbc7_quality = " + std::to_string(quality) + "\n";
     if (with_shaders) s += "shader_cache = shader_cache/spirv\n";
@@ -849,7 +849,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         {
             const std::string ini_path = path_join(o.out_dir, game().game_ini);
             std::string existing;
-            bool ours = !read_text_file(ini_path, existing) || existing.rfind("; Written by mpr_setup", 0) == 0;
+            bool ours = !read_text_file(ini_path, existing) || existing.rfind("; Written by " MPRS_EXE_NAME, 0) == 0;
             if (ours) write_text_file_atomic(ini_path, make_ini(o.bc7_quality, shaders));
             else MPRS_LOGW("%s was edited by hand; left alone. It must contain bc7_quality = %d.", game().game_ini, o.bc7_quality);
             st.set_meta("bc7_quality", std::to_string(o.bc7_quality));

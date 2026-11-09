@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// mpr_setup_cli: the setup as a command line tool (automation, headless machines, support).
+// <game>_setup_cli (mpr_setup_cli for Metroid Prime Remastered): the setup as a command line tool (automation, headless machines, support).
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -36,7 +36,7 @@ BOOL WINAPI on_ctrl(DWORD type) {
 
 void usage() {
     std::puts(
-        "Usage: mpr_setup_cli --input <dump.nsp|xci|nsz|xcz> [--input <update or DLC> ...] --out <game folder> [options]\n"
+        "Usage: " MPRS_EXE_NAME "_cli --input <dump.nsp|xci|nsz|xcz> [--input <update or DLC> ...] --out <game folder> [options]\n"
         "\n"
         "  --input <file>[,<file>]             the base game, and optionally its update and DLC (repeat --input or give a comma list,\n"
         "                                      any order). The newest update is applied; DLC goes to aoc\\<title id>.\n"
@@ -159,7 +159,7 @@ int wmain(int argc, wchar_t** wargv) {
         else if (a == "--find-keys") find_keys = true;
         else if (a == "--title-id") o.expected_title_id = val();
         else if (a == "--build-id") o.expected_build_id = val();
-        else if (a == "--version") { std::printf("mpr_setup %s\n", MPR_VERSION); return 0; }
+        else if (a == "--version") { std::printf(MPRS_EXE_NAME " %s\n", MPR_VERSION); return 0; }
         else if (a == "--help" || a == "-h" || a == "/?") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n\n", a.c_str()); usage(); return 1; }
     }
