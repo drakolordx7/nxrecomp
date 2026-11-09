@@ -8,7 +8,7 @@
 #include "shadercache.h"
 #include "storage.h"
 
-#ifdef MPRS_HAVE_ZSTD
+#ifdef NXS_HAVE_ZSTD
 #include <zstd.h>
 #endif
 
@@ -27,7 +27,7 @@
 #include <string>
 #include <vector>
 
-using namespace mprs;
+using namespace nxs;
 
 namespace {
 
@@ -60,11 +60,11 @@ std::string manifest_for(const std::vector<Fake>& files) {
 }
 
 void write_folder(const std::string& dir, const std::vector<Fake>& files, const std::string* manifest) {
-    if (!create_dirs(dir)) std::printf("FAIL test setup: cannot create %s\n", dir.c_str()), ++mprs_test::failures();
+    if (!create_dirs(dir)) std::printf("FAIL test setup: cannot create %s\n", dir.c_str()), ++nxs_test::failures();
     for (const Fake& f : files)
-        if (!write_text_file_atomic(path_join(dir, f.name), f.data)) std::printf("FAIL test setup: write %s\n", f.name.c_str()), ++mprs_test::failures();
+        if (!write_text_file_atomic(path_join(dir, f.name), f.data)) std::printf("FAIL test setup: write %s\n", f.name.c_str()), ++nxs_test::failures();
     if (manifest && !write_text_file_atomic(path_join(dir, "manifest.sha256"), *manifest))
-        std::printf("FAIL test setup: manifest\n"), ++mprs_test::failures();
+        std::printf("FAIL test setup: manifest\n"), ++nxs_test::failures();
 }
 
 bool same_content(const std::string& path, const std::string& expect) {
@@ -72,7 +72,7 @@ bool same_content(const std::string& path, const std::string& expect) {
     return read_text_file(path, got) && got == expect;
 }
 
-// Runs f and returns the Fail kind it threw: -1 if it did not throw, -2 for a non-mprs exception.
+// Runs f and returns the Fail kind it threw: -1 if it did not throw, -2 for a non-nxs exception.
 int thrown_kind(const std::function<void()>& f) {
     try {
         f();
@@ -340,7 +340,7 @@ void test_pack_source(const std::string& root) {
     r = install_shader_cache(pack, dest, true, nullptr, nullptr);
     CHECK_EQ(r.files_skipped, 6u);
 
-#ifndef MPRS_HAVE_ZSTD
+#ifndef NXS_HAVE_ZSTD
     // Without zstd in the build, a pack entry with method 1 is refused as Input before anything is written.
     std::vector<PackEntry> zstd_entries = entries;
     zstd_entries.back().method = 1;
@@ -354,7 +354,7 @@ void test_pack_source(const std::string& root) {
 #endif
 
     // A pack built by make_shader_pack.py from the folder, when Python can be started.
-    const std::wstring py = mprs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
+    const std::wstring py = nxs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
     const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
     if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
         std::printf("SKIP python pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
@@ -376,13 +376,13 @@ void test_pack_source(const std::string& root) {
     for (const Fake& f : files) CHECK(same_content(path_join(py_dest, f.name), f.data));
 }
 
-#ifdef MPRS_HAVE_ZSTD
+#ifdef NXS_HAVE_ZSTD
 std::string zstd_compress(const std::string& raw) {
     std::string out(ZSTD_compressBound(raw.size()), '\0');
     const size_t n = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), 12);
     if (ZSTD_isError(n)) {
         std::printf("FAIL test setup: ZSTD_compress: %s\n", ZSTD_getErrorName(n));
-        ++mprs_test::failures();
+        ++nxs_test::failures();
         return std::string();
     }
     out.resize(n);
@@ -457,7 +457,7 @@ void test_zstd_pack(const std::string& root) {
     CHECK(!path_exists(path_join(hash_dest, files[2].name)));
 
     // A pack built by make_shader_pack.py --zstd from the folder, when Python can be started.
-    const std::wstring py = mprs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
+    const std::wstring py = nxs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
     const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
     if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
         std::printf("SKIP python zstd pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
@@ -507,7 +507,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     std::string base = narrow(std::wstring(tmp, n));
-    std::string root = path_join(base, "mprs_shc_test_" + std::to_string(GetCurrentProcessId()) + "_" +
+    std::string root = path_join(base, "nxs_shc_test_" + std::to_string(GetCurrentProcessId()) + "_" +
                                            std::to_string(GetTickCount64()));
     if (!create_dirs(root)) {
         std::printf("FAIL: cannot create temp folder %s\n", root.c_str());
@@ -517,7 +517,7 @@ int main(int argc, char** argv) {
     test_fileio(root);
     test_folder_source(root);
     test_pack_source(root);
-#ifdef MPRS_HAVE_ZSTD
+#ifdef NXS_HAVE_ZSTD
     test_zstd_pack(root);
 #endif
 

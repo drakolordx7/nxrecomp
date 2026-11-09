@@ -3,7 +3,7 @@
 #pragma once
 #include "storage.h"
 
-namespace mprs {
+namespace nxs {
 
 // Wraps an NCZ file so that reading it yields the bytes of the original NCA (first 0x4000 bytes as stored, the rest decompressed and
 // encrypted again with the section keys that the NCZ's section table carries). Random access: block-compressed NCZ (NCZBLOCK)
@@ -11,4 +11,4 @@ namespace mprs {
 // Throws Error(Input) for a damaged NCZ, and Error(Input) "this build cannot read NSZ" when built without zstd.
 StoragePtr open_ncz(StoragePtr ncz);
 
-}  // namespace mprs
+}  // namespace nxs

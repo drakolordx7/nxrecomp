@@ -40,6 +40,8 @@ KIB = 1024
 GIB = 1024 * MIB
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(REPO, 'formats'))
+import nx_formats  # noqa: E402  the shared definition of the shader pack (formats/nx_formats.py)
 
 # The game this release is for: its program and file names, from its manifest games/<id>/game.json (`files` and `release`), named
 # by --game DIR or NX_GAME_DIR. set_game() fills the names below.
@@ -48,7 +50,8 @@ RELEASE_PREFIX = EXE_NAME = SETUP_GLOB = LAUNCHER_NAME = GAME_INI = PACK_NAME = 
 SETUP_EXES = ()                                                                        # sits beside the game exe, built with the runtime
 DLL_GLOB = 'astcdec-*-shared.dll'
 DLL_COUNT = 3
-PACK_MAGIC = b'MPRSHC01'                         # shader pack header (tools/setup/src/shadercache.h), the same for every game
+PACK_MAGICS = (nx_formats.SHADER_PACK_MAGIC, nx_formats.SHADER_PACK_MAGIC_LEGACY)   # shader pack header (formats/nx_formats.h); the first
+PACK_MAGIC = PACK_MAGICS[0]                      # Metroid release's magic is still accepted, new packs are written with the first
 PROMPT_FILES = ('prompt_icons.pak', 'LICENSE-Kenney-InputPrompts.txt')   # required, shipped as prompts/<name>
 PROMPT_PACK = 'prompts/prompt_icons.pak'        # the only .pak the audit allows, by exact release path
 PROMPT_MAGIC = b'MPIP'                          # header of the prompt icon pack (scripts/build_prompt_pack.py)
@@ -185,10 +188,11 @@ def parse_args(argv):
     ap.add_argument('--shader-pack', help='translated shader pack, copied under the shader_pack name of game.json '
                                           '(default <repo>/work/setup_test/<shader_pack>)')
     ap.add_argument('--no-shader-pack', action='store_true', help='build the slim variant without the shader pack (-noshaders)')
-    ap.add_argument('--templates', help='templates folder (default <repo>/tools/release/templates)')
+    ap.add_argument('--templates', help='templates folder: README.txt, HELP.txt, THIRD_PARTY_NOTICES.txt, optional controls.ini and <game ini>.example '
+                                        '(default <game folder>/release/templates)')
     ap.add_argument('--controls', help='controls file shipped as controls.ini (default templates/controls.ini when present)')
     ap.add_argument('--license', help='GPL-3.0 licence text (default <repo>/LICENSE)')
-    ap.add_argument('--notices', help='THIRD_PARTY_NOTICES.txt (default templates/THIRD_PARTY_NOTICES.txt; required)')
+    ap.add_argument('--notices', help='THIRD_PARTY_NOTICES.txt (default <templates>/THIRD_PARTY_NOTICES.txt; required)')
     ap.add_argument('--prompts-dir', help='folder with prompt_icons.pak and LICENSE-Kenney-InputPrompts.txt, shipped under prompts/ '
                                           '(default <repo>/runtime/assets/prompts; both required)')
     ap.add_argument('--deny-hash-dir', action='append', default=[], metavar='DIR',
@@ -217,7 +221,7 @@ def resolve(o):
         o.shader_pack = None
     else:
         o.shader_pack = os.path.abspath(o.shader_pack or under_repo('work', 'setup_test', PACK_NAME))
-    o.templates = os.path.abspath(o.templates or under_repo('tools', 'release', 'templates'))
+    o.templates = os.path.abspath(o.templates or os.path.join(o.game, 'release', 'templates'))
     o.license = os.path.abspath(o.license or under_repo('LICENSE'))
     o.notices = os.path.abspath(o.notices or os.path.join(o.templates, 'THIRD_PARTY_NOTICES.txt'))
     o.prompts_dir = os.path.abspath(o.prompts_dir or under_repo('runtime', 'assets', 'prompts'))
@@ -309,7 +313,7 @@ def source_checks(o):
             problems.append('pack-name: the shader pack must be named exactly %s (it is %s)' % (PACK_NAME, base))
         with open(o.shader_pack, 'rb') as f:
             head = f.read(len(PACK_MAGIC))
-        if head != PACK_MAGIC:
+        if head not in PACK_MAGICS:
             problems.append('pack-magic: %s does not start with %s' % (o.shader_pack, PACK_MAGIC.decode()))
     if problems:
         raise Refused(problems)
@@ -396,7 +400,7 @@ def denied_name(rel):
 
 def magic_problems(rel, head):
     if rel == PACK_NAME:
-        return [] if head.startswith(PACK_MAGIC) else ['%s does not start with %s' % (rel, PACK_MAGIC.decode())]
+        return [] if head.startswith(PACK_MAGICS) else ['%s does not start with %s' % (rel, PACK_MAGIC.decode())]
     if rel == PROMPT_PACK:
         out = [] if head.startswith(PROMPT_MAGIC) else ['%s does not start with MPIP (prompt icon pack)' % rel]
         out += ['%s starts with %s' % (rel, label) for magic, label in MAGIC_DENY if head.startswith(magic)]
@@ -407,7 +411,7 @@ def magic_problems(rel, head):
     if exempt:
         return []
     out = []
-    if head.startswith(PACK_MAGIC):
+    if head.startswith(PACK_MAGICS):
         out.append('%s starts with the shader pack magic %s (only %s may)' % (rel, PACK_MAGIC.decode(), PACK_NAME))
     for magic, label in MAGIC_DENY:
         if head.startswith(magic):

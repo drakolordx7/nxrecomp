@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Reads the real dump (skipped when absent): container, program NCA, title id, build id, hash trees, RomFS listing.
-// Env: MPRS_DUMP (nsp path), MPRS_KEYS (prod.keys), MPRS_TITLEKEYS optional, MPRS_VERIFY=1 for the full hash-tree pass.
+// Env: NXS_DUMP (nsp path), NXS_KEYS (prod.keys), NXS_TITLEKEYS optional, NXS_VERIFY=1 for the full hash-tree pass.
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -12,7 +12,7 @@
 #include "game.h"
 #include "log.h"
 
-using namespace mprs;
+using namespace nxs;
 
 static int run();
 int main() {
@@ -20,8 +20,8 @@ int main() {
 }
 static int run() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    const char* dump_env = std::getenv("MPRS_DUMP");
-    const char* keys_env = std::getenv("MPRS_KEYS");
+    const char* dump_env = std::getenv("NXS_DUMP");
+    const char* keys_env = std::getenv("NXS_KEYS");
     // Both come from the environment (your own dump and keys); without them the test is skipped.
     std::string dump = dump_env ? dump_env : "";
     std::string keys_path = keys_env ? keys_env : "";
@@ -31,7 +31,7 @@ static int run() {
     }
     KeySet keys;
     keys.load_file(keys_path);
-    if (std::getenv("MPRS_TITLEKEYS")) keys.load_file(std::getenv("MPRS_TITLEKEYS"));
+    if (std::getenv("NXS_TITLEKEYS")) keys.load_file(std::getenv("NXS_TITLEKEYS"));
     std::printf("keys: %s\n", keys.describe().c_str());
 
     auto c = open_container(dump);
@@ -55,7 +55,7 @@ static int run() {
     if (m) {
         NsoInfo ni = nso_read_info(*exefs->open_file(*m));
         std::printf("main build id %s\n", ni.build_id().c_str());
-        CHECK_EQ(ni.build_id(), std::string(game().build_id));
+        CHECK_EQ(ni.build_id(), std::string(game().builds.front().build_id));
     }
     auto img = t.program->open_romfs_image(1);
     auto rom = Romfs::open(img);
@@ -65,7 +65,7 @@ static int run() {
     auto t0 = std::chrono::steady_clock::now();
     t.program->verify_section(0, nullptr, nullptr);
     std::printf("exefs hash table OK\n");
-    if (std::getenv("MPRS_VERIFY")) {
+    if (std::getenv("NXS_VERIFY")) {
         u64 last = 0;
         u64 n = t.program->verify_section(1, [&](u64 d, u64 tot) {
             if (d - last > (1ull << 30)) { last = d; std::printf("  verified %.1f of %.1f GB\n", d / 1e9, tot / 1e9); }

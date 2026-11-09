@@ -38,7 +38,7 @@ def _edengdb():
     import edengdb
     return edengdb
 
-DEFAULT_NSP = os.environ.get("MPR_DUMP", "")   # your own .nsp; or pass --nsp
+DEFAULT_NSP = os.environ.get("NX_DUMP", "")   # your own .nsp; or pass --nsp
 VK_SDK = os.path.join(os.environ.get("VULKAN_SDK", ""), "Bin")   # the Vulkan SDK installer sets VULKAN_SDK
 
 

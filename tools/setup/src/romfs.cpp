@@ -3,7 +3,7 @@
 
 #include <utility>
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 constexpr u64 kHeaderSize = 0x50;
@@ -181,4 +181,4 @@ std::unique_ptr<Romfs> Romfs::open(StoragePtr image) {
 
 StoragePtr Romfs::open_file(const RomfsFile& f) const { return make_sub_storage(image_, f.offset, f.size); }
 
-}  // namespace mprs
+}  // namespace nxs

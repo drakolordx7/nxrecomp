@@ -11,7 +11,7 @@
 #endif
 #include <windows.h>
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 bool is_sep(char c) { return c == '\\' || c == '/'; }
@@ -201,4 +201,4 @@ int remove_part_files(const std::string& dir_utf8) {
     return removed;
 }
 
-}  // namespace mprs
+}  // namespace nxs

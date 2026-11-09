@@ -281,6 +281,10 @@ NXTEST(game_dir_state_file_must_have_the_setup_header_and_a_finished_line) {
     write_file(t.path / L"bc7_cache" / L"tex_0001.bc7", "bc7");
     write_file(t.path / L"shader_cache" / L"spirv" / L"s_0001.spv", "spv");
 
+    // the neutral state header counts as well as the first release's
+    write_file(t.path / L"setup_state.tsv", "nx_setup_state\t1\nmeta\tfinished\t1\n");
+    CHECK(nxl::check_game_dir(t.str()).setup_finished);
+
     // other state file version: the setup tool starts fresh, so nothing counts as finished
     write_file(t.path / L"setup_state.tsv", "mprs_setup_state\t2\nmeta\tfinished\t1\n");
     CHECK(!nxl::check_game_dir(t.str()).setup_finished);

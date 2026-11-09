@@ -9,7 +9,7 @@
 #include "nca.h"
 #include "nso.h"
 
-namespace mprs {
+namespace nxs {
 
 struct ContainerFile {
     std::string name;      // e.g. "e66e21cdd2693f9c9d1e69dced3a8644.nca" (".cnmt.nca" for metadata)
@@ -38,7 +38,7 @@ struct DumpTitle {
 };
 // Opens every NCA header, picks the Program NCA of `title_id` (hex string, 16 digits). Throws Error(Input) with a message that says
 // what the dump is instead (another game, an update-only dump, DLC only) when it is not there.
-DumpTitle find_program(const Container& c, const KeySet& keys, const std::string& title_id);
+DumpTitle find_program(const Container& c, const KeySet& keys, const std::string& title_id, const std::string& game_title = "");
 
 // ---- several inputs: base game, update, DLC ----------------------------------------------------------------------------------
 
@@ -80,6 +80,8 @@ struct DumpSet {
 // + 0x800) and the newest version of every AddOnContent (title id + 0x1000 and up, same upper bits). Tickets of all inputs are
 // used for every input. Throws like find_program when the base game is not there, and Error(Keys) when a listed content of the
 // picked base, update or DLC cannot be opened with the keys.
-DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet& keys, const std::string& title_id);
+// game_title names the game in messages ("" = say the title id only).
+DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet& keys, const std::string& title_id,
+                      const std::string& game_title = "");
 
-}  // namespace mprs
+}  // namespace nxs

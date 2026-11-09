@@ -78,11 +78,11 @@ key do not change; the entry's header names the format and the game builds its i
 The block height of small textures follows the console's rule (the runtime's `console_block_height`), which changes the key and
 the untiling of the textures where it differs from the smallest covering height. If a `bc7_cache` was made by an older converter (it carries
 `bc7_cache\encoder.txt` with the converter revision, `kTextureEncoderRev` in `src/texcache.h`), setup throws it away and
-converts again; the cache file format is unchanged. `mpr_texq` measures the BC7 encoder alone; to measure the entries as written
-(BC7, BC5 and RGBA8) use `test_texcache mkrefs` and `scripts\check_texcache.py`.
+converts again; the cache file format is unchanged. `nx_texq` (a Metroid tool, `games/mpr/setup/texq.cpp`) measures the BC7 encoder alone; to measure the entries as written
+(BC7, BC5 and RGBA8) use `test_texcache mkrefs` (`games/mpr/setup/tests`) and `scripts\check_texcache.py`.
 
-Quality check on the game's own textures (developers): `tools\setup\scripts\check_texquality.py --baseline` runs
-`mpr_texq` over all 4,413 ASTC textures and checks per-texture floors (PSNR RGB 33 dB, alpha 32 dB, opaque alpha exactly
+Quality check on the game's own textures (developers): `games/mpr/setup/scripts/check_texquality.py --baseline` runs
+`nx_texq` over all 4,413 ASTC textures and checks per-texture floors (PSNR RGB 33 dB, alpha 32 dB, opaque alpha exactly
 255, SSIM 0.95; one white-noise texture is exempt). At quality 3 the minimum PSNR rose from 17.4 to 33.6 dB (19.2 dB for
 the noise texture) and the mean from 48.4 to 50.0 dB; textures under 33 dB went from 65 to 1.
 
@@ -113,3 +113,17 @@ pwsh -File tools\setup\scripts\build.ps1 -Test            # CMake + Ninja + clan
 
 You need Visual Studio Build Tools, LLVM (clang-cl), CMake and Ninja. The program is plain Win32 so it does not depend on
 a graphics driver and works on a machine whose driver is not set up yet. Licences of the parts it uses are in `THIRD_PARTY.md`.
+
+## Structure: base installer and game hook (developers)
+
+The tool is built for one game (`-Game <games/id>`, CMake `NX_GAME_DIR`; its manifest `game.json` gives the title id, the supported
+`builds[]` and the file names). The base installer does what every game needs: keys, containers, NCA and update patches, the
+ExeFS, RomFS and DLC extraction, the shader pack, the state file and the ini. What only one game needs is its hook (`src/game_setup.h`,
+`GameSetup`): `ini_lines`, `texture_cache` (the game's ASTC textures, fed to the generic BC7 cache writer in `src/texcache.*`),
+`program_list` (the shader programs, written as `programs.bin`) and `disk_estimate`. The manifest's `setup_hook` names a CMake file that
+defines the library `nxs_game_hook` (see `CMakeLists.txt`; Metroid's is `games/mpr/setup/hook.cmake`). A game without a hook is
+extracted only: its texture and program stages are skipped.
+
+The BC7 cache key, the `programs.bin` format and the shader pack layout are in `formats/nx_formats.h` (Python twin `nx_formats.py`),
+which the runtime reads as well. Writers use the neutral magics `NXPRG002` and `NXSHC002`; readers also accept the first Metroid
+release's `MPRPRG01` and `MPRSHC01`. The state file starts with `nx_setup_state` (`mprs_setup_state` is still read).

@@ -12,7 +12,7 @@
 #endif
 #include <windows.h>
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 class FileStorage final : public IStorage {
@@ -101,4 +101,4 @@ std::vector<u8> read_all(const IStorage& s, u64 off, size_t len) {
     return v;
 }
 
-}  // namespace mprs
+}  // namespace nxs

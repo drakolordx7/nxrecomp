@@ -3,7 +3,7 @@
 #pragma once
 #include "common.h"
 
-namespace mprs {
+namespace nxs {
 
 // AES-128-ECB with one key. One object per thread (do not share an object across threads).
 class Aes128Ecb {
@@ -56,4 +56,4 @@ private:
 std::array<u8, 32> sha256(const void* data, size_t len);
 std::array<u8, 20> sha1(const void* data, size_t len);
 
-}  // namespace mprs
+}  // namespace nxs

@@ -55,10 +55,10 @@ def make_fake_repo(root):
     w('game-build/build/relpkg/demo_launcher.exe', b'MZ fake launcher')
     w('tools/setup/build/release/bin/astc2bc7.exe', b'MZ tool that must not ship')
     w('work/setup_test/shader_cache.demoshc', mr.PACK_MAGIC + b'\x00' * 1024)
-    w('tools/release/templates/README.txt', b'readme\n')
-    w('tools/release/templates/HELP.txt', b'help\n')
-    w('tools/release/templates/THIRD_PARTY_NOTICES.txt', b'notices\n')
-    w('tools/release/templates/controls.ini', b'[controls]\n')
+    w('release/templates/README.txt', b'readme\n')
+    w('release/templates/HELP.txt', b'help\n')
+    w('release/templates/THIRD_PARTY_NOTICES.txt', b'notices\n')
+    w('release/templates/controls.ini', b'[controls]\n')
     w('tools/release/licenses/LICENSE.astc-encoder.Apache-2.0', b'Apache licence text\n')
     w('tools/release/licenses/LICENSE.zstd', b'zstd licence text\n')
     w('tools/release/fonts/DejaVuSans.ttf', b'\x00\x01\x00\x00' + b'\x00' * 64)
@@ -236,7 +236,7 @@ class BuildTests(unittest.TestCase):
         write(pack, b'XXXXXXXX' + b'\x00' * 1024)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
-        self.assertIn('MPRSHC01', log)
+        self.assertIn('NXSHC002', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_local_path_in_exe_is_refused_by_default(self):
@@ -313,7 +313,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_missing_notices_is_a_usage_error(self):
-        os.remove(os.path.join(self.repo, 'tools', 'release', 'templates', 'THIRD_PARTY_NOTICES.txt'))
+        os.remove(os.path.join(self.repo, 'release', 'templates', 'THIRD_PARTY_NOTICES.txt'))
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
         self.assertEqual(self.leftovers(self.out), [])

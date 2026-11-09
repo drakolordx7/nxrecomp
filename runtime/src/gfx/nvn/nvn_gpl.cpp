@@ -45,6 +45,7 @@
 #include <windows.h>
 #endif
 
+#include "nx_formats.h"
 #include "nxrt/config.h"
 #include "nvn_settings.h"
 #include "nvn_debug.h"
@@ -822,7 +823,7 @@ bool read_programs_file(const std::string& path, std::vector<ProgHashes>* out, s
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) { *error = "cannot open " + path; return false; }
     char head[16];
-    bool ok = std::fread(head, 1, 16, f) == 16 && std::memcmp(head, "MPRPRG01", 8) == 0;
+    bool ok = std::fread(head, 1, 16, f) == 16 && nxfmt::programs_magic_ok(reinterpret_cast<const uint8_t*>(head));   // NXPRG002, or MPRPRG01 of the first Metroid release
     uint32_t count = 0;
     if (ok) std::memcpy(&count, head + 8, 4);
     if (ok) {

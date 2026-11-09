@@ -16,17 +16,17 @@
 #include "crypto.h"
 #include "keys.h"
 
-using namespace mprs;
+using namespace nxs;
 
 namespace {
 
-const std::string kRealProdStr = mprs_test::project_path("game/keys/prod.keys");
-const std::string kRealTitleStr = mprs_test::project_path("game/keys/title.keys");
+const std::string kRealProdStr = nxs_test::project_path("game/keys/prod.keys");
+const std::string kRealTitleStr = nxs_test::project_path("game/keys/title.keys");
 const char* kRealProd = kRealProdStr.c_str();
 const char* kRealTitle = kRealTitleStr.c_str();
 
 std::string temp_path(const std::string& name) {
-    const std::filesystem::path p = std::filesystem::temp_directory_path() / ("mprs_test_keys_" + name);
+    const std::filesystem::path p = std::filesystem::temp_directory_path() / ("nxs_test_keys_" + name);
     return narrow(p.wstring());
 }
 
@@ -60,7 +60,7 @@ std::array<u8, 32> pattern32(u8 seed) {
     return k;
 }
 
-// True if f throws an mprs::Error of the given kind; msg receives the message.
+// True if f throws an nxs::Error of the given kind; msg receives the message.
 template <class F>
 bool throws_error(F&& f, Fail kind, std::string& msg) {
     try {

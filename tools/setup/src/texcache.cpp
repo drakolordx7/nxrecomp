@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// BC7 texture cache builder. Port of the runtime's CPU-side texture preparation (runtime/src/gfx/nvn/nvn_texdata.cpp:
-// hash_seeded, cache_write / cache_read, prepare_texture's Mode::Bc7 branch) and of nvn_texture_layout.cpp (layout rules for
-// block-linear 2D, cube, 2D array and 3D). See texcache.h for the contract. Libraries: tegra_tiling (untile) and astc2bc7
-// (ASTC -> BC7 transcode).
+// BC7 texture cache writer, generic: the game's setup hook hands over the ASTC textures (texcache.h, AstcTexture). Port of the runtime's
+// CPU-side texture preparation (runtime/src/gfx/nvn/nvn_texdata.cpp: prepare_texture's Mode::Bc7 branch) and of nvn_texture_layout.cpp
+// (layout rules for block-linear 2D, cube, 2D array and 3D); the hash, the key and the file header are the shared ones in
+// formats/nx_formats.h. See texcache.h for the contract. Libraries: tegra_tiling (untile) and astc2bc7 (ASTC -> BC7 transcode).
 #include "texcache.h"
 
 #include <algorithm>
@@ -23,114 +23,31 @@
 #include <cwchar>
 
 #include "astc2bc7.h"
+#include "nx_formats.h"
 #include "bc7decomp.h"
 #include "fileio.h"
 #include "log.h"
-#include "pak.h"
 #include "rgbcx.h"
 #include "storage.h"
 #include "tegra_tiling.h"
-#include "txtr.h"
 
-namespace mprs {
+namespace nxs {
 namespace {
 
-// ---- constants of the runtime (nvn_texdata.cpp) -----------------------------------------------------------------------------
-constexpr u32 kCacheVersion = 1;
-constexpr u8 kCacheMagic[4] = {'N', 'X', 'B', '7'};
-constexpr size_t kCacheHeadBytes = 4 + 4 + 8 + 4 + 4 + 4;   // magic, version, key, VkFormat, level count, layer count
-constexpr size_t kCacheLevelBytes = 3 * 4 + 2 * 8;          // per level: width, height, depth, offset, size
+// ---- constants of the runtime (nvn_texdata.cpp); the cache header and the key are nx_formats.h ------------------------------------
 constexpr u32 kVkBc7Unorm = 145;                            // VK_FORMAT_BC7_UNORM_BLOCK
 constexpr u32 kVkBc7Srgb = 146;                             // VK_FORMAT_BC7_SRGB_BLOCK
 constexpr u32 kVkBc5 = 141;                                 // VK_FORMAT_BC5_UNORM_BLOCK
 constexpr u32 kVkRgba8Unorm = 37;                           // VK_FORMAT_R8G8B8A8_UNORM
 constexpr u32 kVkRgba8Srgb = 43;                            // VK_FORMAT_R8G8B8A8_SRGB
-
-// ---- hash (nvn_texdata.cpp, xxHash64-style mix; must stay bit-identical) -----------------------------------------------------
-constexpr u64 kP1 = 0x9E3779B185EBCA87ull, kP2 = 0xC2B2AE3D27D4EB4Full, kP3 = 0x165667B19E3779F9ull,
-              kP4 = 0x85EBCA77C2B2AE63ull, kP5 = 0x27D4EB2F165667C5ull;
-
-inline u64 rotl64(u64 x, int r) { return (x << r) | (x >> (64 - r)); }
-inline u64 read64(const u8* p) { u64 v; std::memcpy(&v, p, 8); return v; }
-inline u32 read32(const u8* p) { u32 v; std::memcpy(&v, p, 4); return v; }
-inline u64 lane(u64 acc, u64 in) { acc += in * kP2; acc = rotl64(acc, 31); return acc * kP1; }
-inline u64 merge_lane(u64 h, u64 v) { h ^= lane(0, v); return h * kP1 + kP4; }
-
-u64 hash_seeded_impl(const u8* p, size_t n, u64 seed) {
-    const u8* const end = p + n;
-    u64 h;
-    if (n >= 32) {
-        u64 v1 = seed + kP1 + kP2, v2 = seed + kP2, v3 = seed, v4 = seed - kP1;
-        do {
-            v1 = lane(v1, read64(p));
-            v2 = lane(v2, read64(p + 8));
-            v3 = lane(v3, read64(p + 16));
-            v4 = lane(v4, read64(p + 24));
-            p += 32;
-        } while (end - p >= 32);
-        h = rotl64(v1, 1) + rotl64(v2, 7) + rotl64(v3, 12) + rotl64(v4, 18);
-        h = merge_lane(h, v1);
-        h = merge_lane(h, v2);
-        h = merge_lane(h, v3);
-        h = merge_lane(h, v4);
-    } else {
-        h = seed + kP5;
-    }
-    h += n;
-    while (end - p >= 8) {
-        h ^= lane(0, read64(p));
-        h = rotl64(h, 27) * kP1 + kP4;
-        p += 8;
-    }
-    if (end - p >= 4) {
-        h ^= static_cast<u64>(read32(p)) * kP1;
-        h = rotl64(h, 23) * kP2 + kP3;
-        p += 4;
-    }
-    while (p < end) {
-        h ^= static_cast<u64>(*p) * kP5;
-        h = rotl64(h, 11) * kP1;
-        ++p;
-    }
-    h ^= h >> 33;
-    h *= kP2;
-    h ^= h >> 29;
-    h *= kP3;
-    h ^= h >> 32;
-    return h;
-}
-
-// ---- little-endian helpers for the cache file -----------------------------------------------------------------------------
-void put32(std::vector<u8>& v, u32 x) {
-    for (int i = 0; i < 4; ++i) v.push_back(static_cast<u8>(x >> (8 * i)));
-}
-void put64(std::vector<u8>& v, u64 x) {
-    for (int i = 0; i < 8; ++i) v.push_back(static_cast<u8>(x >> (8 * i)));
-}
-u32 get32(const u8* p) {
-    return static_cast<u32>(p[0]) | (static_cast<u32>(p[1]) << 8) | (static_cast<u32>(p[2]) << 16) |
-           (static_cast<u32>(p[3]) << 24);
-}
-u64 get64(const u8* p) { return static_cast<u64>(get32(p)) | (static_cast<u64>(get32(p + 4)) << 32); }
+constexpr size_t kCacheHeadBytes = nxfmt::kBc7HeadBytes;
+constexpr size_t kCacheLevelBytes = nxfmt::kBc7LevelBytes;
+using nxfmt::get32;
+using nxfmt::get64;
+using nxfmt::put32;
+using nxfmt::put64;
 
 u64 div_up(u64 a, u64 b) { return (a + b - 1) / b; }
-
-// ---- NVN format enum of the 28 ASTC LDR formats (nvn.h: NVN_FORMAT_RGBA_ASTC_<w>x<h>[_SRGB]) --------------------------------
-struct AstcEnum {
-    u32 w, h;
-    bool srgb;
-    u32 nvn;
-};
-constexpr AstcEnum kAstcEnum[] = {
-    {4, 4, false, 0x79},   {5, 4, false, 0x7A},   {5, 5, false, 0x7B},   {6, 5, false, 0x7C},
-    {6, 6, false, 0x7D},   {8, 5, false, 0x7E},   {8, 6, false, 0x7F},   {8, 8, false, 0x80},
-    {10, 5, false, 0x81},  {10, 6, false, 0x82},  {10, 8, false, 0x83},  {10, 10, false, 0x84},
-    {12, 10, false, 0x85}, {12, 12, false, 0x86},
-    {4, 4, true, 0x87},    {5, 4, true, 0x88},    {5, 5, true, 0x89},    {6, 5, true, 0x8A},
-    {6, 6, true, 0x8B},    {8, 5, true, 0x8C},    {8, 6, true, 0x8D},    {8, 8, true, 0x8E},
-    {10, 5, true, 0x8F},   {10, 6, true, 0x90},   {10, 8, true, 0x91},   {10, 10, true, 0x92},
-    {12, 10, true, 0x93},  {12, 12, true, 0x94},
-};
 
 // ---- layout (nvn_texture_layout.cpp, block-linear case) ----------------------------------------------------------------------
 // The block height (in GOBs) of a 2D texture's level 0 on the console: 1.5 times the block rows decides, against 16, 32, 64 and 128 rows
@@ -150,20 +67,18 @@ struct CacheLayout {
 };
 
 // Builds the layout the runtime builds for this TXTR. Returns nullptr when accepted, else why not.
-const char* build_layout(const TxtrInfo& info, const TxtrFormat& f, CacheLayout& out) {
-    if (info.kind != TxtrKind::D2 && info.kind != TxtrKind::Cube && info.kind != TxtrKind::D2Array &&
-        info.kind != TxtrKind::D3)
-        return "texture kind is not cached (only 2D, cube, 2D array and 3D)";
+const char* build_layout(const AstcTexture& info, CacheLayout& out) {
+    if (info.target == TexTarget::Unsupported) return "texture kind is not cached (only 2D, cube, 2D array and 3D)";
     if (info.width == 0 || info.height == 0) return "width or height is zero";
-    const bool is3d = info.kind == TxtrKind::D3;
+    const bool is3d = info.target == TexTarget::D3;
     const u32 w = info.width, h = info.height;
     const u32 d = is3d ? info.layers : 1;
     if (is3d && d == 0) return "3D texture has depth zero";
 
     u32 layers = 1;
-    if (info.kind == TxtrKind::Cube) {
+    if (info.target == TexTarget::Cube) {
         layers = 6;
-    } else if (info.kind == TxtrKind::D2Array) {
+    } else if (info.target == TexTarget::D2Array) {
         if (info.layers == 0) return "2D array has zero layers";
         layers = info.layers;
     }
@@ -174,7 +89,6 @@ const char* build_layout(const TxtrInfo& info, const TxtrFormat& f, CacheLayout&
     while (top < 32 && (static_cast<u64>(maxdim) >> top) != 0) ++top;
     const u32 levels = std::min<u32>(std::max<u32>(1, info.mips), top);
 
-    if (f.bytes != 16) return "ASTC block is not 16 bytes";
     tegra::TextureDesc& ds = out.desc;
     ds.width = w;
     ds.height = h;
@@ -182,15 +96,15 @@ const char* build_layout(const TxtrInfo& info, const TxtrFormat& f, CacheLayout&
     ds.levels = levels;
     ds.layers = layers;   // 3D: the layout requires 1 (the slices are depth)
     if (is3d) ds.layers = 1;
-    ds.block_w = f.block_w;
-    ds.block_h = f.block_h;
-    ds.bytes_per_block = f.bytes;
+    ds.block_w = info.block_w;
+    ds.block_h = info.block_h;
+    ds.bytes_per_block = 16;   // every ASTC block
     ds.linear_stride_align = 1;   // tight rows, as the runtime's untile target
     if (is3d) {
         ds.gob_blocks_y = 1;
         ds.gob_blocks_z = 16;
     } else {
-        const u32 blocks_y = static_cast<u32>(div_up(h, f.block_h));
+        const u32 blocks_y = static_cast<u32>(div_up(h, info.block_h));
         ds.gob_blocks_y = console_block_height(blocks_y);   // no packaged layout for TXTR textures
         ds.gob_blocks_z = 1;
     }
@@ -203,17 +117,11 @@ const char* build_layout(const TxtrInfo& info, const TxtrFormat& f, CacheLayout&
 }
 
 // Checks everything texcache_plan needs. Returns nullptr when the texture is cacheable (then L is filled), else the reason.
-const char* check_texture(const TxtrInfo& info, size_t tiled_len, int quality, CacheLayout& L, const TxtrFormat*& fmt) {
+const char* check_texture(const AstcTexture& info, size_t tiled_len, int quality, CacheLayout& L) {
     if (quality < 0 || quality > 6) return "quality is outside 0..6";
-    try {
-        fmt = &txtr_format(info.format);
-    } catch (const Error&) {
-        return "unknown TXTR format id";
-    }
-    if (!fmt->astc) return "not an ASTC format (BCn and uncompressed textures need no cache entry)";
-    if (tex_nvn_astc_format(info.format) == 0) return "no NVN format for this ASTC footprint";
-    if (const char* why = build_layout(info, *fmt, L)) return why;
-    if (info.kind != TxtrKind::D3 && L.storage != info.gpu_size)
+    if (info.nvn_format == 0) return "no NVN format for this ASTC footprint";
+    if (const char* why = build_layout(info, L)) return why;
+    if (info.target != TexTarget::D3 && L.storage != info.gpu_size)
         return "layout layer stride times layers differs from the buffer's gpu_size";
     if (L.storage > tiled_len) return "tiled buffer is shorter than the layout's storage size";
     return nullptr;
@@ -263,60 +171,38 @@ double g_rgba8_psnr_db = kRgba8PsnrDb;   // tests move it (detail::texcache_set_
 }  // namespace
 
 // ---- public -----------------------------------------------------------------------------------------------------------------
-u64 tex_hash_bytes(const void* data, size_t len) { return hash_seeded_impl(static_cast<const u8*>(data), len, 0); }
-
-u64 tex_hash_seeded(const void* data, size_t len, u64 seed) {
-    return hash_seeded_impl(static_cast<const u8*>(data), len, seed);
-}
-
-int tex_nvn_astc_format(u32 txtr_format_id) {
-    const TxtrFormat* f = nullptr;
-    try {
-        f = &txtr_format(txtr_format_id);
-    } catch (const Error&) {
-        return 0;
-    }
-    if (!f->astc) return 0;
-    for (const AstcEnum& e : kAstcEnum)
-        if (e.w == f->block_w && e.h == f->block_h && e.srgb == f->srgb) return static_cast<int>(e.nvn);
-    return 0;
-}
-
 namespace detail {
 
 void texcache_set_rgba8_psnr(double db) { g_rgba8_psnr_db = db; }
 
 // Why texcache_plan refuses this texture (nullptr when it accepts it). Used by the build log and the test.
-const char* texcache_reject_reason(const TxtrInfo& info, size_t tiled_len, int quality) {
+const char* texcache_reject_reason(const AstcTexture& info, size_t tiled_len, int quality) {
     CacheLayout L;
-    const TxtrFormat* f = nullptr;
-    return check_texture(info, tiled_len, quality, L, f);
+    return check_texture(info, tiled_len, quality, L);
 }
 
 }  // namespace detail
 
-TexCachePlan texcache_plan(const TxtrInfo& info, const u8* tiled, size_t tiled_len, int quality) {
+TexCachePlan texcache_plan(const AstcTexture& info, const u8* tiled, size_t tiled_len, int quality) {
     TexCachePlan p;
     if (!tiled) return p;
     CacheLayout L;
-    const TxtrFormat* f = nullptr;
-    if (check_texture(info, tiled_len, quality, L, f) != nullptr) return p;
+    if (check_texture(info, tiled_len, quality, L) != nullptr) return p;
 
-    // key = hash_seeded(tiled bytes, storage, seed = hash_bytes(meta)), meta = ten u64 as in prepare_texture
+    // key = hash_seeded(tiled bytes, storage, seed = hash_bytes(meta)): nxfmt::bc7_cache_key, the runtime's prepare_texture meta
     const tegra::LevelLayout& l0 = L.layout.levels[0];
-    const u64 meta[10] = {kCacheVersion,
-                          static_cast<u64>(tex_nvn_astc_format(info.format)),
-                          l0.width,
-                          l0.height,
-                          l0.depth,
-                          L.levels,
-                          L.layers,
-                          l0.gob_blocks_y,
-                          0,   // pitch: block-linear
-                          static_cast<u64>(quality)};
-    const u64 meta_hash = tex_hash_bytes(meta, sizeof meta);
-    p.key = tex_hash_seeded(tiled, static_cast<size_t>(L.storage), meta_hash);
-    p.vk_format = f->srgb ? kVkBc7Srgb : kVkBc7Unorm;
+    nxfmt::Bc7Meta meta;
+    meta.nvn_format = info.nvn_format;
+    meta.width = l0.width;
+    meta.height = l0.height;
+    meta.depth = l0.depth;
+    meta.levels = L.levels;
+    meta.layers = L.layers;
+    meta.block_height = l0.gob_blocks_y;
+    meta.pitch = 0;   // block-linear
+    meta.quality = static_cast<u64>(quality);
+    p.key = nxfmt::bc7_cache_key(tiled, static_cast<size_t>(L.storage), meta);
+    p.vk_format = info.srgb ? kVkBc7Srgb : kVkBc7Unorm;
     p.levels = L.levels;
     p.layers = L.layers;
     fill_levels(L, p.level, p.data_bytes);
@@ -326,17 +212,13 @@ TexCachePlan texcache_plan(const TxtrInfo& info, const u8* tiled, size_t tiled_l
 }
 
 std::string texcache_path(const std::string& cache_dir_utf8, u64 key) {
-    char name[32];
-    std::snprintf(name, sizeof name, "%016llx", static_cast<unsigned long long>(key));
-    const std::filesystem::path dir(widen(cache_dir_utf8));
-    const std::filesystem::path p = dir / std::string(name, 2) / (std::string(name) + ".bc7");
+    const std::filesystem::path p = std::filesystem::path(widen(cache_dir_utf8)) / nxfmt::bc7_cache_rel_path(key);
     return narrow(p.wstring());
 }
 
-bool texcache_level0(const TxtrInfo& info, const u8* tiled, size_t tiled_len, TexLevel0& out) {
+bool texcache_level0(const AstcTexture& info, const u8* tiled, size_t tiled_len, TexLevel0& out) {
     CacheLayout L;
-    const TxtrFormat* f = nullptr;
-    if (check_texture(info, tiled_len, 3, L, f) != nullptr) return false;
+    if (check_texture(info, tiled_len, 3, L) != nullptr) return false;
     const tegra::LevelLayout& last = L.layout.levels.back();
     const u64 lin_total = last.linear_offset + last.linear_slice_size * L.layers;
     std::vector<u8> lin(static_cast<size_t>(lin_total));
@@ -345,9 +227,9 @@ bool texcache_level0(const TxtrInfo& info, const u8* tiled, size_t tiled_len, Te
     const u64 in_slice = g.linear_slice_size / g.depth;
     out.width = g.width;
     out.height = g.height;
-    out.block_w = f->block_w;
-    out.block_h = f->block_h;
-    out.srgb = f->srgb;
+    out.block_w = info.block_w;
+    out.block_h = info.block_h;
+    out.srgb = info.srgb;
     out.astc.assign(lin.begin() + static_cast<ptrdiff_t>(g.linear_offset), lin.begin() + static_cast<ptrdiff_t>(g.linear_offset + in_slice));
     return true;
 }
@@ -416,27 +298,26 @@ bool is_two_channel(const std::vector<u8>& rgba) {
 
 }  // namespace
 
-std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& plan, const u8* tiled, size_t tiled_len, int quality,
+std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan& plan, const u8* tiled, size_t tiled_len, int quality,
                                     TexCacheKind* kind_out) {
-    if (!plan.ok) fail(Fail::Generic, "Texture %s: the cache plan was rejected, nothing to build.", info.id.str().c_str());
+    if (!plan.ok) fail(Fail::Generic, "Texture %s: the cache plan was rejected, nothing to build.", info.name.c_str());
     CacheLayout L;
-    const TxtrFormat* f = nullptr;
-    if (const char* why = check_texture(info, tiled_len, quality, L, f))
-        fail(Fail::Generic, "Texture %s cannot be built: %s.", info.id.str().c_str(), why);
+    if (const char* why = check_texture(info, tiled_len, quality, L))
+        fail(Fail::Generic, "Texture %s cannot be built: %s.", info.name.c_str(), why);
     std::vector<TexOutLevel> levels;
     u64 data_bytes = 0;
     fill_levels(L, levels, data_bytes);
     if (levels.size() != plan.level.size() || data_bytes != plan.data_bytes || L.levels != plan.levels ||
         L.layers != plan.layers)
-        fail(Fail::Generic, "Texture %s: the plan does not match the texture.", info.id.str().c_str());
+        fail(Fail::Generic, "Texture %s: the plan does not match the texture.", info.name.c_str());
     for (size_t i = 0; i < levels.size(); ++i) {
         const TexOutLevel& a = levels[i];
         const TexOutLevel& b = plan.level[i];
         if (a.width != b.width || a.height != b.height || a.depth != b.depth || a.offset != b.offset || a.size != b.size)
-            fail(Fail::Generic, "Texture %s: the plan does not match the texture.", info.id.str().c_str());
+            fail(Fail::Generic, "Texture %s: the plan does not match the texture.", info.name.c_str());
     }
-    const u32 vk = f->srgb ? kVkBc7Srgb : kVkBc7Unorm;
-    if (vk != plan.vk_format) fail(Fail::Generic, "Texture %s: the plan has the wrong format.", info.id.str().c_str());
+    const u32 vk = info.srgb ? kVkBc7Srgb : kVkBc7Unorm;
+    if (vk != plan.vk_format) fail(Fail::Generic, "Texture %s: the plan has the wrong format.", info.name.c_str());
 
     const a2b_status init = ensure_transcoder();
     if (init != A2B_OK)
@@ -447,7 +328,7 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
     const u64 lin_total = last.linear_offset + last.linear_slice_size * L.layers;
     std::vector<u8> lin(static_cast<size_t>(lin_total));
     if (!tegra::untile(L.desc, L.layout, tiled, lin.data()))
-        fail(Fail::Generic, "Texture %s: untile failed.", info.id.str().c_str());
+        fail(Fail::Generic, "Texture %s: untile failed.", info.name.c_str());
 
     a2b_options opt{};
     opt.quality = quality;
@@ -459,11 +340,11 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
     const auto astc_in = [&](size_t i, a2b_input& in) {
         const tegra::LevelLayout& g = L.layout.levels[i];
         in = a2b_input{};
-        in.format = f->srgb ? A2B_ASTC_SRGB : A2B_ASTC_UNORM;
+        in.format = info.srgb ? A2B_ASTC_SRGB : A2B_ASTC_UNORM;
         in.width = g.width;
         in.height = g.height;
-        in.block_w = f->block_w;
-        in.block_h = f->block_h;
+        in.block_w = info.block_w;
+        in.block_h = info.block_h;
     };
     const auto astc_src = [&](size_t i, u32 layer, u32 z) {
         const tegra::LevelLayout& g = L.layout.levels[i];
@@ -476,7 +357,7 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
         const a2b_status st = a2b_decode_astc_rgba8(&in, astc_src(i, layer, z), static_cast<size_t>(g.linear_slice_size / g.depth), 1, rgba,
                                                     nullptr);
         if (st != A2B_OK)
-            fail(Fail::Generic, "Texture %s: ASTC decode failed (%s).", info.id.str().c_str(), a2b_status_string(st));
+            fail(Fail::Generic, "Texture %s: ASTC decode failed (%s).", info.name.c_str(), a2b_status_string(st));
     };
 
     // Level 0 decoded once: it decides the kind of the entry.
@@ -490,14 +371,14 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
     std::vector<u8> data(static_cast<size_t>(data_bytes));
     TexCacheKind kind = TexCacheKind::Bc7;
     const u64 bc_slice0 = plan.level[0].size / L.layers / g0.depth;   // bytes of one BC7/BC5 slice of level 0
-    if (!f->srgb && is_two_channel(rgba0)) {
+    if (!info.srgb && is_two_channel(rgba0)) {
         kind = TexCacheKind::Bc5;
     } else {
         for (u32 s = 0; s < slices0; ++s) {
             const a2b_status st = a2b_encode_bc7(g0.width, g0.height, rgba0.data() + static_cast<u64>(s) * px0 * 4, &opt,
                                                  data.data() + plan.level[0].offset + s * bc_slice0, static_cast<size_t>(bc_slice0), nullptr);
             if (st != A2B_OK)
-                fail(Fail::Generic, "Texture %s: BC7 encode failed (%s).", info.id.str().c_str(), a2b_status_string(st));
+                fail(Fail::Generic, "Texture %s: BC7 encode failed (%s).", info.name.c_str(), a2b_status_string(st));
         }
         if (bc7_slice_psnr(g0.width, g0.height, data.data() + plan.level[0].offset, rgba0.data()) < g_rgba8_psnr_db) kind = TexCacheKind::Rgba8;
     }
@@ -515,7 +396,7 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
                 astc_in(i, in);
                 const u64 out_slice = out.size / L.layers / g.depth;
                 if (a2b_output_size(&in) != out_slice)
-                    fail(Fail::Generic, "Texture %s: internal error, BC7 slice size mismatch.", info.id.str().c_str());
+                    fail(Fail::Generic, "Texture %s: internal error, BC7 slice size mismatch.", info.name.c_str());
                 for (u32 layer = 0; layer < L.layers; ++layer)
                     for (u32 z = 0; z < g.depth; ++z) {
                         u8* dst = data.data() + out.offset + (static_cast<u64>(layer) * g.depth + z) * out_slice;
@@ -523,7 +404,7 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
                         const a2b_status st = a2b_transcode(&in, astc_src(i, layer, z), static_cast<size_t>(g.linear_slice_size / g.depth),
                                                             &opt, &of, dst, static_cast<size_t>(out_slice), nullptr);
                         if (st != A2B_OK)
-                            fail(Fail::Generic, "Texture %s: ASTC to BC7 transcode failed (%s).", info.id.str().c_str(),
+                            fail(Fail::Generic, "Texture %s: ASTC to BC7 transcode failed (%s).", info.name.c_str(),
                                  a2b_status_string(st));
                     }
             }
@@ -550,7 +431,7 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
             }
             break;
         case TexCacheKind::Rgba8: {
-            out_vk = f->srgb ? kVkRgba8Srgb : kVkRgba8Unorm;
+            out_vk = info.srgb ? kVkRgba8Srgb : kVkRgba8Unorm;
             table = texcache_rgba8_levels(plan, &file_bytes);
             data.assign(static_cast<size_t>(file_bytes - kCacheHeadBytes - table.size() * kCacheLevelBytes), 0);
             for (size_t i = 0; i < L.layout.levels.size(); ++i) {
@@ -570,22 +451,12 @@ std::vector<u8> texcache_build_file(const TxtrInfo& info, const TexCachePlan& pl
     // header and level table (cache_write), little endian
     std::vector<u8> out;
     out.reserve(static_cast<size_t>(file_bytes));
-    out.insert(out.end(), kCacheMagic, kCacheMagic + 4);
-    put32(out, kCacheVersion);
-    put64(out, plan.key);
-    put32(out, out_vk);
-    put32(out, static_cast<u32>(table.size()));
-    put32(out, L.layers);
-    for (const TexOutLevel& l : table) {
-        put32(out, l.width);
-        put32(out, l.height);
-        put32(out, l.depth);
-        put64(out, l.offset);
-        put64(out, l.size);
-    }
+    std::vector<nxfmt::Bc7Level> head_levels;
+    for (const TexOutLevel& l : table) head_levels.push_back({l.width, l.height, l.depth, l.offset, l.size});
+    nxfmt::bc7_put_head(out, plan.key, out_vk, L.layers, head_levels.data(), head_levels.size());
     out.insert(out.end(), data.begin(), data.end());
     if (out.size() != file_bytes)
-        fail(Fail::Generic, "Texture %s: internal error, file size mismatch.", info.id.str().c_str());
+        fail(Fail::Generic, "Texture %s: internal error, file size mismatch.", info.name.c_str());
     if (kind_out) *kind_out = kind;
     return out;
 }
@@ -603,9 +474,7 @@ bool texcache_file_valid(const std::string& path_utf8, const TexCachePlan& plan,
     if (static_cast<size_t>(size) < head.size() || !f.read(reinterpret_cast<char*>(head.data()), static_cast<std::streamsize>(head.size())))
         return false;
     const u8* p = head.data();
-    if (std::memcmp(p, kCacheMagic, 4) != 0) return false;
-    if (get32(p + 4) != kCacheVersion) return false;
-    if (get64(p + 8) != plan.key) return false;
+    if (!nxfmt::bc7_head_matches(p, head.size(), plan.key)) return false;
 
     // the format the header declares decides the level table and the size the file must have
     const bool srgb = plan.vk_format == kVkBc7Srgb;
@@ -643,9 +512,8 @@ bool texcache_file_valid(const std::string& path_utf8, const TexCachePlan& plan,
     return true;
 }
 
-TexCacheStats build_texture_cache(const TexCacheOptions& o, const std::function<void(u64 done, u64 total)>& progress,
-                                  const std::function<bool()>& cancelled) {
-    namespace fs = std::filesystem;
+TexCacheStats build_texture_cache(const TexCacheOptions& o, std::vector<AstcTexture> textures,
+                                  const std::function<void(u64 done, u64 total)>& progress, const std::function<bool()>& cancelled) {
     const auto t0 = std::chrono::steady_clock::now();
     TexCacheStats stats;
     if (o.cache_dir.empty()) fail(Fail::Input, "No cache folder was given.");
@@ -653,54 +521,18 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, const std::function<
     if (const a2b_status st = ensure_transcoder(); st != A2B_OK)
         fail(Fail::Generic, "The ASTC transcoder is not available (%s).", a2b_status_string(st));
 
-    // 1. the .pak files under the RomFS folder, in a fixed order
-    std::error_code ec;
-    const fs::path root(widen(o.romfs_dir));
-    if (!fs::is_directory(root, ec)) fail(Fail::Input, "The game files folder %s does not exist.", o.romfs_dir.c_str());
-    std::vector<fs::path> pak_paths;
-    for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
-         !ec && it != end; it.increment(ec)) {
-        std::error_code e2;
-        if (!it->is_regular_file(e2)) continue;
-        if (_wcsicmp(it->path().extension().wstring().c_str(), L".pak") == 0) pak_paths.push_back(it->path());
-    }
-    std::sort(pak_paths.begin(), pak_paths.end());
-
-    // 2. the ASTC textures (headers only)
+    // the textures, largest first
     struct Job {
-        size_t pak;
-        size_t entry;
-        TxtrInfo info;
+        AstcTexture info;
         u64 weight;
     };
-    std::vector<std::shared_ptr<const Pak>> paks;
     std::vector<Job> jobs;
-    for (const fs::path& pp : pak_paths) {
-        const std::string utf8 = narrow(pp.wstring());
-        std::shared_ptr<const Pak> pak;
-        try {
-            pak = Pak::open(open_file_storage(utf8));
-        } catch (const std::exception& e) {
-            MPRS_LOGW("Skipping %s: %s", utf8.c_str(), e.what());
-            continue;
-        }
-        const size_t pi = paks.size();
-        paks.push_back(pak);
-        const std::vector<PakEntry>& assets = pak->assets();
-        for (size_t ei = 0; ei < assets.size(); ++ei) {
-            const PakEntry& e = assets[ei];
-            if (std::strcmp(e.type, "TXTR") != 0) continue;
-            try {
-                TxtrInfo info = txtr_read_info(*pak, e);
-                if (!txtr_format(info.format).astc) continue;
-                const u64 weight = static_cast<u64>(info.width) * info.height * std::max<u32>(1, info.layers);
-                jobs.push_back(Job{pi, ei, info, weight});
-            } catch (const std::exception& err) {
-                ++stats.failed;
-                MPRS_LOGW("Texture %s in %s: header unreadable, not cached: %s", e.id.str().c_str(), utf8.c_str(), err.what());
-            }
-        }
+    jobs.reserve(textures.size());
+    for (AstcTexture& t : textures) {
+        const u64 weight = t.weight ? t.weight : static_cast<u64>(t.width) * t.height * std::max<u32>(1, t.layers);
+        jobs.push_back(Job{std::move(t), weight});
     }
+    textures.clear();
     std::stable_sort(jobs.begin(), jobs.end(), [](const Job& a, const Job& b) { return a.weight > b.weight; });
     const size_t total = jobs.size();
     u64 total_weight = 0, done_weight = 0;
@@ -723,13 +555,11 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, const std::function<
     };
 
     const auto run_job = [&](const Job& j) -> Result {
-        const Pak& pak = *paks[j.pak];
-        const PakEntry& e = pak.assets()[j.entry];
-        const std::vector<u8> tiled = txtr_read_tiled(pak, e, j.info);
+        const std::vector<u8> tiled = j.info.read_tiled();
         const TexCachePlan plan = texcache_plan(j.info, tiled.data(), tiled.size(), o.quality);
         if (!plan.ok) {
             const char* why = detail::texcache_reject_reason(j.info, tiled.size(), o.quality);
-            MPRS_LOGW("Texture %s: not cached, the cache plan rejected it: %s", j.info.id.str().c_str(),
+            NXS_LOGW("Texture %s: not cached, the cache plan rejected it: %s", j.info.name.c_str(),
                       why ? why : "unknown reason");
             return {Outcome::Rejected, 0};
         }
@@ -783,13 +613,13 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, const std::function<
             }
 
             if (disk) {
-                MPRS_LOGE("Texture %s: %s", j.info.id.str().c_str(), err.c_str());
+                NXS_LOGE("Texture %s: %s", j.info.name.c_str(), err.c_str());
                 std::lock_guard<std::mutex> lk(m);
                 if (disk_error.empty()) disk_error = err;
                 stop = true;
                 return;
             }
-            if (failed_job) MPRS_LOGW("Texture %s: not cached: %s", j.info.id.str().c_str(), err.c_str());
+            if (failed_job) NXS_LOGW("Texture %s: not cached: %s", j.info.name.c_str(), err.c_str());
 
             std::lock_guard<std::mutex> lk(m);
             if (failed_job) {
@@ -830,4 +660,4 @@ TexCacheStats build_texture_cache(const TexCacheOptions& o, const std::function<
     return stats;
 }
 
-}  // namespace mprs
+}  // namespace nxs

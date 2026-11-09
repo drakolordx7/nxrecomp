@@ -17,11 +17,11 @@
 #endif
 #include <windows.h>
 
-#ifndef MPRS_VERSION
-#define MPRS_VERSION "dev"
+#ifndef NXS_VERSION
+#define NXS_VERSION "dev"
 #endif
 
-using namespace mprs;
+using namespace nxs;
 
 namespace {
 
@@ -36,14 +36,14 @@ BOOL WINAPI on_ctrl(DWORD type) {
 
 void usage() {
     std::puts(
-        "Usage: " MPRS_EXE_NAME "_cli --input <dump.nsp|xci|nsz|xcz> [--input <update or DLC> ...] --out <game folder> [options]\n"
+        "Usage: " NXS_EXE_NAME "_cli --input <dump.nsp|xci|nsz|xcz> [--input <update or DLC> ...] --out <game folder> [options]\n"
         "\n"
         "  --input <file>[,<file>]             the base game, and optionally its update and DLC (repeat --input or give a comma list,\n"
         "                                      any order). The newest update is applied; DLC goes to aoc\\<title id>.\n"
         "  --keys <prod.keys>[,<title.keys>]   keys file(s); default: look in the usual emulator folders\n"
         "  --quality <0-6>                     texture conversion quality (default 3; the game reads the same value from its ini)\n"
         "  --threads <n>                       worker threads (default: all)\n"
-        "  --shader-pack <file|folder>         the translated shaders to install (default: shader_cache.mprshc, or a shader_cache folder, next to\n"
+        "  --shader-pack <file|folder>         the translated shaders to install (default: the game's shader pack, or a shader_cache folder, next to\n"
         "                                      this program). Setup stops without them.\n"
         "  --no-shaders                        developer option: install without shaders. The game will not draw anything until they are installed.\n"
         "  --skip-textures                     do not build the texture cache\n"
@@ -156,9 +156,7 @@ int wmain(int argc, wchar_t** wargv) {
         else if (a == "--verify-output") o.verify_output = true;
         else if (a == "--check") check = true;
         else if (a == "--find-keys") find_keys = true;
-        else if (a == "--title-id") o.expected_title_id = val();
-        else if (a == "--build-id") o.expected_build_id = val();
-        else if (a == "--version") { std::printf(MPRS_EXE_NAME " %s\n", MPRS_VERSION); return 0; }
+        else if (a == "--version") { std::printf(NXS_EXE_NAME " %s\n", NXS_VERSION); return 0; }
         else if (a == "--help" || a == "-h" || a == "/?") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n\n", a.c_str()); usage(); return 1; }
     }

@@ -4,22 +4,13 @@
 #include "game.h"
 #include "nx_game.h"
 
-namespace mprs {
-
-namespace {
-const GameBuild kBuilds[] = {
-    NXGAME_BUILDS
-    {nullptr, nullptr},
-};
-}  // namespace
+namespace nxs {
 
 const GameProfile& game() {
-    // The single build_id / version are those of the newest listed build (the last row of the manifest's builds).
     static const GameProfile g{
-        NXGAME_ID, NXGAME_TITLE, NXGAME_PRODUCT, NXGAME_TITLE_ID, kBuilds[sizeof(kBuilds) / sizeof(kBuilds[0]) - 2].build_id, NXGAME_VERSION,
-        NXGAME_GAME_INI, NXGAME_SHADER_PACK, kBuilds,
+        NXGAME_ID, NXGAME_TITLE, NXGAME_PRODUCT, NXGAME_TITLE_ID, NXGAME_GAME_INI, NXGAME_SHADER_PACK, {NXGAME_BUILDS},
     };
     return g;
 }
 
-}  // namespace mprs
+}  // namespace nxs

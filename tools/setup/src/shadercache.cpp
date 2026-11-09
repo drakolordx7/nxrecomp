@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "shadercache.h"
+#include "nx_formats.h"
 
 #include <algorithm>
 #include <array>
@@ -24,14 +25,13 @@
 #include "fileio.h"
 #include "storage.h"
 
-#ifdef MPRS_HAVE_ZSTD
+#ifdef NXS_HAVE_ZSTD
 #include <zstd.h>
 #endif
 
-namespace mprs {
+namespace nxs {
 namespace {
 
-constexpr char kPackMagic[8] = {'M', 'P', 'R', 'S', 'H', 'C', '0', '1'};
 constexpr u32 kMaxPackEntries = 1u << 20;
 constexpr u64 kPackRecordFixed = 8 + 8 + 8 + 32 + 1;   // data_offset, stored_size, raw_size, sha256, method
 constexpr const char* kResults = "results.tsv";
@@ -39,14 +39,14 @@ constexpr const char* kManifest = "manifest.sha256";
 // A method-1 entry declares its raw size in the record, so that size is not bounded by the file. Shader modules are a few KB;
 // this cap keeps a lying record from asking for an absurd allocation.
 constexpr u64 kMaxRawEntryBytes = u64(1) << 30;
-#ifndef MPRS_HAVE_ZSTD
+#ifndef NXS_HAVE_ZSTD
 constexpr const char* kZstdMessage = "This shader pack is compressed with zstd, which this build cannot read";
 #endif
 
 // Decodes one zstd-compressed entry (in_len bytes) into out, which must be exactly out_len bytes. Returns false if the data is not
 // a zstd stream, or does not decode to exactly out_len bytes (a damaged payload or a raw_size that does not match it).
 bool decompress_zstd(const u8* in, size_t in_len, u8* out, size_t out_len) {
-#ifdef MPRS_HAVE_ZSTD
+#ifdef NXS_HAVE_ZSTD
     u8 spare = 0;   // ZSTD_decompress wants a valid pointer even when the entry is empty
     const size_t got = ZSTD_decompress(out_len != 0 ? out : &spare, out_len, in, in_len);
     return !ZSTD_isError(got) && got == out_len;
@@ -177,7 +177,7 @@ std::vector<Item> read_pack(const IStorage& st, const std::string& path) {
     if (total < 16) bad("it is too short");
     u8 hdr[16];
     st.read(0, hdr, sizeof hdr);
-    if (std::memcmp(hdr, kPackMagic, sizeof kPackMagic) != 0) bad("the signature is wrong");
+    if (!nxfmt::shader_pack_magic_ok(hdr)) bad("the signature is wrong");
     u32 count = le32(hdr + 8);
     if (count > kMaxPackEntries) bad("the entry count is too large");
 
@@ -210,7 +210,7 @@ std::vector<Item> read_pack(const IStorage& st, const std::string& path) {
         it.method = f[56];
         it.has_hash = true;
         if (it.method > 1) bad("an entry uses an unknown compression method");
-#ifndef MPRS_HAVE_ZSTD
+#ifndef NXS_HAVE_ZSTD
         if (it.method == 1) fail(Fail::Input, "%s", kZstdMessage);
 #endif
         if (it.method == 0 && it.stored != it.size) bad("a stored entry has two different sizes");
@@ -306,4 +306,4 @@ ShaderInstallResult install_shader_cache(const std::string& src_utf8, const std:
     return res;
 }
 
-}  // namespace mprs
+}  // namespace nxs

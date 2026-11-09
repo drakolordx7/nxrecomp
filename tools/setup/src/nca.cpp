@@ -6,10 +6,9 @@
 
 #include "bktr.h"
 #include "crypto.h"
-#include "game.h"
 #include "log.h"
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 u32 rd32(const u8* p) { return u32(p[0]) | u32(p[1]) << 8 | u32(p[2]) << 16 | u32(p[3]) << 24; }
@@ -141,8 +140,6 @@ StoragePtr Nca::open_section(int i, const Nca* base) const {
         fail(Fail::Input, "An archive in the dump is an update section without its patch table.");
     }
     if (!base) {
-        if (!game_lists_builds())
-            fail(Fail::Input, "This is a game update (patch) file. Only the original v%s game dump is supported.", game().version);
         fail(Fail::Input, "This is a game update (patch). Its data is a change to the base game, so setup needs the base game "
                           "dump too (give it as another input).");
     }
@@ -314,4 +311,4 @@ u64 Nca::verify_section(int i, const ProgressFn& progress, const CancelFn& cance
     fail(Fail::Input, "A file system in the dump uses a hash scheme (%u) that is not supported.", (unsigned)s->hash_type);
 }
 
-}  // namespace mprs
+}  // namespace nxs

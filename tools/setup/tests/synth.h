@@ -2,6 +2,8 @@
 // Builders for synthetic PFS0 / HFS0 / RomFS images, used by the container tests. They write the formats as documented in
 // pfs.h and romfs.h and do not validate their input (tests use them to build broken containers on purpose).
 #pragma once
+#include <deque>
+#include <string>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +11,15 @@
 #include <utility>
 #include <vector>
 
-namespace mprs_test {
+namespace nxs_test {
+
+// A C string that stays valid for the whole run (profile builds hold const char*).
+inline const char* keep_cstr(const std::string& v) {
+    static std::deque<std::string> store;
+    store.push_back(v);
+    return store.back().c_str();
+}
+
 
 using SynthFiles = std::vector<std::pair<std::string, std::vector<uint8_t>>>;
 
@@ -25,4 +35,4 @@ std::vector<uint8_t> synth_romfs(const SynthFiles& files_with_slash_paths);
 // SHA-256 used by synth_hfs0 (small standalone implementation, so tests can check the stored hashes).
 std::array<uint8_t, 32> synth_sha256(const uint8_t* data, size_t len);
 
-}  // namespace mprs_test
+}  // namespace nxs_test

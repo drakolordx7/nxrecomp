@@ -11,6 +11,8 @@ if '--skip' in sys.argv:       # --skip S <trace>: drop samples in the first S s
     z, th, ev = fr.load(tr)
     f0 = min(e[0] for e in ev if z.get(e[3]) == 'frame')
     samples = [x for x in samples if int(re.search(r't=(\d+) ns', x).group(1)) >= f0 + S * 1e9]
+# The game exe: the module most of the frames belong to (<game>.exe+0x...).
+EXE = (collections.Counter(re.findall(r'^\s+#\d+ (\S+\.exe)\+0x', txt, re.M)).most_common(1) or [('',)])[0][0]
 WAIT = ('block_on_wake', 'wait_synchronization', 'sleep_ns', 'wait_process_wide_key', 'wait_for_address')
 cnt = collections.defaultdict(collections.Counter)
 guestfn = collections.defaultdict(collections.Counter)
@@ -18,8 +20,8 @@ for s in samples:
     for th in s.split('\nthread ')[1:]:
         name = th.split()[0]
         frames = re.findall(r'^\s+#\d+ (.*)$', th, re.M)
-        mp = [f for f in frames if f.startswith('mpr.exe')]
-        top = ' < '.join(re.sub(r'^mpr.exe\+0x[0-9a-f]+ ', '', f)[:90] for f in mp[:4]) if mp else (frames[0] if frames else '?')
+        mp = [f for f in frames if EXE and f.startswith(EXE)]
+        top = ' < '.join(re.sub(r'^\S+\.exe\+0x[0-9a-f]+ ', '', f)[:90] for f in mp[:4]) if mp else (frames[0] if frames else '?')
         waiting = any(w in top for w in WAIT[:3]) or ('wait' in (mp[0] if mp else '') and not show_all)
         if any(w in ' '.join(mp[:3]) for w in WAIT) and not show_all: continue
         cnt[name][top] += 1

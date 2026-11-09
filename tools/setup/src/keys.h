@@ -7,7 +7,7 @@
 
 #include "common.h"
 
-namespace mprs {
+namespace nxs {
 
 class KeySet {
 public:
@@ -51,4 +51,4 @@ std::vector<KeyFileCandidate> find_key_files();
 // title.keys next to a prod.keys path, or "" if none.
 std::string sibling_title_keys(const std::string& prod_keys_path);
 
-}  // namespace mprs
+}  // namespace nxs

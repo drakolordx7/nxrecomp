@@ -7,7 +7,7 @@
 
 #include "storage.h"
 
-namespace mprs {
+namespace nxs {
 
 struct NsoInfo {
     u32 flags = 0;
@@ -21,4 +21,4 @@ struct NsoInfo {
 // must be <= storage size).
 NsoInfo nso_read_info(const IStorage& file);
 
-}  // namespace mprs
+}  // namespace nxs

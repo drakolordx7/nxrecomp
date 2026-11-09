@@ -11,7 +11,7 @@
 #include "pfs.h"
 #include "romfs.h"
 
-namespace mprs {
+namespace nxs {
 
 enum class NcaContentType : u8 { Program = 0, Meta = 1, Control = 2, Manual = 3, Data = 4, PublicData = 5 };
 
@@ -90,4 +90,4 @@ private:
     NcaSection sec_[4];
 };
 
-}  // namespace mprs
+}  // namespace nxs

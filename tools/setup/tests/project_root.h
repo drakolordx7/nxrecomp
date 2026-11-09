@@ -8,7 +8,7 @@
 #include <string>
 #include <system_error>
 
-namespace mprs_test {
+namespace nxs_test {
 
 inline const std::filesystem::path& project_root() {
     static const std::filesystem::path root = [] {
@@ -31,4 +31,4 @@ inline std::filesystem::path project_fs_path(const std::string& rel) {
 }
 inline std::string project_path(const std::string& rel) { return project_fs_path(rel).string(); }
 
-}  // namespace mprs_test
+}  // namespace nxs_test

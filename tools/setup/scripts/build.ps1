@@ -19,7 +19,7 @@ foreach ($line in (cmd /c "`"$vcvars`" >nul 2>&1 && set")) {
 }
 $env:PATH = "C:\Program Files\LLVM\bin;C:\Program Files\CMake\bin;$env:LOCALAPPDATA\Microsoft\WinGet\Links;$env:PATH"
 if ($Clean -and (Test-Path $build)) { Remove-Item -Recurse -Force $build }
-cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DMPRS_VERSION="$Version" -DNX_GAME_DIR="$Game"
+cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNXS_VERSION="$Version" -DNX_GAME_DIR="$Game"
 if ($LASTEXITCODE) { throw 'cmake configure failed' }
 if ($Target) { cmake --build $build --target $Target } else { cmake --build $build }
 if ($LASTEXITCODE) { throw 'build failed' }

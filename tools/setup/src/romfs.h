@@ -7,7 +7,7 @@
 
 #include "storage.h"
 
-namespace mprs {
+namespace nxs {
 
 struct RomfsFile {
     std::string path;     // relative path, '/' separated, no leading slash, UTF-8, e.g. "Worlds/MP1/Foo.pak"
@@ -35,4 +35,4 @@ private:
     StoragePtr image_;
 };
 
-}  // namespace mprs
+}  // namespace nxs

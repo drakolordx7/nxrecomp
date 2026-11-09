@@ -11,7 +11,7 @@
 
 #include "synth.h"
 
-namespace mprs_test {
+namespace nxs_test {
 namespace {
 
 // ---- AES-128 (independent implementation: S-box computed from GF(2^8) inversion) ---------------------------------------------
@@ -706,7 +706,7 @@ SynthDump make_synth_dump(const char* kind, uint64_t program_id, const std::stri
 
     std::string folder = dir;
     if (folder.empty()) {
-        folder = (std::filesystem::temp_directory_path() / ("mprs_synth_" + k + "_" + title_hex(program_id) +
+        folder = (std::filesystem::temp_directory_path() / ("nxs_synth_" + k + "_" + title_hex(program_id) +
                                                               (use_ticket ? "_tik" : ""))).string();
     }
     std::filesystem::create_directories(folder);
@@ -743,4 +743,4 @@ SynthDump make_synth_dump(const char* kind, uint64_t program_id, const std::stri
     return d;
 }
 
-}  // namespace mprs_test
+}  // namespace nxs_test

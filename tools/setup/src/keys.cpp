@@ -21,7 +21,7 @@
 #include <objbase.h>
 #include <shlobj.h>
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 bool is_blank(char c) { return c == ' ' || c == '\t' || c == '\r'; }
@@ -166,11 +166,11 @@ void KeySet::load_file(const std::string& utf8_path) {
         keys_[name] = std::move(bytes);
     }
 
-    if (skipped != 0) MPRS_LOGD("Skipped %d malformed line(s) in a keys file.", skipped);
+    if (skipped != 0) NXS_LOGD("Skipped %d malformed line(s) in a keys file.", skipped);
     if (keys_.empty() && title_keys_.empty()) {
         throw Error(Fail::Keys, "The file " + utf8_path + " does not look like a keys file.");
     }
-    MPRS_LOGI("Keys file loaded: %zu keys, %zu title keys.", keys_.size(), title_keys_.size());
+    NXS_LOGI("Keys file loaded: %zu keys, %zu title keys.", keys_.size(), title_keys_.size());
 }
 
 bool KeySet::get(const std::string& name, u8* out, size_t n) const {
@@ -327,4 +327,4 @@ std::string sibling_title_keys(const std::string& prod_keys_path) {
     return file_exists(candidate) ? candidate : std::string();
 }
 
-}  // namespace mprs
+}  // namespace nxs

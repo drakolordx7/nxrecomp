@@ -5,7 +5,7 @@
 
 #include "common.h"
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 u32 le32(const u8* p) {
@@ -42,4 +42,4 @@ NsoInfo nso_read_info(const IStorage& file) {
     return info;
 }
 
-}  // namespace mprs
+}  // namespace nxs

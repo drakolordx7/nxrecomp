@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Builds an MPRSHC01 shader pack from a shader cache folder (layout: src/shadercache.h).
+"""Builds a shader pack (magic NXSHC002; layout: formats/nx_formats.h, read by src/shadercache.cpp) from a shader cache folder.
 
 usage: make_shader_pack.py <src folder> <out pack> [--zstd] [--level N]
 
 The folder must contain results.tsv and <16 lower-case hex digits>.spv files; a manifest.sha256 in the folder is not packed.
 Records are written sorted by name with results.tsv first. Stored entries (method 0) are the default. --zstd writes method 1
 entries (zstd, multi-threaded, level 12 unless --level N is given, 1-22) and needs the 'zstandard' module
-(pip install zstandard). The setup tool reads method 1 only when it was built with zstd (MPRS_HAVE_ZSTD).
+(pip install zstandard). The setup tool reads method 1 only when it was built with zstd (NXS_HAVE_ZSTD).
 Entries are compressed and written one at a time; the record table is written last, at the front of the file.
 """
 import argparse
@@ -18,9 +18,12 @@ import struct
 import sys
 import time
 
-MAGIC = b"MPRSHC01"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "formats"))
+import nx_formats  # noqa: E402  the shared definition of the pack (magic, header size)
+
+MAGIC = nx_formats.SHADER_PACK_MAGIC
 SPV_RE = re.compile(r"^[0-9a-f]{16}\.spv$")
-RESULTS = "results.tsv"
+RESULTS = nx_formats.SHADER_RESULTS_NAME
 MANIFEST = "manifest.sha256"
 DEFAULT_LEVEL = 12
 
@@ -35,7 +38,7 @@ def fail(msg):
 
 
 def main(argv):
-    ap = argparse.ArgumentParser(description="Build an MPRSHC01 shader pack from a shader cache folder.")
+    ap = argparse.ArgumentParser(description="Build a shader pack from a shader cache folder.")
     ap.add_argument("src", help="shader cache folder (results.tsv + .spv files)")
     ap.add_argument("out", help="pack file to write")
     ap.add_argument("--zstd", action="store_true", help="compress entries with zstd (method 1)")
@@ -70,7 +73,7 @@ def main(argv):
     # The table size depends only on the names, so the data can start at a known offset.
     name_bytes = [n.encode("ascii") for n in names]
     table_size = sum(2 + len(nb) + 8 + 8 + 8 + 32 + 1 for nb in name_bytes)
-    data_start = 16 + table_size
+    data_start = nx_formats.SHADER_PACK_HEAD_BYTES + table_size
 
     t0 = time.time()
     raw_total = stored_total = 0

@@ -11,10 +11,10 @@
 #include "pfs.h"
 #include "synth.h"
 
-using namespace mprs;
-using mprs_test::SynthFiles;
-using mprs_test::synth_hfs0;
-using mprs_test::synth_pfs0;
+using namespace nxs;
+using nxs_test::SynthFiles;
+using nxs_test::synth_hfs0;
+using nxs_test::synth_pfs0;
 
 namespace {
 
@@ -26,7 +26,7 @@ std::vector<uint8_t> pattern(size_t n, uint8_t seed) {
 
 StoragePtr mem(std::vector<uint8_t> b) { return make_memory_storage(std::move(b)); }
 
-// True when fn throws mprs::Error with kind Input. Any other exception, or no exception, is false.
+// True when fn throws nxs::Error with kind Input. Any other exception, or no exception, is false.
 template <class F>
 bool throws_input(F fn) {
     try {
@@ -102,7 +102,7 @@ void round_trip_hfs0(const SynthFiles& files) {
         const uint32_t hashed = uint32_t(std::min<size_t>(data.size(), 0x200));
         CHECK(e.name == files[i].first);
         CHECK_EQ(e.hashed_size, hashed);
-        CHECK(e.sha256 == mprs_test::synth_sha256(data.data(), hashed));
+        CHECK(e.sha256 == nxs_test::synth_sha256(data.data(), hashed));
         CHECK(read_all(*p->open_file(e), 0, size_t(e.size)) == data);
         CHECK(p->find(e.name) != nullptr);
     }

@@ -3,7 +3,7 @@
 
 #include <cstring>
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 constexpr u32 kMaxFiles = 1000000;
@@ -114,4 +114,4 @@ const PfsEntry* Pfs::find(std::string_view name) const {
 
 StoragePtr Pfs::open_file(const PfsEntry& e) const { return make_sub_storage(storage_, e.offset, e.size); }
 
-}  // namespace mprs
+}  // namespace nxs
