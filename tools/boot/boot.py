@@ -167,7 +167,7 @@ def run_plan(g, a):
                                                          ', '.join(g.presets.get('presets', {})) or 'none'))
         layers.append(g.presets['presets'][n])
     env = {
-        'NXRT_FS_ROMFS': os.path.join(g.data, g.presets.get('romfs', 'game\\romfs')),
+        'NXRT_FS_ROMFS': os.path.normpath(os.path.join(g.data, g.presets.get('romfs', 'game/romfs'))),
         'NXRT_FS_SAVE_DIR': os.path.join(g.run, 'save'),
         'NXRT_BOOT_GFX': 'headless',            # the game exe opens a play-mode window by default; the boot loop stays headless (--env NXRT_BOOT_GFX=window)
         'NXRT_BOOT_HEADLESS_WIDTH': '1280', 'NXRT_BOOT_HEADLESS_HEIGHT': '720',
@@ -184,7 +184,7 @@ def run_plan(g, a):
         exe_args += [g.expand(x) for x in p.get('args', [])]
         seconds = p.get('seconds', seconds)
     if g.presets.get('exefs'):
-        exe_args += ['--exefs', os.path.join(g.data, g.presets['exefs'])]
+        exe_args += ['--exefs', os.path.normpath(os.path.join(g.data, g.presets['exefs']))]
     if a.level: env['NXRT_LOG_LEVEL'] = a.level
     if a.probe: env['NXRT_BOOT_PROBE'] = a.probe
     if a.stub_result: env['NXRT_IPC_STUB_RESULT'] = a.stub_result
