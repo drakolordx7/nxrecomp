@@ -22,6 +22,7 @@
 
 #include <nxrt/config.h>
 
+#include "nvn_settings.h"
 #include "astc2bc7.h"
 #include "nvn_core.h"
 #include "nvn_format.h"
@@ -58,7 +59,9 @@ void set_env(const char* name, const char* value) {
 // The disk cache off for a test: no file may be written into the tree. A developer's environment setting is removed too.
 void no_cache() {
     set_env("NXRT_NVN_BC7_CACHE", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     config_set("nvn", "bc7_cache", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 }
 
 TextureBuilderInfo make_info(int target, int w, int h, int depth, int levels, int format, int flags = 0, ptrdiff_t stride = 0) {
@@ -491,6 +494,7 @@ NXTEST(bc7_disk_cache_hit_and_truncated_file) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     set_env("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     CHECK_EQ(config_get_str("nvn", "bc7_cache", "x"), dir.string());
 
     const TextureBuilderInfo info = make_info(NVN_TEXTURE_TARGET_2D, 64, 64, 1, 3, NVN_FORMAT_RGBA_ASTC_5x4_SRGB);
@@ -507,6 +511,7 @@ NXTEST(bc7_disk_cache_hit_and_truncated_file) {
     CHECK_EQ(files.size(), 1u);
     if (files.size() != 1) {
         set_env("NXRT_NVN_BC7_CACHE", "");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         fs::remove_all(dir, ec);
         return;
     }
@@ -540,7 +545,9 @@ NXTEST(bc7_disk_cache_hit_and_truncated_file) {
 
     // with the cache disabled nothing is read or written
     set_env("NXRT_NVN_BC7_CACHE", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     config_set("nvn", "bc7_cache", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     PreparedTexture g;
     CHECK_MSG(prepare_texture(*bt.tex, TexCaps(), g), g.error);
     CHECK(!g.from_cache);
@@ -576,6 +583,7 @@ fs::path new_cache_dir(const char* tag) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     set_env("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     return dir;
 }
 

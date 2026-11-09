@@ -136,7 +136,7 @@ void sanitize(Settings& s) {
     // A fixed render size is 0 (follow the window) or 320..16384 per side; the settings file rejects anything else.
     s.display.render_width = s.display.render_width <= 0 ? 0 : std::clamp(s.display.render_width, 320, 16384);
     s.display.render_height = s.display.render_height <= 0 ? 0 : std::clamp(s.display.render_height, 320, 16384);
-    // Extras: peak and paper white are 0 (auto) or in range; the upscale mode is kept as it is, even for the modes not yet offered.
+    // Extras: peak and paper white are 0 (auto) or in range.
     extras::HdrSettings& h = s.extras.hdr;
     h.peak_nits = h.peak_nits <= 0 ? 0 : std::clamp(h.peak_nits, 200.0, 10000.0);
     h.paper_white_nits = h.paper_white_nits <= 0 ? 0 : std::clamp(h.paper_white_nits, 80.0, 500.0);
@@ -566,11 +566,8 @@ void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
 constexpr const char* kHdrModeNames[] = {"Off", "Auto", "On"};
 constexpr const char* kHdrFormatNames[] = {"Auto", "HDR10", "scRGB"};
 constexpr const char* kLatencyModeNames[] = {"Off", "Auto", "On", "Boost"};
-constexpr const char* kUpscaleNames[] = {"Off", "FSR 1 (spatial)", "FSR 3", "DLSS", "XeSS"};
+constexpr const char* kUpscaleNames[] = {"Off", "FSR 1 (spatial)"};
 constexpr int kUpscaleCount = static_cast<int>(sizeof kUpscaleNames / sizeof kUpscaleNames[0]);
-
-// Only Off and FSR 1 can be picked for now. The other modes stay in the list, greyed out, and a file that holds one shows it as selected.
-bool upscale_available(extras::UpscaleMode m) { return m == extras::UpscaleMode::Off || m == extras::UpscaleMode::Fsr1; }
 
 // A hover tooltip for the item drawn last.
 void tip(const char* text) {
@@ -639,18 +636,11 @@ void upscale_group(Page& p) {
     ImGui::SeparatorText("Upscaling");
 
     const int mode = static_cast<int>(u.mode);
-    std::string preview = kUpscaleNames[mode];
-    if (!upscale_available(u.mode)) preview += " (not available yet)";
-    const bool open = ImGui::BeginCombo("Mode##upscale_mode", preview.c_str());
-    tip("FSR 1 draws the game below the window size and sharpens it up to the window; the other modes are not available yet.");
+    const bool open = ImGui::BeginCombo("Mode##upscale_mode", kUpscaleNames[mode]);
+    tip("FSR 1 draws the game below the window size and sharpens it up to the window.");
     if (open) {
         for (int i = 0; i < kUpscaleCount; ++i) {
-            const bool ok = upscale_available(static_cast<extras::UpscaleMode>(i));
-            std::string label = kUpscaleNames[i];
-            if (!ok) label += " (not available yet)";
-            ImGui::BeginDisabled(!ok);
-            const bool picked = ImGui::Selectable(label.c_str(), i == mode);
-            ImGui::EndDisabled();
+            const bool picked = ImGui::Selectable(kUpscaleNames[i], i == mode);
             if (picked && i != mode) {
                 u.mode = static_cast<extras::UpscaleMode>(i);
                 mark(p);

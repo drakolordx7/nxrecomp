@@ -2,6 +2,8 @@
 // Pipeline layouts, shader modules and pipelines (see nvn_pipeline.h). Pipeline creation is synchronous on the render thread; a
 // VkPipelineCache persists between runs ([nvn] pipeline_cache, default "pipeline_cache.bin").
 #include "nvn_pipeline.h"
+#include "nvn_settings.h"
+#include "spirv_module.h"
 
 #include <atomic>
 #include <chrono>
@@ -55,7 +57,6 @@ std::unordered_map<const ShaderInfo*, std::pair<VkShaderModule, uint32_t>> g_xfb
 struct GfxEntry {
     GraphicsKey first;
     VkPipeline second = VK_NULL_HANDLE;
-    VkPipeline alt = VK_NULL_HANDLE;                 // measurement only ([nvn] gpl_ab): the optimised pipeline, kept next to the linked one
     std::shared_ptr<PipeUpgrade> up;
 };
 std::unordered_map<uint64_t, std::vector<GfxEntry>> g_gfx;
@@ -92,7 +93,7 @@ void ensure_cache() {
     std::lock_guard<std::mutex> lk(g_cache_mu);       // the prewarm workers and the render thread may get here together
     if (g_cache_tried) return;
     g_cache_tried = true;
-    g_cache_path = config_get_str("nvn", "pipeline_cache", "pipeline_cache.bin");
+    g_cache_path = nvn_settings().pipeline_cache;
     std::vector<char> data;
     if (!g_cache_path.empty()) {
         if (FILE* f = std::fopen(g_cache_path.c_str(), "rb")) {          // one read: the file can be hundreds of MB after a shader preparation
@@ -176,37 +177,17 @@ static VkShaderModule create_module(const std::vector<uint32_t>& words, const ch
         const auto& w = words;
         size_t cap_at = 0;
         bool uses64 = false;
-        for (size_t i = 5; i < w.size();) {
-            const uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
-            if (len == 0) break;
-            if (op == 17 && w[i + 1] == 10) cap_at = i;                       // OpCapability Float64
-            if (op == 22 && i + 2 < w.size() && w[i + 2] == 64) uses64 = true;  // OpTypeFloat 64
-            i += len;
+        std::vector<spirv::Inst> insts;
+        spirv::split(w, insts);                                               // a malformed tail is left as it is
+        for (const spirv::Inst& n : insts) {
+            if (n.op == spirv::OpCapability && n.len >= 2 && w[n.at + 1] == 10) cap_at = n.at;              // OpCapability Float64
+            if (n.op == spirv::OpTypeFloat && n.len >= 3 && w[n.at + 2] == 64) uses64 = true;              // OpTypeFloat 64
         }
         if (cap_at && !uses64) {
             fixed = w;
             fixed.erase(fixed.begin() + static_cast<std::ptrdiff_t>(cap_at), fixed.begin() + static_cast<std::ptrdiff_t>(cap_at) + 2);
             code = &fixed;
         }
-    }
-    // [nvn] spirv_salt (measurement only): an OpSourceExtension with the salt in every module gives the driver a new shader hash, so a run
-    // compiles every shader from scratch without touching the driver's own cache on disk.
-    static const std::string salt = config_get_str("nvn", "spirv_salt", "");
-    std::vector<uint32_t> salted;
-    if (!salt.empty() && code->size() > 5) {
-        salted = *code;
-        size_t at = 5;
-        while (at < salted.size()) {
-            const uint32_t op = salted[at] & 0xffff, len = salted[at] >> 16;
-            if (len == 0) break;
-            if (op != 17 && op != 10 && op != 11 && op != 14 && op != 15 && op != 16 && op != 331) break;   // capability .. execution mode
-            at += len;
-        }
-        std::vector<uint32_t> ins((salt.size() + 1 + 3) / 4 + 1, 0);
-        ins[0] = (static_cast<uint32_t>(ins.size()) << 16) | 4u;                 // OpSourceExtension
-        std::memcpy(&ins[1], salt.c_str(), salt.size());
-        salted.insert(salted.begin() + static_cast<std::ptrdiff_t>(at), ins.begin(), ins.end());
-        code = &salted;
     }
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     ci.codeSize = code->size() * 4;
@@ -626,8 +607,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     for (auto& e : bucket)
         if (e.first == key) {
             counters().pipeline_cache_hits.fetch_add(1, std::memory_order_relaxed);
-            if (e.up && e.up->state.load(std::memory_order_acquire) != 0) gpl_take_upgrade(e.second, e.alt, e.up);
-            if (e.alt && gpl_ab_whole()) return e.alt;
+            if (e.up && e.up->state.load(std::memory_order_acquire) != 0) gpl_take_upgrade(e.second, e.up);
             return e.second;
         }
     g_gfx_keys.add(1);                           // every path below adds one entry to the bucket
@@ -635,7 +615,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     VkPipeline pipe = VK_NULL_HANDLE;
     if (prewarm_take(key, &pipe)) {              // compiled ahead on a worker (or being compiled: waits for it)
         ++g_pipeline_count;
-        bucket.push_back({key, pipe, VK_NULL_HANDLE, nullptr});
+        bucket.push_back({key, pipe, nullptr});
         return pipe;
     }
     std::shared_ptr<PipeUpgrade> up;
@@ -643,7 +623,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
     if (pipe) {
         ++g_pipeline_count;
         prewarm_record(key);                     // the next run builds the whole pipeline ahead of the draw
-        bucket.push_back({key, pipe, VK_NULL_HANDLE, up});
+        bucket.push_back({key, pipe, up});
         return pipe;
     }
     NXFT("pipe.create");
@@ -652,7 +632,7 @@ VkPipeline graphics_pipeline(const GraphicsKey& key, const ProgLayout& layout) {
         ++g_pipeline_count;
         prewarm_record(key);
     }
-    bucket.push_back({key, pipe, VK_NULL_HANDLE, nullptr});
+    bucket.push_back({key, pipe, nullptr});
     return pipe;
 }
 
@@ -744,7 +724,6 @@ void pipeline_shutdown() {
     for (auto& [h, bucket] : g_gfx)
         for (auto& e : bucket) {
             if (e.second) vkDestroyPipeline(d, e.second, nullptr);
-            if (e.alt) vkDestroyPipeline(d, e.alt, nullptr);
             if (e.up && e.up->state.load() == 1 && e.up->pipe) vkDestroyPipeline(d, e.up->pipe, nullptr);     // built and never taken
         }
     g_gfx.clear();

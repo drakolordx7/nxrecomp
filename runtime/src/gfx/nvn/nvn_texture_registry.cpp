@@ -9,6 +9,7 @@
 #include "nxrt/config.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
+#include "nvn_debug.h"
 #include "nvn_texdata.h"
 #include "nxrt/log.h"
 #include "nvn_format.h"
@@ -40,8 +41,7 @@ void tx_mark(const char* what, const Texture* t) {
 }
 
 void tev(const Texture* t, const char* what, uint64_t a, uint64_t b) {
-    static const bool on = nxrt::config_get_int("nvn", "trace_tex_events", 0) != 0;
-    if (!on || !t || !t->fmt || t->b.width != 128 || t->layers != 6 || t->levels != 8) return;
+    if (!debug_on() || !debug_tex_events(t)) return;   // [nvn] trace_tex_events (nvn_debug.h)
     NXLOG_I("nvn.tev", "t%u %s mem %p size %llu: %llx %llx", t->id, what, static_cast<const void*>(t->mem), static_cast<unsigned long long>(t->storage_size),
             static_cast<unsigned long long>(a), static_cast<unsigned long long>(b));
 }

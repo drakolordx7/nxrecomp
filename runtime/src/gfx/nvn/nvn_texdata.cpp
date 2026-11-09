@@ -4,6 +4,8 @@
 // Config: [nvn] bc7_quality (env NXRT_NVN_BC7_QUALITY, default 3), [nvn] bc7_cache (env NXRT_NVN_BC7_CACHE, default
 // "bc7_cache" in the current directory, "" disables the cache).
 #include "nvn_texdata.h"
+#include "nvn_settings.h"
+#include "nvn_debug.h"
 
 #include <algorithm>
 #include <atomic>
@@ -108,10 +110,10 @@ uint32_t get32(const uint8_t* p) {
 }
 uint64_t get64(const uint8_t* p) { return static_cast<uint64_t>(get32(p)) | (static_cast<uint64_t>(get32(p + 4)) << 32); }
 
-std::string cache_dir() { return config_get_str("nvn", "bc7_cache", "bc7_cache"); }
+std::string cache_dir() { return nvn_settings().bc7_cache; }
 
 int bc7_quality() {
-    const int64_t q = config_get_int("nvn", "bc7_quality", kDefaultQuality);
+    const int64_t q = nvn_settings().bc7_quality_set ? nvn_settings().bc7_quality : kDefaultQuality;
     if (q < 0 || q > 6) {
         NXLOG_W(kTag, "[nvn] bc7_quality %lld is outside 0..6: using %d", static_cast<long long>(q), kDefaultQuality);
         return kDefaultQuality;
@@ -441,9 +443,9 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     // Debug: [nvn] dump_astc = DIR writes level 0 of every ASTC texture of width [nvn] dump_astc_w (default any) as tight ASTC blocks to
     // DIR/astc_<key>_<w>x<h>_<bw>x<bh>_<srgb>.bin, to decode them with another decoder.
     {
-        static const std::string dump_dir = config_get_str("nvn", "dump_astc", "");
+        const std::string& dump_dir = nvn_debug().dump_astc;
         if (!dump_dir.empty() && fmt.astc && L.block_linear) {
-            static const int64_t want_w = config_get_int("nvn", "dump_astc_w", 0);
+            const int64_t want_w = nvn_debug().dump_astc_w;
             if (want_w == 0 || want_w == static_cast<int64_t>(geo[0].w)) {
                 char nm[160];
                 std::snprintf(nm, sizeof nm, "/astc_t%u_%016llx_%ux%u_%ux%u_%d.bin", t.id, static_cast<unsigned long long>(key), geo[0].w, geo[0].h,

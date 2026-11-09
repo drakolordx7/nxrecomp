@@ -1,6 +1,6 @@
 # Build and run ONE NVN unit test without CMake (several people can do this at once, each with its own output folder).
 #   pwsh scripts\nvn_unit.ps1 -Name sampler -Test tests\gfx\test_nvn_sampler.cpp -Src src\gfx\nvn\api_sampler.cpp [-Src more.cpp ...] [-Group gfx_nvn_sampler]
-# Always linked in: src\gfx\nvn\nvn_loader.cpp, nvn_abi.cpp, tests\test_main.cpp and build\release\nxrt.lib (the OS layer, built by the
+# Always linked in: src\gfx\nvn\nvn_loader.cpp, nvn_settings.cpp, nvn_abi.cpp, tests\test_main.cpp and build\release\nxrt.lib (the OS layer, built by the
 # normal build; this script never touches build\release). Output: build\unit\<Name>\unit.exe.
 param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Test, [string[]]$Src = @(), [string]$Group = "", [string[]]$Lib = @(), [string[]]$Inc = @(), [switch]$NoRun)
 $ErrorActionPreference = "Stop"
@@ -8,7 +8,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "build\unit\$Name"
 New-Item -ItemType Directory -Force $out | Out-Null
 . (Join-Path $PSScriptRoot "proj.ps1")
-$srcs = @($Test) + $Src + @("src\gfx\nvn\nvn_loader.cpp", "src\gfx\nvn\nvn_abi.cpp", "tests\test_main.cpp") | ForEach-Object { if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $root $_ } }
+$srcs = @($Test) + $Src + @("src\gfx\nvn\nvn_loader.cpp", "src\gfx\nvn\nvn_settings.cpp", "src\gfx\nvn\nvn_abi.cpp", "tests\test_main.cpp") | ForEach-Object { if ([System.IO.Path]::IsPathRooted($_)) { $_ } else { Join-Path $root $_ } }
 $srcList = ($srcs | ForEach-Object { '"' + $_ + '"' }) -join " "
 $lib = Join-Path $root "build\release\nxrt.lib"
 $libs = ($Lib | ForEach-Object { '"' + $_ + '"' }) -join " "

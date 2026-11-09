@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nvn_settings.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
@@ -197,15 +198,14 @@ void prewarm_init() {
     if (g_inited) return;
     g_inited = true;
     g_stop = false;
-    g_enabled = config_get_bool("nvn", "prewarm", true);
-    g_path = config_get_str("nvn", "pipeline_keys", "pipeline_keys.bin");
+    g_enabled = nvn_settings().prewarm;
+    g_path = nvn_settings().pipeline_keys;
     if (!g_enabled || g_path.empty()) {
         g_enabled = false;
         return;
     }
     load_file();
-    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
-    const int64_t want = config_get_int("nvn", "prewarm_threads", std::clamp<int64_t>(hw / 6, 1, 4));
+    const int64_t want = nvn_settings().prewarm_threads;
     for (int64_t i = 0; i < want; ++i) g_workers.emplace_back(worker_main);
     g_saver = std::thread(saver_main);
     NXLOG_I(kTag, "prewarm: %zu recorded pipelines from %s, %zu worker threads", g_recs.size(), g_path.c_str(), g_workers.size());

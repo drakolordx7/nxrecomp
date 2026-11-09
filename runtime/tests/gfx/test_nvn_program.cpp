@@ -231,7 +231,7 @@ NXTEST(unknown_block_leaves_program_unlinked_and_reports_success) {
     std::vector<uint8_t> zeros(v.code.size(), 0);
     CHECK(shader_hash(zeros.data(), static_cast<uint32_t>(zeros.size())) != v.hash);
     const NVNshaderData d = shader_data(zeros, v.ctrl);
-    // [nvn] accept_unlinked (default on): a block the cache lacks still reports success, so the game does not rebuild the shader on every bind (S18); the program stays unlinked
+    // A block the cache lacks still reports success, so the game does not rebuild the shader on every bind (S18); the program stays unlinked
     CHECK_EQ(set_shaders(&prog, 1, &d), 1);
     be::Program* hp = be::host_of<be::Program>(&prog);
     CHECK(hp != nullptr);
@@ -262,7 +262,7 @@ NXTEST(found_stages_are_kept_when_another_is_missing) {
     init(&prog, nullptr);
     std::vector<uint8_t> zeros(v.code.size(), 0);
     const NVNshaderData d[2] = {shader_data(v.code, v.ctrl), shader_data(zeros, v.ctrl)};
-    CHECK_EQ(set_shaders(&prog, 2, d), 1);      // accept_unlinked, see above
+    CHECK_EQ(set_shaders(&prog, 2, d), 1);      // unlinked but accepted, see above
     be::Program* hp = be::host_of<be::Program>(&prog);
     CHECK(hp != nullptr);
     if (hp) {

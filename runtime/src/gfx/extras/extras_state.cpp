@@ -41,31 +41,40 @@ const char* output_kind_name(OutputKind k) {
     return "?";
 }
 
-Settings settings_from_config() {
-    Settings s;
-    const std::string hm = lower(config_get_str("hdr", "mode", "auto"));
-    s.hdr.mode = hm == "off" || hm == "0" || hm == "false" ? HdrMode::Off : hm == "on" || hm == "1" || hm == "true" ? HdrMode::On : HdrMode::Auto;
-    const std::string hf = lower(config_get_str("hdr", "format", "auto"));
-    s.hdr.format = hf == "hdr10" ? HdrFormat::Hdr10 : hf == "scrgb" ? HdrFormat::ScRgb : HdrFormat::Auto;
-    s.hdr.peak_nits = std::clamp(config_get_double("hdr", "peak_nits", 0.0), 0.0, 10000.0);
-    if (s.hdr.peak_nits != 0 && s.hdr.peak_nits < 200) s.hdr.peak_nits = 200;
-    s.hdr.paper_white_nits = std::clamp(config_get_double("hdr", "paper_white_nits", 0.0), 0.0, 500.0);
-    if (s.hdr.paper_white_nits != 0 && s.hdr.paper_white_nits < 80) s.hdr.paper_white_nits = 80;
-    s.hdr.highlight_boost = std::clamp(config_get_double("hdr", "highlight_boost", 1.0), 0.0, 2.0);
+Settings settings_from_config(const Settings& base) {
+    Settings s = base;
+    auto has = [](const char* sec, const char* key) { return config_has(sec, key); };
+    if (has("hdr", "mode")) {
+        const std::string hm = lower(config_get_str("hdr", "mode", "auto"));
+        s.hdr.mode = hm == "off" || hm == "0" || hm == "false" ? HdrMode::Off : hm == "on" || hm == "1" || hm == "true" ? HdrMode::On : HdrMode::Auto;
+    }
+    if (has("hdr", "format")) {
+        const std::string hf = lower(config_get_str("hdr", "format", "auto"));
+        s.hdr.format = hf == "hdr10" ? HdrFormat::Hdr10 : hf == "scrgb" ? HdrFormat::ScRgb : HdrFormat::Auto;
+    }
+    if (has("hdr", "peak_nits")) {
+        s.hdr.peak_nits = std::clamp(config_get_double("hdr", "peak_nits", 0.0), 0.0, 10000.0);
+        if (s.hdr.peak_nits != 0 && s.hdr.peak_nits < 200) s.hdr.peak_nits = 200;
+    }
+    if (has("hdr", "paper_white_nits")) {
+        s.hdr.paper_white_nits = std::clamp(config_get_double("hdr", "paper_white_nits", 0.0), 0.0, 500.0);
+        if (s.hdr.paper_white_nits != 0 && s.hdr.paper_white_nits < 80) s.hdr.paper_white_nits = 80;
+    }
+    if (has("hdr", "highlight_boost")) s.hdr.highlight_boost = std::clamp(config_get_double("hdr", "highlight_boost", 1.0), 0.0, 2.0);
 
-    const std::string um = lower(config_get_str("upscale", "mode", "off"));
-    s.upscale.mode = um == "fsr1" || um == "spatial" ? UpscaleMode::Fsr1 : um == "fsr3" ? UpscaleMode::Fsr3 : um == "dlss" ? UpscaleMode::Dlss : um == "xess" ? UpscaleMode::Xess : UpscaleMode::Off;
-    s.upscale.sharpness = std::clamp(config_get_double("upscale", "sharpness", 0.8), 0.0, 1.0);
-    s.upscale.scene_scale = static_cast<int>(std::clamp<int64_t>(config_get_int("upscale", "scene_scale", 100), 25, 100));
-    s.upscale.fsr_dll = config_get_str("upscale", "fsr_dll", "");
-    s.upscale.dlss_dll = config_get_str("upscale", "dlss_dll", "");
-    s.upscale.xess_dll = config_get_str("upscale", "xess_dll", "");
-    s.upscale.frame_generation = config_get_bool("upscale", "frame_generation", false);
+    if (has("upscale", "mode")) {
+        const std::string um = lower(config_get_str("upscale", "mode", "off"));
+        s.upscale.mode = um == "fsr1" || um == "spatial" ? UpscaleMode::Fsr1 : UpscaleMode::Off;
+    }
+    if (has("upscale", "sharpness")) s.upscale.sharpness = std::clamp(config_get_double("upscale", "sharpness", 0.8), 0.0, 1.0);
+    if (has("upscale", "scene_scale")) s.upscale.scene_scale = static_cast<int>(std::clamp<int64_t>(config_get_int("upscale", "scene_scale", 100), 25, 100));
 
-    const std::string lm = lower(config_get_str("latency", "mode", "off"));
-    s.latency.mode = lm == "auto" ? LatencyMode::Auto : lm == "on" || lm == "1" || lm == "true" ? LatencyMode::On : lm == "boost" ? LatencyMode::Boost : LatencyMode::Off;
-    s.latency.frames_ahead = static_cast<int>(std::clamp<int64_t>(config_get_int("latency", "frames_ahead", 1), -1, 3));
-    s.latency.log_timings = config_get_bool("latency", "log_timings", false);
+    if (has("latency", "mode")) {
+        const std::string lm = lower(config_get_str("latency", "mode", "off"));
+        s.latency.mode = lm == "auto" ? LatencyMode::Auto : lm == "on" || lm == "1" || lm == "true" ? LatencyMode::On : lm == "boost" ? LatencyMode::Boost : LatencyMode::Off;
+    }
+    if (has("latency", "frames_ahead")) s.latency.frames_ahead = static_cast<int>(std::clamp<int64_t>(config_get_int("latency", "frames_ahead", 1), -1, 3));
+    if (has("latency", "log_timings")) s.latency.log_timings = config_get_bool("latency", "log_timings", false);
     return s;
 }
 

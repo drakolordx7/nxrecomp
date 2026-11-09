@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Display extras (S14): HDR output, upscaling, frame generation and low-latency modes.
+// Display extras (S14): HDR output, upscaling and low-latency modes.
 //
 // Everything here is off by default except HDR "auto" (HDR is used when the display and Windows offer it). The settings are read once at
-// start-up from the play-mode settings file (controls.ini, sections [hdr] [upscale] [latency]) with mpr.ini / environment overrides, and
-// the live part can be changed from the F1 page. The pieces:
+// start-up from the play-mode settings file (controls.ini, sections [hdr] [upscale] [latency]) with the game's ini / environment overrides,
+// and the live part can be changed from the F1 page. The pieces:
 //
 //   HDR       the game's scene pipeline is switched to float targets and a tone curve whose shoulder reaches the display's peak; the
 //             present step encodes the result as HDR10 (ST 2084) or scRGB. See src/gfx/extras/hdr_*.
-//   Upscale   a spatial FSR 1 pass in the present step (any internal resolution below the window size); the temporal upscalers are
-//             described in docs/S14.md.
+//   Upscale   a spatial FSR 1 pass in the present step (any internal resolution below the window size).
 //   Latency   NVIDIA Reflex (VK_NV_low_latency2) and AMD Anti-Lag 2 (VK_AMD_anti_lag) markers and sleeps around input sampling.
 #pragma once
 #include <cstdint>
@@ -28,15 +27,11 @@ struct HdrSettings {
     double highlight_boost = 1.0;    // 0 = the game's SDR look up to its own white, 1 = highlights reach the peak (0 .. 2)
 };
 
-enum class UpscaleMode : uint8_t { Off = 0, Fsr1, Fsr3, Dlss, Xess };
+enum class UpscaleMode : uint8_t { Off = 0, Fsr1 };   // older files may say fsr3 / dlss / xess: never implemented, read as Off
 struct UpscaleSettings {
     UpscaleMode mode = UpscaleMode::Off;
     double sharpness = 0.8;          // 0 .. 1 (FSR RCAS; 1 = sharpest)
     int scene_scale = 100;           // 25 .. 100: percent of the output size the 3D scene is rendered at (the game's own dynamic-resolution path; HUD and post stay native)
-    std::string fsr_dll;             // amd_fidelityfx_vk.dll location for the FSR 3 modes (empty: next to the exe)
-    std::string dlss_dll;            // nvngx_dlss.dll the player supplies (empty: not used)
-    std::string xess_dll;            // libxess.dll the player supplies (empty: not used)
-    bool frame_generation = false;   // FSR 3 frame interpolation (needs the FSR 3 mode)
 };
 
 enum class LatencyMode : uint8_t { Off = 0, Auto, On, Boost };   // Auto: whichever of Reflex / Anti-Lag 2 the GPU has; Boost: Reflex boost
@@ -52,8 +47,10 @@ struct Settings {
     LatencySettings latency;
 };
 
-// Reads [hdr] [upscale] [latency] from the nxrt configuration (mpr.ini, environment NXRT_HDR_MODE ...). Never fails.
-Settings settings_from_config();
+// The one reader of [hdr] [upscale] [latency] in the nxrt configuration (the game's ini, environment NXRT_HDR_MODE ...): every key that is set
+// there replaces the value in `base`; the others keep it. With the default base this is the configuration over the built-in defaults; play
+// mode passes its settings file's values, so the ini and the environment override the file. Never fails.
+Settings settings_from_config(const Settings& base = Settings{});
 // The settings in force (set once by play mode / the boot code from the file; the live fields change from the F1 page).
 Settings settings();
 void set_settings(const Settings& s);

@@ -143,9 +143,8 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     if (all_found && gpu::active()) gpu::prewarm_program_shaders(p->stage);
     // A block missing from the shader cache leaves the program unlinked (its draws are skipped). The call still reports success: the game treats a
     // failed SetShaders as "shader not built" and rebuilds it (programs, buffer allocations out of its pool allocator) on every bind, which costs
-    // milliseconds per attempt under the allocator's lock and grows without bound (S18). [nvn] accept_unlinked = 0 restores the old return value.
-    static const bool accept_unlinked = config_get_bool("nvn", "accept_unlinked", true);
-    return (all_found || (accept_unlinked && addresses_ok)) ? 1 : 0;
+    // milliseconds per attempt under the allocator's lock and grows without bound (S18).
+    return (all_found || addresses_ok) ? 1 : 0;
 }
 
 // The Ext entry: NVNshaderData plus one more word (see the header comment).

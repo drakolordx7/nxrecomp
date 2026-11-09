@@ -18,9 +18,10 @@
 namespace nxrt::gfx {
 
 // Background shader work (S24). The threads that compile pipeline parts publish how many jobs are waiting or running; while there are some
-// the overlay shows a small note ("Preparing shaders ..."). Any thread. [nvn] compile_note = false keeps the note off.
+// the overlay shows a small note ("Preparing shaders ..."). Any thread. The NVN back end's settings switch the note off ([nvn] compile_note = false).
 void set_shader_backlog(int pending);
 int shader_backlog();
+void set_compile_note(bool on);
 
 class Overlay {
 public:

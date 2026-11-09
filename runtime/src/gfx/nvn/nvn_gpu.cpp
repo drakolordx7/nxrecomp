@@ -26,6 +26,7 @@
 #include "nvn_impl.h"
 #include "nvn_pipeline.h"
 #include "extras/output_pass.h"
+#include "nvn_settings.h"
 
 namespace nxrt::nvn::be::gpu {
 namespace {
@@ -701,6 +702,7 @@ void register_counter_gauges();
 bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool keep_aspect) {
     std::lock_guard<std::mutex> lk(g_install_mu);
     if (g) return g->dev == &dev;
+    nvn_settings_reload();   // the [nvn] settings are read again at each bring-up (tests change them between back ends)
     auto* gp = new Gpu();
     gp->dev = &dev;
     gp->rend = rend;
