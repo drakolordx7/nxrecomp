@@ -61,8 +61,9 @@ A game module includes `nxrt/*.h` and `nxrt/game/*.h` and nothing else of the ba
 `nxrt/game/` holds `play_game.h` (GamePlay, GameHost), `play_types.h` (settings, actions, contexts, GameDefaults, GameVocabulary),
 `play_display.h`, `menu_mouse.h` (pointer geometry), `play_camlook.h`, `prompt_resolve.h` (PromptGame), `settings.h` (below),
 `launcher_ui.h` (the launcher's Page and Form toolkit and GameLauncher), `tt_probe.h` (the test tooling's memory helpers a probe
-uses) and `hdr_math.h` (the tone-curve arithmetic). A game's own tests may add the private headers they check (INCLUDES in the game's
-CMake).
+uses) and `hdr_math.h` (the tone-curve arithmetic). A game's own tests that check the base's private code (white-box tests that sit in the game folder because they need its data) link
+`nxrt_internal_for_tests` (`cmake/tests.cmake`), the one target that carries the private include paths. A game module that reads the
+player's own archives links `nx_setup_storage` (`tools/setup/storage`: IStorage, `nxs::Error`, hex and UTF-8 helpers), which the setup tool is built on too.
 
 ### A game's own settings and launcher pages
 

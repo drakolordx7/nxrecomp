@@ -25,6 +25,7 @@
 #include "nxrt/game.h"
 #include "nxrt/symbols.h"
 #include "nxrt/timestep.h"
+#include "nxrt/trace.h"
 #include "nxrt/tt.h"
 
 namespace nxrt {
@@ -70,6 +71,7 @@ bool init(const InitOptions& opt) {
     ft::start_from_config();
     tt::init();
     timestep::init();
+    trace::install_from_config();
     g_up = ok;
     return ok;
 }

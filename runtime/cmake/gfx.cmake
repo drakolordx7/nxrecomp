@@ -8,6 +8,7 @@ set(NXRT_TOOLS_DIR "${NX_BASE_DIR}/tools" CACHE PATH "base/tools (tools/tiling i
 if(NOT EXISTS "${NXRT_TOOLS_DIR}/tiling/src/tegra_tiling.cpp")
     message(FATAL_ERROR "tools/tiling not found: set NXRT_TOOLS_DIR to the tools repository (looked in ${NXRT_TOOLS_DIR})")
 endif()
+include("${NXRT_TOOLS_DIR}/setup/storage/nx_setup_storage.cmake")   # nx_setup_storage: the setup tool's byte sources, for a game module that reads archives
 add_library(nxrt_tiling STATIC "${NXRT_TOOLS_DIR}/tiling/src/tegra_tiling.cpp")
 target_include_directories(nxrt_tiling PUBLIC "${NXRT_TOOLS_DIR}/tiling/include")
 

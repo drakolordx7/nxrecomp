@@ -8,6 +8,14 @@
 include_guard(GLOBAL)
 set(NXRT_TESTS_DIR "${CMAKE_CURRENT_LIST_DIR}/../tests")
 
+# nxrt_internal_for_tests: the one way a game's tests reach the base's private headers (the NVN layer, the play engine, the test tools, the
+# launcher's editors, the NVN test harness tests/gfx). Such tests are white-box tests of the base that live in a game folder because they
+# need the game's own data (its translated shaders); they link this target and nothing else adds an include path into src/.
+add_library(nxrt_internal_for_tests INTERFACE)
+target_include_directories(nxrt_internal_for_tests INTERFACE
+    "${CMAKE_CURRENT_LIST_DIR}/../src/gfx" "${CMAKE_CURRENT_LIST_DIR}/../src/gfx/play" "${CMAKE_CURRENT_LIST_DIR}/../src/gfx/nvn"
+    "${CMAKE_CURRENT_LIST_DIR}/../src/testtools" "${CMAKE_CURRENT_LIST_DIR}/../apps/launcher" "${NXRT_TESTS_DIR}/gfx")
+
 function(nxrt_add_test_exe target)
     cmake_parse_arguments(A "" "REGISTER;TIMEOUT" "SOURCES;LINK;INCLUDES;DEFINES;ENVIRONMENT;LINK_OPTIONS" ${ARGN})
     if(NOT A_TIMEOUT)

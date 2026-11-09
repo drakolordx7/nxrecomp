@@ -47,6 +47,10 @@ bool decommit(uint64_t addr, uint64_t size);
 bool protect(uint64_t addr, uint64_t size, Prot p);
 uint64_t alloc_kernel(uint64_t size, uint64_t align = kPage);   // committed RW memory from the kernel region (bump allocator)
 bool is_mapped(uint64_t addr, uint64_t size);                // every byte of the range is committed and accessible (VirtualQuery)
+// An address inside the guest span (the main image up to the end of the kernel region): where a guest pointer can point.
+constexpr bool is_guest_ptr(uint64_t addr) { return addr >= kMainBase && addr < kKernelBase + kKernelSize; }
+// A guest pointer whose first `size` bytes can be read without a fault: safe for diagnostics that follow guest data.
+inline bool guest_readable(uint64_t addr, uint64_t size) { return is_guest_ptr(addr) && is_mapped(addr, size); }
 
 // ---- heap section ---------------------------------------------------------------------------------------------------
 // One pagefile-backed section (SEC_RESERVE, nothing is charged until committed) with a primary view at kHeapBase.
