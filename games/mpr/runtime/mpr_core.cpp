@@ -5,6 +5,7 @@
 
 #include "mpr_sites.h"
 #include "mpr_tt_probe.h"
+#include "nxrt/game/identity.h"
 #include "nxrt/services.h"
 #include "nxrt/timestep.h"
 #include "nxrt/tt.h"
@@ -15,18 +16,10 @@ namespace {
 
 // main.npdm and control.nacp of the 1.0.0 dump.
 void title_defaults(services::TitleProfile& p) {
-    using services::Language;
-    p.program_id = data_info().program_id;
-    p.name = data_info().title;
-    p.display_version = data_info().version;
-    p.supported_languages = data_info().languages;   // control.nacp SupportedLanguage (mpr_data.cpp)
+    game::fill_title_identity(p);
     p.account_save_size = 4ull << 20;          // UserAccountSaveDataSize 4 MiB
     p.account_save_journal = 1ull << 20;       // UserAccountSaveDataJournalSize 1 MiB
-    p.main_thread_stack = 0x100000;            // main.npdm
-    p.main_thread_priority = 44;
-    p.main_thread_core = 0;
     p.user_nickname = "Samus";
-    p.user_uid_hi = 0x0000000000000001ull;
     p.user_uid_lo = 0x4d50525265636f6dull;     // "MPRRecom"
 }
 
