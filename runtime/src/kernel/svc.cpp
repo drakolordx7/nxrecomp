@@ -17,7 +17,6 @@
 #include "nxrt/kernel.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
-#include "nxrt/tt.h"
 
 namespace nxrt {
 namespace {
@@ -31,6 +30,7 @@ const NameEntry kNames[] = {
 
 SvcHandler g_handlers[kSvcCount];
 std::atomic<uint64_t> g_calls[kSvcCount];
+std::atomic<kernel::SvcObserverFn> g_svc_observer{nullptr};
 std::once_flag g_init_once;
 
 std::mutex g_unk_lock;
@@ -108,7 +108,7 @@ static void report_unknown(::Ctx* c, uint32_t number, uint64_t pc) {
 }
 
 void svc_dispatch(::Ctx* c, uint32_t number, uint64_t pc) {
-    if (tt::detail::svc_every.load(std::memory_order_relaxed)) tt::detail::on_svc(c);      // test tooling: frame_source = svc:N
+    if (const kernel::SvcObserverFn obs = g_svc_observer.load(std::memory_order_relaxed)) obs(c);      // an installed observer (test tooling: frame_source = svc:N)
     SvcHandler h = svc_handler(number);
     if (number < kSvcCount) g_calls[number].fetch_add(1, std::memory_order_relaxed);
     if (!h) {
@@ -134,6 +134,8 @@ std::vector<SvcUnknownRecord> svc_unknown_records() {
 }
 
 uint64_t svc_unknown_total() { return g_unknown_total.load(); }
+void kernel::set_svc_observer(SvcObserverFn fn) { g_svc_observer.store(fn, std::memory_order_relaxed); }
+
 uint64_t svc_call_count(uint32_t number) { return number < kSvcCount ? g_calls[number].load() : 0; }
 
 void svc_reset_counters() {

@@ -211,19 +211,37 @@ std::string fmt_double(double v) {
 
 }  // namespace
 
-bool config_load_file(const char* path) {
+namespace {
+bool read_text_file(const char* path, std::string& text) {
     std::FILE* f = path ? std::fopen(path, "rb") : nullptr;
-    if (!f) {
-        config_clear();
-        return false;
-    }
-    std::string text;
+    if (!f) return false;
     char buf[4096];
     size_t n;
     while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
     std::fclose(f);
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF)
+        text.erase(0, 3);      // a UTF-8 byte-order mark must not hide the first section header
+    return true;
+}
+}  // namespace
+
+bool config_load_file(const char* path) {
+    std::string text;
+    if (!read_text_file(path, text)) {
+        config_clear();
+        return false;
+    }
     replace_ini(text);
     return true;
+}
+
+std::string config_file_get_str(const char* path, const char* section, const char* key, const char* def) {
+    std::string text;
+    if (!read_text_file(path, text)) return S(def);
+    const auto parsed = parse_ini(text);
+    const auto it = parsed.find(canon_id(S(section), S(key)));
+    return it != parsed.end() ? it->second : S(def);
 }
 
 void config_load_string(const char* text) { replace_ini(S(text)); }

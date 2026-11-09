@@ -234,14 +234,11 @@ bool supported_or_sibling(Language want, uint32_t mask, Language& out) {
 }
 
 // The player's pick in the play-mode settings file ([tweaks] language of controls.ini, set from the launcher), or "" when there is none. Read
-// here with the plain ini reader so the language is known before the play-mode settings are loaded.
+// with the config layer's ini parser (nxrt/config.h) so the language is known before the play-mode settings are loaded; the file is named
+// by [play] controls, as in play mode.
 std::string controls_language() {
     const std::string rel = config_get_str("play", "controls", "controls.ini");
-    char full[MAX_PATH];
-    if (!GetFullPathNameA(rel.c_str(), MAX_PATH, full, nullptr)) return {};
-    char buf[64] = {};
-    GetPrivateProfileStringA("tweaks", "language", "", buf, sizeof buf, full);
-    return trim(buf);
+    return trim(config_file_get_str(rel.c_str(), "tweaks", "language", ""));
 }
 
 uint32_t parse_language_mask(const std::string& s, uint32_t def) {

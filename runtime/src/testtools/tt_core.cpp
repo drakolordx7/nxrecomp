@@ -17,6 +17,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/diag.h"
 #include "nxrt/game.h"
+#include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/runtime.h"
 #include "nxrt/module.h"
@@ -26,8 +27,15 @@
 
 namespace nxrt::tt {
 namespace detail {
-std::atomic<uint32_t> svc_every{0};
 }  // namespace detail
+
+// The kernel never names tt: deterministic mode hands it a clock and a random stream through its provider hooks (nxrt/kernel.h).
+namespace {
+bool provide_rng(void* p, size_t n);
+bool provide_wall(uint64_t* ft);
+void install_kernel_providers();
+void clear_kernel_providers();
+}  // namespace
 
 namespace {
 
@@ -439,7 +447,8 @@ bool init() {
         }
     }
     diag_set_frame_listener(tick_listener);
-    if (s.src == Source::Svc) detail::svc_every.store(s.svc_n);
+    if (s.det) install_kernel_providers();
+    if (s.src == Source::Svc) kernel::set_svc_observer(detail::on_svc);
     if (s.src == Source::Hook) install_game_hooks();
     if (s.wall_timeout_s > 0) s.wall_thread = std::thread(wall_loop, &s, s.wall_timeout_s);
     return true;
@@ -451,7 +460,7 @@ void shutdown() {
     if (!s.on) return;
     s.stop_wall = true;
     if (s.wall_thread.joinable()) s.wall_thread.join();
-    detail::svc_every.store(0);
+    clear_kernel_providers();
     release_held_keys(s);
     if (!s.finished) {
         s.finished = true;
@@ -489,7 +498,7 @@ void reset_for_tests() {
     s.stop_wall = false;
     s.frame_tid.store(0, std::memory_order_relaxed);   // a recycled thread id must not move the next run's clock
     if (s.trace) { std::fclose(s.trace); s.trace = nullptr; }
-    detail::svc_every.store(0);
+    clear_kernel_providers();
     ExitFn keep = s.exit_fn;
     MouseSinkFn keep_m = s.mouse_sink;
     KeySinkFn keep_k = s.key_sink;
@@ -576,6 +585,29 @@ void rng_fill(void* p, size_t n) {
     if (fn) fn(p, static_cast<ULONG>(n));
     else for (size_t i = 0; i < n; i++) b[i] = static_cast<uint8_t>(rand());
 }
+
+namespace {
+bool provide_rng(void* p, size_t n) {
+    if (!deterministic()) return false;
+    rng_fill(p, n);
+    return true;
+}
+bool provide_wall(uint64_t* ft) {
+    if (!deterministic()) return false;
+    *ft = wall_filetime();
+    return true;
+}
+const kernel::ClockProvider kClockProvider{virtual_tick, virtual_sleep, provide_wall};
+void install_kernel_providers() {
+    kernel::set_clock_provider(&kClockProvider);
+    kernel::set_rng_provider(provide_rng);
+}
+void clear_kernel_providers() {
+    kernel::set_clock_provider(nullptr);
+    kernel::set_rng_provider(nullptr);
+    kernel::set_svc_observer(nullptr);
+}
+}  // namespace
 
 uint64_t wall_filetime() {
     State& s = S();
@@ -733,7 +765,7 @@ void on_svc(::Ctx* c) {
     s.svc_ctx.compare_exchange_strong(expect, c);          // the first guest thread to make an SVC is the frame thread
     if (s.svc_ctx.load() != c) return;
     const uint64_t n = s.svc_count.fetch_add(1) + 1;
-    const uint32_t every = svc_every.load();
+    const uint32_t every = s.svc_n;
     if (every && n % every == 0) frame_boundary(c);
 }
 }  // namespace detail

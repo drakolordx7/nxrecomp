@@ -2,13 +2,35 @@
 // System tick and high-resolution sleep. Pattern from smo-recomp runtime/os/os_threads.c sleep_ns and SuperMarioWonderRecomp kernel.cpp system_tick.
 #include <windows.h>
 
+#include <atomic>
+
 #include "nxrt/kernel.h"
-#include "nxrt/tt.h"
 
 namespace nxrt::kernel {
 
+namespace {
+std::atomic<const ClockProvider*> g_clock{nullptr};
+std::atomic<RngFillFn> g_rng{nullptr};
+}  // namespace
+
+void set_clock_provider(const ClockProvider* p) { g_clock.store(p, std::memory_order_release); }
+void set_rng_provider(RngFillFn fn) { g_rng.store(fn, std::memory_order_release); }
+bool rng_provided_fill(void* p, size_t n) {
+    const RngFillFn fn = g_rng.load(std::memory_order_acquire);
+    return fn && fn(p, n);
+}
+
+uint64_t wall_filetime() {
+    if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->wall_filetime)
+        if (uint64_t v; cp->wall_filetime(&v)) return v;
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft);
+    return (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+}
+
 uint64_t system_tick() {
-    if (uint64_t vt; tt::virtual_tick(&vt)) return vt;      // deterministic mode: the virtual clock (test tooling)
+    if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->tick)
+        if (uint64_t vt; cp->tick(&vt)) return vt;           // a provider's clock (the test tooling's virtual clock)
     static const uint64_t freq = [] {
         LARGE_INTEGER f;
         QueryPerformanceFrequency(&f);
@@ -24,7 +46,7 @@ uint64_t system_tick() {
 // 1 ms or 15.6 ms grid, so the wait runs on a high-resolution waitable timer (100 ns units); Sleep() is only the fallback.
 // A zero or negative span yields, as on the console.
 void sleep_ns(int64_t ns) {
-    if (tt::virtual_sleep(ns)) return;                      // deterministic mode: time advances, the thread only yields
+    if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->sleep && cp->sleep(ns)) return;   // a provider's sleep
     static thread_local HANDLE timer = nullptr;
     static thread_local bool no_timer = false;
     if (ns <= 0) {

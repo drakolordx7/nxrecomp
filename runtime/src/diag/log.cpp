@@ -55,14 +55,13 @@ Resolved resolve(const LogOptions& opt) {
     r.to_stderr = opt.to_stderr;
     r.stderr_all = opt.stderr_all;
     r.keep_previous = opt.keep_previous;
+    // [log] path / NXRT_LOG_PATH come through the generic config mapping; NXRT_LOG is the short alias and wins over them.
     if (const char* e = std::getenv("NXRT_LOG")) {
         r.path = e;
     } else if (config_has("log", "path")) {
         r.path = config_get_str("log", "path");
     }
-    if (const char* e = std::getenv("NXRT_LOG_LEVEL")) {
-        r.level = log_parse_level(e, r.level);
-    } else if (config_has("log", "level")) {
+    if (config_has("log", "level")) {        // [log] level / NXRT_LOG_LEVEL (the generic mapping)
         std::string lv = config_get_str("log", "level");
         r.level = log_parse_level(lv.c_str(), r.level);
     }
