@@ -3,11 +3,8 @@
 // stretch. The behaviour and the thread rules are the contract in include/nxrt/frame_limiter.h.
 #include "nxrt/frame_limiter.h"
 
-#include "nxrt/hires_wait.h"
 #include "nxrt/log.h"
-
-#include <windows.h>
-#include <emmintrin.h>
+#include "nxrt/pacing.h"
 
 #include <algorithm>
 #include <atomic>
@@ -16,15 +13,9 @@
 #include <mutex>
 #include <vector>
 
-#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
-#endif
-
 namespace nxrt {
 
 namespace {
-constexpr double kMinMarginNs = 300000.0;   // 0.3 ms: the spin always covers at least this much
-constexpr double kMaxMarginNs = 3000000.0;  // 3 ms: the spin never covers more than this
 constexpr double kMaxCarryPeriods = 0.1;    // a late frame is made up for by at most this fraction of a period (no bursts)
 constexpr double kResyncPeriods = 4.0;      // a schedule more than this many periods behind restarts from now
 constexpr std::size_t kRing = 8192;         // frame intervals kept for stats()
@@ -49,7 +40,7 @@ struct FrameLimiter::Impl {
     uint64_t last_wait = 0, last_late = 0;
 
     // Used only by begin_frame, which is called from one thread per limiter.
-    double overshoot_ema_ns = 0.0;
+    pacing::Waiter waiter;
 
     void record_locked(uint64_t t) {
         if (has_prev) {
@@ -59,35 +50,6 @@ struct FrameLimiter::Impl {
         }
         has_prev = true;
         prev_start = t;
-    }
-
-    uint64_t margin_ns() const {
-        const double m = std::min(std::max(kMinMarginNs, 2.0 * overshoot_ema_ns), kMaxMarginNs);
-        return static_cast<uint64_t>(m);
-    }
-
-    bool coarse_wait_timer(uint64_t coarse_ns) {
-        const uint64_t set_at = FrameLimiter::now_ns();
-        if (!hires_wait_ns(static_cast<int64_t>(coarse_ns))) return false;
-        const uint64_t woke = FrameLimiter::now_ns();
-        const uint64_t requested = set_at + coarse_ns;
-        const double over = woke > requested ? static_cast<double>(woke - requested) : 0.0;
-        overshoot_ema_ns = overshoot_ema_ns * 0.875 + over * 0.125;
-        return true;
-    }
-
-    void wait_until(uint64_t target) {
-        for (;;) {
-            const uint64_t t = FrameLimiter::now_ns();
-            if (t >= target) return;
-            const uint64_t remaining = target - t;
-            if (remaining > margin_ns()) {
-                if (!coarse_wait_timer(remaining - margin_ns())) Sleep(1);  // no high-resolution timer: no timeBeginPeriod
-                continue;
-            }
-            while (FrameLimiter::now_ns() < target) _mm_pause();
-            return;
-        }
     }
 };
 
@@ -148,7 +110,7 @@ uint64_t FrameLimiter::begin_frame_nohook() {
 
     const uint64_t target = static_cast<uint64_t>(std::ceil(next));
     const bool had_to_wait = target > entry;
-    s.wait_until(target);
+    s.waiter.until_ns(target);
     const uint64_t start = now_ns();
     // A wait that ends long after its target means the thread was not scheduled (the timer fired late); a long planned wait means the schedule ran ahead.
     if (start > target + 40000000ull || target > entry + static_cast<uint64_t>(4.0 * period))
@@ -244,18 +206,7 @@ uint64_t FrameLimiter::last_late_ns() const {
     return impl_->last_late;
 }
 
-uint64_t FrameLimiter::now_ns() {
-    static const uint64_t freq = [] {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        return static_cast<uint64_t>(f.QuadPart);
-    }();
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    const uint64_t q = static_cast<uint64_t>(c.QuadPart);
-
-    return (q / freq) * 1000000000ull + ((q % freq) * 1000000000ull) / freq;
-}
+uint64_t FrameLimiter::now_ns() { return pacing::now_ns(); }
 
 double suggest_vrr_cap(double refresh_hz) {
     const double under = std::max(3.0, refresh_hz * refresh_hz / 3600.0);

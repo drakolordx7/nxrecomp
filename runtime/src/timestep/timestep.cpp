@@ -19,10 +19,10 @@
 #include "nxrt/config.h"
 #include "nxrt/memory.h"
 #include "nxrt/game.h"
-#include "nxrt/hires_wait.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/movie.h"
+#include "nxrt/pacing.h"
 #include "nxrt/tt.h"
 
 namespace nxrt::timestep {
@@ -133,6 +133,7 @@ struct G {
     std::vector<uint32_t> hooks;
     uint32_t frame_hook = 0;
     FrameListener listener = nullptr;
+    pacing::Waiter waiter;
 
     ClockFn test_clock = nullptr;
     double det_step_test = 0;
@@ -173,19 +174,7 @@ double clock_now() {
     return s.test_clock ? s.test_clock() : qpc_seconds();
 }
 
-void wait_until(double target) {
-    for (;;) {
-        const double r = target - clock_now();
-        if (r <= 0) return;
-        if (r > 0.0012) {
-            const double sleep_s = r - 0.0008;
-            if (hires_wait_ns(static_cast<int64_t>(sleep_s * 1e9))) continue;
-            Sleep(static_cast<DWORD>(std::max(1.0, sleep_s * 1000.0)));
-        } else {
-            YieldProcessor();
-        }
-    }
-}
+void wait_until(double target) { g().waiter.until_ns(static_cast<uint64_t>(target * 1e9)); }
 
 void publish_dt(float dt) {
     G& s = g();

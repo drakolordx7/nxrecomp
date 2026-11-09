@@ -3,6 +3,7 @@
 // expected values are written out from Switchbrew's command ids and result codes (result = module | (description << 9)), not read from
 // the service under test.
 #include "svc_test_util.h"
+#include "nxrt/config.h"
 
 NXTEST_GROUP(svc_network)
 
@@ -103,6 +104,7 @@ NXTEST(nim_eca_creation_succeeds) {
     nxsvc::Session async = accessor.sub(ar);
     REQUIRE(async.valid());
     CHECK(!signalled(ar.copy[0]));                           // nothing requested yet
+    config_set_default("ec", "shop_body", "[]");             // what a game's config_defaults gives (the base default is an empty body)
     // Prepare(InArray<char> path, InArray<char> post data) (5), then Request (4): the event signals, the body is "[]"
     const char path[] = "/v1/applications/{applicationId}/consumables?country={country}&lang=en-US";
     CHECK_EQ(async.call(5, nxsvc::Args().buf_x(path, sizeof(path) - 1, 0)).result, 0u);
@@ -117,6 +119,7 @@ NXTEST(nim_eca_creation_succeeds) {
     CHECK_EQ(rd.get<uint64_t>(0), 2u);
     CHECK(body[0] == '[' && body[1] == ']');
     CHECK_EQ(async.call(3).get<uint64_t>(0), 0u);            // GetErrorCode: none
+    config_clear_defaults();
     kernel::handle_close(ar.copy[0]);
     CHECK_EQ(nim.call(4).get<uint8_t>(0), 0);                 // IsLargeResourceAvailable: false
 }

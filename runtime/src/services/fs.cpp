@@ -568,7 +568,7 @@ uint32_t open_save(uint8_t space, const SaveAttr& a, bool read_only, std::shared
         create_save(d, static_cast<int64_t>(p.device_save_size), static_cast<int64_t>(p.device_save_journal), p.save_data_owner_id);
     }
     // Cache storage (type 5): the console makes it from control.nacp's CacheStorageSize (Ryujinx EnsureApplicationCacheStorage),
-    // and titles that only mount it (one title mounts cache/0 at boot and aborts on TargetNotFound) never create it themselves.
+    // and titles that only mount it never create it themselves (TargetNotFound otherwise). The size is the title profile's: none by default.
     if (a.type == 5 && p.cache_save_size > 0 && !save_exists(key))
         create_save(a, static_cast<int64_t>(p.cache_save_size), static_cast<int64_t>(p.cache_save_journal), p.save_data_owner_id);
     if (!save_exists(key)) {
