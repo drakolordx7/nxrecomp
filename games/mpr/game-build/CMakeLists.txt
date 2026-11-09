@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# mpr.exe: the runtime (../runtime) + the four lifted game libraries (built by ../recomp/scripts/build_mpr.cmd into ../work/build/mpr).
-#   pwsh scripts\build.ps1            configure + build into game-build\build\release
+# mpr.exe and mpr_launcher.exe: the base runtime + this game's runtime module (../runtime) + the lifted game libraries (built by the base's
+# recomp/scripts/build_game.cmd <this game folder> into ../work/build/mpr). Names, ids and modules come from ../game.json.
+#   pwsh game-build\scripts\build.ps1 [-Release] [-Version 0.1.0]      exact commands: base docs/BUILD.md
 # Nothing derived from the game lives here: the libraries are imported from the work folder, the NSOs are read at run time.
 cmake_minimum_required(VERSION 3.25)
 # Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
@@ -12,61 +13,25 @@ project(mpr_game C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-get_filename_component(MPR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-set(MPR_LIB_DIR "${MPR_ROOT}/work/build/mpr" CACHE PATH "folder with mpr_main.lib mpr_sdk.lib mpr_subsdk0.lib mpr_rtld.lib (built by recomp scripts build_mpr.cmd)")
-set(MPR_EXEFS_DEFAULT "${MPR_ROOT}/game/exefs" CACHE PATH "default ExeFS folder baked into mpr.exe (--exefs / MPR_EXEFS override it)")
-
-# Release packages (MPR_RELEASE=ON): mpr.exe is a Windows GUI program (double click opens the game window only, no console; errors show in
-# a message box, output still reaches a terminal it was started from), looks for ./exefs by default, and carries no local build paths
-# (source paths in assert strings, the .pdb path): see the installed-layout comment in src/mpr_main.cpp.
-# __FILE__ (the assert strings of the audio renderer) never carries the build folder, in any build: paths are written relative to the checkout.
-add_compile_options("-clang:-fmacro-prefix-map=${MPR_ROOT}=.")
-option(MPR_RELEASE "build mpr.exe as a release package binary" OFF)
-if(MPR_RELEASE)
-    set(MPR_GUI_SUBSYSTEM ON)
-    set(MPR_EXEFS_DEFAULT "exefs")
-    add_compile_options("-clang:-ffile-prefix-map=${MPR_ROOT}=.")
+get_filename_component(GAME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+# NX_BASE: the base checkout. Default: ./base inside the game folder when it is populated (a public clone with the base as a submodule),
+# else ../../base (the NX layout: NX/games/<id> next to NX/base).
+if(NOT NX_BASE)
+    if(EXISTS "${GAME_DIR}/base/runtime/CMakeLists.txt")
+        set(_nx_base "${GAME_DIR}/base")
+    else()
+        get_filename_component(_nx_base "${GAME_DIR}/../../base" ABSOLUTE)
+    endif()
+    set(NX_BASE "${_nx_base}" CACHE PATH "the base checkout (runtime/, recomp/, tools/)")
 endif()
-
-# The release version ("0.1.0"; "dev" for local builds). The game log, --version and the exe's file properties show it, and the
-# launcher (built from the runtime with the same cache value) shows it in its window. game-build/scripts/build.ps1 -Version sets it.
-set(MPR_VERSION "dev" CACHE STRING "release version shown by mpr.exe and the launcher")
-set(MPR_VER_MAJOR 0)
-set(MPR_VER_MINOR 0)
-set(MPR_VER_PATCH 0)
-if(MPR_VERSION MATCHES "^([0-9]+)[.]([0-9]+)[.]([0-9]+)")
-    set(MPR_VER_MAJOR ${CMAKE_MATCH_1})
-    set(MPR_VER_MINOR ${CMAKE_MATCH_2})
-    set(MPR_VER_PATCH ${CMAKE_MATCH_3})
+if(NOT EXISTS "${NX_BASE}/runtime/CMakeLists.txt")
+    message(FATAL_ERROR "NX_BASE=${NX_BASE} is not a base checkout (pass -DNX_BASE=<base>)")
 endif()
-# MPR_RUNTIME_DIR: which runtime checkout compiles in (default the main one; a worktree such as runtime-wt/boot2 for branch work)
-set(MPR_RUNTIME_DIR "${MPR_ROOT}/runtime" CACHE PATH "runtime source tree compiled into mpr.exe")
+set(GAME_LIB_DIR "${GAME_DIR}/work/build/mpr" CACHE PATH "folder with the lifted libraries mpr_<module>.lib (base recomp/scripts/build_game.cmd)")
+# The release version ("0.1.0"; "dev" for local builds): the game log, --version, the launcher window and the file properties show it.
+set(GAME_VERSION "dev" CACHE STRING "release version shown by mpr.exe and the launcher")
+
 set(NXRT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(NXRT_RECOMP_INCLUDE "${MPR_ROOT}/recomp/include" CACHE PATH "")
-add_subdirectory("${MPR_RUNTIME_DIR}" runtime)
-
-foreach(m main sdk subsdk0 rtld)
-    add_library(mpr_${m} STATIC IMPORTED GLOBAL)
-    set_target_properties(mpr_${m} PROPERTIES IMPORTED_LOCATION "${MPR_LIB_DIR}/mpr_${m}.lib")
-endforeach()
-
-add_executable(mpr src/mpr_main.cpp res/mpr.rc)
-set_source_files_properties(src/mpr_main.cpp PROPERTIES COMPILE_DEFINITIONS "MPR_VERSION=\"${MPR_VERSION}\"")
-set_source_files_properties(res/mpr.rc PROPERTIES COMPILE_DEFINITIONS "MPR_VER_MAJOR=${MPR_VER_MAJOR};MPR_VER_MINOR=${MPR_VER_MINOR};MPR_VER_PATCH=${MPR_VER_PATCH};MPR_VER_TEXT=\"${MPR_VERSION}\""
-                            OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/mpr.manifest")
-target_compile_definitions(mpr PRIVATE MPR_EXEFS_DEFAULT="${MPR_EXEFS_DEFAULT}")
-target_link_libraries(mpr PRIVATE mpr_main mpr_sdk mpr_subsdk0 mpr_rtld nxrt_game_mpr nxrt_gfx nxrt)   # nxrt_game_mpr: runtime/games/mpr
-# Same link options as the runtime's test executables: a linker map next to the exe (host frames get names), a big main stack (lifted
-# code nests deeply), low host allocations so the guest ranges at 0x71_0000_0000 and up stay free.
-if(MPR_RELEASE)
-    target_compile_definitions(mpr PRIVATE MPR_GUI_SUBSYSTEM=1)
-    target_link_options(mpr PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /PDBALTPATH:mpr.pdb)
-endif()
-target_link_options(mpr PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG /MANIFEST:NO)   # res/mpr.rc carries the manifest
-
-# The ASTC decoder DLLs astc2bc7 loads at run time (NVN textures in ASTC are transcoded to BC7 on first use): next to mpr.exe.
-# (NXRT_A2B_DIR is the tools/textures build folder the runtime links its transcoder from: cmake/gfx.cmake)
-file(GLOB MPR_A2B_DLLS "${NXRT_A2B_DIR}/astcdec-*-shared.dll")
-foreach(dll ${MPR_A2B_DLLS})
-    add_custom_command(TARGET mpr POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:mpr>")
-endforeach()
+set(NXRT_GAME_DIRS "${GAME_DIR}" CACHE STRING "" FORCE)
+add_subdirectory("${NX_BASE}/runtime" runtime)
+nxrt_add_game_exe(mpr GAME_DIR "${GAME_DIR}" LIB_DIR "${GAME_LIB_DIR}" VERSION "${GAME_VERSION}")
