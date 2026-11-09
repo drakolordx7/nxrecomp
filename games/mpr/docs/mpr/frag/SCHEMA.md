@@ -31,4 +31,4 @@ Nothing is invented: unknown values are `null`.
 ```
 {"type":"enum","name":"EControl","underlying":"int","values":[{"name":"ZR","value":"0x26"}],"src":{...}}
 ```
-Paths in `src.path` are relative to the project root `C:\mpr` with forward slashes, e.g. `refs/mp1r-practice-mod/src/program/patches.cpp`.
+Paths in `src.path` are relative to the NX folder with forward slashes, e.g. `refs/mp1r-practice-mod/src/program/patches.cpp`.

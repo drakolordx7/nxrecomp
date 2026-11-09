@@ -3,7 +3,7 @@ r"""Guest address -> demangled symbol name (+offset) for the four modules of the
 Reads the .dynsym of work\elf\{main,sdk,subsdk0,rtld}.elf (nx2elf output, module-relative values) and caches a sorted table in
 work\run\symcache.pkl. Importable: addrname.annotate(text) appends '<name+off>' after every 0x71..0x77xxxxxxxx / f_77xxxxxxxx address."""
 import os, pickle, re, subprocess, sys, bisect
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+ROOT = os.environ.get('NX_GAME_DATA') or os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))   # NX_GAME_DATA: the folder holding work (boot.py sets it for a worktree)
 BASES = {'main': 0x7100000000, 'sdk': 0x7500000000, 'subsdk0': 0x7600000000, 'rtld': 0x7700000000}
 CACHE = os.path.join(ROOT, 'work', 'run', 'symcache.pkl')
 CXXFILT = r'C:\Program Files\LLVM\bin\llvm-cxxfilt.exe'

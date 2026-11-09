@@ -1,7 +1,7 @@
 """S11 timing oracle: does the game's clock follow wall-clock time at 60, 120 and 240 steps per second?
 
 Runs the lifted game headless (the title screen and front end: movies, menu animation, render timings) once per case through
-hifps_wt.sh-style (local test script) boot.py, with the [time] keys of the runtime's timestep module, and reads the per-frame CSV it writes
+base tools/boot/boot.py (--game, --exe), with the [time] keys of the runtime's timestep module, and reads the per-frame CSV it writes
 (frame, host_s, elapsed_s, step_s, sim_s, movie_frames). Per case it reports, over the steady part of the run:
 
   fps        frames per wall second
@@ -14,7 +14,7 @@ Cases: detretail (the same with the game's own 1/60 per frame: what the unpatche
 time), retail (mode=off, off_rate=N: the game's own 1/60 per call, held to N frames per second: what the unpatched game does),
 real (mode=real, max_rate=N: measured frame time, held to N), fixed (mode=fixed, rate=N: the lock).
 
-  tools\\.venv\\Scripts\\python tools\\test\\hifps_timing.py [--rates 60,120,240] [--modes retail,real,fixed] [--seconds 40] [--warmup 14] [--exe PATH]
+  tools\\.venv\\Scripts\\python tools\\test\\hifps_timing.py [--rates 60,120,240] [--modes retail,real,fixed] [--seconds 40] [--warmup 14] [--exe FILE]
 
 Exit code 0 when every det case has movie x and sim/wall, and every real/fixed case has movie x, within --tol (default 0.06) of 1.0; retail rows are informational
 (they are expected to show N/60). Output: a table on stdout and work/hifps_timing/<case>.csv + summary.json.
@@ -26,14 +26,14 @@ BASE = os.environ.get('NX_BASE') or os.path.abspath(os.path.join(ROOT, '..', '..
 OUT = os.path.join(ROOT, 'work', 'hifps_timing')
 
 
-def run_case(name, env_kv, seconds, exe_env):
+def run_case(name, env_kv, seconds, exe):
     os.makedirs(OUT, exist_ok=True)
     csv_path = os.path.join(OUT, name + '.csv')
     if os.path.exists(csv_path):
         os.remove(csv_path)
-    env = dict(os.environ, MSYS2_ARG_CONV_EXCL='*', **exe_env)
-    cmd = [sys.executable, os.path.join(BASE, 'tools', 'boot', 'boot.py'), '--no-build',
-           '--seconds', str(seconds), '--tail', '0']
+    env = dict(os.environ, MSYS2_ARG_CONV_EXCL='*')
+    cmd = [sys.executable, os.path.join(BASE, 'tools', 'boot', 'boot.py'), '--game', ROOT, '--no-build', '--run', 'hifps',
+           '--seconds', str(seconds), '--tail', '0'] + (['--exe', exe] if exe else [])
     for k, v in env_kv.items():
         cmd += ['--env', '%s=%s' % (k, v)]
     cmd += ['--env', 'NXRT_TIME_CSV=' + csv_path]
@@ -77,10 +77,9 @@ def main():
     ap.add_argument('--warmup', type=float, default=14.0, help='seconds of the run skipped (boot, logo card)')
     ap.add_argument('--warmup-virtual', dest='warmup_virtual', type=float, default=6.0, help='det cases: virtual seconds skipped')
     ap.add_argument('--tol', type=float, default=0.06)
-    ap.add_argument('--exe', default=os.path.join(ROOT, 'game-build', 'build', 'hifps'))
+    ap.add_argument('--exe', default='', help='game exe to run (default: the one built for this game folder, NX/build/<folder>/release; see base docs/BUILD.md)')
     ap.add_argument('--extra', action='append', default=[], help='extra K=V environment for every case')
     a = ap.parse_args()
-    exe_env = {'MPR_BUILD_DIR': a.exe, 'MPR_RUNTIME': os.path.join(ROOT, 'runtime-wt', 'hifps')}
     extra = dict(kv.split('=', 1) for kv in a.extra)
     results, bad = {}, 0
     print('%-14s %7s %9s %9s %9s %8s %10s' % ('case', 'fps', 'sim/wall', 'movie x', 'render x', 'dt ms', 'dt sd ms'))
@@ -99,7 +98,7 @@ def main():
                 kv.update(NXRT_TIME_MODE='real', NXRT_TEST_DETERMINISTIC=1, NXRT_TEST_CLOCK_STEP_TICKS=int(round(19200000 / rate)))
             else:
                 kv.update(NXRT_TIME_MODE='fixed', NXRT_TIME_RATE=rate)
-            csv_path, took = run_case(name, kv, a.seconds, exe_env)
+            csv_path, took = run_case(name, kv, a.seconds, a.exe)
             if not os.path.exists(csv_path):
                 print('%-14s no csv (the run failed to start)' % name)
                 bad += 1

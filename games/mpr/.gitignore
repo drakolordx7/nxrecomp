@@ -9,7 +9,6 @@
 *.xci
 *.keys
 /publish/
-/runtime-wt/
 nxrt.log*
 *.log
 
