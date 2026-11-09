@@ -21,7 +21,8 @@ EXPECTED = sorted([
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
 TINY_RULES = {'exe': (0, None), 'setup': (0, None), 'pack': (0, None), 'launcher': (0, None)}
-EXE_REL = 'build/demo/relpkg/demo.exe'
+BUILD_DEMO = 'build/' + mr.nxpaths.CHECKOUT_NAME + '/demo'   # the build folder of this checkout: NX/build/<main | worktree name>/<id>
+EXE_REL = BUILD_DEMO + '/relpkg/demo.exe'
 GAME_JSON = (b'{"id": "demo", "files": {"exe": "demo.exe", "setup": "demo_setup.exe", "setup_cli": "demo_setup_cli.exe", '
              b'"launcher": "demo_launcher.exe", "game_ini": "demo.ini", "shader_pack": "shader_cache.demoshc"}, '
              b'"release": {"prefix": "demo", "setup_glob": "demo_setup*.exe"}}')   # games/demo of the fake NX folder
@@ -39,20 +40,20 @@ def write(path, data):
 
 
 def make_fake_repo(root):
-    """An NX folder with just the inputs the builder reads, all tiny: games/demo, base, build/demo/relpkg, build/setup-demo/bin."""
+    """An NX folder with just the inputs the builder reads, all tiny: games/demo, base, build/<checkout>/demo/relpkg, build/setup-demo/bin."""
     def w(rel, data):
         write(os.path.join(root, *rel.split('/')), data)
 
     w('base/LICENSE', b'GNU GENERAL PUBLIC LICENSE, fake text for the test\n')
     w('games/demo/game.json', GAME_JSON)
     w(EXE_REL, b'MZ' + b'\x90' * 64 + b'fake demo')
-    w('build/demo/relpkg/demo.pdb', b'PDB fake, must never ship')
-    w('build/demo/relpkg/demo.map', b'MAP fake, must never ship')
+    w(BUILD_DEMO + '/relpkg/demo.pdb', b'PDB fake, must never ship')
+    w(BUILD_DEMO + '/relpkg/demo.map', b'MAP fake, must never ship')
     for n in ('astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll'):
-        w('build/demo/relpkg/' + n, b'MZ fake dll')
+        w(BUILD_DEMO + '/relpkg/' + n, b'MZ fake dll')
     w('build/setup-demo/bin/demo_setup.exe', b'MZ fake setup')
     w('build/setup-demo/bin/demo_setup_cli.exe', b'MZ fake setup cli')
-    w('build/demo/relpkg/demo_launcher.exe', b'MZ fake launcher')
+    w(BUILD_DEMO + '/relpkg/demo_launcher.exe', b'MZ fake launcher')
     w('build/setup-demo/bin/astc2bc7.exe', b'MZ tool that must not ship')
     w('games/demo/work/setup_test/shader_cache.demoshc', mr.PACK_MAGIC + b'\x00' * 1024)
     w('games/demo/release/templates/README.txt', b'readme\n')
@@ -264,7 +265,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_local_path_in_launcher_is_refused_by_default(self):
-        write(os.path.join(self.repo, 'build', 'demo', 'relpkg', 'demo_launcher.exe'),
+        write(os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'demo_launcher.exe'),
               b'MZ' + b'launcher built at ' + LOCAL_PATH + b'\x00' * 8)
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
@@ -278,7 +279,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_dll_count_other_than_three_is_a_usage_error(self):
-        os.remove(os.path.join(self.repo, 'build', 'demo', 'relpkg', 'astcdec-sse2-shared.dll'))
+        os.remove(os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'astcdec-sse2-shared.dll'))
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
         self.assertEqual(self.leftovers(self.out), [])
@@ -286,21 +287,21 @@ class BuildTests(unittest.TestCase):
     def test_launcher_ships_beside_demo_exe_and_in_the_zip(self):
         code, log = self.run_build()
         self.assertEqual(code, 0, log)
-        src = os.path.join(self.repo, 'build', 'demo', 'relpkg', 'demo_launcher.exe')
+        src = os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'demo_launcher.exe')
         self.assertTrue(os.path.isfile(os.path.join(self.out, ROOT, 'demo_launcher.exe')))
         with zipfile.ZipFile(os.path.join(self.out, ROOT + '.zip')) as z:
             self.assertIn(ROOT + '/demo_launcher.exe', z.namelist())
             self.assertEqual(z.read(ROOT + '/demo_launcher.exe'), read_bytes(src))
 
     def test_missing_launcher_is_a_usage_error(self):
-        os.remove(os.path.join(self.repo, 'build', 'demo', 'relpkg', 'demo_launcher.exe'))
+        os.remove(os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'demo_launcher.exe'))
         code, log = self.run_build()
         self.assertEqual(code, 2, log)
         self.assertIn('demo_launcher.exe not found', log)
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_launcher_importing_vcruntime_is_refused(self):
-        write(os.path.join(self.repo, 'build', 'demo', 'relpkg', 'demo_launcher.exe'),
+        write(os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'demo_launcher.exe'),
               make_pe(['kernel32.dll', 'vcruntime140.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
@@ -391,7 +392,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_dll_with_crt_delay_import_is_refused(self):
-        dll = os.path.join(self.repo, 'build', 'demo', 'relpkg', 'astcdec-avx2-shared.dll')
+        dll = os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'astcdec-avx2-shared.dll')
         write(dll, make_pe(['kernel32.dll'], delay=['MSVCP140.dll']))
         code, log = self.run_build()
         self.assertEqual(code, 3, log)
@@ -399,7 +400,7 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(self.leftovers(self.out), [])
 
     def test_unreadable_dll_is_a_warning_only(self):
-        dll = os.path.join(self.repo, 'build', 'demo', 'relpkg', 'astcdec-avx2-shared.dll')
+        dll = os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'astcdec-avx2-shared.dll')
         for label, data in (('not a PE file', b'plain text, not a program'),
                             ('cut short', make_pe(['vcruntime140.dll'])[:300])):
             with self.subTest(label):

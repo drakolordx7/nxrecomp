@@ -6,9 +6,9 @@ r"""Build the Windows x64 release of one game (--game DIR, its manifest game.jso
                                          [--shader-pack F] [--templates DIR] [--controls F] [--license F] [--notices F]
                                          [--prompts-dir DIR] [--launcher F]
 
-Defaults follow docs/BUILD.md: the exe is NX\build\<game folder name>\relpkg\<files.exe> (game exe built with -Release), the setup
+Defaults follow docs/BUILD.md: the exe is NX\build\<main | worktree name>\<id>\relpkg\<files.exe> (game exe built with -Release), the setup
 tools NX\build\setup-<id>\bin, the shader pack <game>\work\setup_test\<files.shader_pack>, the output <game>\work\release_out. NX is
-$NX_ROOT, else the nearest parent of this checkout with a games\ folder. --base is the base checkout holding LICENSE,
+$NX_ROOT, else the main checkout (this one, or the parent of wt\ for a worktree). --base is the base checkout holding LICENSE,
 runtime/assets/prompts, tools/release/licenses and the fonts (default: the checkout of this script); --repo is only the repository
 that git describe names the version after (default: the game folder).
 
@@ -231,7 +231,7 @@ def resolve(o):
 
     if o.no_shader_pack and o.shader_pack:
         raise UsageError('--no-shader-pack and --shader-pack cannot be given together')
-    o.exe = os.path.abspath(o.exe or under_nx('build', os.path.basename(o.game), 'relpkg', EXE_NAME))
+    o.exe = os.path.abspath(o.exe or under_nx('build', nxpaths.CHECKOUT_NAME, GAME['id'], 'relpkg', EXE_NAME))
     o.launcher = os.path.abspath(o.launcher or os.path.join(os.path.dirname(o.exe), LAUNCHER_NAME))
     o.setup_bin = os.path.abspath(o.setup_bin or under_nx('build', 'setup-' + GAME['id'], 'bin'))
     if o.no_shader_pack:

@@ -1,14 +1,15 @@
 r"""Boot loop for one game: rebuild what changed, run the game exe headless with a timeout, print the tail of the log and a summary of every
 unknown call (SVC, IPC command, NVN function, HLE stub), the stop reason and the guest call stack (demangled).
 
-  base\tools\.venv\Scripts\python base\tools\boot\boot.py --game <games\<id> | <id> | a worktree folder or name> [options]
+  base\tools\.venv\Scripts\python base\tools\boot\boot.py --game <id | game folder> [--wt <name | worktree folder>] [options]
 
-Game: a game folder (holds game.json), a game id (NX\games\<id>) or the name of a worktree (NX\wt\<id>-<topic>). The exe, the lifted
-libraries, the RomFS and the run folder follow base docs\BUILD.md:
-  exe    NX\build\<game checkout name>\release\<files.exe of game.json>   (a worktree NX\wt\mpr-x builds into NX\build\mpr-x)
-  libs   NX\games\<id>\work\build\<id>_<topic> when it exists (a stream's own lift), else ...\work\build\<id>
+Game: a game id (games\<id> of the main checkout, NX) or a game folder (holds game.json; its checkout is the one holding it). --wt NAME
+takes the game and the base from the worktree NX\wt\NAME instead (a worktree is a whole checkout: git worktree add NX\wt\NAME -b <branch>).
+The exe, the lifted libraries, the RomFS and the run folder follow base docs\BUILD.md:
+  exe    NX\build\<checkout name>\<id>\release\<files.exe of game.json>   (checkout name: main, or the worktree's name: NX\build\x\mpr)
+  libs   NX\games\<id>\work\build\<id>_<name> when it exists (a worktree's own lift), else ...\work\build\<id>
   run    NX\games\<id>\work\run (--run NAME: work\run_NAME), log <files.log of game.json>, previous log <log>.prev
-  data   game\ and work\ are read from NX\games\<id> (a worktree has none), or from the game folder when it holds them
+  data   game\ and work\ are read from NX\games\<id> of the main checkout (a worktree has none), or from the game folder when it holds them
 The test-run rules (scripts\testrun_env.py: headless, 1280x720, NXRT_NVN_POOL_MIRROR=off, NXRT_AUDIO_SINK=paced) and a timeout apply. What one game needs on
 top lives in its folder, tools\boot\presets.json: "romfs" and "exefs" (relative to the data folder), "env", "args" (exe arguments),
 "seconds", and named "presets" {name: {env, args, seconds}}; values may use {data} {game} {run} {nx} {id}. Env a game needs on every
@@ -18,7 +19,8 @@ run (not only in test runs) belongs in its Info::config_defaults instead.
   --tail N        last N log lines to print (default 30)
   --libs          also rebuild the lifted game libraries (base recomp\scripts\build_game.cmd, ~2 min, incremental)
   --no-build      run the existing exe
-  --base DIR      base checkout whose scripts build (default: the checkout this script is in)
+  --wt NAME       use the worktree NX\wt\NAME (or a worktree folder): its game folder, its base scripts, its build folder NX\build\NAME
+  --base DIR      base folder whose scripts build (default: the base of the checkout used: main, or the --wt worktree)
   --exe FILE      run this exe instead of the build folder's        --lib-dir DIR  lifted libraries to link (default as above)
   --run NAME      run folder work\run_NAME instead of work\run
   --preset NAME   a named preset of the game's presets.json (repeatable): its env, exe arguments and seconds are added
@@ -46,7 +48,7 @@ sys.path.insert(0, os.path.join(BASE_ROOT, 'scripts'))
 import nxpaths
 from testrun_env import testrun_env
 
-NX = nxpaths.NX_ROOT
+NX = nxpaths.NX_ROOT        # the main checkout: games\<id>\game and work (the data), build\ and wt (a worktree has none)
 CXXFILT = os.path.join(os.environ.get('LLVM_BIN') or os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'LLVM', 'bin'),
                        'llvm-cxxfilt.exe')
 annotate = lambda text: text      # replaced by the game's own address namer (load_addrname)
@@ -57,20 +59,29 @@ class Game:
 
     def __init__(self, arg, a=None):
         a = a or argparse.Namespace()
-        base, exe, lib_dir, run = (getattr(a, k, None) for k in ('base', 'exe', 'lib_dir', 'run'))
-        cands = [arg, os.path.join(NX or '', 'games', arg), os.path.join(NX or '', 'wt', arg)]
-        self.dir = next((os.path.abspath(c) for c in cands if os.path.isfile(os.path.join(c, 'game.json'))), None)
-        if not self.dir:
-            sys.exit('no game "%s": give a game folder (with game.json), a game id or a worktree name' % arg)
+        base, exe, lib_dir, run, wt = (getattr(a, k, None) for k in ('base', 'exe', 'lib_dir', 'run', 'wt'))
+        gid = os.path.basename(os.path.abspath(arg))
+        if wt:                                                                # a worktree: a whole checkout under NX\wt
+            self.checkout = os.path.abspath(wt if os.path.isdir(wt) else os.path.join(NX, 'wt', wt))
+            if not os.path.isdir(os.path.join(self.checkout, 'base')):
+                sys.exit('no worktree "%s": give its name (a folder NX/wt/NAME) or its folder (it holds base/ and games/)' % wt)
+            self.dir = os.path.join(self.checkout, 'games', gid)
+        elif os.path.isfile(os.path.join(arg, 'game.json')):                  # a game folder: the checkout that holds it
+            self.dir = os.path.abspath(arg)
+            self.checkout = os.path.dirname(os.path.dirname(self.dir))
+        else:                                                                 # a game id: the main checkout
+            self.checkout = NX
+            self.dir = os.path.join(NX, 'games', arg)
+        if not os.path.isfile(os.path.join(self.dir, 'game.json')):
+            sys.exit('no game "%s" (%s has no game.json): give a game id or a game folder, with --wt <worktree> for a worktree' % (arg, self.dir))
         self.man = json.load(open(os.path.join(self.dir, 'game.json'), encoding='utf-8'))
         self.id = self.man['id']
-        self.leaf = os.path.basename(self.dir)                                # mpr, or mpr-w7 for a worktree
-        topic = self.leaf[len(self.id) + 1:] if self.leaf.startswith(self.id + '-') else ''
+        self.name = nxpaths.checkout_name(self.checkout, NX)                  # main, or the worktree's folder name
+        topic = '' if self.name == 'main' else self.name
         own_data = os.path.isdir(os.path.join(self.dir, 'game')) or os.path.isdir(os.path.join(self.dir, 'work'))
-        self.data = self.dir if own_data or not NX else os.path.join(NX, 'games', self.id)
-        self.base = os.path.abspath(base or os.environ.get('NX_BASE') or BASE_ROOT)
-        build_root = os.path.join(NX, 'build') if NX else os.path.join(self.dir, 'build')
-        self.build_dir = os.path.join(build_root, self.leaf, 'release')
+        self.data = self.dir if own_data else os.path.join(NX, 'games', self.id)
+        self.base = os.path.abspath(base or os.path.join(self.checkout, 'base'))
+        self.build_dir = os.path.join(NX, 'build', self.name, self.id, 'release')
         files = self.man.get('files', {})
         self.exe_name = files.get('exe', self.id + '.exe')
         self.exe = os.path.abspath(exe) if exe else os.path.join(self.build_dir, self.exe_name)
@@ -87,7 +98,7 @@ class Game:
 
     def expand(self, s):
         out = (s.replace('{data}', self.data).replace('{game}', self.dir).replace('{run}', self.run)
-                .replace('{nx}', NX or '').replace('{id}', self.id))
+                .replace('{nx}', NX).replace('{id}', self.id))
         return os.path.normpath(out) if out != s and re.fullmatch(r'\{[a-z]+\}[\/].*', s) else out
 
 
@@ -262,7 +273,7 @@ def run(g, a, args, env, secs):
 def dry_run(g, a):
     args, env, secs = run_plan(g, a)
     cmd = command(g, args)
-    print('game     %s (%s)  manifest %s' % (g.id, g.leaf, os.path.join(g.dir, 'game.json')))
+    print('game     %s (%s)  manifest %s' % (g.id, g.name, os.path.join(g.dir, 'game.json')))
     print('base     ' + g.base)
     print('data     ' + g.data)
     print('libs     ' + g.libs)
@@ -330,6 +341,7 @@ def main():
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument('--game')
     ap.add_argument('--base')
+    ap.add_argument('--wt')
     ap.add_argument('--exe')
     ap.add_argument('--lib-dir')
     ap.add_argument('--run')

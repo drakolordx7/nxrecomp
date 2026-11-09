@@ -14,25 +14,20 @@
 # MODULE_<name>_FILE _INDEX _BASE _SHARDS _SITES (absolute, empty when none).
 include_guard(GLOBAL)
 
-# NX_ROOT: the folder that holds games/ and build/ (C:\nx). Default: the nearest parent of this base checkout with a games/ folder.
+# NX_ROOT: the main checkout (C:\nx): it holds the local-only data (games/<id>/game and work), build/, refs/ and wt/. Default: the parent
+# of wt/ when this checkout is a worktree (NX/wt/<name>), else this checkout (the folder holding base/).
 if(NOT DEFINED NX_ROOT OR NX_ROOT STREQUAL "")
     if(DEFINED ENV{NX_ROOT} AND NOT "$ENV{NX_ROOT}" STREQUAL "")
         file(TO_CMAKE_PATH "$ENV{NX_ROOT}" _nx_root)
     else()
-        get_filename_component(_nx_d "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-        set(_nx_root "")
-        while(NOT _nx_root)
-            get_filename_component(_nx_up "${_nx_d}" DIRECTORY)
-            if(_nx_up STREQUAL _nx_d)
-                break()
-            endif()
-            set(_nx_d "${_nx_up}")
-            if(IS_DIRECTORY "${_nx_d}/games")
-                set(_nx_root "${_nx_d}")
-            endif()
-        endwhile()
+        get_filename_component(_nx_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+        get_filename_component(_nx_up "${_nx_root}" DIRECTORY)
+        get_filename_component(_nx_up_name "${_nx_up}" NAME)
+        if(_nx_up_name STREQUAL "wt")
+            get_filename_component(_nx_root "${_nx_up}" DIRECTORY)
+        endif()
     endif()
-    set(NX_ROOT "${_nx_root}" CACHE PATH "the NX folder (games/, build/); empty outside one")
+    set(NX_ROOT "${_nx_root}" CACHE PATH "the main checkout (games/<id>/game and work, build/, wt/)")
 endif()
 
 # services::Language (runtime/include/nxrt/services.h), in enum order: bit n of a language mask is the n-th name.

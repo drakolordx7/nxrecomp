@@ -1,9 +1,9 @@
 # Configure + build one game's exe (and launcher with -Release): the base runtime is compiled in, the lifted libraries are imported.
 #   pwsh runtime\scripts\build_game_exe.ps1 -Game <games\<id>> [-Release] [-Version 0.1.0] [-LibDir <dir>] [-Out <build dir>] [-Clean]
-# Output: <NX>\build\<game folder name> (e.g. NX\build\mpr; a worktree NX\wt\mpr-x builds into NX\build\mpr-x), with -Release ...\relpkg
+# Output: <NX>\build\<checkout name>\<id>\release (NX\build\main\mpr\release; a worktree NX\wt\x builds into NX\build\x\mpr), with -Release ...\relpkg
 # (NXRT_RELEASE=ON: GUI program, ./exefs, no build paths in the files): the folder tools\release\make_release.py packs.
-# -LibDir: the lifted libraries (default <game>\work\build\<id>). -A2B: a built astc2bc7, tools\textures (default NXRT_A2B_DIR, else
-# NX\build\textures). The game is built against the base checkout this script is in. Exact commands: docs\BUILD.md.
+# -LibDir: the lifted libraries (default: games\<id>\work\build\<id> of the main checkout). -A2B: a built astc2bc7, tools\textures (default NXRT_A2B_DIR, else
+# NX\build\textures). The game is built against the base this script is in; its data (game\, work\) is read from the main checkout. Exact commands: docs\BUILD.md.
 param([string]$Game = $env:NX_GAME_DIR, [string]$Config = "Release", [switch]$Clean, [switch]$Release, [string]$LibDir = "", [string]$Out = "",
       [string]$Version = "dev", [string]$A2B = $env:NXRT_A2B_DIR)
 $ErrorActionPreference = "Stop"
@@ -13,8 +13,10 @@ if (-not (Test-Path (Join-Path $Game "game.json"))) { throw "no game manifest $G
 $id = (Get-Content -Raw (Join-Path $Game "game.json") | ConvertFrom-Json).id
 $base = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $base "scripts\nxpaths.ps1")
-$name = Split-Path -Leaf $Game
-$bd = if ($Out) { $Out } elseif ($env:NX_ROOT) { Join-Path $env:NX_ROOT ("build\" + $name) } else { Join-Path $Game "work\build\exe" }
+# game data (work\, game\) exists only in the main checkout (or in a game folder that holds its own work\)
+$data = if (Test-Path (Join-Path $Game "work")) { $Game } else { Join-Path $env:NX_ROOT "games\$id" }
+if (-not $LibDir) { $LibDir = Join-Path $data "work\build\$id" }
+$bd = if ($Out) { $Out } else { Join-Path $env:NX_ROOT "build\$($env:NX_CHECKOUT_NAME)\$id" }
 $bd = if ($Release) { Join-Path $bd "relpkg" } else { Join-Path $bd $Config.ToLower() }
 if ($Clean -and (Test-Path $bd)) { Remove-Item -Recurse -Force $bd }
 $src = Join-Path $PSScriptRoot "..\cmake\game_project"

@@ -5,7 +5,7 @@ its builds, modules and files; `recomp/` holds its lift config and sites, `runti
 is the base's (`runtime/cmake/game_project`), so a game folder holds nothing else to build.
 
 Windows x64, clang-cl + Ninja + sccache. Every script gets its environment from `scripts\env.cmd` of the base (MSVC through vswhere,
-LLVM, CMake, Ninja, Python, `NX_ROOT`, `NX_BASE`); PowerShell scripts dot-source `scripts\nxpaths.ps1`, Python scripts import `scripts/nxpaths.py`,
+LLVM, CMake, Ninja, Python, `NX_ROOT`, `NX_BASE`, `NX_CHECKOUT`, `NX_CHECKOUT_NAME`); PowerShell scripts dot-source `scripts\nxpaths.ps1`, Python scripts import `scripts/nxpaths.py`,
 CMake reads `cmake/nx_game.cmake`: one rule for each. `LLVM_BIN`, `NX_PYTHON` and `NX_JOBS` override the defaults. Vulkan tools are found
 through `VULKAN_SDK`, which the Vulkan SDK installer sets.
 
@@ -13,10 +13,12 @@ through `VULKAN_SDK`, which the Vulkan SDK installer sets.
 
 | Name | What | Default |
 | --- | --- | --- |
-| `NX_ROOT` | the folder holding `games\` and `build\` | env `NX_ROOT`, else the nearest parent of the checkout with a `games\` folder |
-| `NX_BASE` | the base checkout whose scripts build | env `NX_BASE`, else the checkout holding the script |
-| build output | one folder per checkout | `NX\build\<checkout folder name>\...` (a worktree `NX\wt\base-x` builds into `NX\build\base-x`) |
-| lifted libraries | `<id>_<module>.lib` | `games\<id>\work\build\<id>`: kept there, a game exe build only imports them |
+| checkout | the whole tree (`base\`, `games\`): the main checkout `NX`, or a worktree `NX\wt\<name>` (`git worktree add NX\wt\<name> -b <branch>`) | the parent of `NX_BASE` (`NX_CHECKOUT`) |
+| `NX_ROOT` | the main checkout: it holds the local-only game data (`games\<id>\game`, `work`), `build\`, `wt\` | env `NX_ROOT`, else the parent of `wt\` when the checkout is a worktree, else the checkout |
+| `NX_BASE` | the base folder whose scripts build: `<checkout>\base` | env `NX_BASE`, else the folder holding the script |
+| build output | one folder per checkout, `NX_CHECKOUT_NAME` | `NX\build\main\...` for the main checkout, `NX\build\<name>\...` for the worktree `NX\wt\<name>`. Keep `textures`, `publish`, `setup-*` as non-worktree names |
+| game data | `games\<id>\game`, `games\<id>\work` | only in the main checkout; a worktree's builds and runs read them from `NX_ROOT\games\<id>` |
+| lifted libraries | `<id>_<module>.lib` | `NX\games\<id>\work\build\<id>`: kept there, a game exe build only imports them (a worktree's own lift: `...\<id>_<name>`) |
 
 ## Base: runtime and its tests
 
@@ -24,7 +26,7 @@ through `VULKAN_SDK`, which the Vulkan SDK installer sets.
 pwsh base\runtime\scripts\build.ps1 -Test [-A2B <astc2bc7 build dir>]
 ```
 
-Output: `NX\build\base\runtime\release`. The tests register the neutral fixture game (`runtime\tests\fixture_game`). `-A2B` points at a
+Output: `NX\build\main\runtime\release` (a worktree `x`: `NX\build\x\runtime\release`). The tests register the neutral fixture game (`runtime\tests\fixture_game`). `-A2B` points at a
 built `tools\textures` (default `NX\build\textures`, else `tools\textures\build\release`). `-Games "<dir>;<dir>"` (CMake
 `NXRT_GAME_DIRS`) also builds those games' runtime modules and their tests (`mpr_core_tests`, ...). One test group:
 `pwsh base\runtime\scripts\t.ps1 svc_fs`.
@@ -38,7 +40,7 @@ built `tools\textures` (default `NX\build\textures`, else `tools\textures\build\
    ```
 
    Reads `games\<id>\game.json` (modules, bases, shard counts, sites) and `recomp\config.py`, the NSOs from `games\<id>\game\exefs`, and
-   writes `games\<id>\work\build\<id>\<id>_<module>.lib`. `NX_BUILD` overrides the build folder. A build folder configured before the
+   writes `games\<id>\work\build\<id>\<id>_<module>.lib`. `NX_BUILD` overrides the build folder; the data is `games\<id>` of the main checkout when the game folder holds no `work\` (a worktree). A build folder configured before the
    untangle (its CMakeCache points at `recomp/games/<id>`) must be replaced: set `NX_BUILD` to a new folder or delete its CMakeCache.txt.
 
 2. The exe and the launcher, against the libraries already there:
@@ -47,7 +49,7 @@ built `tools\textures` (default `NX\build\textures`, else `tools\textures\build\
    pwsh base\runtime\scripts\build_game_exe.ps1 -Game games\<id> [-LibDir <dir>] [-Out <dir>] [-Release] [-Version 0.1.0]
    ```
 
-   Output: `NX\build\<id>\release\<id>.exe` (dev build: reads `games\<id>\game\exefs` and `romfs`). `-Release` builds `<id>.exe` and
+   Output: `NX\build\main\<id>\release\<id>.exe` (a worktree `x`: `NX\build\x\<id>\release`; dev build: reads `games\<id>\game\exefs` and `romfs`). `-Release` builds `<id>.exe` and
    `<id>_launcher.exe` into `...\relpkg` (GUI program, `.\exefs`, no build paths). The CMake function is
    `nxrt_add_game_exe(<id> GAME_DIR <dir> LIB_DIR <dir> VERSION <v>)` (`runtime\cmake\game_exe.cmake`, called by `runtime\cmake\game_project`); the exe is the base's
    `runtime\apps\game\game_main.cpp`.
@@ -56,7 +58,7 @@ built `tools\textures` (default `NX\build\textures`, else `tools\textures\build\
 
 ```
 pwsh base\tools\setup\scripts\build.ps1 -Game games\<id> [-Test] [-Version 0.1.0]
-python base\tools\release\make_release.py --game games\<id> --exe NX\build\<id>\relpkg\<id>.exe --setup-bin NX\build\setup-<id>\bin
+python base\tools\release\make_release.py --game games\<id> --exe NX\build\main\<id>\relpkg\<id>.exe --setup-bin NX\build\setup-<id>\bin
 ```
 
 The setup tool is built for one game (CMake `NX_GAME_DIR`): its profile is generated from the manifest. The release takes every file

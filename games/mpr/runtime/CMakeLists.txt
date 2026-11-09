@@ -66,6 +66,9 @@ if(NXRT_BUILD_TESTS)
             list(APPEND _mpr_gfx_defs NXRT_HAVE_BC7_REF=1)
         endif()
         get_filename_component(NXRT_TEST_DATA_GAME_DIR "${_mpr}/.." ABSOLUTE)   # (this folder only) work/shader_cache, game/romfs of this game
+        if(NOT IS_DIRECTORY "${NXRT_TEST_DATA_GAME_DIR}/work" AND IS_DIRECTORY "${NX_ROOT}/games/mpr/work")   # a worktree has no data: the main checkout's
+            set(NXRT_TEST_DATA_GAME_DIR "${NX_ROOT}/games/mpr")
+        endif()
         nxrt_add_test_exe(mpr_gfx_tests SOURCES ${_mpr_gfx_tests} LINK nxrt_game_mpr nxrt_internal_for_tests REGISTER nxrt_register_game_mpr
                           INCLUDES ${_mpr_gfx_incs} DEFINES ${_mpr_gfx_defs} TIMEOUT 300 ENVIRONMENT "NXRT_GFX_HIDDEN=1"
                           LINK_OPTIONS /MAP /STACK:8388608 /DEBUG)

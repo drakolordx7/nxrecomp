@@ -33,7 +33,7 @@ def run(cmd, **kw):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--tests-build', default=os.path.join(os.environ.get('NX_ROOT') or os.path.dirname(os.path.dirname(ROOT)), 'build', 'base', 'runtime', 'release'),
+    ap.add_argument('--tests-build', default=os.path.join(os.environ.get('NX_ROOT') or os.path.dirname(os.path.dirname(ROOT)), 'build', 'main', 'runtime', 'release'),
                     help='the base runtime build folder holding nxrt_tests.exe (pwsh base/runtime/scripts/build.ps1 -Test; base docs/BUILD.md)')
     ap.add_argument('--romfs', default=ROOT + '/game/romfs')
     ap.add_argument('--work', default=ROOT + '/work/media_fmv')
