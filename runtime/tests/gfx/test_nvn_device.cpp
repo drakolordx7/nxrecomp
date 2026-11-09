@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Device, queue, sync, event and window entry points (api_device.cpp) through the typed thunks, called the way a game calls them.
 // The command buffer procs (api_cmdbuf.cpp) record the lists that the queue submits; the builders (api_builders.cpp) fill the
-// builder objects. The GPU is the stub (nvn_gpu_stub.cpp): submit advances the serial, every wait is already satisfied.
+// builder objects.
 #include <cstring>
 
 #include "nvn_cmd.h"

@@ -129,3 +129,30 @@ NXTEST(prepare_done_needs_complete_line) {
     write_file(state, "key: abc\r\ncomplete: 1\r\n");
     CHECK(nxl::shader_prepare_done(t.str()));
 }
+
+// ---- formats/nx_formats.h: what the game exe writes is what the launcher reads --------------------------------------------
+
+NXTEST(prepare_lines_written_are_parsed) {
+    const nxl::PrepareLine p = nxl::parse_prepare_line(nxfmt::prepare_line_progress(7, 9));
+    CHECK(p.kind == PrepareKind::progress && p.done == 7 && p.total == 9);
+    CHECK(nxl::parse_prepare_line(nxfmt::prepare_line_ready()).kind == PrepareKind::ready);
+    const nxl::PrepareLine e = nxl::parse_prepare_line(nxfmt::prepare_line_error("no device"));
+    CHECK(e.kind == PrepareKind::error && e.text == "no device");
+    nxfmt::PrepareDone d;
+    d.programs = 10;
+    d.failed = 2;
+    d.cancelled = true;
+    const nxl::PrepareLine r = nxl::parse_prepare_line(nxfmt::prepare_line_done(d));
+    CHECK(r.kind == PrepareKind::done && r.failed == 2 && r.cancelled);
+}
+
+NXTEST(prepare_state_written_is_read) {
+    nxfmt::PrepareState s;
+    s.key = "scheme=1 gpu=x";
+    s.programs = 5;
+    s.complete = true;
+    const nxfmt::PrepareState back = nxfmt::prepare_state_decode(nxfmt::prepare_state_encode(s));
+    CHECK(back.key == s.key && back.programs == 5 && back.complete);
+    s.complete = false;
+    CHECK(!nxfmt::prepare_state_decode(nxfmt::prepare_state_encode(s)).complete);
+}

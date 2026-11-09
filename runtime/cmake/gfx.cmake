@@ -28,19 +28,17 @@ target_link_libraries(nxrt_astc2bc7 INTERFACE "${NXRT_A2B_DIR}/astc2bc7.lib" "${
 file(GLOB _nxrt_a2b_dlls "${NXRT_A2B_DIR}/astcdec-*-shared.dll")
 set(NXRT_A2B_DLLS "${_nxrt_a2b_dlls}" CACHE INTERNAL "the ASTC decoder DLLs, copied next to every exe that links nxrt_gfx")
 
+# The play-mode settings model (types, ini parse and format, key names): the game's play mode and the launcher edit the same file with it.
+add_library(nxrt_settings STATIC src/gfx/play/play_types.cpp src/gfx/play/play_config.cpp)
+target_include_directories(nxrt_settings PUBLIC include)
+target_link_libraries(nxrt_settings PUBLIC SDL3::SDL3-static)
+
 file(GLOB_RECURSE NXRT_GFX_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/*.cpp")
-list(FILTER NXRT_GFX_SOURCES EXCLUDE REGEX "nvn_gpu_stub[.]cpp$")   # unit-test stand-in of the GPU boundary (scripts/nvn_unit.ps1)
+list(FILTER NXRT_GFX_SOURCES EXCLUDE REGEX "/play/play_(types|config)[.]cpp$")   # nxrt_settings
 add_library(nxrt_gfx STATIC ${NXRT_GFX_SOURCES})
 target_include_directories(nxrt_gfx PUBLIC include src/gfx/nvn/third_party PRIVATE src/gfx src/gfx/nvn)
-target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling nxrt_astc2bc7 SDL3::SDL3-static)
+target_link_libraries(nxrt_gfx PUBLIC nxrt nxrt_settings nxrt_volk nxrt_vma nxrt_imgui nxrt_tiling nxrt_astc2bc7 SDL3::SDL3-static)
 target_compile_definitions(nxrt_gfx PUBLIC VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
-
-add_executable(nxrt_gfx_demo apps/gfx_demo.cpp)
-target_link_libraries(nxrt_gfx_demo PRIVATE nxrt_gfx)
-target_link_options(nxrt_gfx_demo PRIVATE /MAP /DEBUG /STACK:8388608)
-foreach(dll ${NXRT_A2B_DLLS})
-    add_custom_command(TARGET nxrt_gfx_demo POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:nxrt_gfx_demo>")
-endforeach()
 
 if(NXRT_BUILD_TESTS)
     file(GLOB_RECURSE NXRT_GFX_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gfx/*.cpp")

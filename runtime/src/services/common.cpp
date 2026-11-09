@@ -6,6 +6,7 @@
 #include <mutex>
 #include <set>
 
+#include "nxrt/strutil.h"
 #include "nxrt/config.h"
 #include "nxrt/game.h"
 #include "nxrt/game/settings.h"
@@ -149,16 +150,8 @@ constexpr LangName kLangs[] = {
     {"BrazilianPortuguese", Language::BrazilianPortuguese, "pt-BR"},
 };
 
-std::string lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-std::string trim(const std::string& s) {
-    size_t a = 0, b = s.size();
-    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) a++;
-    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) b--;
-    return s.substr(a, b - a);
-}
+using nxrt::str::lower;
+using nxrt::str::trim;
 
 bool parse_language(const std::string& s, Language& out) {
     const std::string l = lower(trim(s));
@@ -279,11 +272,16 @@ TitleProfile game_defaults() {
     return p;
 }
 
+// [title] program_id; the older [process] program_id is still read and wins when set.
+uint64_t configured_program_id(uint64_t def) {
+    if (config_has("process", "program_id")) return static_cast<uint64_t>(config_get_int("process", "program_id", 0));
+    return static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(def)));
+}
+
 TitleProfile load_profile() {
     TitleProfile p = game_defaults();
     const uint64_t game_owner = p.save_data_owner_id;
-    p.program_id = static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(p.program_id)));
-    if (config_has("process", "program_id")) p.program_id = static_cast<uint64_t>(config_get_int("process", "program_id", 0));
+    p.program_id = configured_program_id(p.program_id);
     p.name = config_get_str("title", "name", p.name.c_str());
     p.display_version = config_get_str("title", "display_version", p.display_version.c_str());
     p.supported_languages = parse_language_mask(config_get_str("title", "supported_languages", ""), p.supported_languages);
@@ -340,10 +338,7 @@ const TitleProfile& profile() {
     return g_prof;
 }
 
-uint64_t program_id_now() {
-    if (config_has("process", "program_id")) return static_cast<uint64_t>(config_get_int("process", "program_id", 0));
-    return static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(game_defaults().program_id)));
-}
+uint64_t program_id_now() { return configured_program_id(game_defaults().program_id); }
 
 void profile_reload() {
     std::lock_guard<std::mutex> lk(g_prof_mu);

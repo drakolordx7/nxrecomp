@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The boundary between the NVN entry points (host side, api_*.cpp) and the GPU back end (render thread, nvn_gpu*.cpp,
-// nvn_replay.cpp). The api files only use the functions below; they never include Vulkan. nvn_gpu_stub.cpp implements the same
-// functions without a GPU (a serial counter and nothing else) so the api files can be unit-tested on their own.
+// nvn_replay.cpp). The api files only use the functions below; they never include Vulkan.
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -34,7 +33,7 @@ void destroy_texture_gpu(TexGpu* t);          // the Vulkan image of a finalized
 void destroy_pool_gpu(PoolGpu* p);
 // The game finalized t (or initialized its NVNtexture again): its image goes now, deferred until the GPU is done with it, although a texture
 // pool entry may keep the object alive until the game registers another texture at that id. The console's pool entry is a descriptor that
-// does not own the texture; ACNH finalizes ~300 textures a second and leaves most of them in its 8192-entry pool. Should the object be used
+// does not own the texture; one title finalizes ~300 textures a second and leaves most of them in its 8192-entry pool. Should the object be used
 // again, the image is made again from its storage. Queued behind the submissions already made (they are replayed in order).
 void release_texture_gpu(Texture* t);
 // A pool was created: import it into Vulkan on a background thread so the first draw that uses it does not wait for the driver (the import

@@ -11,7 +11,7 @@
 #include "nxrt/log.h"
 #include "nxrt/overlay.h"
 #include "nxrt/platform.h"
-#include "nxrt/scene.h"
+#include "scene.h"
 
 namespace nxrt::gfx {
 

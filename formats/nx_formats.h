@@ -6,16 +6,22 @@
 //   2. the BC7 cache file: key, header, level table, path
 //   3. programs.bin, the shader program list the setup tool scans from the player's game files and the runtime compiles ahead of play
 //   4. the shader pack, the one file a release ships its translated shaders in (the setup tool unpacks it)
-//   5. the prompt icon pack, the button icons a release ships (written by runtime/scripts/build_prompt_pack.py)
+//   5. setup_state.tsv, what the setup tool finished (written by the setup tool, read by the launcher)
+//   6. shader_cache/prepare.state, what a shader preparation run finished (written and read by the game exe, read by the launcher)
+//   7. the "prepare:" stdout lines of `<game exe> --prepare-shaders` (printed by the game exe, parsed by the launcher)
 //
-// Magics: the current ones (NXPRG002, NXSHC002) are what is written now. The v1 magics of the first release (the *Legacy constants)
-// have the same layout and are still accepted by every reader, so an existing install keeps working.
+//   8. the prompt icon pack, the button icons a release ships (written by runtime/scripts/build_prompt_pack.py)
+//
+// Magics: the current ones (NXPRG002, NXSHC002, nx_setup_state) are what is written now. The v1 magics of the first release (the *Legacy
+// constants) have the same layout and are still accepted by every reader, so an existing install keeps working.
 #pragma once
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace nxfmt {
@@ -212,7 +218,227 @@ inline bool shader_pack_magic_ok(const void* p) {
     return std::memcmp(p, kShaderPackMagic, 8) == 0 || std::memcmp(p, kShaderPackMagicLegacy, 8) == 0;
 }
 
-// ---- 5. the prompt icon pack ----------------------------------------------------------------------------------------------------
+// ---- 5. setup_state.tsv -------------------------------------------------------------------------------------------------------
+// <install>/setup_state.tsv, tab separated, one record per line: the head "nx_setup_state\t1", then "meta\t<key>\t<value>" and
+// "file\t<relative path>\t<size>\t<sha256 hex, may be empty>" lines. The last "meta\tfinished\t<0|1>" line says whether a setup run
+// ended; unknown lines are ignored. The head of the first release ("mprs_setup_state\t1") is still accepted.
+constexpr const char* kSetupStateName = "setup_state.tsv";
+constexpr const char* kSetupStateHead = "nx_setup_state\t1";
+constexpr const char* kSetupStateHeadLegacy = "mprs_setup_state\t1";
+
+inline std::string setup_state_head_line() { return std::string(kSetupStateHead) + "\n"; }
+inline std::string setup_state_meta_line(const std::string& key, const std::string& value) { return "meta\t" + key + "\t" + value + "\n"; }
+inline std::string setup_state_file_line(const std::string& rel, uint64_t size, const std::string& sha256) {
+    return "file\t" + rel + "\t" + std::to_string(size) + "\t" + sha256 + "\n";
+}
+
+// The fields of one line without its end of line (a trailing '\r' is dropped). Empty fields are kept.
+inline std::vector<std::string> split_tabs(std::string_view line) {
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    std::vector<std::string> f;
+    size_t p = 0;
+    for (;;) {
+        const size_t q = line.find('\t', p);
+        f.emplace_back(line.substr(p, q == std::string_view::npos ? q : q - p));
+        if (q == std::string_view::npos) break;
+        p = q + 1;
+    }
+    return f;
+}
+
+inline bool setup_state_head_ok(std::string_view line) {
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    return line == kSetupStateHead || line == kSetupStateHeadLegacy;
+}
+
+// True when `text` is a state file whose last "meta finished" record is 1.
+inline bool setup_state_finished(std::string_view text) {
+    size_t pos = 0;
+    bool first = true, finished = false;
+    while (pos < text.size()) {
+        size_t e = text.find('\n', pos);
+        if (e == std::string_view::npos) e = text.size();
+        const std::string_view line = text.substr(pos, e - pos);
+        pos = e + 1;
+        if (first) {
+            if (!setup_state_head_ok(line)) return false;
+            first = false;
+            continue;
+        }
+        const std::vector<std::string> f = split_tabs(line);
+        if (f.size() >= 3 && f[0] == "meta" && f[1] == "finished") finished = (f[2] == "1");
+    }
+    return !first && finished;
+}
+
+// ---- 6. shader_cache/prepare.state --------------------------------------------------------------------------------------------
+// <game folder>/shader_cache/prepare.state, "name: value" lines in this order: key, programs, prepared, missing, failed, seconds,
+// complete (1 = the run finished, 0 = it was cancelled). `key` names the GPU, driver and scheme the run was for; a run is up to date
+// when the key matches and complete is 1.
+constexpr const char* kPrepareStateName = "prepare.state";
+
+struct PrepareState {
+    std::string key;
+    uint64_t programs = 0, prepared = 0, missing = 0, failed = 0;
+    double seconds = 0;
+    bool complete = false;
+};
+
+inline std::string prepare_state_encode(const PrepareState& s) {
+    std::string t = "key: " + s.key + "\nprograms: " + std::to_string(s.programs) + "\nprepared: " + std::to_string(s.prepared) +
+                    "\nmissing: " + std::to_string(s.missing) + "\nfailed: " + std::to_string(s.failed) + "\nseconds: ";
+    char b[32];
+    std::snprintf(b, sizeof b, "%g", s.seconds);
+    return t + b + "\ncomplete: " + (s.complete ? "1" : "0") + "\n";
+}
+
+// Reads the lines it knows ("key" and "complete" decide whether a run is up to date; the counters are kept for reports).
+inline PrepareState prepare_state_decode(std::string_view text) {
+    PrepareState s;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t e = text.find('\n', pos);
+        if (e == std::string_view::npos) e = text.size();
+        std::string_view l = text.substr(pos, e - pos);
+        pos = e + 1;
+        while (!l.empty() && l.back() == '\r') l.remove_suffix(1);
+        const size_t c = l.find(": ");
+        if (c == std::string_view::npos) continue;
+        const std::string name(l.substr(0, c)), v(l.substr(c + 2));
+        if (name == "key") s.key = v;
+        else if (name == "programs") s.programs = std::strtoull(v.c_str(), nullptr, 10);
+        else if (name == "prepared") s.prepared = std::strtoull(v.c_str(), nullptr, 10);
+        else if (name == "missing") s.missing = std::strtoull(v.c_str(), nullptr, 10);
+        else if (name == "failed") s.failed = std::strtoull(v.c_str(), nullptr, 10);
+        else if (name == "seconds") s.seconds = std::strtod(v.c_str(), nullptr);
+        else if (name == "complete") s.complete = (v == "1");
+    }
+    return s;
+}
+
+// ---- 7. the prepare: output of --prepare-shaders ------------------------------------------------------------------------------
+// One line each, on stdout:
+//   "prepare: <done> <total>"          progress (programs compiled so far, programs in all)
+//   "prepare: ready"                   already up to date, nothing was done
+//   "prepare: done programs=N prepared=N missing=N failed=N parts=N fast=N seconds=S[ cancelled]"
+//   "prepare: error <text>"            could not run
+// The parser takes surrounding blanks and a trailing '\r'; a line that does not fit any of the four is `other`.
+enum class PrepareKind { other, progress, ready, done, error };
+
+struct PrepareLine {
+    PrepareKind kind = PrepareKind::other;
+    unsigned long long done = 0;    // progress: programs compiled so far
+    unsigned long long total = 0;   // progress: programs in all
+    long long failed = -1;          // done: the failed= count, -1 when the line has none
+    bool cancelled = false;         // done: the line ends with "cancelled"
+    std::string text;               // error: the error text; ready and done: the rest of the line; other: the whole line
+};
+
+struct PrepareDone {
+    unsigned long long programs = 0, prepared = 0, missing = 0, failed = 0, parts = 0, fast = 0;
+    double seconds = 0;
+    bool cancelled = false;
+};
+
+inline std::string prepare_line_progress(unsigned long long done, unsigned long long total) {
+    return "prepare: " + std::to_string(done) + " " + std::to_string(total) + "\n";
+}
+inline std::string prepare_line_ready() { return "prepare: ready\n"; }
+inline std::string prepare_line_error(const std::string& text) { return "prepare: error " + text + "\n"; }
+inline std::string prepare_line_done(const PrepareDone& d) {
+    char b[256];
+    std::snprintf(b, sizeof b, "prepare: done programs=%llu prepared=%llu missing=%llu failed=%llu parts=%llu fast=%llu seconds=%.1f%s\n", d.programs,
+                  d.prepared, d.missing, d.failed, d.parts, d.fast, d.seconds, d.cancelled ? " cancelled" : "");
+    return b;
+}
+
+namespace detail {
+inline std::string trim_blanks(std::string_view s) {
+    size_t a = 0, b = s.size();
+    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) ++a;
+    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r' || s[b - 1] == '\n')) --b;
+    return std::string(s.substr(a, b - a));
+}
+inline bool parse_count(const std::string& s, unsigned long long* out) {
+    if (s.empty() || s.size() > 18) return false;
+    unsigned long long v = 0;
+    for (char c : s) {
+        if (c < '0' || c > '9') return false;
+        v = v * 10 + static_cast<unsigned long long>(c - '0');
+    }
+    *out = v;
+    return true;
+}
+}  // namespace detail
+
+inline PrepareLine prepare_line_parse(std::string_view raw) {
+    using detail::parse_count;
+    using detail::trim_blanks;
+    PrepareLine out;
+    const std::string line = trim_blanks(raw);
+    static const std::string kPrefix = "prepare:";
+    if (line.compare(0, kPrefix.size(), kPrefix) != 0) {
+        out.text = line;
+        return out;
+    }
+    const std::string rest = trim_blanks(line.substr(kPrefix.size()));
+    std::vector<std::string> words;
+    {
+        std::string cur;
+        for (char c : rest) {
+            if (c == ' ' || c == '\t') {
+                if (!cur.empty()) words.push_back(cur);
+                cur.clear();
+            } else {
+                cur.push_back(c);
+            }
+        }
+        if (!cur.empty()) words.push_back(cur);
+    }
+    if (words.empty()) {
+        out.text = line;
+        return out;
+    }
+    const std::string& w0 = words[0];
+    if (w0 == "ready") {
+        out.kind = PrepareKind::ready;
+        out.text = rest;
+        return out;
+    }
+    if (w0 == "error") {
+        out.kind = PrepareKind::error;
+        out.text = trim_blanks(rest.substr(w0.size()));
+        return out;
+    }
+    if (w0 == "done") {
+        out.kind = PrepareKind::done;
+        out.text = rest;
+        for (size_t i = 1; i < words.size(); ++i) {
+            const std::string& w = words[i];
+            if (w.compare(0, 7, "failed=") == 0) {
+                unsigned long long n = 0;
+                if (parse_count(w.substr(7), &n)) out.failed = static_cast<long long>(n);
+            } else if (w == "cancelled") {
+                out.cancelled = true;
+            }
+        }
+        return out;
+    }
+    if (words.size() == 2) {
+        unsigned long long d = 0, t = 0;
+        if (parse_count(words[0], &d) && parse_count(words[1], &t)) {
+            out.kind = PrepareKind::progress;
+            out.done = d;
+            out.total = t;
+            out.text = rest;
+            return out;
+        }
+    }
+    out.text = line;
+    return out;
+}
+
+// ---- 8. the prompt icon pack ----------------------------------------------------------------------------------------------------
 // One file: magic (4), u32 version (1), u32 entry_count, u32 icon width, u32 icon height, u32 reserved, then entry_count records
 // {char name[40] (zero padded), u32 data_offset (from file start), u32 size (= width * height * 4)}, then the RGBA8 icons. Little-endian.
 constexpr char kPromptPackMagic[4] = {'M', 'P', 'I', 'P'};

@@ -817,7 +817,7 @@ bool read_programs_file(const std::string& path, std::vector<ProgHashes>* out, s
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) { *error = "cannot open " + path; return false; }
     char head[16];
-    bool ok = std::fread(head, 1, 16, f) == 16 && nxfmt::programs_magic_ok(reinterpret_cast<const uint8_t*>(head));   // NXPRG002, or MPRPRG01 of the first Metroid release
+    bool ok = std::fread(head, 1, 16, f) == 16 && nxfmt::programs_magic_ok(reinterpret_cast<const uint8_t*>(head));   // NXPRG002, or the first release's magic of the first Metroid release
     uint32_t count = 0;
     if (ok) std::memcpy(&count, head + 8, 4);
     if (ok) {
@@ -850,24 +850,25 @@ std::string prepare_key(uint64_t programs) {
 }
 
 bool prepare_state_ready(const std::string& path, const std::string& key) {
-    std::ifstream f(path);
+    std::ifstream f(path, std::ios::binary);
     if (!f) return false;
-    std::string l;
-    bool key_ok = false, done = false;
-    while (std::getline(f, l)) {
-        while (!l.empty() && l.back() == '\r') l.pop_back();
-        if (l == "key: " + key) key_ok = true;
-        if (l == "complete: 1") done = true;
-    }
-    return key_ok && done;
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const nxfmt::PrepareState st = nxfmt::prepare_state_decode(text);
+    return st.key == key && st.complete;
 }
 
 void write_prepare_state(const std::string& path, const std::string& key, const PrepareResult& r) {
-    std::ofstream f(path, std::ios::trunc);
+    std::ofstream f(path, std::ios::trunc | std::ios::binary);
     if (!f) return;
-    const char nl = 10;
-    f << "key: " << key << nl << "programs: " << r.programs << nl << "prepared: " << r.prepared << nl << "missing: " << r.missing_shaders << nl
-      << "failed: " << r.failed << nl << "seconds: " << r.seconds << nl << "complete: " << (r.cancelled ? 0 : 1) << nl;
+    nxfmt::PrepareState st;
+    st.key = key;
+    st.programs = r.programs;
+    st.prepared = r.prepared;
+    st.missing = r.missing_shaders;
+    st.failed = r.failed;
+    st.seconds = r.seconds;
+    st.complete = !r.cancelled;
+    f << nxfmt::prepare_state_encode(st);
 }
 
 bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
@@ -881,7 +882,7 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
     std::vector<ProgHashes> progs;
     if (!read_programs_file(file, &progs, &r.error)) return false;
     r.programs = progs.size();
-    const std::string state_path = (std::filesystem::path(file).parent_path() / "prepare.state").string();
+    const std::string state_path = (std::filesystem::path(file).parent_path() / nxfmt::kPrepareStateName).string();
     const std::string key = prepare_key(r.programs);
     if (o.only_if_needed && !o.force && prepare_state_ready(state_path, key)) {
         r.already_ready = true;

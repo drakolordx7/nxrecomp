@@ -1,6 +1,6 @@
 # nxrt
 
-nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered static recompilation. It runs on native Windows x64, is written in C++20 and builds with clang-cl. It is licensed GPL-3.0-or-later. Third-party material is listed in THIRD_PARTY_NOTICES.md.
+nxrt is the game-independent OS and HLE runtime for Nintendo Switch static recompilations. It runs on native Windows x64, is written in C++20 and builds with clang-cl. It is licensed GPL-3.0-or-later. Third-party material is listed in THIRD_PARTY_NOTICES.md.
 
 ## Layout
 
@@ -15,10 +15,9 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `src/loader` | ELF64 AArch64 structures (elf.h), module loader and linker (module.cpp), NSO loader with LZ4 (nso.cpp) |
 | `src/mem` | Guest address space, heap section and alias views (memory.cpp) |
 | `src/os` | Guest-address keyed sync objects (sync.cpp) |
-| `src/gfx` | Graphics shell (S4b, library `nxrt_gfx`, see docs/S4b.md): SDL3 platform and input queue (platform.cpp, input.cpp), frame limiter (frame_limiter.cpp), Vulkan device and renderer (vk_device.cpp, vk_renderer.cpp, vma_impl.cpp), test scene and loop (scene.cpp, scene_runner.cpp, shaders/, scene_shaders.inc), ImGui overlay (overlay.cpp), NVN front end (nvn/nvn_loader.cpp, generated nvn/nvn_table.inc and nvn/nvn_sizes.inc) and the NVN-on-Vulkan back end of S4d (nvn/api_*.cpp entry points, nvn_gpu*.cpp, nvn_replay.cpp, nvn_pipeline.cpp, nvn_shaders.cpp, nvn_texdata.cpp, nvn_present_pass.cpp; docs/S4d.md) |
+| `src/gfx` | Graphics shell (S4b, library `nxrt_gfx`, see docs/S4b.md): SDL3 platform and input queue (platform.cpp, input.cpp), frame limiter (frame_limiter.cpp), Vulkan device and renderer (vk_device.cpp, vk_renderer.cpp, vma_impl.cpp), shaders/, ImGui overlay (overlay.cpp), NVN front end (nvn/nvn_loader.cpp, generated nvn/nvn_table.inc and nvn/nvn_sizes.inc) and the NVN-on-Vulkan back end of S4d (nvn/api_*.cpp entry points, nvn_gpu*.cpp, nvn_replay.cpp, nvn_pipeline.cpp, nvn_shaders.cpp, nvn_texdata.cpp, nvn_present_pass.cpp; docs/S4d.md) |
 | `src/media` | The SDK's `movie::` library on Windows Media Foundation (S9, `movie_mf.cpp`, see docs/S9.md): the 41 imports of the game are answered on the host, so the movies play |
 | `src/services` | Service library (S3c, see docs/S3c_commands.md): one file per service group (`acc.cpp`, `am.cpp`, `audio_out.cpp`, `fs.cpp`, `fs_romfs.cpp`, `fs_volume.cpp`, `hid.cpp`, `logfault.cpp`, `misc.cpp`, `network.cpp`, `pl.cpp`, `power.cpp`, `settings.cpp`, `time.cpp`, `timezone.cpp`, `vi_nv.cpp`), audio sinks (`audio_sink.cpp`, `audio_xaudio2.cpp`, `audio_paced.cpp`, `audio_wav.cpp`), shared helpers (`common.cpp`, `services_internal.h`) |
-| `apps` | `gfx_demo.cpp`: the test scene as an executable (`nxrt_gfx_demo`) |
 | `cmake` | `gfx.cmake`, `gfx_deps.cmake`: the graphics library, the demo, the gfx tests and the pinned third-party sources |
 | `tests` | 21 unit-test groups (`test_*.cpp`), `test_framework.h`, `test_main.cpp`; `tests/gfx` holds the graphics groups (`nxrt_gfx_tests`: the shell, 30 NVN groups, 8 of them scene oracles that play a small game through `nvnBootstrapLoader`; see docs/S4d.md), `tests/data/gfx` the reference image |
 | `tests/lift` | Integration tests: test programs lifted by the recompiler and run on this runtime (`driver.cpp`, `CMakeLists.txt`), the S3b exception programs (`progs`), their miniature libc++abi (`guest/rt2.h`) and its host stand-in (`native`) |
@@ -26,7 +25,7 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py` (HIPC vectors); for the lifted tests: `guest_build.py`, `make_sites.py`, `unicorn_expect.py`, `native_check.cmd`, `dump_results.py` |
 | `docs` | `S3.md`, `S3b.md`, `S4b.md`, `S4d.md` and `S4e.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes), `REFERENCES.md` (cited documents that live outside this repository) |
-| `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_shaders.py` (SPIR-V of the runtime's own shaders in src/gfx/shaders: test scene, output pass, FSR 1, masked clear; uses `VULKAN_SDK`), `nvn_unit.ps1` (build and run one NVN unit test without CMake), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
+| `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_shaders.py` (SPIR-V of the runtime's own shaders in src/gfx/shaders and the test scene's: output pass, FSR 1, masked clear; uses `VULKAN_SDK`), `t.ps1` (build and run named test groups), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
 
 ## Build and test
 
@@ -134,7 +133,7 @@ Every source or header file that names an upstream project in its comments is li
 | `src/gfx/nvn/nvn_spirv_patch.cpp` | SuperMarioWonderRecomp `runtime/src/nvn/nvn_spirv_patch.cpp` (MIT, Copyright (c) 2026 BelmanteGu): the idea of rewriting a translated module's declarations when the pipeline needs it (there for integer vertex inputs); the two rewrites here (missing varyings, dual-source output) and the code are new | MIT |
 | `src/gfx/nvn/nvn_present_pass.cpp`, `nvn_mask_clear.cpp`, `present_shaders.inc`, `mask_clear_shaders.inc` | Written from scratch; SPIR-V generated from GLSL in `scripts/gen_*_shaders.py` with glslc | GPL-3.0-or-later |
 | `../tools/shaders/harness/translator/spirv-pixld-*.patch` | Patches to the Ryujinx shader translator (MIT, Copyright Ryujinx Team and Contributors); context lines are Ryujinx source | MIT |
-| `src/gfx/scene.cpp` | tools/tiling (`tegra_tiling.h`, compiled in as source from the tools repository) for the block-linear round trip of the test texture | GPL-3.0-or-later |
+| `tests/gfx/scene/scene.cpp` | tools/tiling (`tegra_tiling.h`, compiled in as source from the tools repository) for the block-linear round trip of the test texture | GPL-3.0-or-later |
 | `src/services/acc.cpp` | ScarletNX `src/nx/hle/services/acc.c` (command table, one-local-user answers, profile timestamp, GetAccountId formula, IAsyncContext result; adapted); Ryujinx `src/Ryujinx.HLE/HOS/Services/Account/Acc` (IsUserRegistrationRequestPermitted, IProfile layout, NullArgument check; adapted) | GPL-3.0-or-later; MIT |
 | `src/services/am.cpp` | ScarletNX `src/nx/hle/services/am.c` and `am.swipc` (command table, message queue, lock accessor, audio volumes, save data rules, launch parameter storage; adapted); Ryujinx `src/Ryujinx.HLE/HOS/Services/Am` (result codes, LaunchParameterKind, preselected user layout, GamePlay command id; adapted); SuperMarioWonderRecomp `runtime/src/svc_am.cpp` (window controller applet resource user id; adapted) | GPL-3.0-or-later; MIT; MIT |
 | `src/services/audio_out.cpp` | ScarletNX `src/nx/hle/services/audio.c` (command table, buffer protocol, refusal of a second Start, release on Stop and Flush; adapted; its audout part is ported from Eden); ryubing `src/Ryujinx.Horizon/Sdk/Audio/Detail/AudioOut.cs` and `AudioOutManager.cs` (channel-count rule, Flush result; adapted) | GPL-3.0-or-later (audout part from Eden, GPL-2.0-or-later); MIT |

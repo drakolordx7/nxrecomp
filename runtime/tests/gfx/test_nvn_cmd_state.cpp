@@ -594,7 +594,7 @@ NXTEST(nothing_recorded_outside_recording_or_for_null_arguments) {
 }
 
 // A list recorded into command memory outlives its command buffer: the game may finalize the buffer and call the handle later
-// (Animal Crossing's worker jobs do it every frame). A newer list recorded over the same memory still drops it, and a list without
+// (one title's worker jobs do it every frame). A newer list recorded over the same memory still drops it, and a list without
 // command memory goes with its buffer.
 NXTEST(handles_outlive_their_finalized_command_buffer) {
     setup();

@@ -34,6 +34,8 @@
 #include <utility>
 #include <vector>
 
+#include "nx_formats.h"
+#include "nxrt/strutil.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
@@ -115,20 +117,8 @@ std::unique_ptr<nxrt::gfx::Renderer> g_gfx_renderer;
     for (;;) {}
 }
 
-std::wstring widen_utf8(const std::string& s) {
-    if (s.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
-    std::wstring w(static_cast<size_t>(n), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
-    return w;
-}
-std::string narrow_utf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(static_cast<size_t>(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
+using nxrt::str::widen;
+using nxrt::str::narrow;
 std::wstring exe_dir() {
     std::wstring buf(32768, L'\0');
     const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
@@ -141,12 +131,12 @@ bool file_exists(const std::wstring& p) {
     return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
 }
 std::string absolute_utf8(const std::string& p) {
-    const std::wstring w = widen_utf8(p);
+    const std::wstring w = widen(p);
     std::wstring buf(32768, L'\0');
     const DWORD n = GetFullPathNameW(w.c_str(), static_cast<DWORD>(buf.size()), buf.data(), nullptr);
     if (!n || n >= buf.size()) return p;
     buf.resize(n);
-    return narrow_utf8(buf);
+    return narrow(buf);
 }
 
 // [boot] press = "A@12,A@20:500,PLUS@30,A#1500": scripted controller presses on player 1 (button@seconds-after-start[:hold ms, default 300]).
@@ -232,7 +222,7 @@ DWORD WINAPI deadline_thread(LPVOID p) {
 
 // --prepare-shaders: no game, no window. A headless Vulkan device and the NVN back end's pipeline code compile the shader parts of every program the
 // setup tool listed (shader_cache/programs.bin), so the driver has them in its cache before the first start. Progress goes to stdout as
-// "prepare: <done> <total>" lines (the launcher reads them), the end as "prepare: done ..." / "prepare: ready" (already up to date).
+// "prepare:" lines (formats/nx_formats.h: the launcher reads them).
 // Exit code: 0 done or ready, 1 could not run, 3 cancelled.
 int prepare_shaders_main(bool if_needed, int threads, const std::string& programs) {
     std::string err;
@@ -260,11 +250,14 @@ int prepare_shaders_main(bool if_needed, int threads, const std::string& program
     nxrt::nvn::ShaderPrepareResult pr;
     const bool ok = nxrt::nvn::prepare_shaders(po, &pr);
     int rc = 0;
-    if (!ok) { std::printf("prepare: error %s\n", pr.error.c_str()); rc = 1; }
-    else if (pr.already_ready) std::printf("prepare: ready\n");
-    else std::printf("prepare: done programs=%llu prepared=%llu missing=%llu failed=%llu parts=%llu fast=%llu seconds=%.1f%s\n", static_cast<unsigned long long>(pr.programs),
-                     static_cast<unsigned long long>(pr.prepared), static_cast<unsigned long long>(pr.missing_shaders), static_cast<unsigned long long>(pr.failed),
-                     static_cast<unsigned long long>(pr.parts), static_cast<unsigned long long>(pr.fast_parts), pr.seconds, pr.cancelled ? " cancelled" : "");
+    if (!ok) { std::fputs(nxfmt::prepare_line_error(pr.error).c_str(), stdout); rc = 1; }
+    else if (pr.already_ready) std::fputs(nxfmt::prepare_line_ready().c_str(), stdout);
+    else {
+        nxfmt::PrepareDone d;
+        d.programs = pr.programs; d.prepared = pr.prepared; d.missing = pr.missing_shaders; d.failed = pr.failed;
+        d.parts = pr.parts; d.fast = pr.fast_parts; d.seconds = pr.seconds; d.cancelled = pr.cancelled;
+        std::fputs(nxfmt::prepare_line_done(d).c_str(), stdout);
+    }
     std::fflush(stdout);
     if (ok && pr.cancelled) rc = 3;
     nxrt::nvn::shutdown_backend();
@@ -318,13 +311,13 @@ int main(int argc, char** argv) {
     std::string ini_abs, log_abs;
     bool installed = false;
     {
-        const std::wstring base = game.empty() ? exe_dir() : widen_utf8(absolute_utf8(game));
+        const std::wstring base = game.empty() ? exe_dir() : widen(absolute_utf8(game));
         installed = !game.empty() || file_exists(base + L"\\exefs\\main");
         if (installed) {
             if (exefs_given) exefs = absolute_utf8(exefs);
             if (ini) { ini_abs = absolute_utf8(ini); ini = ini_abs.c_str(); }
             if (logp) { log_abs = absolute_utf8(logp); logp = log_abs.c_str(); }
-            if (!SetCurrentDirectoryW(base.c_str())) die("cannot use the game folder %s", narrow_utf8(base).c_str());
+            if (!SetCurrentDirectoryW(base.c_str())) die("cannot use the game folder %s", narrow(base).c_str());
             // One game (or one shader preparation) per game folder: two would write the same log, pipeline cache and saves. The name comes from
             // the game's save folder name and the folder's full path; NXRT_ALLOW_MULTIPLE=1 lifts the check for test rigs.
             if (!std::getenv("NXRT_ALLOW_MULTIPLE")) {
@@ -332,14 +325,14 @@ int main(int argc, char** argv) {
                 full.resize(GetFullPathNameW(base.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr));
                 unsigned long long h = 1469598103934665603ull;
                 for (wchar_t ch : full) h = (h ^ static_cast<unsigned long long>(std::towlower(ch))) * 1099511628211ull;
-                const std::wstring name = L"Local\\" + widen_utf8(*gi.save_folder ? gi.save_folder : gi.id) + L"_" + std::to_wstring(h);
+                const std::wstring name = L"Local\\" + widen(*gi.save_folder ? gi.save_folder : gi.id) + L"_" + std::to_wstring(h);
                 if (CreateMutexW(nullptr, FALSE, name.c_str()) && GetLastError() == ERROR_ALREADY_EXISTS)
                     die("The game is already running from this folder (or its shaders are being prepared). Close that one first.");
             }
             if (!exefs_given) exefs = "exefs";
             if (!logp) logp = NXGAME_LOG;
             const char* game_ini = gi.game_ini;     // written by setup
-            if (!ini && !std::getenv("NXRT_INI") && *game_ini && file_exists(widen_utf8(game_ini))) ini = game_ini;
+            if (!ini && !std::getenv("NXRT_INI") && *game_ini && file_exists(widen(game_ini))) ini = game_ini;
         }
     }
 
@@ -415,7 +408,7 @@ int main(int argc, char** argv) {
         lo.base = g.nx->base;
         std::string err;
         const std::string path = exefs + "\\" + g.file;
-        if (!file_exists(widen_utf8(path)))
+        if (!file_exists(widen(path)))
             die("The game files were not found (%s). Run %s from this folder first, then start the game again.", path.c_str(), gi.setup_exe_name);
         nxrt::Module* m = nxrt::module_load_nso_file(path.c_str(), lo, &err);
         if (!m) die("cannot load %s: %s", path.c_str(), err.c_str());
@@ -459,9 +452,9 @@ int main(int argc, char** argv) {
     if (!h) die("cannot create the main thread");
     ::Ctx* ctx = nxrt::kernel::current_ctx();
 
-    // The entry module (rtld): host stand-ins for what a known rtld build's lift lacks; a lift without an entry function is refused.
+    // The entry module (rtld) is lifted from offset 0; a lift without an entry function is refused.
     const uint64_t entry = kModules[0].nx->base;
-    if (!nxrt::install_rtld_standins(entry)) die("the lifted %s has no function at its entry: rebuild the game libraries", kModules[0].file);
+    if (!nxrt::fn_lookup(entry)) die("the lifted %s has no function at its entry: rebuild the game libraries", kModules[0].file);
 
     // 5. the first instruction: the entry module at offset 0. x0 = 0 (the exception entry would be non-zero), x1 = the main thread's handle.
     ctx->x[0] = 0;

@@ -215,17 +215,14 @@ The `[nvn]` keys are read in two places: the player and tuning settings by `src/
 | `time` | `log_every` | `0` | `NXRT_TIME_LOG_EVERY` | `src/timestep/timestep.cpp` | One log line of frame statistics every N frames (0 = off). |
 | `time` | `csv` | empty | `NXRT_TIME_CSV` | `src/timestep/timestep.cpp` | Write one line per frame: frame, host time, measured elapsed, step, sum of steps, movie frames delivered, render-timing clock. |
 | `time` | `game_base` | `0x7100000000` | `NXRT_TIME_GAME_BASE` | `src/timestep/timestep.cpp` | Guest address of the main module (the hooks are keyed by it). |
-| `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `game-build/src/mpr_main.cpp` | `window`, `headless` or `none`. |
-| `boot` | `nvn` | `true` | `NXRT_BOOT_NVN` | `game-build/src/mpr_main.cpp` | `true`: the NVN front end and the graphics device are created. `false` (or `--no-nvn`): neither is. |
-| `boot` | `link` | `rtld` | `NXRT_BOOT_LINK` | `game-build/src/mpr_main.cpp` | `rtld`: the game's own loader relocates every module, as on the console. `host`: the runtime's linker does it instead, as a cross-check. |
-| `boot` | `probe` | empty | `NXRT_BOOT_PROBE` | `game-build/src/mpr_main.cpp` | `no-sdk-services`: bring-up probe that starts the game without the SDK's service initialisation. Logged as `PROBE`. |
-| `boot` | `press` | empty | `NXRT_BOOT_PRESS` | `game-build/src/mpr_main.cpp` | Scripted button presses for player 1, a comma list such as `A@12,A@20:500,PLUS@30,A#1500`. `NAME@seconds` counts from start, `NAME#frame` counts presented frames of the NVN back end, and `:ms` sets the hold (default 300). Names: A, B, X, Y, PLUS, MINUS, UP, DOWN, LEFT, RIGHT, L, R, ZL, ZR. |
-| `boot` | `screenshot_at` | `0` | `NXRT_BOOT_SCREENSHOT_AT` | `game-build/src/mpr_main.cpp` | Seconds after start to write `shot_<n>.png` of the presented frame, in the working directory. `0`: off. |
-| `boot` | `screenshot_every` | `0` | `NXRT_BOOT_SCREENSHOT_EVERY` | `game-build/src/mpr_main.cpp` | Repeats `screenshot_at` every N seconds. `0`: once only. |
-| `boot` | `max_seconds` | `0` | `NXRT_BOOT_MAX_SECONDS` | `game-build/src/mpr_main.cpp` | After this many seconds the process logs a state summary and ends with exit code 124, even if the game is still running. `0`: no limit. `--max-seconds` sets it. |
-| `boot` | `main_stack_kb` | `1024` | `NXRT_BOOT_MAIN_STACK_KB` | `game-build/src/mpr_main.cpp` | Stack of the game's main thread, in KiB. |
-| `boot` | `dump_killer` | `false` | `NXRT_BOOT_DUMP_KILLER` | `game-build/src/mpr_main.cpp` | Temporary debug hook (debug note 121). Logs two fixed memory slots on an access violation, and the thread stacks when one of them first fills. |
-| `boot` | `trace_plt` | `false` | `NXRT_BOOT_TRACE_PLT` | `game-build/src/mpr_main.cpp` | Diagnostic: logs every lazy symbol binding of the game's loader (debug note 018). |
+| `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `apps/game/game_main.cpp` | `window`, `headless` or `none`. |
+| `boot` | `nvn` | `true` | `NXRT_BOOT_NVN` | `apps/game/game_main.cpp` | `true`: the NVN front end and the graphics device are created. `false` (or `--no-nvn`): neither is. |
+| `boot` | `link` | `rtld` | `NXRT_BOOT_LINK` | `apps/game/game_main.cpp` | `rtld`: the game's own loader relocates every module, as on the console. `host`: the runtime's linker does it instead, as a cross-check. |
+| `boot` | `press` | empty | `NXRT_BOOT_PRESS` | `apps/game/game_main.cpp` | Scripted button presses for player 1, a comma list such as `A@12,A@20:500,PLUS@30,A#1500`. `NAME@seconds` counts from start, `NAME#frame` counts presented frames of the NVN back end, and `:ms` sets the hold (default 300). Names: A, B, X, Y, PLUS, MINUS, UP, DOWN, LEFT, RIGHT, L, R, ZL, ZR. |
+| `boot` | `screenshot_at` | `0` | `NXRT_BOOT_SCREENSHOT_AT` | `apps/game/game_main.cpp` | Seconds after start to write `shot_<n>.png` of the presented frame, in the working directory. `0`: off. |
+| `boot` | `screenshot_every` | `0` | `NXRT_BOOT_SCREENSHOT_EVERY` | `apps/game/game_main.cpp` | Repeats `screenshot_at` every N seconds. `0`: once only. |
+| `boot` | `max_seconds` | `0` | `NXRT_BOOT_MAX_SECONDS` | `apps/game/game_main.cpp` | After this many seconds the process logs a state summary and ends with exit code 124, even if the game is still running. `0`: no limit. `--max-seconds` sets it. |
+| `boot` | `main_stack_kb` | `1024` | `NXRT_BOOT_MAIN_STACK_KB` | `apps/game/game_main.cpp` | Stack of the game's main thread, in KiB. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
 
 ### Audio notes

@@ -110,7 +110,7 @@ struct TitleProfile {
     std::string user_nickname = "Player";                  // [account] nickname
     uint64_t user_uid_hi = 0x0000000000000001ull, user_uid_lo = 0x6e78727475736572ull;   // [account] uid = 32 hex digits ("nxrtuser")
 };
-uint64_t program_id_now();               // [process] program_id if set, else [title] program_id, else the game's title id; read from the config on every call
+uint64_t program_id_now();               // [title] program_id, else the game's title id; read from the config on every call
 const TitleProfile& profile();
 void profile_reload();
 const char* language_code(Language l);   // "en-US", "ja", ... (the 8-byte LanguageCode string)

@@ -7,8 +7,6 @@
 
 namespace nxrt::tt::detail {
 
-uint64_t game_base();                                    // the guest address of the main module
-bool have_state_manager();                               // the game's state manager exists (the warp can run)
 bool read_mem(uint64_t addr, void* out, size_t n);       // ReadProcessMemory on ourselves: false instead of a fault
 bool write_mem(uint64_t addr, const void* in, size_t n);
 

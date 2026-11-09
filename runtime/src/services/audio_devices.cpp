@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/strutil.h"
 #include "nxrt/audio_sink.h"
 
 #pragma comment(lib, "ole32.lib")
@@ -16,14 +17,7 @@
 namespace nxrt::audio {
 namespace {
 
-std::string wide_to_utf8(const wchar_t* w) {
-    if (!w || !*w) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 1) return {};
-    std::string out(static_cast<size_t>(n - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w, -1, out.data(), n, nullptr, nullptr);
-    return out;
-}
+using nxrt::str::narrow;
 
 }
 
@@ -68,7 +62,7 @@ std::vector<OutputDevice> list_output_devices() {
                     PROPVARIANT pv;
                     PropVariantInit(&pv);
                     if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR) {
-                        d.name = wide_to_utf8(pv.pwszVal);
+                        d.name = narrow(pv.pwszVal);
                     }
                     PropVariantClear(&pv);
                     props->Release();

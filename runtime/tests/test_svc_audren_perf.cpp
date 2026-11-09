@@ -21,7 +21,7 @@ using namespace nxrt::audren;
 
 namespace {
 
-// Stand-in for BehaviourInfo (not ported yet): only the performance-metrics data format is used here.
+// Stand-in for BehaviourInfo: only the performance-metrics data format is used here.
 struct FakeBehaviourInfo {
     uint32_t Format;
     uint32_t GetPerformanceMetricsDataFormat() const { return Format; }

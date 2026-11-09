@@ -18,6 +18,7 @@
 #include <set>
 #include <sstream>
 
+#include "nxrt/strutil.h"
 #include "nxrt/config.h"
 #include "nxrt/game.h"
 #include "nxrt/log.h"
@@ -35,31 +36,15 @@ constexpr size_t kCaseWarnPerMod = 5;
 
 // ---- strings and paths -------------------------------------------------------------------------------------------------------------
 
-std::string lower(std::string s) {
-    for (char& c : s)
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
-    return s;
-}
+using nxrt::str::lower;
+using nxrt::str::trim;
+bool to_utf8(const std::wstring& w, std::string& out) { return nxrt::str::narrow_strict(w, out); }
 bool ieq(const std::string& a, const std::string& b) { return a.size() == b.size() && lower(a) == lower(b); }
 bool ends_with_i(const std::string& s, const char* suffix) {
     const size_t n = std::strlen(suffix);
     return s.size() >= n && lower(s.substr(s.size() - n)) == suffix;
 }
-std::string trim(const std::string& s) {
-    size_t a = 0, b = s.size();
-    while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) a++;
-    while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r' || s[b - 1] == '\n')) b--;
-    return s.substr(a, b - a);
-}
 
-bool to_utf8(const std::wstring& w, std::string& out) {
-    out.clear();
-    if (w.empty()) return true;
-    const int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return false;
-    out.resize(static_cast<size_t>(n));
-    return WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), static_cast<int>(w.size()), out.data(), n, nullptr, nullptr) == n;
-}
 
 stdfs::path u8(const std::string& s) { return stdfs::u8path(s); }
 std::string path_u8(const stdfs::path& p) {

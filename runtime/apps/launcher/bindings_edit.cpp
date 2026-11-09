@@ -17,7 +17,7 @@ using nxrt::play::InputId;
 using nxrt::play::Settings;
 using nxrt::play::Trig;
 
-// The registered game's rows (nxrt::play::GameVocabulary::labels; Metroid Prime Remastered: games/mpr/mpr_vocabulary.cpp). Without a game: the
+// The registered game's rows (nxrt::play::GameVocabulary::labels). Without a game: the
 // movement, menu and d-pad rows under generic names.
 const std::vector<KeyRow>& key_rows() {
     static std::vector<std::wstring> text;

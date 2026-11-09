@@ -13,6 +13,7 @@
 #include <mutex>
 #include <tuple>
 
+#include "nxrt/strutil.h"
 #include "nxrt/config.h"
 #include "nxrt/gauge.h"
 #include "nxrt/memguard.h"
@@ -53,10 +54,7 @@ namespace {
 constexpr const char* kTag = "gfx";
 constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
-std::string lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
+using nxrt::str::lower;
 
 const char* type_name(int t) {
     static const char* const names[] = {"other", "integrated", "discrete", "virtual", "cpu"};

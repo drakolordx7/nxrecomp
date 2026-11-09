@@ -4,6 +4,7 @@
 // layout, the goback/goahead extension of ToCalendarTimeInternal and the time-type checks of ParseTimeZoneBinary. The behaviour
 // they follow is tzcode localtime.c (public domain): localsub and time2.
 // to_posix is written as a candidate search (time2 semantics), not Ryujinx's binary search, so an ambiguous wall time gives two results.
+#include "nxrt/strutil.h"
 #include "timezone.h"
 
 #include <algorithm>
@@ -313,13 +314,7 @@ int find_or_add(std::vector<HostType>& types, int32_t utoff, bool isdst, const s
 }
 
 #ifdef _WIN32
-std::string wide_to_utf8(const wchar_t* w) {
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 1) return {};
-    std::string s(static_cast<size_t>(n - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
-    return s;
-}
+using nxrt::str::narrow;
 
 // Local wall time of a SYSTEMTIME as seconds since the epoch in that wall clock. A wYear of 0 is a recurring rule:
 // wDay is the n-th wDayOfWeek of the month, 5 meaning the last.
@@ -342,7 +337,7 @@ int64_t resolve_systemtime(const SYSTEMTIME& st, int year) {
 bool build_host_rule(RuleImage& img, std::string& name) {
     DYNAMIC_TIME_ZONE_INFORMATION dtzi{};
     if (GetDynamicTimeZoneInformation(&dtzi) == TIME_ZONE_ID_INVALID) return false;
-    const std::string key = wide_to_utf8(dtzi.TimeZoneKeyName);
+    const std::string key = narrow(dtzi.TimeZoneKeyName);
     if (key.empty()) return false;
     const AbbrMap* map = find_zone(key);
     name = map ? map->iana : key;

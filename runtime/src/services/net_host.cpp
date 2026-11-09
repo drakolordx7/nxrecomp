@@ -38,6 +38,7 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/strutil.h"
 #include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
@@ -110,16 +111,8 @@ constexpr int kFGetFl = 3, kFSetFl = 4, kONonBlock = 0x800;
 constexpr int kSolSocket = 0xFFFF, kIpprotoIp = 0, kIpprotoTcp = 6;
 
 // ---- config ------------------------------------------------------------------------------------------------------------------------------
-std::string lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
-std::string trim(const std::string& s) {
-    size_t a = 0, b = s.size();
-    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
-    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
-    return s.substr(a, b - a);
-}
+using nxrt::str::lower;
+using nxrt::str::trim;
 std::vector<std::pair<std::string, std::string>> pairs(const std::string& text) {
     std::vector<std::pair<std::string, std::string>> out;
     size_t pos = 0;

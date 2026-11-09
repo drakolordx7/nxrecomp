@@ -8,7 +8,7 @@
 
 #include "test_framework.h"
 
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 
 NXTEST_GROUP(hdr_math)
 
@@ -147,8 +147,8 @@ NXTEST(extend_shoulder_refuses_a_peak_at_or_below_the_value_at_t2) {
 }
 
 NXTEST(extend_shoulder_peak_one_rebuilds_the_original_asymptote) {
-    // The plan expected false for peak_ratio 1.0. The stated rule is "refuse when peak_ratio <= value at t2 + 1e-4",
-    // and the value at t2 is about 0.3625, so 1.0 is accepted. Its asymptote is A + B = 1.0 again, the original curve.
+    // The rule is "refuse when peak_ratio <= value at t2 + 1e-4", and the value at t2 is about 0.3625, so 1.0 is accepted.
+    // Its asymptote is A + B = 1.0 again, the original curve.
     hdr::TonemapEval e = frame_params();
     CHECK(hdr::extend_shoulder(&e, 1.0f));
     CHECK(std::fabs(curve_at(e, 1e7) - 1.0f) < 1e-3f);

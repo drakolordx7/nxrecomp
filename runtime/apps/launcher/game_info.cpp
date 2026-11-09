@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "game_info.h"
 
+#include "nxrt/strutil.h"
 #include "nxrt/game.h"
+#include "nx_formats.h"
 
 #include <filesystem>
 #include <fstream>
@@ -22,32 +24,11 @@ void set_err(std::wstring* err, const std::wstring& msg) {
 
 bool is_blank(char c) { return c == ' ' || c == '\t'; }
 
-std::string trim(const std::string& s) {
-    size_t b = 0, e = s.size();
-    while (b < e && (is_blank(s[b]) || s[b] == '\r')) ++b;
-    while (e > b && (is_blank(s[e - 1]) || s[e - 1] == '\r')) --e;
-    return s.substr(b, e - b);
-}
+using nxrt::str::trim;
+using nxrt::str::lower;
 
-std::string lower(std::string s) {
-    for (char& c : s) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
-    }
-    return s;
-}
 
-bool utf8_to_wide(const std::string& in, std::wstring* out) {
-    out->clear();
-    if (in.empty()) return true;
-    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, in.data(), static_cast<int>(in.size()), nullptr, 0);
-    if (n <= 0) return false;
-    out->resize(static_cast<size_t>(n));
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, in.data(), static_cast<int>(in.size()), out->data(), n) != n) {
-        out->clear();
-        return false;
-    }
-    return true;
-}
+bool utf8_to_wide(const std::string& in, std::wstring* out) { return nxrt::str::widen_strict(in, *out); }
 
 std::wstring brand(const char* utf8) {
     std::wstring w;
@@ -55,14 +36,7 @@ std::wstring brand(const char* utf8) {
     return w;
 }
 
-std::string wide_to_utf8(const std::wstring& in) {
-    if (in.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, in.data(), static_cast<int>(in.size()), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return {};
-    std::string out(static_cast<size_t>(n), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, in.data(), static_cast<int>(in.size()), out.data(), n, nullptr, nullptr);
-    return out;
-}
+using nxrt::str::narrow;
 
 // Value part of a "key = value" line. Either "quoted" (kept as is, may hold ';' and '#') or plain.
 // A ';' or '#' that is first or comes after a space or tab starts a comment.
@@ -129,30 +103,11 @@ bool has_entries(const fs::path& dir) {
     return !ec && it != fs::directory_iterator();
 }
 
-// setup_state.tsv as the setup tool writes it (pipeline.cpp, State): first line "nx_setup_state\t1" (the first Metroid release wrote "mprs_setup_state\t1", still read), then
-// "meta\tkey\tvalue" lines; the last "meta\tfinished" line wins. Anything else in the file is ignored.
 bool setup_finished_in(const fs::path& state_file) {
     std::ifstream f(state_file, std::ios::binary);
     if (!f) return false;
-    std::string line;
-    if (!std::getline(f, line)) return false;
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line != "nx_setup_state\t1" && line != "mprs_setup_state\t1") return false;
-
-    bool finished = false;
-    while (std::getline(f, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        std::vector<std::string> fields;
-        size_t p = 0;
-        for (;;) {
-            const size_t q = line.find('\t', p);
-            fields.push_back(line.substr(p, q == std::string::npos ? q : q - p));
-            if (q == std::string::npos) break;
-            p = q + 1;
-        }
-        if (fields.size() >= 3 && fields[0] == "meta" && fields[1] == "finished") finished = (fields[2] == "1");
-    }
-    return finished;
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return nxfmt::setup_state_finished(text);
 }
 
 }  // namespace
@@ -178,7 +133,7 @@ GameStatus check_game_dir(const std::wstring& dir) {
     s.romfs = has_entries(root / L"romfs");
     s.textures = has_entries(root / L"bc7_cache");
     s.shaders = has_entries(root / L"shader_cache");
-    s.setup_finished = setup_finished_in(root / L"setup_state.tsv");
+    s.setup_finished = setup_finished_in(root / nxfmt::kSetupStateName);
     return s;
 }
 
@@ -209,7 +164,7 @@ std::wstring shader_pack_name() { return brand(nxrt::game::info().shader_pack); 
 std::wstring launcher_config_path() { return (fs::path(launcher_exe_dir()) / brand(nxrt::game::info().launcher_ini)).wstring(); }
 
 std::string format_launcher_config(const LauncherConfig& cfg) {
-    std::string v = wide_to_utf8(cfg.game_dir);
+    std::string v = narrow(cfg.game_dir);
     // Quote the value when a plain read would cut it: spaces at the ends, or a ';' or '#' (a comment marker after a space).
     // Windows paths never hold a double quote, so quoting is always safe.
     bool quote = false;
@@ -347,85 +302,7 @@ bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* er
 
 // ---- Shader preparation ----------------------------------------------------------------------------------------------
 
-namespace {
-
-bool parse_count(const std::string& s, unsigned long long* out) {
-    if (s.empty() || s.size() > 18) return false;
-    unsigned long long v = 0;
-    for (char c : s) {
-        if (c < '0' || c > '9') return false;
-        v = v * 10 + static_cast<unsigned long long>(c - '0');
-    }
-    *out = v;
-    return true;
-}
-
-}  // namespace
-
-PrepareLine parse_prepare_line(const std::string& raw) {
-    PrepareLine out;
-    const std::string line = trim(raw);
-    static const std::string kPrefix = "prepare:";
-    if (line.compare(0, kPrefix.size(), kPrefix) != 0) {
-        out.text = line;
-        return out;
-    }
-    const std::string rest = trim(line.substr(kPrefix.size()));
-    std::vector<std::string> words;
-    {
-        std::string cur;
-        for (char c : rest) {
-            if (c == ' ' || c == '\t') {
-                if (!cur.empty()) words.push_back(cur);
-                cur.clear();
-            } else {
-                cur.push_back(c);
-            }
-        }
-        if (!cur.empty()) words.push_back(cur);
-    }
-    if (words.empty()) {
-        out.text = line;
-        return out;
-    }
-    const std::string& w0 = words[0];
-    if (w0 == "ready") {
-        out.kind = PrepareKind::ready;
-        out.text = rest;
-        return out;
-    }
-    if (w0 == "error") {
-        out.kind = PrepareKind::error;
-        out.text = trim(rest.substr(w0.size()));
-        return out;
-    }
-    if (w0 == "done") {
-        out.kind = PrepareKind::done;
-        out.text = rest;
-        for (size_t i = 1; i < words.size(); ++i) {
-            const std::string& w = words[i];
-            if (w.compare(0, 7, "failed=") == 0) {
-                unsigned long long n = 0;
-                if (parse_count(w.substr(7), &n)) out.failed = static_cast<long long>(n);
-            } else if (w == "cancelled") {
-                out.cancelled = true;
-            }
-        }
-        return out;
-    }
-    if (words.size() == 2) {
-        unsigned long long d = 0, t = 0;
-        if (parse_count(words[0], &d) && parse_count(words[1], &t)) {
-            out.kind = PrepareKind::progress;
-            out.done = d;
-            out.total = t;
-            out.text = rest;
-            return out;
-        }
-    }
-    out.text = line;
-    return out;
-}
+PrepareLine parse_prepare_line(const std::string& raw) { return nxfmt::prepare_line_parse(raw); }
 
 bool shader_prepare_available(const std::wstring& game_dir) {
     if (game_dir.empty()) return false;
@@ -434,13 +311,10 @@ bool shader_prepare_available(const std::wstring& game_dir) {
 
 bool shader_prepare_done(const std::wstring& game_dir) {
     if (game_dir.empty()) return false;
-    std::ifstream f(fs::path(game_dir) / L"shader_cache" / L"prepare.state", std::ios::binary);
+    std::ifstream f(fs::path(game_dir) / L"shader_cache" / nxfmt::kPrepareStateName, std::ios::binary);
     if (!f) return false;
-    std::string line;
-    while (std::getline(f, line)) {
-        if (trim(line) == "complete: 1") return true;
-    }
-    return false;
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    return nxfmt::prepare_state_decode(text).complete;
 }
 
 PrepareRun::~PrepareRun() {

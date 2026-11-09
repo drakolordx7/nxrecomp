@@ -17,7 +17,7 @@
 namespace nxrt {
 namespace {
 
-constexpr uint32_t kInvalidCombination = 0xE801;   // kernel result 116 (InvalidCombination); not in kernel.h yet
+using kernel::kInvalidCombination;
 
 // Values Switchbrew does not document (it gives names only) are nxrt choices; the comment on each says where a value comes from.
 constexpr uint64_t kCoreMaskApp = 0x7;                          // nxrt: cores 0..2, the three application cores
@@ -90,9 +90,7 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
         case 15: out = mem::kStackSize; return kernel::kOk;                   // StackRegionSize
         case 16: out = static_cast<uint64_t>(config_get_int("process", "system_resource_size", 0)); return kernel::kOk;
         case 17: out = 0; return kernel::kOk;                                 // SystemResourceSizeUsed
-        case 18:                                                              // ProgramId: set by the game layer ([process] program_id)
-            out = services::program_id_now();   // [process] program_id, else [title] program_id (default: the title the profile describes)
-            return kernel::kOk;
+        case 18: out = services::program_id_now(); return kernel::kOk;       // ProgramId
         case 20:                                                              // UserExceptionContextAddress
             out = user_exception_context();
             return out ? kernel::kOk : kernel::kOutOfMemory;
