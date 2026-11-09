@@ -34,6 +34,11 @@ void present(Window* window, int index);
 // ---- resources (called from destructors and finalizers, any thread) --------------------------------------------------------
 void destroy_texture_gpu(TexGpu* t);          // the Vulkan image of a finalized texture; deferred until the GPU is done with it
 void destroy_pool_gpu(PoolGpu* p);
+// The game finalized t (or initialized its NVNtexture again): its image goes now, deferred until the GPU is done with it, although a texture
+// pool entry may keep the object alive until the game registers another texture at that id. The console's pool entry is a descriptor that
+// does not own the texture; ACNH finalizes ~300 textures a second and leaves most of them in its 8192-entry pool. Should the object be used
+// again, the image is made again from its storage. Queued behind the submissions already made (they are replayed in order).
+void release_texture_gpu(Texture* t);
 // A pool was created: import it into Vulkan on a background thread so the first draw that uses it does not wait for the driver (the import
 // pins the pages; it takes 10 to 80 ms). A no-op without a back end and for virtual pools.
 void prefetch_pool(MemoryPool* p);

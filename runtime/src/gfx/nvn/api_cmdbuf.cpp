@@ -48,7 +48,7 @@ void nvnCommandBufferFinalize(NVNcommandBuffer* c) {
     if (!cb) return;
     {
         std::lock_guard<std::mutex> lk(cb->lock);
-        for (uint64_t h : cb->handles) handle_release(h);
+        for (uint64_t h : cb->handles) handle_release_unbacked(h);   // lists in command memory outlive the buffer (nvn_cmd_handles.cpp)
         cb->handles.clear();
         command_buffer_gone(cb);
     }

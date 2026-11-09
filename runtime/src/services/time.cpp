@@ -292,6 +292,44 @@ State& state_locked() {
     return s;
 }
 
+// nn::time::sf::ClockSnapshot (0xD0 bytes): Ryubing Time/Clock/Types/ClockSnapshot.cs.
+struct ClockSnapshot {
+    SysCtx user_ctx, network_ctx;                 // 0x00, 0x20
+    int64_t user_time, network_time;              // 0x40, 0x48
+    tz::CalendarTime user_cal, network_cal;       // 0x50, 0x58
+    tz::CalendarAdditionalInfo user_info, network_info;   // 0x60, 0x78
+    int64_t steady_time_point;                    // 0x90: SteadyClockTimePoint {time_point, clock source}
+    uint8_t steady_source[16];
+    char location[0x24];                          // 0xA8
+    uint8_t auto_correction;                      // 0xCC
+    uint8_t type;                                 // 0xCD
+    uint16_t unknown;
+};
+static_assert(sizeof(ClockSnapshot) == 0xD0);
+
+// Ryubing IStaticServiceForPsc.GetClockSnapshotFromSystemClockContextInternal: the steady time point now, both contexts, the times
+// they give at that point (a context from another clock source gives none: the user one fails, the network one is 0) and the
+// calendar times of both under the device rule. Called with mu() held.
+uint32_t make_snapshot(State& st, const SysCtx& user, const SysCtx& network, uint8_t type, ClockSnapshot* out) {
+    ClockSnapshot cs{};
+    const int64_t steady = steady_secs(st);
+    cs.auto_correction = st.auto_correction ? 1 : 0;
+    cs.user_ctx = user;
+    cs.network_ctx = network;
+    cs.steady_time_point = steady;
+    std::memcpy(cs.steady_source, kSourceId, 16);
+    const std::string name = device_name(st);
+    std::memcpy(cs.location, name.data(), name.size() < sizeof cs.location - 1 ? name.size() : sizeof cs.location - 1);
+    if (std::memcmp(user.source, kSourceId, 16) != 0) return res(116, 102);   // ClockSnapshot.GetCurrentTime: TimeMismatch
+    cs.user_time = user.offset + steady;
+    if (!tz::to_calendar(device_rule(st), cs.user_time, &cs.user_cal, &cs.user_info)) return err_tz_conversion();
+    cs.network_time = std::memcmp(network.source, kSourceId, 16) == 0 ? network.offset + steady : 0;
+    if (!tz::to_calendar(device_rule(st), cs.network_time, &cs.network_cal, &cs.network_info)) return err_tz_conversion();
+    cs.type = type;
+    *out = cs;
+    return 0;
+}
+
 void push_uuid(ipc::Response& rsp) { rsp.out.insert(rsp.out.end(), kSourceId, kSourceId + 16); }
 
 // ---- service objects ----------------------------------------------------------------------------------------------------------
@@ -542,6 +580,30 @@ std::shared_ptr<ipc::Service> make_static(const char* name, uint32_t perm) {
             State& st = state_locked();
             st.internal_ns = v;
             write_shm(st);
+            return 0;
+        });
+        // GetClockSnapshot(u8 type) -> buffer<ClockSnapshot, 0x1a>: from the user and network clock contexts now.
+        s.add_cmd(400, "GetClockSnapshot", [](ipc::Request& req, ipc::Response&) -> uint32_t {
+            const uint8_t type = req.arg<uint8_t>(0);
+            std::lock_guard<std::mutex> lk(mu());
+            State& st = state_locked();
+            const Now n = now_of(st);
+            ClockSnapshot cs{};
+            const uint32_t r = make_snapshot(st, sys_ctx(n, st.local_delta), sys_ctx(n, st.network_delta), type, &cs);
+            if (r) return r;
+            buf_write(req.out_buf(0), &cs, sizeof cs);
+            return 0;
+        });
+        // GetClockSnapshotFromSystemClockContext(u8 type, SystemClockContext user, SystemClockContext network) -> buffer 0x1a.
+        // The u8 comes first and the contexts are 8-byte aligned after it (Ryubing reads type, skips 7 bytes, then the contexts).
+        s.add_cmd(401, "GetClockSnapshotFromSystemClockContext", [](ipc::Request& req, ipc::Response&) -> uint32_t {
+            const uint8_t type = req.arg<uint8_t>(0);
+            const SysCtx user = req.arg<SysCtx>(8), network = req.arg<SysCtx>(8 + sizeof(SysCtx));
+            std::lock_guard<std::mutex> lk(mu());
+            ClockSnapshot cs{};
+            const uint32_t r = make_snapshot(state_locked(), user, network, type, &cs);
+            if (r) return r;
+            buf_write(req.out_buf(0), &cs, sizeof cs);
             return 0;
         });
         s.add_cmd(100, "IsStandardUserSystemClockAutomaticCorrectionEnabled", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {

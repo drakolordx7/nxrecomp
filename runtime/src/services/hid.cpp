@@ -88,16 +88,22 @@ void set_sampling(MouseState& v, uint64_t n) { v.sampling = n; }
 void set_sampling(KeyboardState& v, uint64_t n) { v.sampling = n; }
 void set_sampling(DebugPadState& v, uint64_t n) { v.sampling = n; }
 
-// Appends one entry: sampling number = the previous one + 1 (the first entry is 1), the header index moves to it, and count grows
-// up to kRingMaxCount (Ryujinx RingLifo.Write).
+// Appends one entry: the state's sampling number = the previous one + 1 (the first entry is 1), the header index moves to it, and
+// count grows up to kRingMaxCount (Ryujinx RingLifo.Write). The entry's own number (AtomicStorage) is a sequence lock: odd while the
+// state is being written, then twice the state's number. The SDK 20 reader (nn::hid::detail::GetNpadStates, sdk+0x5087a0) retries
+// while it is odd and while it changed across the copy, and checks that neighbouring states' numbers differ by 1; older readers only
+// compare it before and after the copy (libnx _hidGetStates), so the doubled value suits both.
 template <class T>
 void ring_push(Ring<T>* r, T value) {
-    const uint64_t n = r->entries[r->index].sampling + 1;
+    const uint64_t n = r->entries[r->index].sampling / 2 + 1;
     set_sampling(value, n);
     const uint64_t next = (r->index + 1) % kRingEntries;
-    r->entries[next].sampling = n;
+    std::atomic_ref<uint64_t> seq(r->entries[next].sampling);
+    seq.store(2 * n - 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
     r->entries[next].state = value;
-    r->index = next;
+    seq.store(2 * n, std::memory_order_release);
+    std::atomic_ref<uint64_t>(r->index).store(next, std::memory_order_release);
     if (r->count < kRingMaxCount) r->count++;
 }
 

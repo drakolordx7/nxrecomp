@@ -837,6 +837,21 @@ NXTEST(flush_marks_dirty_and_views_and_compare) {
     build(a, bld, pool, NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_RGBA8, 16384);
     CHECK_EQ(a.init(&other, &bld), 1);
     CHECK_EQ(a.compare(&t1, &other), 0);   // different storage
+
+    // Same storage, different channel mapping or format: different (layout captures are rebuilt this way)
+    auto bswz = abi::proc<PFNNVNTEXTUREBUILDERSETSWIZZLEPROC>("nvnTextureBuilderSetSwizzle");
+    NVNtexture swz, fmt;
+    std::memset(&swz, 0, sizeof swz);
+    std::memset(&fmt, 0, sizeof fmt);
+    build(a, bld, pool, NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_RGBA8);
+    bswz(&bld, NVN_TEXTURE_SWIZZLE_ONE, NVN_TEXTURE_SWIZZLE_ONE, NVN_TEXTURE_SWIZZLE_ONE, NVN_TEXTURE_SWIZZLE_R);
+    CHECK_EQ(a.init(&swz, &bld), 1);
+    CHECK_EQ(a.compare(&t1, &swz), 0);
+    build(a, bld, pool, NVN_TEXTURE_TARGET_2D, 32, 32, 1, 1, NVN_FORMAT_RGBA8UI);
+    CHECK_EQ(a.init(&fmt, &bld), 1);
+    CHECK_EQ(a.compare(&t1, &fmt), 0);
+    a.finalize(&swz);
+    a.finalize(&fmt);
     CHECK_EQ(static_cast<long long>(a.pool_offset(&other)), 16384ll);
 
     // Null out-pointers and null views are allowed.

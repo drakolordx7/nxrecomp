@@ -26,6 +26,8 @@
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
+#include "nxrt/write_watch.h"
 #include "vk_gauges.h"
 #include "nvn_enums.h"
 #include "nvn_format.h"
@@ -669,8 +671,56 @@ VkSampler create_sampler(const SamplerInfo& s) {
 
 }  // namespace
 
+namespace {
+// ---- CPU writes without a flush --------------------------------------------------------------------------------------------
+// A texture in a CPU_UNCACHED pool is coherent on the console: the game writes it and the GPU sees the bytes without FlushMappedRange.
+// ACNH's text renderer rasterizes the glyphs it needs into such a texture (an R8 2048x4096 glyph cache) as new characters come up; an
+// image uploaded once kept the old glyph set and every later new glyph drew as nothing. The storage pages of an uploaded coherent texture
+// are therefore armed in one write-watch region over the heap (nxrt/write_watch.h), before the storage is read for the upload. At the start
+// of every submission the pages the CPU wrote since are handed to textures_cpu_wrote, as a flush of them would be: the textures there are
+// uploaded again before their next use (and armed again). A texture the GPU renders to is not armed. [nvn] tex_write_watch = false: off.
+mem::ww::Region* g_tex_ww = nullptr;
+bool g_tex_ww_tried = false;
+std::vector<uint64_t> g_tex_ww_pages;
+
+mem::ww::Region* tex_ww() {
+    if (!g_tex_ww_tried) {
+        g_tex_ww_tried = true;
+        if (nxrt::config_get_bool("nvn", "tex_write_watch", true) && mem::heap_exists())
+            g_tex_ww = mem::ww::region_create(mem::kHeapBase, mem::heap_reserved());
+    }
+    return g_tex_ww;
+}
+
+void tex_ww_arm(const Texture& t, const TexGpu& g) {
+    if (!t.cpu_coherent || !t.mem || !t.storage_size || g.gpu_written) return;
+    mem::ww::Region* r = tex_ww();
+    if (!r) return;
+    const uint64_t a = reinterpret_cast<uint64_t>(t.mem), base = mem::ww::region_base(r);
+    if (a < base) return;
+    const uint64_t first = (a - base) >> 12, last = (a + t.storage_size - 1 - base) >> 12;
+    mem::ww::arm(r, first, last - first + 1);   // false: a page it cannot protect (another view, a file read in progress): not watched
+}
+
+}  // namespace
+
 // ---- texture interface (gpu::*, internal.h) -----------------------------------------------------------------------------
 TexGpu* tex_gpu(Texture* t) { return tex_or_null(t); }
+
+void tex_poll_cpu_writes() {
+    if (!g_tex_ww) return;
+    g_tex_ww_pages.clear();
+    mem::ww::take_written(g_tex_ww, g_tex_ww_pages);
+    if (g_tex_ww_pages.empty()) return;
+    std::sort(g_tex_ww_pages.begin(), g_tex_ww_pages.end());
+    const uint64_t base = mem::ww::region_base(g_tex_ww);
+    for (size_t i = 0; i < g_tex_ww_pages.size();) {
+        size_t j = i + 1;
+        while (j < g_tex_ww_pages.size() && g_tex_ww_pages[j] <= g_tex_ww_pages[j - 1] + 1) ++j;   // a run of written pages: one call
+        textures_cpu_wrote(reinterpret_cast<const void*>(base + (g_tex_ww_pages[i] << 12)), (g_tex_ww_pages[j - 1] - g_tex_ww_pages[i] + 1) << 12);
+        i = j;
+    }
+}
 
 void tex_ensure_current(Texture* t, Frame& f) {
     NXFT_MIN("tex.ensure", 30000);
@@ -687,6 +737,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
         return;
     }
     t->cpu_dirty.exchange(false);
+    tex_ww_arm(*t, *g);                          // before the storage is read: a write from now on makes it dirty again
     if (g->gpu_written) {
         static int logged = 0;
         if (logged++ < 20) NXLOG_W(kTag, "texture %u: the GPU wrote it, the game flushed memory it overlaps: its storage replaces the image content", t->id);

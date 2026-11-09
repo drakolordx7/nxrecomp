@@ -2,11 +2,13 @@
 // SVC table and dispatcher (see include/nxrt/svc.h). Dispatch pattern from SuperMarioWonderRecomp runtime/src/kernel.cpp (MIT).
 #include "nxrt/svc.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <vector>
 
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
@@ -148,6 +150,20 @@ std::string svc_summary() {
     for (auto& c : g_calls)
         if (c.load()) { total += c.load(); distinct++; }
     std::string s = "svc: " + std::to_string(total) + " calls, " + std::to_string(distinct) + " distinct, " + std::to_string(g_unknown_total.load()) + " unknown";
+    // The busiest three, so a guest spinning on one SVC shows which.
+    std::vector<std::pair<uint64_t, uint32_t>> top;
+    for (uint32_t n = 0; n < kSvcCount; n++)
+        if (const uint64_t k = g_calls[n].load()) top.emplace_back(k, n);
+    std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    if (!top.empty()) {
+        s += " (most:";
+        for (size_t i = 0; i < top.size() && i < 3; i++) {
+            char b[64];
+            snprintf(b, sizeof b, " %s x%llu", svc_name(top[i].second), static_cast<unsigned long long>(top[i].first));
+            s += b;
+        }
+        s += ")";
+    }
     std::lock_guard<std::mutex> lk(g_unk_lock);
     for (auto& kv : g_unknown) {
         char b[96];

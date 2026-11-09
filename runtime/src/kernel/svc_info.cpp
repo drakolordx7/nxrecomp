@@ -114,6 +114,12 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
             out = thread_cpu_ticks(handle == kernel::kPseudoCurrentThread ? GetCurrentThread() : static_cast<HANDLE>(t->host_handle));
             return kernel::kOk;
         }
+        case 28:                                                              // AliasRegionExtraSize (18.0.0+): sub 0
+            // The extra alias space a process gets when created with the 18.0.0 flag; nxrt's alias region has none (mesosphere
+            // returns the page table's extra size, 0 without the flag).
+            if (sub != 0) return kInvalidCombination;
+            out = 0;
+            return kernel::kOk;
         default:
             NXLOG_W("svc", "svcGetInfo: unknown type %u sub %llu", type, static_cast<unsigned long long>(sub));
             return kInvalidCombination;

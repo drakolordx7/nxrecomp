@@ -216,6 +216,7 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
     t->block_linear = L.block_linear;
     t->block_height_gobs = L.block_linear ? L.layout.levels[0].gob_blocks_y : 0;
     t->is_display = (info.flags & NVN_TEXTURE_FLAGS_DISPLAY) != 0;
+    t->cpu_coherent = t->mem && (pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_UNCACHED) && !(pool->flags & NVN_MEMORY_POOL_FLAGS_CPU_NO_ACCESS);
     t->levels = L.levels;
     t->layers = L.layers;
     t->id = next_texture_id(info.device);
@@ -226,6 +227,7 @@ NVNboolean nvnTextureInitialize(NVNtexture* texture, const NVNtextureBuilder* bu
         be::texture_registry_remove(old);
         be::texture_registry_remove_virtual(old);
         old->destroyed.store(true);
+        gpu::release_texture_gpu(old);
     }
     be::bind_guest(texture, t);                              // the guest object takes the one reference of t
     if (!was_live) g_textures.add(1);
@@ -242,6 +244,7 @@ void nvnTextureFinalize(NVNtexture* texture) {
     if (!t) return;
     be::tev(t, "finalize");
     t->destroyed.store(true);
+    gpu::release_texture_gpu(t);
     be::texture_registry_remove(t);
     be::texture_registry_remove_virtual(t);
     g_textures.sub(1);
@@ -429,13 +432,21 @@ int nvnTextureGetStorageSize(const NVNtexture* texture) {
     return t ? static_cast<int>(t->storage_size) : 0;
 }
 
-// Same host object, or the same storage address and size.
+// Same host object, or the same storage (address and size) with the same description and channel mapping. Layout libraries
+// (agl) rebuild a capture texture on the same storage with a new swizzle and replace its registered descriptor only when this
+// reports a difference; ignoring the swizzle kept the old mapping and drew those captures black (found by seedds/nxnative,
+// docs/reference/rendering.md).
 NVNboolean nvnTextureCompare(const NVNtexture* a, const NVNtexture* b) {
     Texture* x = tex_of(a);
     Texture* y = tex_of(b);
     if (!x || !y) return a == b ? 1 : 0;
     if (x == y) return 1;
-    return (x->mem && x->mem == y->mem && x->storage_size == y->storage_size) ? 1 : 0;
+    if (!x->mem || x->mem != y->mem || x->storage_size != y->storage_size) return 0;
+    const TextureBuilderInfo& p = x->b;
+    const TextureBuilderInfo& q = y->b;
+    return (p.format == q.format && p.target == q.target && p.width == q.width && p.height == q.height && p.depth == q.depth &&
+            p.levels == q.levels && p.samples == q.samples && p.depth_stencil_mode == q.depth_stencil_mode &&
+            std::equal(p.swizzle, p.swizzle + 4, q.swizzle)) ? 1 : 0;
 }
 
 uint64_t nvnTextureGetDebugID(const NVNtexture* texture) {

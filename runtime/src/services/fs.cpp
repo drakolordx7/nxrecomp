@@ -3,6 +3,7 @@
 //   * RomFS: OpenDataStorageByCurrentProcess returns an IStorage over a RomFS image synthesised from the loose game folder
 //     ([fs] romfs, default game/romfs; fs_romfs.h). The SDK parses the RomFS itself (nn::fs::MountRom), so the storage is byte addressed.
 //     OpenDataFileSystemByCurrentProcess serves the same folder as a read-only IFileSystem.
+//     Mods (fs_mods.h, docs/MODS.md): the mods folder next to the exe is merged over that folder, in both views, once at start-up.
 //   * Save data: account, device and cache saves live in folders under [fs] save_dir (default %APPDATA%\<game save_folder>\save, nxrt/game.h; MPRRecomp for Metroid Prime Remastered) with the journal
 //     semantics of fs_volume.h: writes are invisible to the committed state until IFileSystem::Commit.
 //   * SD card, game card, BIS: absent (the results of a console without them).
@@ -18,6 +19,7 @@
 #include <mutex>
 #include <sstream>
 
+#include "fs_mods.h"
 #include "fs_romfs.h"
 #include "fs_volume.h"
 #include "nxrt/config.h"
@@ -47,6 +49,8 @@ struct FsState {
     std::mutex mu;
     std::shared_ptr<fs::RomfsImage> rom;
     bool rom_failed = false;
+    std::shared_ptr<const fs::ModOverlay> mods;           // the loaded mods (null: none)
+    bool mods_loaded = false;
     std::map<std::string, std::weak_ptr<Volume>> saves;   // key -> open volume (one at a time per save)
     std::map<uint64_t, std::string> ids;                  // SaveDataId -> key, for the commands that name a save by id
 };
@@ -421,6 +425,16 @@ std::shared_ptr<Service> make_storage_rom(std::shared_ptr<fs::RomfsImage> img) {
     });
 }
 
+// The mods over the RomFS folder, loaded once on first use: the game's first RomFS open, after every game module has registered its
+// mod hook (fs_mods.h). Null when there are none. Caller holds st().mu.
+std::shared_ptr<const fs::ModOverlay> rom_mods_locked() {
+    if (!st().mods_loaded) {
+        st().mods = fs::load_mods(fs::mods_config_from_runtime(), romfs_dir());
+        st().mods_loaded = true;
+    }
+    return st().mods;
+}
+
 std::shared_ptr<fs::RomfsImage> rom_image() {
     std::lock_guard<std::mutex> lk(st().mu);
     if (st().rom) return st().rom;
@@ -428,14 +442,16 @@ std::shared_ptr<fs::RomfsImage> rom_image() {
     auto img = std::make_shared<fs::RomfsImage>();
     std::string err;
     const std::string dir = romfs_dir();
-    if (!img->build(dir, &err)) {
+    const std::shared_ptr<const fs::ModOverlay> mods = rom_mods_locked();
+    if (!img->build(dir, &err, mods.get())) {
         NXLOG_E("fs", "RomFS folder '%s' cannot be served: %s (set [fs] romfs)", dir.c_str(), err.c_str());
         st().rom_failed = true;
         return nullptr;
     }
     const fs::RomfsImage::Stats s = img->stats();
-    NXLOG_I("fs", "RomFS image from %s: %u files, %u directories, %llu bytes of data, image size %llu", dir.c_str(), s.files, s.dirs,
-            static_cast<unsigned long long>(s.data_bytes), static_cast<unsigned long long>(img->size()));
+    NXLOG_I("fs", "RomFS image from %s: %u files, %u directories, %llu bytes of data, image size %llu%s", dir.c_str(), s.files, s.dirs,
+            static_cast<unsigned long long>(s.data_bytes), static_cast<unsigned long long>(img->size()),
+            mods ? (", " + std::to_string(mods->file_count()) + " files from mods").c_str() : "");
     st().rom = img;
     return img;
 }
@@ -541,6 +557,22 @@ std::shared_ptr<Service> make_info_reader() {
 uint32_t open_save(uint8_t space, const SaveAttr& a, bool read_only, std::shared_ptr<Service>* out) {
     if (space == 2 || space == 4) return fs::rc::kPortSdCardNoDevice;
     const std::string key = save_key(a);
+    // The running title's device save data (type 3) exists before it starts on the console: the system creates it at launch from
+    // control.nacp's DeviceSaveDataSize (Ryujinx: EnsureApplicationSaveData when the application is loaded). Here it is made on the
+    // first open, when the title profile gives a device save size.
+    const TitleProfile& p = profile();
+    if (a.type == 3 && a.application_id == p.program_id && p.device_save_size > 0 && !save_exists(key)) {
+        SaveAttr d;
+        d.application_id = p.program_id;
+        d.type = 3;
+        std::memcpy(d.raw, &d.application_id, 8);
+        d.raw[32] = 3;
+        create_save(d, static_cast<int64_t>(p.device_save_size), static_cast<int64_t>(p.device_save_journal), p.save_data_owner_id);
+    }
+    // Cache storage (type 5): the console makes it from control.nacp's CacheStorageSize (Ryujinx EnsureApplicationCacheStorage),
+    // and titles that only mount it (a game: cache/0 at boot, an abort on TargetNotFound) never create it themselves.
+    if (a.type == 5 && p.cache_save_size > 0 && !save_exists(key))
+        create_save(a, static_cast<int64_t>(p.cache_save_size), static_cast<int64_t>(p.cache_save_journal), p.save_data_owner_id);
     if (!save_exists(key)) {
         NXLOG_I("fs", "OpenSaveDataFileSystem %s: no such save data", key.c_str());
         return fs::rc::kTargetNotFound;
@@ -558,6 +590,10 @@ std::shared_ptr<Service> make_fsp() {
     s->add_cmd(2, "OpenDataFileSystemByCurrentProcess", [](Request&, Response& rsp) -> uint32_t {
         auto v = std::make_shared<Volume>(romfs_dir(), false, true, 0);
         if (!v->ok()) return fs::rc::kTargetNotFound;
+        {
+            std::lock_guard<std::mutex> lk(st().mu);
+            v->set_overlay(rom_mods_locked());
+        }
         rsp.push_object(make_filesystem(v, "rom:"));
         return 0;
     });
@@ -759,6 +795,8 @@ void fs_reset() {
     std::lock_guard<std::mutex> lk(st().mu);
     st().rom.reset();
     st().rom_failed = false;
+    st().mods.reset();
+    st().mods_loaded = false;
     st().saves.clear();
     st().ids.clear();
 }

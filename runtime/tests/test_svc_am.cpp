@@ -340,6 +340,123 @@ NXTEST(am_library_applet_refused) {
     CHECK_EQ(creator.call(3, nxsvc::Args().u32(0x10).u32(1).u64(0)).result, 0x4680u);
 }
 
+namespace {
+
+// CreateStorage(size) on the creator, `n` bytes of `data` written at `off`. Returns the storage handle, released for a move.
+uint32_t make_storage(nxsvc::Session& creator, int64_t size, int64_t off = 0, const void* data = nullptr, size_t n = 0) {
+    nxsvc::Session storage = creator.sub(creator.call(10, nxsvc::Args().i64(size)));
+    if (!storage.valid()) return 0;
+    if (data && n) {
+        nxsvc::Session acc = storage.sub(storage.call(0));
+        if (acc.call(10, nxsvc::Args().i64(off).buf_a(data, n)).result != 0) return 0;
+    }
+    return storage.release();
+}
+
+// The software keyboard's in data: CommonArguments (0x20 bytes, library_version at +8 = 0x8000D, 8.0.0+), then the 0x4C8-byte
+// config of that version with max_text_length (+0x3AC) and use_text_check (+0x3D0), then a 0x1000-byte work buffer.
+// Offsets and sizes from Eden applet_software_keyboard_types.h (SwkbdConfigCommon 0x3D4 + SwkbdConfigNew).
+nxsvc::Session open_swkbd(nxsvc::Session& creator, uint32_t max_len, bool text_check) {
+    nxsvc::Reply cr = creator.call(0, nxsvc::Args().u32(0x11).u32(0));   // LibraryAppletSwkbd, AllForeground
+    if (!cr.ok()) return nxsvc::Session();
+    nxsvc::Session applet = creator.sub(cr);
+    const uint32_t version = 0x8000D;
+    uint8_t cfg[0x4C8] = {};
+    std::memcpy(cfg + 0x3AC, &max_len, 4);
+    cfg[0x3D0] = text_check ? 1 : 0;
+    const uint32_t hs[3] = {make_storage(creator, 0x20, 8, &version, 4), make_storage(creator, sizeof cfg, 0, cfg, sizeof cfg),
+                            make_storage(creator, 0x1000)};
+    for (uint32_t h : hs)
+        if (!h || applet.call(100, nxsvc::Args().hmove(h)).result != 0) return nxsvc::Session();
+    return applet;
+}
+
+// Pops one storage (PopOutData 101 / PopInteractiveOutData 104) into `buf`; returns its size, or -1.
+int64_t pop_into(nxsvc::Session& applet, uint32_t cmd, uint8_t* buf, size_t n) {
+    nxsvc::Reply r = applet.call(cmd);
+    if (!r.ok() || r.move.size() != 1) return -1;
+    nxsvc::Session st = applet.sub(r);
+    nxsvc::Session acc = st.sub(st.call(0));
+    const int64_t size = acc.call(0).get<int64_t>(0);
+    if (acc.call(11, nxsvc::Args().i64(0).buf_b(buf, n)).result != 0) return -1;
+    return size;
+}
+
+}  // namespace
+
+NXTEST(am_swkbd_normal_keyboard) {
+    nxsvc::Env env;
+    config_clear();
+    config_set("applet", "swkbd_text", "Hello World");
+    nxsvc::Session proxy = open_proxy();
+    REQUIRE(proxy.valid());
+    nxsvc::Session creator = proxy.sub(proxy.call(11));
+    REQUIRE(creator.valid());
+    nxsvc::Session applet = open_swkbd(creator, 5, false);
+    REQUIRE(applet.valid());
+
+    nxsvc::Reply ev_r = applet.call(0);   // GetAppletStateChangedEvent
+    REQUIRE(ev_r.copy.size() == 1);
+    const uint32_t ev = ev_r.copy[0];
+    CHECK(!signalled(ev));
+    CHECK_EQ(applet.call(1).get<uint8_t>(0), 0u);   // IsCompleted: not yet
+    CHECK_EQ(applet.call(101).result, 0x480u);      // PopOutData before Start: ResultNoDataInChannel, 128-2
+
+    CHECK_EQ(applet.call(10).result, 0u);           // Start
+    CHECK(signalled(ev));
+    CHECK_EQ(applet.call(1).get<uint8_t>(0), 1u);
+    CHECK_EQ(applet.call(30).result, 0u);           // GetResult
+
+    // Output: SwkbdResult Ok (0), then the text in UTF-16LE cut to max_text_length 5, then zeros; 0x7D8 bytes in all.
+    uint8_t out[0x7D8] = {};
+    std::memset(out, 0xEE, sizeof out);
+    CHECK_EQ(pop_into(applet, 101, out, sizeof out), 0x7D8ll);
+    const uint8_t want[4 + 12] = {0, 0, 0, 0, 'H', 0, 'e', 0, 'l', 0, 'l', 0, 'o', 0, 0, 0};
+    CHECK(std::memcmp(out, want, sizeof want) == 0);
+    CHECK_EQ(out[0x7D7], 0u);
+    CHECK_EQ(applet.call(101).result, 0x480u);      // drained
+
+    // Other applets and the inline keyboard (PartialForeground, mode 1) are still refused: AppletLaunchFailed 0x4680.
+    CHECK_EQ(creator.call(0, nxsvc::Args().u32(0x11).u32(1)).result, 0x4680u);
+    kernel::handle_close(ev);
+    clear_config();
+}
+
+NXTEST(am_swkbd_text_check) {
+    nxsvc::Env env;
+    config_clear();
+    nxsvc::Session proxy = open_proxy();
+    REQUIRE(proxy.valid());
+    nxsvc::Session creator = proxy.sub(proxy.call(11));
+    REQUIRE(creator.valid());
+    nxsvc::Session applet = open_swkbd(creator, 12, true);
+    REQUIRE(applet.valid());
+    nxsvc::Reply ie = applet.call(106);   // GetPopInteractiveOutDataEvent
+    REQUIRE(ie.copy.size() == 1);
+    CHECK_EQ(applet.call(10).result, 0u);
+    CHECK(signalled(ie.copy[0]));
+    CHECK_EQ(applet.call(1).get<uint8_t>(0), 0u);   // waiting for the application's verdict
+
+    // Interactive out: u64 byte size with the NUL ("Player" = 7 UTF-16 units = 14), then the text. 8 + 0x7D4 bytes.
+    uint8_t chk[8 + 0x7D4] = {};
+    CHECK_EQ(pop_into(applet, 104, chk, sizeof chk), static_cast<int64_t>(sizeof chk));
+    uint64_t size = 0;
+    std::memcpy(&size, chk, 8);
+    CHECK_EQ(size, 14ull);
+    CHECK(chk[8] == 'P' && chk[9] == 0 && chk[18] == 'r');
+    CHECK(!signalled(ie.copy[0]));
+
+    // The application answers SwkbdTextCheck {Success 0, message}: the keyboard ends with the text.
+    const uint32_t h = make_storage(creator, 0x7D8);
+    REQUIRE(h != 0);
+    CHECK_EQ(applet.call(103, nxsvc::Args().hmove(h)).result, 0u);
+    CHECK_EQ(applet.call(1).get<uint8_t>(0), 1u);
+    uint8_t out[0x7D8] = {};
+    CHECK_EQ(pop_into(applet, 101, out, sizeof out), 0x7D8ll);
+    CHECK(out[0] == 0 && out[4] == 'P' && out[14] == 'r' && out[16] == 0);
+    kernel::handle_close(ie.copy[0]);
+}
+
 NXTEST(am_desired_language) {
     nxsvc::Env env;
     clear_config();

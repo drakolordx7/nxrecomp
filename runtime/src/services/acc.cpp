@@ -20,10 +20,12 @@
 // (0x407C), 124-100 ResultUserNotExist (0xC87C). Module 110 (nifm) 300 comes from ScarletNX's comment; Switchbrew's page does not
 // list it (checked), so that code is unconfirmed.
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <vector>
 
+#include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
 #include "nxrt/services_api.h"
@@ -120,7 +122,13 @@ std::shared_ptr<ipc::Service> make_profile(const Uid& u) {
     });
 }
 
-// IAsyncContext: an operation that needs the network. It is done at once and failed, as nifm fails with no network (ScarletNX).
+// [acc] network_account (default false): the user has a Nintendo network service account. The id token request then succeeds and
+// LoadIdTokenCache hands out a stand-in token, for titles that need it before they use their own servers (a game starts its socket
+// manager only after the token is loaded). The token is not a valid Nintendo token: only a local server will take it.
+bool network_account() { return config_get_bool("acc", "network_account", false); }
+
+// IAsyncContext: an operation that needs the network. It is done at once and failed, as nifm fails with no network (ScarletNX); with
+// [acc] network_account it is done at once and succeeds.
 std::shared_ptr<ipc::Service> make_async_context() {
     auto done = std::make_shared<ServiceEvent>(true);
     return make_iface("IAsyncContext", [done](ipc::Service& s) {
@@ -133,7 +141,7 @@ std::shared_ptr<ipc::Service> make_async_context() {
             rsp.push<uint8_t>(1);
             return 0;
         });
-        s.add_cmd(3, "GetResult", [](ipc::Request&, ipc::Response&) -> uint32_t { return res(110, 300); });
+        s.add_cmd(3, "GetResult", [](ipc::Request&, ipc::Response&) -> uint32_t { return network_account() ? 0 : res(110, 300); });
     });
 }
 
@@ -149,6 +157,20 @@ std::shared_ptr<ipc::Service> make_manager(const Uid& u) {
         });
         s.add_cmd(2, "EnsureIdTokenCacheAsync", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
             rsp.push_object(make_async_context());
+            return 0;
+        });
+        // LoadIdTokenCache (only with [acc] network_account): a stand-in token as text in the output buffer, its length as a u32 (Ryujinx
+        // IManagerForApplication layout). Without the option the command stays unhandled, as before.
+        if (network_account()) s.add_cmd(3, "LoadIdTokenCache", [u](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            char tok[160];
+            const int n = std::snprintf(tok, sizeof tok, "eyJhbGciOiJub25lIn0.eyJzdWIiOiIlMDE2bGx4In0.%016llx",
+                                        static_cast<unsigned long long>(u.hi ^ u.lo));
+            const ipc::Buffer out = req.out_buf(0);
+            const uint32_t len = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(n), out.size));
+            // Copy the terminating NUL too when it fits: titles read the buffer as a C string (a game sent bytes past the token).
+            const uint64_t copy = std::min<uint64_t>(static_cast<uint64_t>(n) + 1, out.size);
+            if (out.addr && copy) std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(out.addr)), tok, copy);
+            rsp.push<uint32_t>(len);
             return 0;
         });
     });
@@ -222,13 +244,14 @@ uint32_t get_baas_manager(ipc::Request& req, ipc::Response& rsp) {
 
 void setup_app(ipc::Service& s) {
     add_shared(s, false);
-    // Accepted and ignored: the application's init call (InitializeApplicationInfo / V0 take the pid, Switchbrew).
+    // Accepted and ignored: the application's init call (InitializeApplicationInfo / V0 / V2 take the pid, Switchbrew).
     auto accept = [](ipc::Request&, ipc::Response&) -> uint32_t {
         NXLOG_D("acc", "InitializeApplicationInfo: accepted, no state kept");
         return 0;
     };
     s.add_cmd(100, "InitializeApplicationInfoV0", accept);
     s.add_cmd(140, "InitializeApplicationInfo", accept);
+    s.add_cmd(160, "InitializeApplicationInfoV2", accept);   // newer SDKs' init call (Switchbrew: same pid input)
     s.add_cmd(101, "GetBaasAccountManagerForApplication", get_baas_manager);
     s.add_cmd(130, "LoadOpenContext", get_baas_manager);
     s.add_cmd(131, "ListOpenContextStoredUsers", [](ipc::Request& req, ipc::Response&) -> uint32_t {

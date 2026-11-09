@@ -223,14 +223,16 @@ NXTEST(set_permission_errors) {
     teardown();
 }
 
-NXTEST(set_memory_attribute_uncached_only) {
+NXTEST(set_memory_attribute_mask_checks) {
     setup();
     CHECK_EQ(svc(0x01, 0, 2 * kMiB).rc, 0u);
     const uint64_t base = mem::kHeapBase;
     CHECK_EQ(svc(0x03, base, kPg, 8, 8).rc, 0u);
     CHECK_EQ(svc(0x03, base, kPg, 8, 0).rc, 0u);
-    CHECK_EQ(svc(0x03, base, kPg, 1, 0).rc, kRcD801);
-    CHECK_EQ(svc(0x03, base, kPg, 8, 1).rc, kRcD801);
+    CHECK_EQ(svc(0x03, base, kPg, 1, 0).rc, 0xE801u);      // unsupported bit: InvalidCombination (mesosphere)
+    CHECK_EQ(svc(0x03, base, kPg, 8, 1).rc, 0xE801u);      // value outside the mask
+    CHECK_EQ(svc(0x03, base, kPg, 16, 0).rc, 0xE801u);     // PermissionLocked can only be set
+    CHECK_EQ(svc(0x03, base, kPg, 16, 16).rc, kRcD401);    // ... and only on module .data/.bss, not heap
     CHECK_EQ(svc(0x03, base + 1, kPg, 8, 8).rc, kRcCc01);
     CHECK_EQ(svc(0x03, base, 0, 8, 8).rc, kRcCa01);
     teardown();

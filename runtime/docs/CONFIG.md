@@ -28,6 +28,7 @@ Rules:
 | `nvn` | `accept_unlinked` | `true` | `NXRT_NVN_ACCEPT_UNLINKED` | `src/gfx/nvn/api_program.cpp` | `nvnProgramSetShaders` returns success for a program whose shader block is missing from the shader cache (the program stays unlinked, its draws are skipped). `false` returns failure, which makes the game rebuild that shader on every bind. Read once. |
 | `nvn` | `pool_view` | `true` | `NXRT_NVN_POOL_VIEW` | `src/gfx/nvn/nvn_gpu_pool.cpp` | Import a memory pool for the GPU through a small private view of the heap section instead of the pool's own address in the multi-gigabyte primary view (tens of milliseconds per import against 0.05). `false` for before/after runs. Read once. |
 | `nvn` | `pool_mirror` | `on` | `NXRT_NVN_POOL_MIRROR` | `src/gfx/nvn/nvn_gpu_pool.cpp` | Also the launcher's and the F1 page's "Faster GPU memory" (`[display] fast_gpu_memory` in controls.ini), which applies when this key is not set. `on` (default): a memory pool that draws read vertices, indices or uniform blocks from gets a device-local copy, so draws stop reading host memory over PCIe. Pages are copied at the start of a submission after a draw wanted them; the CPU's writes are seen by page protection (`src/mem/write_watch.cpp`) and the GPU's by the replay, and a page that changed is read from the pool until it is copied again. A pool whose writes cannot be tracked (outside the heap's primary view, or `pool_view = false`) gets no copy. `off`: draws read the pools in host memory, as before. See `docs/S38.md`. Read once. |
+| `nvn` | `tex_write_watch` | `true` | `NXRT_NVN_TEX_WRITE_WATCH` | `src/gfx/nvn/nvn_gpu_texture.cpp` | A texture in a CPU_UNCACHED memory pool is written by the game without FlushMappedRange (the console's CPU writes are coherent). After its upload its storage pages are made read-only (`src/mem/write_watch.cpp`); at the start of each submission the pages the CPU wrote since count as flushed, and the textures there are uploaded again before their next use. ACNH's glyph cache needs it (new characters drew as nothing). `false`: off. Read once. |
 | `nvn` | `pool_mirror_mb` | from the card | `NXRT_NVN_POOL_MIRROR_MB` | `src/gfx/nvn/nvn_gpu_pool.cpp`, `nvn_mirror_cap.h` | Most video memory the pool copies may take in all; a pool that would go over it stays in host memory. Not set: a quarter of the largest device-local heap, at most 2048 MiB, and no copies at all under 4 GiB of video memory. A value set here wins (0: no copies). The chosen cap is logged (`nvn.pool: pool copies: cap ...`). Read once. |
 | `nvn` | `pass_barriers` | `tracked` | `NXRT_NVN_PASS_BARRIERS` | `src/gfx/nvn/nvn_replay.cpp`, `nvn_gpu.cpp` | Also the launcher's and the F1 page's "Fewer GPU pipeline waits" (`[display] fewer_gpu_waits` in controls.ini), which applies when this key is not set. `tracked` (default): a render pass that only wrote its attachments ends without a full barrier (the next pass that uses those images gets the barrier it needs), and image layout changes wait only for the stages of the old layout instead of all commands. `full`: a barrier on all commands and all memory after every pass, as before. Read once. |
 | `nvn` | `gpuperf_ab` | `0` | `NXRT_NVN_GPUPERF_AB` | `src/gfx/nvn/nvn_replay.cpp` | Measurement only. N > 0: `pool_mirror` and `pass_barriers` are off in even windows of N presents and as set in odd ones, so one run compares both (trace marks `gpuperf.on` / `gpuperf.off`). Read once. |
@@ -117,6 +118,7 @@ Rules:
 | `am` | `resolution` | empty (docked 1920x1080, handheld 1280x720) | `NXRT_AM_RESOLUTION` | `src/services/am.cpp` | Output size as `WIDTHxHEIGHT`, e.g. `1280x720`. Empty or not parseable: the default for the operation mode. |
 | `am` | `operation_mode` | `docked` | `NXRT_AM_OPERATION_MODE` | `src/services/common.cpp` | `handheld` sets handheld mode. Any other value is docked. |
 | `audio` | `sink` | `auto` | `NXRT_AUDIO_SINK` | `src/services/audio_sink.cpp` | `auto` plays through XAudio2 on the default output device and falls back to the null sink (no sound, a warning in the log) when XAudio2 or a device is missing. `xaudio2` is the same with an explicit name. `paced` is a simulated device: it drains its queue at the sample rate and reports underruns and queue levels, which is how the renderer's timing is checked on a machine without a sound card. `null` discards everything. Tests install their own sink. The sink's counters (frames written, underruns, dropped frames, queue peak) go to the log once a minute while it plays and again when the game closes. |
+| `applet` | `swkbd_text` | `Player` | `NXRT_APPLET_SWKBD_TEXT` | `src/services/am.cpp` | Text the software keyboard applet answers with (UTF-8), as if typed and confirmed; no keyboard is shown. Cut to the maximum length the game asks for. |
 | `audio` | `paced_ppm` | `0` | `NXRT_AUDIO_PACED_PPM` | `src/services/audio_paced.cpp` | Clock error of the paced sink in parts per million (positive: the simulated device runs fast). Used to check that the renderer follows a device clock that is not exactly the host's. |
 | `media` | `movie` | `mf` | `NXRT_MEDIA_MOVIE` | `src/media/movie_mf.cpp` | `mf`: the game's `movie::` imports (Extractor, Decoder, MediaData, Buffer) are answered on Windows Media Foundation. `off`: the library compiled into subsdk0 runs (it needs the NVDEC/VIC driver, which does not exist here, so no movie plays). |
 | `media` | `movie_log` | `false` | `NXRT_MEDIA_MOVIE_LOG` | `src/media/movie_mf.cpp` | One log line per sample read and per input buffer sent to a decoder. Very verbose. |
@@ -149,9 +151,19 @@ Rules:
 | `account` | `uid` | empty (`00000000000000014d50525265636f6d`) | `NXRT_ACCOUNT_UID` | `src/services/common.cpp` | Local user id as 32 hex digits. Anything that is not 32 hex digits keeps the default. |
 | `fs` | `romfs` | `game/romfs` | `NXRT_FS_ROMFS` | `src/services/common.cpp` | Host folder served as the game's RomFS, relative to the working directory. |
 | `fs` | `save_dir` | empty (`%APPDATA%\MPRRecomp\save`) | `NXRT_FS_SAVE_DIR` | `src/services/common.cpp` | Folder for save data. Empty: the APPDATA default. |
+| `mods` | `enabled` | `true` | `NXRT_MODS_ENABLED` | `src/services/fs_mods.cpp` | `false` loads no mods: the game's RomFS is served as it is. See `docs/MODS.md`. |
+| `mods` | `dir` | empty (`mods` next to the exe) | `NXRT_MODS_DIR` | `src/services/fs_mods.cpp` | Folder with the mods (RomFS overrides, LayeredFS style: `<mod>/romfs/...` and the Atmosphère, Ryujinx and Eden layouts). A relative path is taken from the exe's folder. A missing folder means no mods. |
+| `mods` | `ini` | empty (`mods.ini` next to the exe) | `NXRT_MODS_INI` | `src/services/fs_mods.cpp` | File with the mods in priority order (highest first) and their `on`/`off` flags. New mods are added to it, switched on, at the bottom. A relative path is taken from the exe's folder. |
 | `fatal` | `report_path` | unset (`<exe path without extension>_fatal.txt`) | `NXRT_FATAL_REPORT_PATH` | `src/services/logfault.cpp` | Fatal-error report file. Once the key is set, even to empty, its value is used. Empty: no file is written. |
 | `fatal` | `terminate` | `true` | `NXRT_FATAL_TERMINATE` | `src/services/logfault.cpp` | `true` ends the process with exit code 5 after a fatal report. `false` returns. |
+| `acc` | `network_account` | `false` | `NXRT_ACC_NETWORK_ACCOUNT` | `src/services/acc.cpp` | `true`: the user has a network service account: EnsureIdTokenCacheAsync succeeds and LoadIdTokenCache gives a stand-in token (not a valid Nintendo token; for titles talking to a local server). |
 | `net` | `offline` | `true` | `NXRT_NET_OFFLINE` | `src/services/network.cpp` | `true`: no connection, no friends and no BCAT data (the start-up log line says so). |
+| `net` | `nifm_connected` | `false` | `NXRT_NET_NIFM_CONNECTED` | `src/services/network.cpp` | `true`: nifm reports a working Wi-Fi connection (request accepted, address 192.168.0.2, status connected) while sockets stay down; for titles that will not start without a connection. |
+| `net` | `sockets` | `off` | `NXRT_NET_SOCKETS` | `src/services/net_host.cpp` | `off`: every bsd socket call answers "network down" (ENETDOWN) and sfdnsres finds no name. `host`: bsd runs on real Winsock sockets (Socket, Connect, Send/Recv, Poll/Select, Accept/Bind/Listen, options, Close ...) and sfdnsres answers GetHostByName / GetAddrInfo from `hosts` (and `dns`). nifm still reports no connection. |
+| `net` | `hosts` | empty | `NXRT_NET_HOSTS` | `src/services/net_host.cpp` | With `sockets = host`: names sfdnsres resolves, `name=ip;name2=ip;*.example.com=ip` (IPv4). `*.example.com` matches any name ending in `.example.com`; an exact name wins over a wildcard. `localhost` and dotted IPv4 literals always resolve. Each name a title looks up is logged once with its answer. |
+| `net` | `dns` | `hosts` | `NXRT_NET_DNS` | `src/services/net_host.cpp` | With `sockets = host`: `hosts` resolves only the names in `hosts` (anything else is "host not found", so a title never reaches the internet by accident). `host`: names not in `hosts` go to the PC's resolver. |
+| `net` | `trace` | `false` | `NXRT_NET_TRACE` | `src/services/net_host.cpp` | `true` (sockets=host): every bsd command is logged with its first argument and its (ret, errno) reply words. |
+| `net` | `port_map` | empty | `NXRT_NET_PORT_MAP` | `src/services/net_host.cpp` | With `sockets = host`: remote port rewrite applied in Connect and SendTo, `443=8443;80=8080`, so a local server need not use privileged or busy ports. The first connect of each socket is logged with the address and the mapping. |
 | `pl` | `font_dir` | empty | `NXRT_PL_FONT_DIR` | `src/services/pl.cpp` | Folder searched first for `DejaVuSans.ttf` and the shared font dumps. Empty: the search goes on to `fonts\` next to the exe, then `assets\fonts\` under the working directory, then the exe's folder. |
 | `play` | `controls` | `controls.ini` | `NXRT_PLAY_CONTROLS` | `src/gfx/play/play.cpp` | Settings file of play mode (controls, sensitivity, display); written with the factory settings when missing. |
 | `play` | `capture_mouse` | `true` | `NXRT_PLAY_CAPTURE_MOUSE` | `src/gfx/play/play.cpp` | Capture the pointer (relative mode) while the game is in play. |
@@ -414,12 +426,22 @@ nickname = Samus
 romfs = game/romfs
 ; save_dir =  (empty: %APPDATA%\MPRRecomp\save)
 
+[mods]
+enabled = true
+; dir =  (empty: the mods folder next to the exe)
+; ini =  (empty: mods.ini next to the exe)
+
 [fatal]
 ; report_path is not listed: once set, even empty, it replaces the default report file.
 terminate = true
 
 [net]
 offline = true
+nifm_connected = false
+sockets = off
+; hosts = game.example.com=127.0.0.1;*.example.net=127.0.0.1   (sockets = host only)
+dns = hosts
+; port_map = 443=8443;80=8080
 
 [pl]
 ; font_dir =  (empty: the default search folders)

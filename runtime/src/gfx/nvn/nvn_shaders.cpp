@@ -810,6 +810,10 @@ bool ShaderCache::open(const std::string& dir) {
     return true;
 }
 
+namespace {
+void dump_missing_block(const std::string& hash, const uint8_t* code, const uint8_t* control, uint32_t code_size);
+}
+
 const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control) {
     if (!code || !control) return nullptr;
     ShaderControl c = read_control(control);
@@ -821,7 +825,10 @@ const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control)
     }
     std::string hash = shader_hash(code, c.code_size);  // a pass over the block: outside the lock
     std::lock_guard lk(lock_);
-    if (!open_) return nullptr;
+    if (!open_) {   // no cache at all: every block is missing, and still goes to [nvn] dump_missing
+        dump_missing_block(hash, code, control, c.code_size);
+        return nullptr;
+    }
     if (auto it = by_hash_.find(hash); it != by_hash_.end()) return it->second.get();
     return load_locked(hash, code, control, c.code_size);
 }
