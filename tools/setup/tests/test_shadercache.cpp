@@ -353,7 +353,7 @@ void test_pack_source(const std::string& root) {
 #endif
 
     // A pack built by make_shader_pack.py from the folder, when Python can be started.
-    const std::wstring py = nxs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
+    const std::wstring py = nxs_test::python_exe().wstring();
     const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
     if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
         std::printf("SKIP python pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
@@ -456,7 +456,7 @@ void test_zstd_pack(const std::string& root) {
     CHECK(!path_exists(path_join(hash_dest, files[2].name)));
 
     // A pack built by make_shader_pack.py --zstd from the folder, when Python can be started.
-    const std::wstring py = nxs_test::project_fs_path("tools/.venv/Scripts/python.exe").wstring();
+    const std::wstring py = nxs_test::python_exe().wstring();
     const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
     if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
         std::printf("SKIP python zstd pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());

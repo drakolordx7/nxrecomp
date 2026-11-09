@@ -3,7 +3,7 @@
 Turns the code of a Nintendo Switch program (NSO modules, or any static AArch64 ELF) into C++ that builds natively on Windows
 x64 with clang-cl. The translation is done by deterministic code. There is no inline assembly and no
 interpreter. It is the CPU half of the NX base, shared by every game: nothing here is specific to one game. A game supplies its
-own configuration (modules, extra entries, overrides), hook-site list and build from its own folder.
+own manifest (modules, bases), configuration, hook-site list and build from its own folder.
 
 Licence: GPL-3.0-or-later (`LICENSE`). Borrowed code and its licences: `THIRD_PARTY.md`.
 
@@ -22,12 +22,12 @@ version is `NXRECOMP_ABI_VERSION` (3).
 
 ## Use
 
-Python 3.13 with the packages of `requirements.txt` (`tools\.venv` beside `recomp/` when it exists, else the Python on PATH).
-Build tools: LLVM 23 clang-cl, CMake, Ninja, sccache; `scripts\nx_env.cmd <command>` runs a command with the MSVC environment
-set up. Where the tools are found is decided in one place, `cmake/nx_toolchain.cmake` (environment `LLVM_BIN`, `NX_PYTHON`,
-`NX_NO_SCCACHE`), with `scripts\nx_env.cmd` as its shell side.
+Python 3.13 with the packages of `requirements.txt` (`tools\.venv` of the base when it exists, else the Python on PATH).
+Build tools: LLVM 23 clang-cl, CMake, Ninja, sccache; the base's `scripts\env.cmd <command>` runs a command with the MSVC environment
+set up (`recomp\scripts\nx_env.cmd` forwards to it). Where the tools are found is decided in one place, `cmake/nx_toolchain.cmake`
+(environment `LLVM_BIN`, `NX_PYTHON`, `NX_NO_SCCACHE`), with `scripts\env.cmd` as its shell side.
 
-    python -m nxrecomp lift  <module.nso|prog.elf> <outdir> [--game <id>] [--base 0x7100000000] [--name main] [--index N]
+    python -m nxrecomp lift  <module.nso|prog.elf> <outdir> [--game <config.py>] [--base 0x7100000000] [--name main] [--index N]
                              [--shards 16] [--jobs 8] [--sites FILE]
     python -m nxrecomp cover <module.nso|prog.elf> [--game <id>]     per-instruction-word translation coverage of .text
     python -m nxrecomp.funcs <module> --out functions.tsv             function boundaries and the evidence for each
@@ -45,9 +45,10 @@ lifts as a build step and builds the result as a static library (flags: C++20, /
   (`lift/tier2/`) is Capstone-driven and covers what tier 1 does not: LSE atomics, crypto, the long tail of AdvSIMD, structure
   loads and stores. The files `x_*.py` there hold the handlers rewritten or added here; the ported emitters beside them hold the
   rest.
-- `nxrecomp/config.py` `GameConfig` is the per-game seam (module list and bases, function overrides, extra entries); a game's
-  site list (`--sites`) carries its instruction patches and hooks. SDK facts are the lifter's own: rtld's process entry is rooted
-  automatically, and a `bl` followed by a data word returns after the call (the SDK rtld `bl f; .word` idiom).
+- `nxrecomp/config.py` `GameConfig` is the per-game seam (what changes lifting; the module list, bases and indices come from the
+  manifest through `--base`, `--index`, `--sites`); a game's site list carries its instruction patches and hooks. SDK facts are the
+  lifter's own: rtld's process entry and its `mov x0, x30; bl f; .word off` blocks are rooted automatically, and a `bl` followed by a
+  data word returns after the call (the SDK rtld `bl f; .word` idiom).
 
 ## Oracles (pass/fail checks under `oracle/`, hash-locked in `oracle/SHA256SUMS`)
 

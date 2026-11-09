@@ -12,7 +12,7 @@ naming its source; this page lists them with the exact upstream commit that was 
 
 Not taken: smo-recomp's `sdklift.py` / `sdklift_rules.txt`, `gen_tables.py` (SMO symbol matching between the base game and the
 update, nerve naming), `extract.py` (SMO version / NPDM checks), its clang-9 build scripts, and everything under its `runtime/`
-except the three headers above. The game-specific seam is `games/<name>/config.py`.
+except the three headers above. The game-specific seam is `games/<id>/recomp/config.py` and the manifest `games/<id>/game.json`.
 
 ## MIT notice (SuperMarioWonderRecomp)
 

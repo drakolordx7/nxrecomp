@@ -98,13 +98,11 @@ DebugMode retry); smo 135 valid (87 not translated, 72 of them texture handles, 
 
 - `harness/translator/spirv-pixld-*.patch` (five files): PIXLD.MY_INDEX reads `gl_SampleID` (new `IoVariable.SampleId`), `gl_PerVertex` declares `ClipDistance[7]`. Before the patch 33,361 of 33,744 pixel blocks hit "Shader instruction Pixld is not implemented"; after it none do.
 - `StaticGpuAccessor.cs`: the host profile reports no fragment shader interlock, so no module needs `SPV_EXT_fragment_shader_interlock`.
-- `scripts/make_code_corpus.py <corpus> --out <dir> [--verify <results dir>]`: collapses the 67,506-block survey corpus to the 13,016 distinct code blocks, keyed by the first 16 hex digits of sha1(code). `--verify` checks that blocks sharing code gave identical SPIR-V (9,750 groups, 0 differ).
+- `scripts/make_code_corpus.py <corpus> --out <dir> [--verify <results dir>]`: collapses a survey corpus to its distinct code blocks, keyed by the first 16 hex digits of sha1(code). `--verify` checks that blocks sharing code gave identical SPIR-V.
 
 `spirv-nan.patch` is carried from Wonder but not applied (Wonder's published numbers were built without it).
 
-## Cache completeness (S40)
+## Cache completeness
 
-- `scripts/gap_corpus.py <romfs> --cache <spirv dir> --out <dir> [--programs programs.bin] [--all]`: scans the game files the way the
-  setup tool does (MaterialArchive.arc and every pak MTRL asset, read from the paks, not from retrotool output) and writes the blocks
-  the cache lacks as a `--batch` corpus plus `gap_report.json`. The survey corpus had missed 85 gun fragment blocks (328 programs)
-  because retrotool stopped part way through `SamusGunMP1.pak`; see `docs/S40.md`.
+A game that scans its own files for shader blocks (to find the ones a cache lacks) keeps that scanner in its folder: Metroid's is
+`games/mpr/tools/shaders/gap_corpus.py`. The corpus it writes is the layout above, so `--batch` takes it.

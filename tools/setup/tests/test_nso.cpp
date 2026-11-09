@@ -15,9 +15,9 @@ using namespace nxs;
 
 namespace {
 
-const std::string kRealMainStr = nxs_test::project_path("game/exefs/main");
+const std::string kRealMainStr = nxs_test::game_data_path("exefs/main");
 const char* kRealMain = kRealMainStr.c_str();
-const char* kRealBuildId = "67C9CA1428222752F951021464A7B3597EB98FEC";
+const char* kRealBuildId = nxs_test::first_build_id();
 
 void put32(std::vector<u8>& v, size_t at, u32 x) {
     for (int i = 0; i < 4; ++i) v[at + i] = static_cast<u8>(x >> (8 * i));

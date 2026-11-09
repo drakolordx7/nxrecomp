@@ -19,7 +19,9 @@ import time
 
 # ROOT is the game folder (games/<id>, holding work/ and game/): NX_GAME_DIR, else the current folder. NX is the NX folder (toolchain/).
 ROOT = os.path.abspath(os.environ.get("NX_GAME_DIR") or os.getcwd())
-NX = os.path.abspath(os.environ.get("NX_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts"))
+import nxpaths
+NX = nxpaths.NX_ROOT
 
 # What the harness wants, section.key = value.
 HARNESS_SETTINGS = {

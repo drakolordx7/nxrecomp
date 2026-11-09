@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Collapse a shader corpus (tools/survey/extract_shaders.py layout) to one block per distinct Maxwell CODE block.
+"""Collapse a shader corpus (a game's survey extractor writes it: manifest.tsv, code_<h>.bin, ctrl_<h>.bin) to one block per distinct
+Maxwell CODE block.
 
-The survey keys a block by sha1(code + control section) (67,506 distinct blocks for Metroid Prime Remastered). The runtime
-only has the code block and its control pointer (no control length), and the translated SPIR-V depends on the code block
-alone: 9,750 of the 13,016 distinct code blocks occur with several control sections, and every group checked so far gave
-byte-identical SPIR-V. This script writes a corpus with one entry per distinct code block, keyed by the first 16 hex digits
+A survey keys a block by sha1(code + control section). The runtime only has the code block and its control pointer (no control
+length), and the translated SPIR-V depends on the code block alone: many code blocks occur with several control sections, and every
+group checked so far gave byte-identical SPIR-V. This script writes a corpus with one entry per distinct code block, keyed by the first 16 hex digits
 of sha1(code block bytes), which is the key the runtime computes (nvn_shaders.cpp: sha1 of the `code_size` bytes at the
 NVNshaderData address; the size is the u32 at control +0x704, and it equals the length of code_*.bin).
 

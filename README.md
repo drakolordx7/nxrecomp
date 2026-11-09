@@ -8,11 +8,11 @@ Tools for statically recompiling Nintendo Switch (AArch64) games into native Win
 
 No game code or data is included. Games are supplied by the user from their own dumps.
 
-The first game target is [Metroid Prime Remastered](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp), which includes this repository as a submodule. Game bugs and the player-facing README live there.
+A game is a folder, `games/<id>`, that the base takes as input: its manifest `game.json` (names, ids, builds, modules, file names), its lift config and hook sites in `recomp/`, its runtime module in `runtime/`, and its own docs and tools. The base builds, sets up and releases any such folder (`docs/BUILD.md`). Game bugs and the player-facing README live in the game's folder.
 
 ## Status
 
-Early. The recompiler lifts all of Metroid Prime Remastered's code and passes its checks, and the runtime boots the game into its first level. Gaps are listed in the development logs under `runtime/docs/` and `recomp/docs/`.
+The recompiler lifts the whole code of the games built on it and passes its checks; the runtime boots them. Gaps are listed in the development logs under `runtime/docs/` and `recomp/docs/`.
 
 ## Building and testing
 

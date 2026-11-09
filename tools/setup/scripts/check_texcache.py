@@ -18,25 +18,16 @@ Exit 0 on PASS, 1 on FAIL, 2 when bc7dec or the python dependencies are missing.
 
 import argparse
 import math
+import os
 import struct
 import sys
 import tempfile
 from pathlib import Path
 
-def _project_root():
-    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
-    import os, pathlib
-    env = os.environ.get('NXRT_ROOT')
-    if env:
-        return pathlib.Path(env).as_posix()
-    here = pathlib.Path(__file__).resolve()
-    for p in here.parents:
-        if (p / 'tools').is_dir() and (p / 'work').is_dir():
-            return p.as_posix()
-    return here.parents[2].as_posix()
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
+import nxpaths
 
-
-ROOT = Path(_project_root())
+ROOT = Path(nxpaths.NX_BASE)
 ORACLE = ROOT / "tools/textures/oracle"
 
 try:
@@ -139,7 +130,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--cache-dir", required=True)
     ap.add_argument("--ref-dir", required=True)
-    ap.add_argument("--romfs", default=str(ROOT / "game/romfs"), help="RomFS folder (reported only)")
+    ap.add_argument("--romfs", default=str(Path(os.environ.get("NX_GAME_DIR", ".")) / "game" / "romfs"), help="RomFS folder (reported only; default <NX_GAME_DIR>/game/romfs)")
     ap.add_argument("--n", type=int, default=40, help="sample size")
     ap.add_argument("--min-psnr", type=float, default=33.0)
     ap.add_argument("--min-alpha-psnr", type=float, default=33.0)

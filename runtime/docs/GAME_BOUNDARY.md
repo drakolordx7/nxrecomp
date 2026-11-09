@@ -15,7 +15,7 @@ Three kinds of game knowledge:
   module.
 
 Scope: `runtime/` (base and launcher), `tools/` (setup tool, release builder) and `recomp/` outside `recomp/games/mpr`, which was
-already the recompiler's game folder. The game exe (`game-build/`) is the game's own program and stays there.
+already the recompiler's game folder. The game exe is the base's generic one (`runtime/apps/game`), built for a game folder by `runtime/scripts/build_game_exe.ps1`.
 
 ## The interface
 
@@ -27,7 +27,7 @@ a log line). It is header-only, so the launcher can use it without linking the r
 
 | Field | Kind | What the base does with it |
 | --- | --- | --- |
-| `id`, `title`, `product`, `short_title`, `program_id`, `version` | identity | logs, window titles, the controls.ini header, the launcher's branding and ini comment, the title profile |
+| `id`, `title`, `product`, `short_title`, `program_id`, `version`, `languages` | identity, filled from the manifest by `game::fill_identity` (`nxrt/game/identity.h`; `languages` lists `services::Language` names in `game.json`) | logs, window titles, the controls.ini header, the launcher's branding and ini comment, the title profile |
 | `main_base` | (a) | the default guest base of play mode, timestep and test tooling (`[play]`, `[time]`, `[test] game_base` still override) |
 | `exe_name`, `setup_exe_name`, `launcher_ini`, `game_ini`, `shader_pack`, `save_folder` | file names | the launcher finds and starts the programs; the game exe reads `game_ini`; services put saves under `%APPDATA%\<save_folder>` |
 | `title_defaults(TitleProfile&)` | (a) | the services' title profile (program id, name, version, languages, save sizes, main thread, nickname, user id) |

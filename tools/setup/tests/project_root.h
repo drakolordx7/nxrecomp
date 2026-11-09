@@ -1,6 +1,7 @@
-// Where the optional real-data inputs of the tests live (game/, work/, tools/.venv, runtime/) when the checkout sits inside the author's
-// project folder. NXRT_ROOT names that folder; without it the nearest parent of the working directory that holds both a tools/ and a
-// work/ folder is used. Outside such a folder the paths stay relative and the tests that need the data skip.
+// Where the optional real-data inputs of the tests live: the game folder this setup tool is built for (NXS_TEST_GAME_DIR from CMake,
+// env NX_GAME_DIR overrides it; a worktree of the game, which has no game/ folder, reads games/<id> of the NX folder) holds game/keys
+// and game/exefs, and the base's Python (NXS_TEST_PYTHON from CMake, env NX_PYTHON
+// overrides it) runs the pack script. A test whose input is absent skips.
 #pragma once
 
 #include <cstdlib>
@@ -10,25 +11,26 @@
 
 namespace nxs_test {
 
-inline const std::filesystem::path& project_root() {
-    static const std::filesystem::path root = [] {
-        namespace fs = std::filesystem;
-        if (const char* e = std::getenv("NXRT_ROOT"); e && *e) return fs::path(e);
-        std::error_code ec;
-        for (fs::path p = fs::current_path(ec); !p.empty(); p = p.parent_path()) {
-            if (fs::is_directory(p / "tools", ec) && fs::is_directory(p / "work", ec)) return p;
-            if (p == p.parent_path()) break;
-        }
-        return fs::path();
-    }();
-    return root;
+inline std::filesystem::path game_dir() {
+    if (const char* e = std::getenv("NX_GAME_DIR"); e && *e) return std::filesystem::path(e);
+    std::error_code ec;
+    const std::filesystem::path dir(NXS_TEST_GAME_DIR);
+    if (std::filesystem::is_directory(dir / "game", ec)) return dir;
+    const std::filesystem::path main_checkout = std::filesystem::path(NXS_TEST_NX_ROOT) / "games" / NXS_TEST_GAME_ID;
+    return std::filesystem::is_directory(main_checkout / "game", ec) ? main_checkout : dir;
 }
 
-// `rel` (written with '/') below the project root, with the platform's separators.
-inline std::filesystem::path project_fs_path(const std::string& rel) {
-    std::filesystem::path p = project_root() / rel;
-    return p.make_preferred();
+// `rel` (written with '/') below <game dir>/game, with the platform's separators.
+inline std::string game_data_path(const std::string& rel) {
+    return (game_dir() / "game" / rel).make_preferred().string();
 }
-inline std::string project_path(const std::string& rel) { return project_fs_path(rel).string(); }
+
+inline std::filesystem::path python_exe() {
+    if (const char* e = std::getenv("NX_PYTHON"); e && *e) return std::filesystem::path(e).make_preferred();
+    return std::filesystem::path(NXS_TEST_PYTHON).make_preferred();
+}
+
+// The first build id of the game's manifest: the build id of the main module of the dump in game/exefs.
+inline const char* first_build_id() { return NXS_TEST_BUILD_ID; }
 
 }  // namespace nxs_test

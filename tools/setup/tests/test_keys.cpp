@@ -20,8 +20,8 @@ using namespace nxs;
 
 namespace {
 
-const std::string kRealProdStr = nxs_test::project_path("game/keys/prod.keys");
-const std::string kRealTitleStr = nxs_test::project_path("game/keys/title.keys");
+const std::string kRealProdStr = nxs_test::game_data_path("keys/prod.keys");
+const std::string kRealTitleStr = nxs_test::game_data_path("keys/title.keys");
 const char* kRealProd = kRealProdStr.c_str();
 const char* kRealTitle = kRealTitleStr.c_str();
 

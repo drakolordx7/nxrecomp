@@ -58,9 +58,7 @@ std::string gb(u64 b) {
     return s;
 }
 
-constexpr const char* kStateName = "setup_state.tsv";
-constexpr const char* kStateMagic = "nx_setup_state";          // first line of the state file: "<magic>\t<version>"
-constexpr const char* kStateMagicLegacy = "mprs_setup_state";  // the v1 state file's magic; read the same way
+constexpr const char* kStateName = nxfmt::kSetupStateName;
 
 struct FileRec {
     u64 size = 0;
@@ -109,9 +107,9 @@ public:
         {
             std::lock_guard lk(mu_);
             if (!dirty_ && !force) return;
-            text = std::string(kStateMagic) + "\t1\n";
-            for (auto& [k, v] : meta) text += "meta\t" + k + "\t" + v + "\n";
-            for (auto& [k, r] : files_) text += "file\t" + k + "\t" + std::to_string(r.size) + "\t" + r.sha256 + "\n";
+            text = nxfmt::setup_state_head_line();
+            for (auto& [k, v] : meta) text += nxfmt::setup_state_meta_line(k, v);
+            for (auto& [k, r] : files_) text += nxfmt::setup_state_file_line(k, r.size, r.sha256);
             dirty_ = false;
         }
         write_text_file_atomic(path_, text);
@@ -125,22 +123,14 @@ private:
         while (pos < t.size()) {
             size_t e = t.find('\n', pos);
             if (e == std::string::npos) e = t.size();
-            std::string line = t.substr(pos, e - pos);
+            const std::string_view line = std::string_view(t).substr(pos, e - pos);
             pos = e + 1;
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            std::vector<std::string> f;
-            size_t p = 0;
-            for (;;) {
-                size_t q = line.find('\t', p);
-                f.push_back(line.substr(p, q == std::string::npos ? q : q - p));
-                if (q == std::string::npos) break;
-                p = q + 1;
-            }
             if (first) {
                 first = false;
-                if (f.size() < 2 || (f[0] != kStateMagic && f[0] != kStateMagicLegacy) || f[1] != "1") return;
+                if (!nxfmt::setup_state_head_ok(line)) return;
                 continue;
             }
+            const std::vector<std::string> f = nxfmt::split_tabs(line);
             if (f.size() >= 3 && f[0] == "meta") meta[f[1]] = f[2];
             else if (f.size() >= 4 && f[0] == "file") files_[f[1]] = FileRec{std::strtoull(f[2].c_str(), nullptr, 10), f[3]};
         }

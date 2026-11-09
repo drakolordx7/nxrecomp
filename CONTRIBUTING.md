@@ -2,7 +2,7 @@
 
 Thanks for helping. Bug reports with a good log are as useful as code. Small fixes can go straight to a pull request. For anything bigger, open an issue first so we can agree on the approach before you spend time on it.
 
-Problems that only show up in Metroid Prime Remastered itself (a wrong texture, a broken room) belong in the [game repository](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp). Problems in the recompiler, the runtime or the tools belong here.
+Problems that only show up in one game (a wrong texture, a broken room) belong with that game: its folder under `games/<id>` has its own README and known issues. Problems in the recompiler, the runtime or the tools belong here.
 
 ## No game data, ever
 
@@ -18,14 +18,14 @@ Screenshots and short clips of a bug in a running build are fine. Logs are fine,
 
 | Part | Where | What it does |
 |---|---|---|
-| Recompiler | `recomp/` | Turns AArch64 code into C++ that builds natively with clang-cl. Instruction handlers are in `nxrecomp/lift/`, per-game settings in `games/<name>/config.py`. The checks are in `oracle/`: every instruction shape is run in Unicorn and in the generated code and the results must match. |
+| Recompiler | `recomp/` | Turns AArch64 code into C++ that builds natively with clang-cl. Instruction handlers are in `nxrecomp/lift/`, a game's lift config in `games/<id>/recomp/config.py` and its manifest `games/<id>/game.json`. The checks are in `oracle/`: every instruction shape is run in Unicorn and in the generated code and the results must match. |
 | Runtime | `runtime/src/` | Memory map and module loader (`mem`, `loader`), threads and the SVC layer (`kernel`), C++ exceptions (`eh`), crash reports, log and freeze watchdog (`diag`), IPC (`ipc`), indirect calls and hook sites (`core`). |
 | Services | `runtime/src/services/` | The Horizon system services a game's SDK talks to: file system, saves, account, applet, input, time, audio renderer and more. One file per service group. `runtime/docs/S3c_commands.md` is the command table. |
 | Graphics | `runtime/src/gfx/` | A Vulkan 1.3 device layer and renderer. `gfx/nvn/` implements the NVN graphics API on top of it. `gfx/play/` is play mode: window, controls, settings page. |
 | Media and timing | `runtime/src/media/`, `runtime/src/timestep/` | Movies on Windows Media Foundation. The frame step for high refresh rates. |
 | Tools | `tools/` | Offline tools: Maxwell shaders to SPIR-V (`shaders/`), ASTC to BC7 textures (`textures/`), Tegra block-linear tiling (`tiling/`), the setup tool (`setup/`), the release builder (`release/`), the boot loop (`boot/`), test tools (`test/`) and analysis scripts (`analysis/`). |
 
-Some docs are named `S3c.md`, `S4d.md` and so on. They are development logs, named after the project's work areas: S1 recompiler, S3 OS and services, S4 graphics, S5 test tooling, S6 boot, S8 play mode, S9 movies and audio, S10 display, S11 high refresh. The Metroid Prime Remastered session and debug logs of the graphics work (S10, S24, S29, S38, debug 121, 123, 140, 440 to 443) live in that game's repository; `runtime/docs/REFERENCES.md` says where.
+Some docs are named `S3c.md`, `S4d.md` and so on. They are development logs, named after the project's work areas: S1 recompiler, S3 OS and services, S4 graphics, S5 test tooling, S6 boot, S8 play mode, S9 movies and audio, S10 display, S11 high refresh. The Metroid Prime Remastered session and debug logs of the graphics work (S10, S24, S29, S38, debug 121, 123, 140, 440 to 443) live in that game's folder (`games/mpr/docs`); `runtime/docs/REFERENCES.md` says where.
 
 ## Building and testing
 
@@ -43,7 +43,8 @@ uv pip install --python tools\.venv numpy pillow
 | Recompiler | From `recomp\`: `python oracle\difftest\difftest.py all`, `python oracle\difftest\mutation.py`, `python oracle\e2e\run_e2e.py`, `python oracle\hooks\test_hooks.py` |
 | Test tools | From `tools\test`: `..\.venv\Scripts\python -I -m unittest discover -s tests` |
 | Shader, texture or tiling tools | `python tools\<tool>\oracle\run_oracle.py` (see each tool's README) |
-| Setup tool | `pwsh -File tools\setup\scripts\build.ps1 -Test` |
+| Setup tool | `pwsh -File tools\setup\scripts\build.ps1 -Game games\<id> -Test` |
+| A game | lift `recomp\scripts\build_game.cmd games\<id>`, then `pwsh runtime\scripts\build_game_exe.ps1 -Game games\<id>` (`docs\BUILD.md`) |
 
 Timing tests can fail on a busy machine. Rerun a failing one on its own before you call it broken. `runtime\README.md` has the full test list and `recomp\README.md` explains each oracle.
 
@@ -73,7 +74,7 @@ Code borrowed from other projects keeps its licence notice. Add it to the matchi
 Use the issue forms and attach what you have.
 
 - Your GPU, driver version and Windows version, and the exact command you ran.
-- The log file. The runtime writes `nxrt.log` in the working directory by default (`[log] path`, `NXRT_LOG`). A game built on it may name it differently, for example `mpr.log`. The previous run is kept as `<name>.prev`.
+- The log file. The runtime writes `nxrt.log` in the working directory by default (`[log] path`, `NXRT_LOG`). A game built on it names it in its manifest (`files.log`, such as `<id>.log`). The previous run is kept as `<name>.prev`.
 - For a crash, the crash report: `<program name>_crash.txt` next to the executable. For a fatal service error, `<program name>_fatal.txt`. For a freeze, `<program name>_freeze.txt`, which the watchdog writes when the program stops making progress for 10 seconds.
 - A screenshot of the bug in a running build.
 

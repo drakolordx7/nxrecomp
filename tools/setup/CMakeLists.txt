@@ -41,6 +41,7 @@ endfunction()
 # (base cmake/nx_game.cmake), generated into nx_game.h and read by src/game_profile.cpp. The setup programs are named after the
 # manifest (files.setup, files.setup_cli: <id>_setup.exe, <id>_setup_cli.exe); their file properties show its product name.
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nx_game.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/cmake/nx_toolchain.cmake)   # NX_PYTHON
 set(NX_GAME_DIR "" CACHE PATH "the game folder (games/<id>) whose manifest game.json the setup tool is built for")
 if(NOT NX_GAME_DIR)
     message(FATAL_ERROR "NX_GAME_DIR is not set: pass -DNX_GAME_DIR=<games/<id>> (the folder with game.json)")
@@ -93,7 +94,10 @@ function(nxs_test_in dir name)
     file(GLOB helpers ${CMAKE_CURRENT_SOURCE_DIR}/tests/synth*.cpp)
     add_executable(test_${name} ${src} ${helpers})
     target_include_directories(test_${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${S})
-    target_compile_definitions(test_${name} PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
+    list(GET NXS_G_BUILD_IDS 0 _nxs_first_build)
+    target_compile_definitions(test_${name} PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE NXS_TEST_GAME_DIR="${NX_GAME_DIR}"
+                               NXS_TEST_PYTHON="${NX_PYTHON}" NXS_TEST_BUILD_ID="${_nxs_first_build}"
+                               NXS_TEST_NX_ROOT="${NX_ROOT}" NXS_TEST_GAME_ID="${NXS_G_ID}")
     target_compile_options(test_${name} PRIVATE ${NXS_WARN})
     target_link_libraries(test_${name} PRIVATE ${ARGN})
     add_test(NAME ${name} COMMAND test_${name})
