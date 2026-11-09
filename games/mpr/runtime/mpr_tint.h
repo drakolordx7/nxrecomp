@@ -2,7 +2,7 @@
 // Suit and arm cannon colour of Metroid Prime Remastered (S45, docs/S45.md; settings [tweaks] suit_color, gun_color in play_tweaks.h).
 //
 // Samus's look comes from base colour (BCLR) textures; this module recolours their painted areas on the CPU when the game uploads them, through
-// the runtime's texture edit hook (nxrt/tex_edit.h). Glow (ICAN), normal, metal and reflection maps are other textures and stay the game's.
+// the runtime's texture upload hook (nxrt/tex_upload.h). Glow (ICAN), normal, metal and reflection maps are other textures and stay the game's.
 //   * Which textures: a table of asset ids per part (suit body per suit, the low-poly third-person suit, the morph ball and spider ball, the
 //     first-person arm cannon per suit, the beam gun shared by every suit). At the first use the module reads them from the player's own paks
 //     (Preload/DuplicateData.pak, Preload/MPR1/SamusGunMP1.pak, Preload/MPR1/TestAnimMP1.pak) and keeps the size and a hash of each tiled

@@ -11,7 +11,7 @@
 // CPlayerGunMP1::Update for the gun, both existing hook sites).
 // The glowing stripes of the ball are that inner glow and the ball's light (S44c: the CModelFlagsMPT mode-2 incandescence colour that S44 gave
 // the ball's draws is gone: it lit the whole shell). S44b: the arm cannon's lit panels take their colour from a small ramp texture and the
-// suits' lights from their glow maps; those textures are recoloured as the game uploads them (nxrt/tex_edit.h through mpr_texedit.h, told apart
+// suits' lights from their glow maps; those textures are recoloured as the game uploads them (nxrt/tex_upload.h, told apart
 // by a hash of their smaller mip levels).
 #pragma once
 #include <cstddef>

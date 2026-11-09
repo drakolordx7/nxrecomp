@@ -1,6 +1,6 @@
 # S1b (Phase 3: lift and compile the game)
 
-> Moved from the base repo (`recomp/docs/S1b.md`) in the NX untangle. Paths below are the pre-NX layout (`scripts\build_mpr.cmd`, `games/mpr/...` inside recomp, the `cmake/nx_cc_launcher.py` the base has since dropped) and are kept as the record of that milestone.
+> Moved from the base repo (`recomp/docs/S1b.md`) in the NX untangle. Paths below are the pre-NX layout (`scripts\build_mpr.cmd`, now `base\recomp\scripts\build_game.cmd games\mpr`; `games/mpr/...` inside recomp, the `cmake/nx_cc_launcher.py` the base has since dropped) and are kept as the record of that milestone.
 
 S1b, the Metroid Prime Remastered recompilation milestone, lifts `main`, `sdk`, `subsdk0` (and `rtld`) of the v1.0.0 dump with the S1 lifter and compiles every translation unit for x64. Linking against the runtime is not part of it. All numbers are from this machine (i9-12900K, 64 GB) while other projects were using most of its CPU and about 40 GB of its RAM, so wall times are pessimistic.
 

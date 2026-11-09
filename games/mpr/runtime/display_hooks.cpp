@@ -46,6 +46,7 @@ struct State {
     std::atomic<double> aspect{0.0};
     std::atomic<double> fov_offset{0.0};
     std::atomic<bool> dynres{false}, bloom{true}, chroma{true};
+    std::atomic<int> scene_scale{100};
     std::atomic<uint32_t> calls{0};
     std::vector<uint32_t> hooks;
     bool installed = false;
@@ -82,7 +83,7 @@ int hook_resolution_scale(::Ctx* c, uint64_t, void*) {
     if (s.dynres.load(std::memory_order_relaxed)) return 0;      // the game's own controller
     // [upscale] scene_scale (S14): the 3D scene is rendered at that percent of the output size per side, through the game's own
     // dynamic-resolution path (it takes an area factor and makes the scene targets sqrt(factor) of the full size; the post chain and the HUD stay native)
-    const float lin = static_cast<float>(extras::upscale_scene_scale()) * 0.01f;
+    const float lin = static_cast<float>(s.scene_scale.load(std::memory_order_relaxed)) * 0.01f;
     c->v[0].f32[0] = lin < 0.999f ? lin * lin : 1.0f;
     s.calls.fetch_add(1, std::memory_order_relaxed);
     return 1;
@@ -193,6 +194,8 @@ int hook_chromatic(::Ctx* c, uint64_t, void*) {
 }
 
 }  // namespace
+
+void display_set_scene_scale(int percent) { st().scene_scale.store(percent, std::memory_order_relaxed); }
 
 void display_apply(const DisplaySettings& d) {
     State& s = st();

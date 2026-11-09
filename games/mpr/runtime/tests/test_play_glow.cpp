@@ -16,7 +16,6 @@
 #undef near
 #undef far
 
-#include "mpr_texedit.h"
 #include "play_glow.h"
 
 NXTEST_GROUP(gfx_play_glow)
@@ -168,47 +167,6 @@ NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
     CHECK_EQ(suit_arms, 4);
     CHECK_EQ(small, 2);
     CHECK_EQ(gun, 2);
-}
-
-// ---- the shared texture edit hook (mpr_texedit.h): the tint and the glow colour each get their own textures -------------------------
-
-namespace {
-uint64_t tint_m(const nxrt::gfx::TexEditReq& r, void*) { return r.width == 1 ? 7 : 0; }
-uint64_t glow_m(const nxrt::gfx::TexEditReq& r, void*) { return r.width <= 2 ? 3 : 0; }
-uint64_t tint_g(void*) { return 10; }
-uint64_t glow_g(void*) { return 5; }
-int tint_edits = 0, glow_edits = 0;
-uint64_t last_id = 0;
-void tint_e(uint64_t id, uint32_t, uint32_t, uint32_t, uint8_t*, void*) { ++tint_edits; last_id = id; }
-void glow_e(uint64_t id, uint32_t, uint32_t, uint32_t, uint8_t*, void*) { ++glow_edits; last_id = id; }
-}  // namespace
-
-NXTEST(texedit_dispatch_routes_ids_to_their_client) {
-    using namespace nxrt::play;
-    nxrt::gfx::TexEditHooks t{&tint_m, &tint_g, &tint_e, nullptr}, gl{&glow_m, &glow_g, &glow_e, nullptr};
-    texedit_set(TexEditClient::Tint, &t);
-    texedit_set(TexEditClient::Glow, &gl);
-    nxrt::gfx::TexEditReq r;
-    r.width = 1;
-    const uint64_t a = texedit::match(r, nullptr);   // both want it: the tint comes first
-    r.width = 2;
-    const uint64_t b = texedit::match(r, nullptr);
-    r.width = 3;
-    CHECK_EQ(texedit::match(r, nullptr), uint64_t{0});
-    CHECK(a != 0 && b != 0 && a != b);
-    CHECK_EQ(texedit::generation(nullptr), uint64_t{15});
-    texedit::edit(a, 0, 1, 1, nullptr, nullptr);
-    CHECK(tint_edits == 1 && glow_edits == 0 && last_id == 7);
-    texedit::edit(b, 0, 1, 1, nullptr, nullptr);
-    CHECK(tint_edits == 1 && glow_edits == 1 && last_id == 3);
-    texedit::edit(3, 0, 1, 1, nullptr, nullptr);   // no client slot: ignored
-    CHECK(tint_edits == 1 && glow_edits == 1);
-    texedit_set(TexEditClient::Glow, nullptr);
-    CHECK_EQ(texedit::match(r, nullptr), uint64_t{0});
-    r.width = 2;
-    CHECK_EQ(texedit::match(r, nullptr), uint64_t{0});
-    CHECK_EQ(texedit::generation(nullptr), uint64_t{10});
-    texedit_set(TexEditClient::Tint, nullptr);   // the last client: the runtime hook goes
 }
 
 // S47: the ball colour tables are written only from the thread that runs the game's frame boundary (the first caller after install).

@@ -3,6 +3,7 @@
 // button prompts and the boot hook, which need the graphics library.
 #include "mpr_game.h"
 
+#include "nxrt/game_render.h"
 #include "nxrt/game/play_game.h"
 #include "nxrt/game/prompt_resolve.h"
 #include "mpr_settings.h"

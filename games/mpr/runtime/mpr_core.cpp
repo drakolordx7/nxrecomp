@@ -4,14 +4,10 @@
 #include "mpr_game.h"
 
 #include "mpr_sites.h"
+#include "mpr_tt_probe.h"
 #include "nxrt/services.h"
 #include "nxrt/timestep.h"
 #include "nxrt/tt.h"
-
-
-namespace nxrt::tt::mpr {
-const GameProbes& mpr_game_probes();      // mpr_tt_probe.cpp
-}  // namespace nxrt::tt::mpr
 
 namespace nxrt::games::mpr {
 

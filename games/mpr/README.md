@@ -36,21 +36,18 @@ Defaults: WASD move, mouse aims, left button fires, right button or Q locks on, 
 
 ```
 git clone --recurse-submodules https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp
-mklink /J recomp base\recomp
-mklink /J runtime base\runtime
-mklink /J tools base\tools
-uv venv tools\.venv --python 3.13
-uv pip install --python tools\.venv -r recomp\requirements.txt numpy pillow
-pwsh -File tools\textures\scripts\fetch_third_party.ps1
-pwsh -File tools\setup\scripts\fetch_zstd.ps1
-pwsh -File tools\setup\scripts\build.ps1
-tools\setup\build\release\bin\mpr_setup_cli --input "Metroid Prime Remastered.nsp" --out game
-recomp\scripts\build_mpr.cmd
-pwsh -File tools\textures\scripts\build.ps1
+uv venv base\tools\.venv --python 3.13
+uv pip install --python base\tools\.venv -r base\recomp\requirements.txt numpy pillow
+pwsh -File base\tools\textures\scripts\fetch_third_party.ps1
+pwsh -File base\tools\setup\scripts\fetch_zstd.ps1
+pwsh -File base\tools\setup\scripts\build.ps1 -Game .
+base\tools\setup\build\mpr\bin\mpr_setup_cli --input "Metroid Prime Remastered.nsp" --out game
+base\recomp\scripts\build_game.cmd .
+pwsh -File base\tools\textures\scripts\build.ps1
 pwsh game-build\scripts\build.ps1
 ```
 
-`build_mpr.cmd` lifts the game's code and takes a while the first time. The program ends up in `game-build\build\release\mpr.exe`. Add `-Release -Version 0.1.0` to the last command for the package build that `tools\release\make_release.py` zips. The tests are `pwsh runtime\scripts\build.ps1 -Test` (runtime) and `pwsh -File tools\setup\scripts\build.ps1 -Test` (setup tool). Folders with an `oracle\LOCKED` file are checks that must not be edited. More detail is in the READMEs of each folder in nxrecomp.
+`build_game.cmd` lifts the game's code into `work\build\mpr` and takes a while the first time. The program ends up in `game-build\build\release\mpr.exe`. Add `-Release -Version 0.1.0` to the last command for the package build that `base\tools\release\make_release.py --game .` zips. The tests are `pwsh base\runtime\scripts\build.ps1 -Test` (runtime) and `pwsh -File base\tools\setup\scripts\build.ps1 -Game . -Test` (setup tool). The exact commands are in `base\docs\BUILD.md`. Folders with an `oracle\LOCKED` file are checks that must not be edited. More detail is in the READMEs of each folder in nxrecomp.
 
 ## Credits
 

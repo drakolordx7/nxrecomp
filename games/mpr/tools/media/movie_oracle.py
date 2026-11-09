@@ -1,6 +1,6 @@
 """Movie oracle: play every FMV0 movie of the game through the HLE movie:: path (nxrt_tests media_movie) and compare with the container and ffmpeg.
 
-  tools\.venv\Scripts\python tools\media\movie_oracle.py [--runtime-wt DIR] [--romfs DIR] [--work DIR] [--only ID_PREFIX] [--frame-step N] [--threads N]
+  tools\.venv\Scripts\python tools\media\movie_oracle.py [--tests-build DIR] [--romfs DIR] [--work DIR] [--only ID_PREFIX] [--frame-step N] [--threads N]
 
 Steps: fmv_manifest.py (extract the 25 movies from the RomFS paks), fmv_reference.py (ffmpeg frame md5 + reference PCM), write expected.tsv and the
 per-movie .pts files, run `nxrt_tests media_movie` with NXRT_MOVIE_DIR, then compare the PCM the HLE path produced with ffmpeg's (compare_pcm.py).
@@ -33,7 +33,8 @@ def run(cmd, **kw):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--runtime-wt', default=ROOT + '/runtime-wt/media')
+    ap.add_argument('--tests-build', default=os.path.join(os.environ.get('NX_ROOT') or os.path.dirname(os.path.dirname(ROOT)), 'build', 'base', 'runtime', 'release'),
+                    help='the base runtime build folder holding nxrt_tests.exe (pwsh base/runtime/scripts/build.ps1 -Test; base docs/BUILD.md)')
     ap.add_argument('--romfs', default=ROOT + '/game/romfs')
     ap.add_argument('--work', default=ROOT + '/work/media_fmv')
     ap.add_argument('--only', default='')
@@ -55,7 +56,7 @@ def main():
     open(a.work + '/expected.tsv', 'w').write('\n'.join(lines) + '\n')
     out = a.work + '/out'
     os.makedirs(out, exist_ok=True)
-    exe = a.runtime_wt + '/build/release/nxrt_tests.exe'
+    exe = a.tests_build + '/nxrt_tests.exe'
     env = dict(os.environ, NXRT_MOVIE_DIR=a.work, NXRT_MOVIE_OUT=out, NXRT_MOVIE_THREADS=a.threads, NXRT_MOVIE_FRAME_STEP=a.frame_step)
     if a.only:
         env['NXRT_MOVIE_ONLY'] = a.only
