@@ -24,7 +24,6 @@ run (not only in test runs) belongs in its Info::config_defaults instead.
   --preset NAME   a named preset of the game's presets.json (repeatable): its env, exe arguments and seconds are added
   --level L       NXRT_LOG_LEVEL for the run (info|debug|trace)
   --link M        [boot] link: rtld (default; the game's own dynamic linker relocates) | host (the runtime's linker)
-  --probe P       no-sdk-services: skip nninitInitializeSdkModule so the boot reaches nnMain without the Horizon services
   --stub-result R  Result every stub IPC command answers (0 = succeed with an empty reply), to see the next service the game asks for
   --env K=V       extra environment variable (repeatable), e.g. --env NXRT_SVC_UNKNOWN_LOG_LIMIT=1000
   --arg A         extra exe argument (repeatable)
@@ -33,6 +32,13 @@ run (not only in test runs) belongs in its Info::config_defaults instead.
   --dry-run       print the build and run commands, the folders and the environment the run would use, and stop
 
 Exit code: the exit code of the game exe (124 = deadline, 3/4 = crash).
+
+Other tools start a game the same way through this module (sys.path: base	oolsoot):
+  import boot
+  g = boot.load_game('mpr', exe=DIR_OR_FILE, run=NAME_OR_NONE)   # a Game: .dir .data .id .exe .exe_name .log_name .run .presets
+  r = boot.launch(g, env={...}, args=[...], run_dir=..., cwd=..., stdout=FILE, detach=False)   # a Run: .pid .log .wait(timeout) -> exit code
+launch() adds the data env of every run of that game (RomFS, save folder, shader cache, BC7 cache, regions file, the presets' env), the
+exe's --log and --exefs; the caller adds only what is its own. Presets key "regions" names the guest-address table for scripted runs.
 """
 import argparse, json, os, re, subprocess, sys, time, collections
 
@@ -60,7 +66,9 @@ annotate = lambda text: text      # replaced by the game's own address namer (lo
 class Game:
     """One game: its folder (manifest, hooks, presets), its data (game\\, work\\) and the paths BUILD.md derives from them."""
 
-    def __init__(self, arg, a):
+    def __init__(self, arg, a=None):
+        a = a or argparse.Namespace()
+        base, exe, lib_dir, run = (getattr(a, k, None) for k in ('base', 'exe', 'lib_dir', 'run'))
         cands = [arg, os.path.join(NX or '', 'games', arg), os.path.join(NX or '', 'wt', arg)]
         self.dir = next((os.path.abspath(c) for c in cands if os.path.isfile(os.path.join(c, 'game.json'))), None)
         if not self.dir:
@@ -71,16 +79,20 @@ class Game:
         topic = self.leaf[len(self.id) + 1:] if self.leaf.startswith(self.id + '-') else ''
         own_data = os.path.isdir(os.path.join(self.dir, 'game')) or os.path.isdir(os.path.join(self.dir, 'work'))
         self.data = self.dir if own_data or not NX else os.path.join(NX, 'games', self.id)
-        self.base = os.path.abspath(a.base or os.environ.get('NX_BASE') or BASE_ROOT)
+        self.base = os.path.abspath(base or os.environ.get('NX_BASE') or BASE_ROOT)
         build_root = os.path.join(NX, 'build') if NX else os.path.join(self.dir, 'build')
         self.build_dir = os.path.join(build_root, self.leaf, 'release')
         files = self.man.get('files', {})
-        self.exe = os.path.abspath(a.exe) if a.exe else os.path.join(self.build_dir, files.get('exe', self.id + '.exe'))
+        self.exe_name = files.get('exe', self.id + '.exe')
+        self.exe = os.path.abspath(exe) if exe else os.path.join(self.build_dir, self.exe_name)
+        if os.path.isdir(self.exe):
+            self.exe = os.path.join(self.exe, self.exe_name)
+        self.exe_dir = os.path.dirname(self.exe)
         self.log_name = files.get('log', self.id + '.log')
         libs = os.path.join(self.data, 'work', 'build', self.id)
         own = os.path.join(self.data, 'work', 'build', self.id + '_' + topic) if topic else ''
-        self.libs = os.path.abspath(a.lib_dir) if a.lib_dir else (own if own and os.path.isdir(own) else libs)
-        self.run = os.path.join(self.data, 'work', 'run_' + a.run if a.run else 'run')
+        self.libs = os.path.abspath(lib_dir) if lib_dir else (own if own and os.path.isdir(own) else libs)
+        self.run = os.path.join(self.data, 'work', 'run_' + run if run else 'run')
         pf = os.path.join(self.dir, 'tools', 'boot', 'presets.json')
         self.presets = json.load(open(pf, encoding='utf-8')) if os.path.isfile(pf) else {}
 
@@ -158,8 +170,64 @@ def build(g, libs):
             print('built in %.0fs' % (time.time() - t))
 
 
+def game_env(g, layers=()):
+    """The environment every run of this game needs: RomFS, save folder, shader and BC7 caches, the regions table, then the env of `layers`
+    (named-preset dicts) over the presets file's own env."""
+    env = {
+        'NXRT_FS_ROMFS': os.path.normpath(os.path.join(g.data, g.presets.get('romfs', 'game/romfs'))),
+        'NXRT_FS_SAVE_DIR': os.path.join(g.run, 'save'),
+        'NXRT_NVN_SHADER_CACHE': os.path.join(g.data, 'work', 'shader_cache', 'spirv'),
+        'NXRT_NVN_BC7_CACHE': os.path.join(g.data, 'work', 'run', 'bc7_cache'),
+    }
+    if g.presets.get('regions'):
+        env['NXRT_TEST_REGIONS'] = g.expand(g.presets['regions'])
+    for p in [g.presets] + list(layers):
+        for k, v in p.get('env', {}).items():
+            env[k] = g.expand(v)
+    return env
+
+
+def command(g, args=(), run_dir=None):
+    """Exe command line: --log, the arguments, then --exefs when the game's presets name one."""
+    cmd = [g.exe, '--log', os.path.join(run_dir or g.run, g.log_name)] + list(args)
+    if g.presets.get('exefs'):
+        cmd += ['--exefs', os.path.normpath(os.path.join(g.data, g.presets['exefs']))]
+    return cmd
+
+
+class Run:
+    """A started game process: .pid, .log, .proc; wait() returns the exit code (124 after the deadline kill)."""
+
+    def __init__(self, proc, log):
+        self.proc, self.pid, self.log = proc, proc.pid, log
+
+    def wait(self, timeout=None):
+        try:
+            return self.proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            return 124
+
+
+def launch(g, env=None, args=(), run_dir=None, cwd=None, stdout=None, detach=False):
+    """Start the game exe: data env of game_env(), then `env`; cwd defaults to the run folder; stdout (a file object) gets stdout and stderr."""
+    run_dir = run_dir or g.run
+    os.makedirs(run_dir, exist_ok=True)
+    e = dict(os.environ)
+    e.update(game_env(g))
+    e.update(env or {})
+    flags = 0x00000008 | 0x00000200 if detach else 0            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    p = subprocess.Popen(command(g, args, run_dir), cwd=cwd or run_dir, env=e, stdout=stdout, stderr=subprocess.STDOUT if stdout else None,
+                         creationflags=flags)
+    return Run(p, os.path.join(run_dir, g.log_name))
+
+
+def load_game(arg, base=None, exe=None, lib_dir=None, run=None):
+    return Game(arg, argparse.Namespace(base=base, exe=exe, lib_dir=lib_dir, run=run))
+
+
 def run_plan(g, a):
-    """(command, env additions over os.environ, seconds): the test-run rules, the game's presets, then the command line."""
+    """(exe arguments, env additions over os.environ, seconds): the test-run rules, the game's presets, then the command line."""
     layers = [g.presets]
     for n in (a.preset or []):
         if n not in g.presets.get('presets', {}):
@@ -167,8 +235,6 @@ def run_plan(g, a):
                                                          ', '.join(g.presets.get('presets', {})) or 'none'))
         layers.append(g.presets['presets'][n])
     env = {
-        'NXRT_FS_ROMFS': os.path.normpath(os.path.join(g.data, g.presets.get('romfs', 'game/romfs'))),
-        'NXRT_FS_SAVE_DIR': os.path.join(g.run, 'save'),
         'NXRT_BOOT_GFX': 'headless',            # the game exe opens a play-mode window by default; the boot loop stays headless (--env NXRT_BOOT_GFX=window)
         'NXRT_BOOT_HEADLESS_WIDTH': '1280', 'NXRT_BOOT_HEADLESS_HEIGHT': '720',
         'NXRT_NVN_POOL_MIRROR': 'off',
@@ -177,45 +243,40 @@ def run_plan(g, a):
     for k in list(env):
         if k in os.environ:
             env[k] = os.environ[k]
+    env.update(game_env(g, layers[1:]))
+    for k in ('NXRT_FS_ROMFS', 'NXRT_FS_SAVE_DIR'):
+        env[k] = os.environ.get(k, env[k])
     exe_args, seconds = [], None
     for p in layers:
-        for k, v in p.get('env', {}).items():
-            env[k] = g.expand(v)
         exe_args += [g.expand(x) for x in p.get('args', [])]
         seconds = p.get('seconds', seconds)
-    if g.presets.get('exefs'):
-        exe_args += ['--exefs', os.path.normpath(os.path.join(g.data, g.presets['exefs']))]
     if a.level: env['NXRT_LOG_LEVEL'] = a.level
-    if a.probe: env['NXRT_BOOT_PROBE'] = a.probe
     if a.stub_result: env['NXRT_IPC_STUB_RESULT'] = a.stub_result
     for kv in a.env or []:
         k, v = kv.split('=', 1); env[k] = v
     secs = a.seconds or seconds or 40
-    cmd = [g.exe, '--log', os.path.join(g.run, g.log_name), '--max-seconds', str(max(1, secs - 2))]
-    if a.link: cmd += ['--link', a.link]
-    cmd += exe_args + (a.arg or [])
-    return cmd, env, secs
+    args = ['--max-seconds', str(max(1, secs - 2))] + (['--link', a.link] if a.link else []) + exe_args + (a.arg or [])
+    return args, env, secs
 
 
-def run(g, a, cmd, env, secs):
+def run(g, a, args, env, secs):
     os.makedirs(g.run, exist_ok=True)
     log = os.path.join(g.run, g.log_name)
     if os.path.exists(log):
         os.replace(log, log + '.prev')
-    print('== run (%ds limit): %s' % (secs, ' '.join(cmd[1:])))
+    print('== run (%ds limit): %s' % (secs, ' '.join(args)))
     t = time.time()
-    p = subprocess.Popen(cmd, cwd=g.run, env=dict(os.environ, **env), stdout=open(os.path.join(g.run, 'run.out'), 'w'), stderr=subprocess.STDOUT)
-    try:
-        rc = p.wait(timeout=secs)
-    except subprocess.TimeoutExpired:
-        p.kill(); rc = 124
+    r = launch(g, env, args, stdout=open(os.path.join(g.run, 'run.out'), 'w'))
+    rc = r.wait(secs)
+    if rc == 124:
         print('(killed at the host deadline)')
     print('exit code %d after %.1fs' % (rc, time.time() - t))
     return rc
 
 
 def dry_run(g, a):
-    cmd, env, secs = run_plan(g, a)
+    args, env, secs = run_plan(g, a)
+    cmd = command(g, args)
     print('game     %s (%s)  manifest %s' % (g.id, g.leaf, os.path.join(g.dir, 'game.json')))
     print('base     ' + g.base)
     print('data     ' + g.data)
@@ -297,7 +358,6 @@ def main():
     ap.add_argument('--env', action='append')
     ap.add_argument('--arg', action='append')
     ap.add_argument('--grep')
-    ap.add_argument('--probe', help='[boot] probe: no-sdk-services = run nn::init::Start step by step without nninitInitializeSdkModule (reaches nnMain)')
     ap.add_argument('--stub-result', help='[ipc] stub_result: Result every stub service command answers (0 = succeed with an empty reply)')
     ap.add_argument('--log-only', action='store_true')
     ap.add_argument('--dry-run', action='store_true')
@@ -314,8 +374,8 @@ def main():
     rc = 0
     if not a.log_only:
         if not a.no_build: build(g, a.libs)
-        cmd, env, secs = run_plan(g, a)
-        rc = run(g, a, cmd, env, secs)
+        args, env, secs = run_plan(g, a)
+        rc = run(g, a, args, env, secs)
     summarise(g, a)
     return rc
 
