@@ -1,0 +1,7 @@
+# local-only folders (game data, builds, worktrees, references, tools)
+/refs/
+/toolchain/
+/wt/
+/build/
+__pycache__/
+*.log
