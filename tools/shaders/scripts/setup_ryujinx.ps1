@@ -1,8 +1,13 @@
 # Stage the three Ryujinx projects the translator needs into tools\shaders\third_party\ryubing (git-ignored).
 # Source: the read-only checkout refs\ryubing (Ryubing fork, Codeberg archive a82350bb77, MIT). The build writes obj/bin
 # next to the sources, so we build from this copy and never touch refs\.
-param([string]$Ryubing = (Join-Path $PSScriptRoot '..\..\..\refs\ryubing'))
+param([string]$Ryubing = '')   # default <NX>\refs\ryubing
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '..\..\..\scripts\nxpaths.ps1')
+if (-not $Ryubing) {
+    if (-not $env:NX_ROOT) { throw 'no NX folder around this checkout: pass -Ryubing <the ryubing checkout> or set NX_ROOT' }
+    $Ryubing = Join-Path $env:NX_ROOT 'refs\ryubing'
+}
 $dst = Join-Path $PSScriptRoot '..\third_party\ryubing'
 New-Item -ItemType Directory -Force "$dst\src" | Out-Null
 foreach ($p in 'Ryujinx.Common','Spv.Generator','Ryujinx.Graphics.Shader') {

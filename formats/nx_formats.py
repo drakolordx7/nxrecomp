@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Python twin of nx_formats.h: the hash of the BC7 texture cache key, and the magics and layouts of programs.bin and the shader pack.
+"""Python twin of nx_formats.h: the hash of the BC7 texture cache key, and the magics and layouts of programs.bin, the shader pack and the
+prompt icon pack.
 The same constants and the same functions; test_formats.py checks this file against the header. Used by
-tools/setup/scripts/make_shader_pack.py and tools/release/make_release.py."""
+tools/setup/scripts/make_shader_pack.py, runtime/scripts/build_prompt_pack.py and tools/release/make_release.py."""
 import struct
 
 M64 = (1 << 64) - 1
@@ -78,14 +79,21 @@ def bc7_cache_rel_path(key):
 
 
 PROGRAMS_MAGIC = b"NXPRG002"
-PROGRAMS_MAGIC_LEGACY = b"MPRPRG01"
+PROGRAMS_MAGIC_LEGACY = b"MPRPRG01"             # v1 magic; same layout
 PROGRAMS_HEAD_BYTES = 16
 PROGRAMS_RECORD_BYTES = 24
 
 SHADER_PACK_MAGIC = b"NXSHC002"
-SHADER_PACK_MAGIC_LEGACY = b"MPRSHC01"
+SHADER_PACK_MAGIC_LEGACY = b"MPRSHC01"           # v1 magic; same layout
 SHADER_PACK_HEAD_BYTES = 16
 SHADER_RESULTS_NAME = "results.tsv"
+
+
+PROMPT_PACK_MAGIC = b"MPIP"
+PROMPT_PACK_VERSION = 1
+PROMPT_PACK_HEAD_BYTES = 24
+PROMPT_PACK_ENTRY_BYTES = 48
+PROMPT_PACK_NAME_BYTES = 40
 
 
 def shader_pack_magic_ok(head):

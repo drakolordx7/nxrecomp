@@ -5,9 +5,11 @@
 #
 #   nx_game_read(<game dir> <prefix>)        sets <prefix>_<FIELD> for the fields below, plus <prefix>_DIR (absolute game dir)
 #   nx_game_header(<prefix> <out file>)      writes a C/C++ header with the same fields as NXGAME_<FIELD> macros
+#                                            (the runtime's nxrt/game/identity.h turns them into the Info identity)
 #
 # Fields: ID TITLE PRODUCT SHORT_TITLE TITLE_ID VERSION (of the newest build) BUILD_IDS VERSIONS (lists, one per build) EXE SETUP SETUP_CLI
-# LAUNCHER LAUNCHER_INI GAME_INI LOG SHADER_PACK SAVE_FOLDER RELEASE_PREFIX ENTRY_MODULE SETUP_HOOK (absolute path of the game's
+# LAUNCHER LAUNCHER_INI GAME_INI LOG SHADER_PACK SAVE_FOLDER RELEASE_PREFIX ENTRY_MODULE LANGUAGES (control.nacp SupportedLanguage as
+# bits of services::Language: the manifest lists the names) SETUP_HOOK (absolute path of the game's
 # setup CMake file, or empty) MODULES (names, in index order) and per module
 # MODULE_<name>_FILE _INDEX _BASE _SHARDS _SITES (absolute, empty when none).
 include_guard(GLOBAL)
@@ -32,6 +34,10 @@ if(NOT DEFINED NX_ROOT OR NX_ROOT STREQUAL "")
     endif()
     set(NX_ROOT "${_nx_root}" CACHE PATH "the NX folder (games/, build/); empty outside one")
 endif()
+
+# services::Language (runtime/include/nxrt/services.h), in enum order: bit n of a language mask is the n-th name.
+set(_NX_LANGUAGE_NAMES Japanese AmericanEnglish French German Italian Spanish Chinese Korean Dutch Portuguese Russian Taiwanese BritishEnglish
+    CanadianFrench LatinAmericanSpanish SimplifiedChinese TraditionalChinese BrazilianPortuguese)
 
 function(_nx_json_get out json)
     string(JSON v ERROR_VARIABLE err GET "${json}" ${ARGN})
@@ -70,6 +76,20 @@ function(nx_game_read dir prefix)
     endforeach()
     _nx_json_get(v "${j}" release prefix)
     set(${prefix}_RELEASE_PREFIX "${v}" PARENT_SCOPE)
+    set(mask 0)
+    string(JSON n ERROR_VARIABLE err LENGTH "${j}" languages)
+    if(NOT err AND n GREATER 0)
+        math(EXPR last "${n} - 1")
+        foreach(i RANGE ${last})
+            _nx_json_get(name "${j}" languages ${i})
+            list(FIND _NX_LANGUAGE_NAMES "${name}" bit)
+            if(bit LESS 0)
+                message(FATAL_ERROR "nx_game_read: ${file}: unknown language '${name}' (names of services::Language)")
+            endif()
+            math(EXPR mask "${mask} | (1 << ${bit})")
+        endforeach()
+    endif()
+    set(${prefix}_LANGUAGES "${mask}" PARENT_SCOPE)
     # setup_hook: the game's CMake file for its part of the setup tool (tools/setup/CMakeLists.txt); absolute, "" when the game has none
     _nx_json_get(v "${j}" setup_hook)
     if(v)
@@ -128,6 +148,7 @@ function(nx_game_header prefix out)
         string(APPEND t "#define NXGAME_${f} \"${${prefix}_${f}}\"\n")
     endforeach()
     string(APPEND t "#define NXGAME_PROGRAM_ID 0x${${prefix}_TITLE_ID}ull\n")
+    string(APPEND t "#define NXGAME_LANGUAGES ${${prefix}_LANGUAGES}u\n")
     # NXGAME_BUILDS: {"build id", "version"}, one row per supported build
     set(rows "")
     list(LENGTH ${prefix}_BUILD_IDS n)

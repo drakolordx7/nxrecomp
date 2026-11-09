@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Where the build tools are: the one place that knows (scripts/nx_env.cmd sets the same environment variables for a shell).
+# Where the build tools are: the one place that knows (scripts/env.cmd of the base sets the same environment variables for a shell).
 #   NX_LLVM_BIN   LLVM's bin folder (clang-cl, lld-link, llvm-rc, llvm-mt): env LLVM_BIN, else clang-cl on PATH, else
 #                 %ProgramFiles%\LLVM\bin
-#   NX_PYTHON     Python with recomp/requirements.txt: env NX_PYTHON, else <base>/tools/.venv, else python on PATH
+#   NX_PYTHON     Python with recomp/requirements.txt: env NX_PYTHON, else <base>/tools/.venv, else <NX_ROOT>/base/tools/.venv, else
+#                 python on PATH
 #   NX_SCCACHE    sccache (compiler cache), unless env NX_NO_SCCACHE is set: PATH, else the WinGet links folder
 # Included by cmake/clang-cl.cmake (the toolchain file) and cmake/NxRecomp.cmake; safe to include more than once.
 if(NOT NX_LLVM_BIN)
@@ -20,11 +21,14 @@ if(NOT NX_LLVM_BIN)
 endif()
 
 if(NOT NX_PYTHON)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/nx_game.cmake")     # NX_ROOT
   get_filename_component(_nx_venv "${CMAKE_CURRENT_LIST_DIR}/../../tools/.venv/Scripts/python.exe" ABSOLUTE)
   if(DEFINED ENV{NX_PYTHON})
     file(TO_CMAKE_PATH "$ENV{NX_PYTHON}" _nx_py)
   elseif(EXISTS "${_nx_venv}")
     set(_nx_py "${_nx_venv}")
+  elseif(NX_ROOT AND EXISTS "${NX_ROOT}/base/tools/.venv/Scripts/python.exe")
+    set(_nx_py "${NX_ROOT}/base/tools/.venv/Scripts/python.exe")
   else()
     find_program(_nx_py NAMES python3 python)
   endif()

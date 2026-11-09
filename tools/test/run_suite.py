@@ -35,7 +35,9 @@ from typing import Any, Optional
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent.parent / "scripts"))
 import imgdiff  # noqa: E402  (same folder)
+from testrun_env import testrun_env  # noqa: E402  (base/scripts)
 import tracediff  # noqa: E402  (same folder)
 
 STATUS_ORDER = ("PASS", "FAIL", "CRASH", "FREEZE", "TIMEOUT", "ERROR")
@@ -275,7 +277,8 @@ def select_runs(specs, only=None, tags=None):
 # ----------------------------------------------------------------- execution
 
 def build_env(spec: RunSpec, outdir: Path) -> dict:
-    env = dict(os.environ)
+    env = testrun_env()
+    env.update(os.environ)
     env.update(spec.env)
     env.setdefault("NXRT_GFX_HEADLESS", "1")  # a suite env entry may override this one
     env["NXRT_TEST_SCRIPT"] = str(spec.script)

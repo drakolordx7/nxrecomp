@@ -2,7 +2,12 @@
 """Emit the NxEh unwind tables (nxrecomp/ctx.h) of a module: CFI rows and saved-register lists of every FDE, plus the
 C++ LSDA call sites, action records and type tables. The runtime's unwinder (or oracle/e2e/rt/eh_rt.c) walks the guest
 stack with these."""
+import struct
+import sys
+
 from . import eh as ehmod
+
+MAX_BAD_FDE_PERCENT = 1            # more FDEs whose CFI the reader rejects than this fail the lift
 
 
 def emit(env, m):
@@ -12,12 +17,14 @@ def emit(env, m):
     if not fdes:
         return 'NULL'
     rows, saved, sites_out, actions_out, types_out, tsyms_out, specs_out, fde_out = [], [], [], [], [], [], [], []
+    bad = []
     for f in fdes:
         cie = ehmod.parse_cie(rd, f.cie)
         try:
             frows = ehmod.cfi_rows(rd, f, cie)
-        except Exception:
+        except (ValueError, IndexError, KeyError, struct.error):
             frows = []
+            bad.append(f.start)
         row_first = len(rows)
         for pc, cfa_reg, cfa_off, sv in frows:
             if cfa_reg is None:
@@ -45,6 +52,11 @@ def emit(env, m):
             tsyms_out += [y for _, y in ltypes]
         fde_out.append((env.base + f.start, env.base + f.end, row_first, len(rows) - row_first, site_first,
                         len(sites_out) - site_first, type_first))
+    if bad:
+        print('nxrecomp: %s: %d of %d FDEs have unreadable CFI (no unwind rows), first at module offsets %s'
+              % (img.name, len(bad), len(fdes), ' '.join('0x%x' % a for a in bad[:5])), file=sys.stderr)
+        if len(bad) * 100 > len(fdes) * MAX_BAD_FDE_PERCENT:
+            raise RuntimeError('%s: more than %d%% of the FDEs have unreadable CFI' % (img.name, MAX_BAD_FDE_PERCENT))
     m.append('static const NxFde eh_fdes[] = {')
     m += ['  { 0x%xULL, 0x%xULL, %d, %d, %d, %d, %d },' % x for x in fde_out]
     m.append('};')

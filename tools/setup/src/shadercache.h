@@ -13,7 +13,7 @@
 namespace nxs {
 
 // Pack file format (formats/nx_formats.h, section "shader pack"; written by tools/setup/scripts/make_shader_pack.py, read here): the
-// magic NXSHC002, or MPRSHC01 of the first Metroid release, then the record table and the data.
+// magic NXSHC002, or the v1 magic of the first release (nx_formats.h), then the record table and the data.
 // A folder source may additionally contain "manifest.sha256" (lines "<64 hex>  <file name>") which is checked when present.
 
 struct ShaderInstallResult {

@@ -2,18 +2,24 @@
 """Build the Windows x64 release of one game (--game DIR, its manifest game.json names every file): a release folder and a zip of it, audited before and after the zip is written.
 
     python tools/release/make_release.py --game DIR [--out DIR] [--version V] [--no-shader-pack] [--allow-local-paths]
-                                         [--deny-hash-dir DIR ...] [--repo DIR] [--exe F] [--setup-bin DIR]
+                                         [--deny-hash-dir DIR ...] [--repo DIR] [--base DIR] [--exe F] [--setup-bin DIR]
                                          [--shader-pack F] [--templates DIR] [--controls F] [--license F] [--notices F]
                                          [--prompts-dir DIR] [--launcher F]
 
-Output, in --out (default <repo>/work/release_out):
+Defaults follow docs/BUILD.md: the exe is NX\build\<game folder name>\relpkg\<files.exe> (game exe built with -Release), the setup
+tools NX\build\setup-<id>\bin, the shader pack <game>\work\setup_test\<files.shader_pack>, the output <game>\work\release_out. NX is
+$NX_ROOT, else the nearest parent of this checkout with a games\ folder. --base is the base checkout holding LICENSE,
+runtime/assets/prompts, tools/release/licenses and the fonts (default: the checkout of this script); --repo is only the repository
+that git describe names the version after (default: the game folder).
+
+Output, in --out:
     <prefix>-<version>-windows-x64/              the release folder
     <prefix>-<version>-windows-x64.zip           the same folder zipped: one top-level folder, sorted entries, fixed timestamps
     <prefix>-<version>-windows-x64.manifest.txt  the audit table and totals (written only on success)
     <prefix>-<version>-windows-x64.zip.sha256    the zip's SHA-256 in the usual "<hash>  <name>" form
 Without the shader pack the folder and the zip get the suffix -noshaders.
 The prompt icon pack prompts/prompt_icons.pak and its licence prompts/LICENSE-Kenney-InputPrompts.txt are required,
-read from --prompts-dir (default <repo>/runtime/assets/prompts).
+read from --prompts-dir (default <base>/runtime/assets/prompts).
 The launcher (<id>_launcher.exe) is read from --launcher (default: next to --exe) and ships in the release root beside
 the game exe and the setup tools (<id>_setup.exe, <id>_setup_cli.exe). Names are those in game.json `files`.
 
@@ -39,9 +45,11 @@ MIB = 1024 * 1024
 KIB = 1024
 GIB = 1024 * MIB
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(REPO, 'formats'))
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(BASE, 'formats'))
+sys.path.insert(0, os.path.join(BASE, 'scripts'))
 import nx_formats  # noqa: E402  the shared definition of the shader pack (formats/nx_formats.py)
+import nxpaths  # noqa: E402  NX_ROOT
 
 # The game this release is for: its program and file names, from its manifest games/<id>/game.json (`files` and `release`), named
 # by --game DIR or NX_GAME_DIR. set_game() fills the names below.
@@ -50,11 +58,11 @@ RELEASE_PREFIX = EXE_NAME = SETUP_GLOB = LAUNCHER_NAME = GAME_INI = PACK_NAME = 
 SETUP_EXES = ()                                                                        # sits beside the game exe, built with the runtime
 DLL_GLOB = 'astcdec-*-shared.dll'
 DLL_COUNT = 3
-PACK_MAGICS = (nx_formats.SHADER_PACK_MAGIC, nx_formats.SHADER_PACK_MAGIC_LEGACY)   # shader pack header (formats/nx_formats.h); the first
-PACK_MAGIC = PACK_MAGICS[0]                      # Metroid release's magic is still accepted, new packs are written with the first
+PACK_MAGICS = (nx_formats.SHADER_PACK_MAGIC, nx_formats.SHADER_PACK_MAGIC_LEGACY)   # shader pack header (formats/nx_formats.h); the v1
+PACK_MAGIC = PACK_MAGICS[0]                      # magic is still accepted, new packs are written with the first
 PROMPT_FILES = ('prompt_icons.pak', 'LICENSE-Kenney-InputPrompts.txt')   # required, shipped as prompts/<name>
 PROMPT_PACK = 'prompts/prompt_icons.pak'        # the only .pak the audit allows, by exact release path
-PROMPT_MAGIC = b'MPIP'                          # header of the prompt icon pack (scripts/build_prompt_pack.py)
+PROMPT_MAGIC = nx_formats.PROMPT_PACK_MAGIC     # header of the prompt icon pack
 MANIFEST = 'MANIFEST.sha256'
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
 VERSION_RE = r'[A-Za-z0-9][A-Za-z0-9._-]*'
@@ -84,7 +92,7 @@ MAGIC_DENY = [
     (b'NCA3', 'NCA3 (game content archive)'),
     (b'PFS0', 'PFS0 (game archive)'),
     (b'HFS0', 'HFS0 (game archive)'),
-    (b'NXB7', 'NXB7 (BC7 cache)'),
+    (nx_formats.BC7_CACHE_MAGIC, '%s (BC7 cache)' % nx_formats.BC7_CACHE_MAGIC.decode()),
     (b'\x13\xab\xa1\x5c', 'ASTC texture magic'),
     (b'DDS ', 'DDS texture'),
 ]
@@ -167,6 +175,7 @@ def sha256_file(path):
 
 
 def default_version(repo):
+    """Today plus `git describe` of the repository `repo` (the game's)."""
     today = time.strftime('%Y-%m-%d')
     try:
         r = subprocess.run(['git', '-C', repo, 'describe', '--always', '--dirty'], capture_output=True, text=True)
@@ -179,22 +188,23 @@ def default_version(repo):
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--game', default=os.environ.get('NX_GAME_DIR'), help='game folder with the manifest game.json (default NX_GAME_DIR)')
-    ap.add_argument('--repo', default=REPO, help='repository root; every default path below is relative to it')
-    ap.add_argument('--out', help='output folder (default <repo>/work/release_out)')
+    ap.add_argument('--repo', help='the repository git describe names the version after (default: the game folder)')
+    ap.add_argument('--base', default=BASE, help='base checkout holding LICENSE, runtime/assets/prompts, tools/release/licenses and the fonts')
+    ap.add_argument('--out', help='output folder (default <game>/work/release_out)')
     ap.add_argument('--version', help='version in the names (default: today plus git describe --always --dirty)')
-    ap.add_argument('--exe', help='the game exe of the package build (default <repo>/game-build/build/relpkg/<exe>, made by game-build/scripts/build.ps1 -Release); the astcdec DLLs come from its folder')
+    ap.add_argument('--exe', help='the game exe of the package build (default NX/build/<game folder name>/relpkg/<exe>, made by runtime/scripts/build_game_exe.ps1 -Release); the astcdec DLLs come from its folder')
     ap.add_argument('--launcher', help='the launcher exe (default: the one in the folder of --exe)')
-    ap.add_argument('--setup-bin', help='folder with the setup exes (default <repo>/tools/setup/build/release/bin)')
+    ap.add_argument('--setup-bin', help='folder with the setup exes (default NX/build/setup-<id>/bin)')
     ap.add_argument('--shader-pack', help='translated shader pack, copied under the shader_pack name of game.json '
-                                          '(default <repo>/work/setup_test/<shader_pack>)')
+                                          '(default <game>/work/setup_test/<shader_pack>)')
     ap.add_argument('--no-shader-pack', action='store_true', help='build the slim variant without the shader pack (-noshaders)')
     ap.add_argument('--templates', help='templates folder: README.txt, HELP.txt, THIRD_PARTY_NOTICES.txt, optional controls.ini and <game ini>.example '
                                         '(default <game folder>/release/templates)')
     ap.add_argument('--controls', help='controls file shipped as controls.ini (default templates/controls.ini when present)')
-    ap.add_argument('--license', help='GPL-3.0 licence text (default <repo>/LICENSE)')
+    ap.add_argument('--license', help='GPL-3.0 licence text (default <base>/LICENSE)')
     ap.add_argument('--notices', help='THIRD_PARTY_NOTICES.txt (default <templates>/THIRD_PARTY_NOTICES.txt; required)')
     ap.add_argument('--prompts-dir', help='folder with prompt_icons.pak and LICENSE-Kenney-InputPrompts.txt, shipped under prompts/ '
-                                          '(default <repo>/runtime/assets/prompts; both required)')
+                                          '(default <base>/runtime/assets/prompts; both required)')
     ap.add_argument('--deny-hash-dir', action='append', default=[], metavar='DIR',
                     help='refuse any release file whose sha256 equals a file directly inside DIR (repeatable, not recursive)')
     ap.add_argument('--allow-local-paths', action='store_true',
@@ -206,28 +216,35 @@ def parse_args(argv):
 def resolve(o):
     if not o.game:
         raise UsageError('no game: pass --game DIR (or set NX_GAME_DIR)')
-    set_game(os.path.abspath(o.game))
-    o.repo = os.path.abspath(o.repo)
+    o.game = os.path.abspath(o.game)
+    set_game(o.game)
+    o.base = os.path.abspath(o.base)
+    nx = nxpaths.find_root()
 
-    def under_repo(*parts):
-        return os.path.join(o.repo, *parts)
+    def under_game(*parts):
+        return os.path.join(o.game, *parts)
+
+    def under_nx(*parts):
+        if not nx:
+            raise UsageError('no NX folder around %s: pass the paths (--exe, --setup-bin) or set NX_ROOT' % BASE)
+        return os.path.join(nx, *parts)
 
     if o.no_shader_pack and o.shader_pack:
         raise UsageError('--no-shader-pack and --shader-pack cannot be given together')
-    o.exe = os.path.abspath(o.exe or under_repo('game-build', 'build', 'relpkg', EXE_NAME))
+    o.exe = os.path.abspath(o.exe or under_nx('build', os.path.basename(o.game), 'relpkg', EXE_NAME))
     o.launcher = os.path.abspath(o.launcher or os.path.join(os.path.dirname(o.exe), LAUNCHER_NAME))
-    o.setup_bin = os.path.abspath(o.setup_bin or under_repo('tools', 'setup', 'build', 'release', 'bin'))
+    o.setup_bin = os.path.abspath(o.setup_bin or under_nx('build', 'setup-' + GAME['id'], 'bin'))
     if o.no_shader_pack:
         o.shader_pack = None
     else:
-        o.shader_pack = os.path.abspath(o.shader_pack or under_repo('work', 'setup_test', PACK_NAME))
+        o.shader_pack = os.path.abspath(o.shader_pack or under_game('work', 'setup_test', PACK_NAME))
     o.templates = os.path.abspath(o.templates or os.path.join(o.game, 'release', 'templates'))
-    o.license = os.path.abspath(o.license or under_repo('LICENSE'))
+    o.license = os.path.abspath(o.license or os.path.join(o.base, 'LICENSE'))
     o.notices = os.path.abspath(o.notices or os.path.join(o.templates, 'THIRD_PARTY_NOTICES.txt'))
-    o.prompts_dir = os.path.abspath(o.prompts_dir or under_repo('runtime', 'assets', 'prompts'))
+    o.prompts_dir = os.path.abspath(o.prompts_dir or os.path.join(o.base, 'runtime', 'assets', 'prompts'))
     o.controls = os.path.abspath(o.controls) if o.controls else None
-    o.out = os.path.abspath(o.out or under_repo('work', 'release_out'))
-    o.version = o.version or default_version(o.repo)
+    o.out = os.path.abspath(o.out or under_game('work', 'release_out'))
+    o.version = o.version or default_version(os.path.abspath(o.repo or o.game))
     o.deny_hash_dir = [os.path.abspath(d) for d in o.deny_hash_dir]
     return o
 
@@ -264,7 +281,7 @@ def plan_items(o):
     for name in PROMPT_FILES:
         items.append(('prompts/' + name, need(os.path.join(o.prompts_dir, name), 'prompt icon file %s' % name)))
     for src, dst, required in LICENSE_FILES:
-        p = os.path.join(o.repo, *src.split('/'))
+        p = os.path.join(o.base, *src.split('/'))
         if os.path.isdir(p):
             found = []
             for dp, _, names in os.walk(p):
@@ -279,7 +296,7 @@ def plan_items(o):
         elif required:
             raise UsageError('licence source not found: %s' % p)
     for src, dst, required in FONT_FILES:
-        p = os.path.join(o.repo, *src.split('/'))
+        p = os.path.join(o.base, *src.split('/'))
         if os.path.isfile(p):
             items.append((dst, p))
         elif required:

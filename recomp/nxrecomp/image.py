@@ -14,7 +14,7 @@ tools/lifter/recomp.py (_elf_layout), GPL-3.0-or-later.
 """
 import struct
 
-NX_ELF_OFF = 0x1000          # file offset of the image in the ELF files nso_to_elf writes
+from .nso import OFF as NX_ELF_OFF          # file offset of the image in the ELF files nso_to_elf writes
 
 
 def sext(v, n):

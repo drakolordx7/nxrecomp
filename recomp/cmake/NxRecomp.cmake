@@ -10,7 +10,7 @@
 #     INPUT <module file>          NSO or static ELF (see --kind)
 #     NAME <module name>           default: main        (the generated descriptor is `nxmod_<NAME>`)
 #     [BASE <0x...>]               guest address the module is mapped at (default 0x7100000000)
-#     [INDEX <n>]                  NxModule.index / import-id module number (default: position in the game config's module list)
+#     [INDEX <n>]                  NxModule.index / import-id module number (default 0; nxrecomp_add_game passes the module's position in the manifest)
 #     [GAME <config.py>]           the game's lifter config, games/<id>/recomp/config.py (default: generic)
 #     [KIND nso|nx_elf|static_elf] default: guessed from the file's magic
 #     [SHARDS <n>]                 exactly n translation units c_000.cpp ... (default 16)

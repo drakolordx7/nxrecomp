@@ -5,12 +5,8 @@
 #   $rtbuild  the runtime build folder for $Config (default Release): $env:NXRT_BUILD_DIR, else $nx\build\<checkout name>\runtime\<config>,
 #             else (outside an NX folder) <runtime>\build\<config>
 $base = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$nx = $env:NX_ROOT
-if (-not $nx) {
-    $d = Split-Path -Parent $base
-    while ($d -and -not (Test-Path (Join-Path $d "games"))) { $d = Split-Path -Parent $d }
-    $nx = $d
-}
+. (Join-Path $base "scripts\nxpaths.ps1")
+$nx = $env:NX_ROOT   # scripts\nxpaths.ps1 sets it: env NX_ROOT, else the nearest parent of the checkout with a games\ folder
 $recomp = if ($env:NXRT_RECOMP_INCLUDE) { $env:NXRT_RECOMP_INCLUDE } else { Join-Path $base "recomp\include" }
 $_cfg = if ($Config) { $Config.ToLower() } else { "release" }
 $rtbuild = if ($env:NXRT_BUILD_DIR) { $env:NXRT_BUILD_DIR }

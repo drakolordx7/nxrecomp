@@ -243,6 +243,7 @@ def resolve(env):
     unresolved ones that are indirect tail calls."""
     env.jt = {}
     env.tailbr = set()
+    env.jt_errors = []                       # `br` sites whose reader raised: counted in the lift's log line
     img = env.img
     cs = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
     words = img.words()
@@ -277,6 +278,7 @@ def resolve(env):
             tg = _jump_table(img, f, b)
         except (KeyError, IndexError, ValueError, AttributeError, TypeError):
             tg = None
+            env.jt_errors.append(b)
         if tg:
             env.jt[b] = tg
         else:
@@ -284,4 +286,4 @@ def resolve(env):
                 if _is_tail_br(img, f, b):
                     env.tailbr.add(b)
             except (KeyError, IndexError, ValueError, AttributeError, TypeError):
-                pass
+                env.jt_errors.append(b)

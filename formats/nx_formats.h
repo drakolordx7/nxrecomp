@@ -6,9 +6,10 @@
 //   2. the BC7 cache file: key, header, level table, path
 //   3. programs.bin, the shader program list the setup tool scans from the player's game files and the runtime compiles ahead of play
 //   4. the shader pack, the one file a release ships its translated shaders in (the setup tool unpacks it)
+//   5. the prompt icon pack, the button icons a release ships (written by runtime/scripts/build_prompt_pack.py)
 //
-// Magics: the neutral ones (NXPRG002, NXSHC002) are what is written now. The magics the first Metroid release wrote (MPRPRG01,
-// MPRSHC01) have the same layout and are still accepted by every reader, so an existing install keeps working.
+// Magics: the current ones (NXPRG002, NXSHC002) are what is written now. The v1 magics of the first release (the *Legacy constants)
+// have the same layout and are still accepted by every reader, so an existing install keeps working.
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -152,7 +153,7 @@ inline bool bc7_head_matches(const uint8_t* p, size_t n, uint64_t key) {
 // program has no geometry stage), little-endian, strictly ascending by (vs, fs, gs). A stage hash is the first 8 bytes of the SHA-1 of
 // its code block read as a big-endian u64: the first 16 hex digits of the shader cache file name.
 constexpr char kProgramsMagic[8] = {'N', 'X', 'P', 'R', 'G', '0', '0', '2'};
-constexpr char kProgramsMagicLegacy[8] = {'M', 'P', 'R', 'P', 'R', 'G', '0', '1'};   // the first Metroid release; same layout
+constexpr char kProgramsMagicLegacy[8] = {'M', 'P', 'R', 'P', 'R', 'G', '0', '1'};   // v1 magic; same layout
 constexpr size_t kProgramsHeadBytes = 16;
 constexpr size_t kProgramsRecordBytes = 24;
 
@@ -203,12 +204,21 @@ inline const char* programs_decode(const uint8_t* data, size_t size, std::vector
 //   {u16 name_len, name bytes, u64 data_offset (from file start), u64 stored_size, u64 raw_size, u8[32] sha256 of the RAW bytes,
 //    u8 method (0 = stored, 1 = zstd)}, then the data. Little-endian. A name is "results.tsv" or 16 lower-case hex digits + ".spv".
 constexpr char kShaderPackMagic[8] = {'N', 'X', 'S', 'H', 'C', '0', '0', '2'};
-constexpr char kShaderPackMagicLegacy[8] = {'M', 'P', 'R', 'S', 'H', 'C', '0', '1'};   // the first Metroid release; same layout
+constexpr char kShaderPackMagicLegacy[8] = {'M', 'P', 'R', 'S', 'H', 'C', '0', '1'};   // v1 magic; same layout
 constexpr size_t kShaderPackHeadBytes = 16;
 constexpr const char* kShaderResultsName = "results.tsv";
 
 inline bool shader_pack_magic_ok(const void* p) {
     return std::memcmp(p, kShaderPackMagic, 8) == 0 || std::memcmp(p, kShaderPackMagicLegacy, 8) == 0;
 }
+
+// ---- 5. the prompt icon pack ----------------------------------------------------------------------------------------------------
+// One file: magic (4), u32 version (1), u32 entry_count, u32 icon width, u32 icon height, u32 reserved, then entry_count records
+// {char name[40] (zero padded), u32 data_offset (from file start), u32 size (= width * height * 4)}, then the RGBA8 icons. Little-endian.
+constexpr char kPromptPackMagic[4] = {'M', 'P', 'I', 'P'};
+constexpr uint32_t kPromptPackVersion = 1;
+constexpr size_t kPromptPackHeadBytes = 24;
+constexpr size_t kPromptPackEntryBytes = 48;
+constexpr size_t kPromptPackNameBytes = 40;
 
 }  // namespace nxfmt

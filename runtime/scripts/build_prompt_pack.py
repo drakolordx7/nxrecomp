@@ -33,13 +33,17 @@ from PIL import Image, ImageDraw, ImageFont
 ICON = 36
 BOX = 33                    # icon content is fitted into a BOX x BOX square
 BLOCK = ICON * ICON * 4
-MAGIC = b"MPIP"
-VERSION = 1
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "formats"))
+import nx_formats  # the layout of the pack (formats/nx_formats.h)
+
+MAGIC = nx_formats.PROMPT_PACK_MAGIC
+VERSION = nx_formats.PROMPT_PACK_VERSION
 HEADER_FMT = "<4sIIIII"
 ENTRY_FMT = "<40sII"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)
-ENTRY_SIZE = struct.calcsize(ENTRY_FMT)
-NAME_FIELD = 40
+HEADER_SIZE = nx_formats.PROMPT_PACK_HEAD_BYTES
+ENTRY_SIZE = nx_formats.PROMPT_PACK_ENTRY_BYTES
+NAME_FIELD = nx_formats.PROMPT_PACK_NAME_BYTES
+assert struct.calcsize(HEADER_FMT) == HEADER_SIZE and struct.calcsize(ENTRY_FMT) == ENTRY_SIZE
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_FONT = SCRIPT_DIR.parent / "assets" / "fonts" / "DejaVuSans.ttf"

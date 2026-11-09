@@ -3,7 +3,7 @@
 start the game exe headless from a different working directory and confirm the game reaches the title screen.
 
   python -I cleanroom_test.py --game <game dir> --zip work/release_out/<prefix>-<ver>-windows-x64.zip --dump <game.nsp> --keys <prod.keys>
-        [--dest work/release_test] [--seconds 90] [--shot-at 40] [--quality 3] [--skip-setup]
+        [--dest <game>/work/release_test] [--seconds 90] [--shot-at 40] [--quality 3] [--skip-setup]
 
 What it checks (exit 0 only when all hold):
   1. the zip extracts and holds no game data or keys (the same audit rules as make_release.py: no exefs/romfs/bc7_cache/keys)
@@ -24,7 +24,9 @@ import time
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+# What the game exe's log shows (runtime/apps/game/game_main.cpp: "exefs '<dir>'" at start, "presents <n> pipelines" in the deadline summary).
+EXEFS_MARKER = "exefs 'exefs'"
+PRESENTS_RE = r"presents (\d+) pipelines"
 FORBIDDEN_TOP = {"exefs", "romfs", "bc7_cache", "game", "keys"}
 
 
@@ -40,7 +42,7 @@ def main(argv=None):
     ap.add_argument("--zip", required=True)
     ap.add_argument("--dump", required=True)
     ap.add_argument("--keys", required=True)
-    ap.add_argument("--dest", default=str(ROOT / "work/release_test"))
+    ap.add_argument("--dest", help="default <game>/work/release_test")
     ap.add_argument("--seconds", type=int, default=90)
     ap.add_argument("--shot-at", type=int, default=40)
     ap.add_argument("--quality", type=int, default=None)
@@ -48,11 +50,13 @@ def main(argv=None):
     ap.add_argument("--min-presents", type=int, default=600)
     a = ap.parse_args(argv)
 
-    files = json.loads((Path(a.game) / "game.json").read_text(encoding="utf-8"))["files"]
+    manifest = json.loads((Path(a.game) / "game.json").read_text(encoding="utf-8"))
+    files = manifest["files"]
+    modules = [m.get("file", m["name"]) for m in manifest["modules"]]
     exe_name, log_name, ini_name = files["exe"], files["log"], files["game_ini"]
     zpath = Path(a.zip)
     name = zpath.stem
-    dest = Path(a.dest) / name
+    dest = Path(a.dest or Path(a.game) / "work" / "release_test") / name
     top = dest / name
     if not a.skip_setup:
         if dest.exists():
@@ -82,7 +86,7 @@ def main(argv=None):
         print(f"setup exit {r.returncode}, {time.time() - t0:.0f} s wall")
         if r.returncode != 0:
             return 1
-        for need in ("exefs/main", "exefs/rtld", "romfs", "bc7_cache", ini_name, "setup.log"):
+        for need in [f"exefs/{m}" for m in modules] + ["romfs", "bc7_cache", ini_name, "setup.log"]:
             if not (top / need).exists():
                 print("FAIL: setup did not produce", need)
                 return 1
@@ -106,15 +110,15 @@ def main(argv=None):
         return 1
     text = log.read_text(errors="replace")
     ok = True
-    if "exefs 'exefs'" not in text:
-        print("FAIL: the log does not show exefs 'exefs'")
+    if EXEFS_MARKER not in text:
+        print(f"FAIL: the log does not show {EXEFS_MARKER}")
         ok = False
     shots = sorted(top.glob("shot_*.png"))
     print("screenshots:", [str(s) for s in shots])
     if not shots:
         ok = False
         print("FAIL: no screenshot")
-    presents = [int(m) for m in re.findall(r"presents (\d+) pipelines", text)]
+    presents = [int(m) for m in re.findall(PRESENTS_RE, text)]
     print("presented frames at the deadline:", presents[-1] if presents else "none")
     if not presents or presents[-1] < a.min_presents:
         print(f"FAIL: fewer than {a.min_presents} presented frames")

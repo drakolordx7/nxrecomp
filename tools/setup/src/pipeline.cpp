@@ -60,7 +60,7 @@ std::string gb(u64 b) {
 
 constexpr const char* kStateName = "setup_state.tsv";
 constexpr const char* kStateMagic = "nx_setup_state";          // first line of the state file: "<magic>\t<version>"
-constexpr const char* kStateMagicLegacy = "mprs_setup_state";  // what the first Metroid release wrote; read the same way
+constexpr const char* kStateMagicLegacy = "mprs_setup_state";  // the v1 state file's magic; read the same way
 
 struct FileRec {
     u64 size = 0;

@@ -109,7 +109,6 @@ class Env:
         self.text_hi = self.text_lo + img.text_size
         self.full = full
         self.wanted = collections.OrderedDict()
-        self.overrides = dict(self.cfg.overrides)
         self.imports = set()
         self.plt_cache, self.plt_slot = {}, {}
         self.plt_syms = None
@@ -164,32 +163,37 @@ class Env:
         return self.plt_info[self.plt_slot[target]]
 
     def call(self, target):
-        if target in self.overrides:
-            return 'h_%s(c);' % self.overrides[target]
         if not (self.text_lo <= target < self.text_hi):
             return 'call_indirect(c, 0x%xULL);' % target          # another module / not code of this one
         self.wanted.setdefault(target, None)
         return 'f_%x(c);' % target
 
-    def compute_starts(self, extra=()):
-        """Function entries and exact ends: funcs.analyse(img), rtld's process entry and the config's extra entries
-        (module offsets)."""
+    def rtld_roots(self):
+        """Module offsets of the entries discovery cannot see in rtld: the process entry (offset 0: the loader jumps there) has no
+        FDE, symbol or direct branch; and the SDK's `mov x0, x30; bl f; .word off` block, which f reads the word of and which rtld
+        hands out only as a pointer (nn::init::Start)."""
+        roots = [0]
+        for a in range(self.text_lo + 4, self.text_hi - 4, 4):
+            if self.img.word(a - 4) == 0xaa1e03e0 and self.img.word(a) >> 26 == 0x25 and (self.img.word(a + 4) >> 25) & 0xf <= 3:
+                roots.append(a - 4 - self.base)
+        return roots
+
+    def compute_starts(self):
+        """Function entries and exact ends: funcs.analyse(img) and, for rtld, rtld_roots()."""
         from . import funcs
         rows, self.stats = funcs.analyse(self.img)
         self.ends = {}
         for r in rows:
             self.ends[self.base + r['start']] = self.base + r['end']
         added = []
-        # rtld's process entry (offset 0: the loader jumps there) has no FDE, symbol or direct branch, so discovery never sees it
-        roots = [0] if self.img.name == 'rtld' else []
-        for off in roots + list(self.cfg.extra_entries.get(self.img.name, ())) + list(extra):
+        for off in self.rtld_roots() if self.img.name == 'rtld' else ():
             a = self.base + off
             if a not in self.ends:
                 self.ends[a] = self.base + off + 4
                 added.append(a)
         self.starts = sorted(self.ends)
-        # an extra entry runs to the next known entry (or the end of .text), not one instruction: an entry reached only
-        # through a pointer may hold several instructions before the next function (SDK 10 rtld+0x14a0)
+        # a root runs to the next known entry (or the end of .text), not one instruction: an entry reached only through a
+        # pointer may hold several instructions before the next function
         for a in added:
             i = bisect.bisect_right(self.starts, a)
             self.ends[a] = self.starts[i] if i < len(self.starts) else max(self.ends[a], self.text_hi)
@@ -351,7 +355,7 @@ def build_env(spec):
     img = open_image(spec)
     cfg = load_game(spec.get('game'))
     env = Env(img, cfg)
-    env.module_index = module_index_of(cfg, spec)
+    env.module_index = int(spec.get('index') or 0)
     if spec.get('sites'):
         load_sites(spec['sites'], env)
     return env
@@ -368,16 +372,6 @@ def make_env(spec):
     env.catchers = set(spec['catchers'])
     env.full = True
     return env
-
-
-def module_index_of(cfg, spec):
-    """NxModule.index: --index, else the position of the module in the game config's list, else 0."""
-    if spec.get('index') is not None:
-        return int(spec['index'])
-    for i, m in enumerate(cfg.modules):
-        if m.name == spec.get('name'):
-            return i
-    return 0
 
 
 def open_image(spec):
@@ -451,7 +445,8 @@ def lift_module(spec, outdir, jobs=8, shards=16, log=print):
     from . import jumptables
     jumptables.resolve(env)
     starts = env.starts
-    log('%s: %d function entries, %d landing pads, %d jump tables  (%.1fs)' % (img.name, len(starts), len(env.pads), len(env.jt), time.time() - t0))
+    log('%s: %d function entries, %d landing pads, %d jump tables, %d unreadable branch sites  (%.1fs)'
+        % (img.name, len(starts), len(env.pads), len(env.jt), len(env.jt_errors), time.time() - t0))
     spec = dict(spec, ends=env.ends, jt={str(k): v for k, v in env.jt.items()}, tailbr=sorted(env.tailbr), pads=env.pads, catchers=sorted(env.catchers))
     os.makedirs(outdir, exist_ok=True)
     known = set(starts)
@@ -551,14 +546,11 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
          '#define NX_OPTNONE __attribute__((optnone, noinline))']
     h += ['void f_%x(Ctx *__restrict c);' % a for a in all_funcs]
     h += ['void u_%x(Ctx *__restrict c, uint64_t rp);' % a for a in u_entries]
-    h += ['void h_%s(Ctx *c);' % n for n in sorted(set(env.overrides.values()))]
     h += ['#ifdef __cplusplus', '}', '#endif', '#endif', '']
     _write_if_changed(os.path.join(outdir, 'funcs.h'), '\n'.join(h))
     m = ['/* generated by nxrecomp -- do not edit */', '#include <nxrecomp/ctx.h>', '#include "funcs.h"', '',
          'extern "C" {', 'static const FnEntry fns[] = {']
     m += ['  { 0x%xULL, f_%x },' % (a, a) for a in all_funcs]
-    for a, n in sorted(env.overrides.items()):
-        m.append('  { 0x%xULL, h_%s },' % (a, n))
     m.append('};')
     m.append('static const DynSym syms[] = {')
     allsyms = img.symbols() if nsym else []
@@ -585,7 +577,7 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
     m.append('extern const uint32_t nxmod_%s_abi;' % name)
     m.append('const uint32_t nxmod_%s_abi = NXRECOMP_ABI_VERSION;' % name)
     m.append('const NxModule nxmod_%s = { "%s", %du, 0x%xULL, 0x%xULL, fns, %d, syms, %d, resume, %d, %s };'
-             % (name, img.name, env.module_index, env.base, env.text_hi, len(all_funcs) + len(env.overrides), nsym, len(resume), eh_name))
+             % (name, img.name, env.module_index, env.base, env.text_hi, len(all_funcs), nsym, len(resume), eh_name))
     m.append('}')
     m.append('')
     _write_if_changed(os.path.join(outdir, 'module_%s.cpp' % name), '\n'.join(m))

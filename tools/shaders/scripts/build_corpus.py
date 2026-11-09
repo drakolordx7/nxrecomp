@@ -2,7 +2,7 @@
 """Adapt Vulkan-style GLSL shaders to the uam (deko3d Maxwell SM 5.3) dialect and compile them to .dksh.
 
 Usage:
-  build_corpus.py --src <glsl root> --out <dir> [--uam <wsl path>] [--jobs 16]
+  build_corpus.py --src <glsl root> --out <dir> --uam <wsl path> [--jobs 16]
 
 Outputs:
   <out_adapted>/        adapted GLSL copies (sibling folder: <out>_adapted), same relative layout as --src
@@ -22,7 +22,6 @@ import sys
 from pathlib import Path
 
 STAGES = {".vert": "vert", ".frag": "frag", ".comp": "comp", ".geom": "geom"}
-UAM_DEFAULT = "/mnt/d/AI/Active/Metroid-Prime/work/corpus/uam/bin/uam"
 WSL_DISTRO = "Ubuntu-22.04"
 
 # Placeholder written for push_constant blocks; resolved to binding 15 in renumber().
@@ -256,7 +255,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--src", required=True, help="GLSL root (walked recursively)")
     ap.add_argument("--out", required=True, help="output folder for .dksh files (created fresh)")
-    ap.add_argument("--uam", default=UAM_DEFAULT, help="uam binary as a WSL path")
+    ap.add_argument("--uam", required=True, help="uam binary as a WSL path")
     ap.add_argument("--jobs", type=int, default=16, help="parallel uam processes")
     args = ap.parse_args()
 

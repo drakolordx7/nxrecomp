@@ -32,7 +32,7 @@ def main(argv=None):
         p.add_argument('--kind', choices=['nso', 'nx_elf', 'static_elf'])
         p.add_argument('--base', default='0x7100000000')
         p.add_argument('--name', default='main')
-        p.add_argument('--index', type=int, help='module index (NxModule.index, import ids); default: position in the game config')
+        p.add_argument('--index', type=int, help='module index (NxModule.index, import ids): its position in the manifest, default 0')
         p.add_argument('--sites', help='site list: patches, inline callouts, hooks (see program.load_sites)')
     a = ap.parse_args(argv)
     spec = spec_from(a)

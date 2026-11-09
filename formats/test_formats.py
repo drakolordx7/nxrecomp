@@ -34,6 +34,16 @@ class Formats(unittest.TestCase):
             self.assertIsNotNone(m, name)
             self.assertEqual("".join(c.strip().strip("'") for c in m.group(1).split(",")).encode(), val, name)
 
+    def test_prompt_pack_matches_header(self):
+        h = header()
+        m = re.search(r"kPromptPackMagic\[4\] = \{([^}]*)\}", h)
+        self.assertEqual("".join(c.strip().strip("'") for c in m.group(1).split(",")).encode(), py.PROMPT_PACK_MAGIC)
+        for name, val in (("kPromptPackVersion", py.PROMPT_PACK_VERSION), ("kPromptPackHeadBytes", py.PROMPT_PACK_HEAD_BYTES),
+                          ("kPromptPackEntryBytes", py.PROMPT_PACK_ENTRY_BYTES), ("kPromptPackNameBytes", py.PROMPT_PACK_NAME_BYTES)):
+            m = re.search(name + r" = (\d+)", h)
+            self.assertIsNotNone(m, name)
+            self.assertEqual(int(m.group(1)), val, name)
+
     def test_sizes_match_header(self):
         h = header()
         for name, val in (("kBc7CacheVersion", py.BC7_CACHE_VERSION), ("kProgramsHeadBytes", py.PROGRAMS_HEAD_BYTES),

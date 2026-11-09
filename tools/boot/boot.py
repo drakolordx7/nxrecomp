@@ -9,7 +9,7 @@ libraries, the RomFS and the run folder follow base docs\BUILD.md:
   libs   NX\games\<id>\work\build\<id>_<topic> when it exists (a stream's own lift), else ...\work\build\<id>
   run    NX\games\<id>\work\run (--run NAME: work\run_NAME), log <files.log of game.json>, previous log <log>.prev
   data   game\ and work\ are read from NX\games\<id> (a worktree has none), or from the game folder when it holds them
-The test-run rules are fixed here: headless, 1280x720, NXRT_NVN_POOL_MIRROR=off, NXRT_AUDIO_SINK=paced, a timeout. What one game needs on
+The test-run rules (scripts\testrun_env.py: headless, 1280x720, NXRT_NVN_POOL_MIRROR=off, NXRT_AUDIO_SINK=paced) and a timeout apply. What one game needs on
 top lives in its folder, tools\boot\presets.json: "romfs" and "exefs" (relative to the data folder), "env", "args" (exe arguments),
 "seconds", and named "presets" {name: {env, args, seconds}}; values may use {data} {game} {run} {nx} {id}. Env a game needs on every
 run (not only in test runs) belongs in its Info::config_defaults instead.
@@ -18,7 +18,7 @@ run (not only in test runs) belongs in its Info::config_defaults instead.
   --tail N        last N log lines to print (default 30)
   --libs          also rebuild the lifted game libraries (base recomp\scripts\build_game.cmd, ~2 min, incremental)
   --no-build      run the existing exe
-  --base DIR      base checkout to build against (default: the checkout this script is in)
+  --base DIR      base checkout whose scripts build (default: the checkout this script is in)
   --exe FILE      run this exe instead of the build folder's        --lib-dir DIR  lifted libraries to link (default as above)
   --run NAME      run folder work\run_NAME instead of work\run
   --preset NAME   a named preset of the game's presets.json (repeatable): its env, exe arguments and seconds are added
@@ -37,23 +37,13 @@ Exit code: the exit code of the game exe (124 = deadline, 3/4 = crash).
 import argparse, json, os, re, subprocess, sys, time, collections
 
 BASE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-CXXFILT = r'C:\Program Files\LLVM\bin\llvm-cxxfilt.exe'
+sys.path.insert(0, os.path.join(BASE_ROOT, 'scripts'))
+import nxpaths
+from testrun_env import testrun_env
 
-
-def find_nx(start):
-    nx = os.environ.get('NX_ROOT')
-    if nx:
-        return os.path.abspath(nx)
-    d = os.path.abspath(start)
-    while not os.path.isdir(os.path.join(d, 'games')):
-        p = os.path.dirname(d)
-        if p == d:
-            return None
-        d = p
-    return d
-
-
-NX = find_nx(BASE_ROOT)
+NX = nxpaths.NX_ROOT
+CXXFILT = os.path.join(os.environ.get('LLVM_BIN') or os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'LLVM', 'bin'),
+                       'llvm-cxxfilt.exe')
 annotate = lambda text: text      # replaced by the game's own address namer (load_addrname)
 
 
@@ -99,7 +89,8 @@ def load_addrname(game):
     sys.path.insert(0, os.path.dirname(p))
     try:
         import addrname
-    except Exception:
+    except Exception as e:
+        print('warning: %s did not import (%s: %s); call stacks are not named' % (p, type(e).__name__, e), file=sys.stderr)
         return lambda text: text
 
     def namer(text):
@@ -120,11 +111,12 @@ def demangle(text):
         return text
     try:
         out = subprocess.run([CXXFILT] + sorted(names), capture_output=True, text=True, timeout=30).stdout.splitlines()
-        if len(out) == len(names):
-            for n, d in zip(sorted(names), out):
-                text = text.replace(n, d)
-    except Exception:
-        pass
+    except (OSError, subprocess.SubprocessError) as e:
+        print('warning: llvm-cxxfilt failed (%s); names stay mangled' % e, file=sys.stderr)
+        return text
+    if len(out) == len(names):
+        for n, d in zip(sorted(names), out):
+            text = text.replace(n, d)
     return text
 
 
@@ -135,9 +127,9 @@ def build_cmds(g, libs):
         bg = os.path.join(g.base, 'recomp', 'scripts', 'build_game.cmd')
         cmds.append(('game libraries (recomp\\scripts\\build_game.cmd)', '"%s" "%s"' % (bg, g.dir),
                      {'NX_BUILD': g.libs, 'SCCACHE_DIR': os.path.join(g.data, 'work', 'build', 'sccache')}, g.dir))
-    ps = os.path.join(g.dir, 'game-build', 'scripts', 'build.ps1')
-    cmds.append(('%s (game-build\\scripts\\build.ps1)' % os.path.basename(g.exe),
-                 'pwsh -NoProfile -File "%s" -Base "%s" -LibDir "%s"' % (ps, g.base, g.libs), {}, g.dir))
+    ps = os.path.join(g.base, 'runtime', 'scripts', 'build_game_exe.ps1')
+    cmds.append(('%s (runtime/scripts/build_game_exe.ps1)' % os.path.basename(g.exe),
+                 'pwsh -NoProfile -File "%s" -Game "%s" -LibDir "%s"' % (ps, g.dir, g.libs), {}, g.dir))
     return cmds
 
 
@@ -166,14 +158,8 @@ def run_plan(g, a):
             sys.exit('no preset "%s" in %s (has: %s)' % (n, os.path.join(g.dir, 'tools', 'boot', 'presets.json'),
                                                          ', '.join(g.presets.get('presets', {})) or 'none'))
         layers.append(g.presets['presets'][n])
-    env = {
-        'NXRT_FS_ROMFS': os.path.normpath(os.path.join(g.data, g.presets.get('romfs', 'game/romfs'))),
-        'NXRT_FS_SAVE_DIR': os.path.join(g.run, 'save'),
-        'NXRT_BOOT_GFX': 'headless',            # the game exe opens a play-mode window by default; the boot loop stays headless (--env NXRT_BOOT_GFX=window)
-        'NXRT_BOOT_HEADLESS_WIDTH': '1280', 'NXRT_BOOT_HEADLESS_HEIGHT': '720',
-        'NXRT_NVN_POOL_MIRROR': 'off',
-        'NXRT_AUDIO_SINK': 'paced',             # muted: a silent sink with a real clock; --env NXRT_AUDIO_SINK=xaudio2 only for explicit audio tests
-    }
+    env = dict(testrun_env(), NXRT_FS_ROMFS=os.path.normpath(os.path.join(g.data, g.presets.get('romfs', 'game/romfs'))),
+               NXRT_FS_SAVE_DIR=os.path.join(g.run, 'save'))
     for k in list(env):
         if k in os.environ:
             env[k] = os.environ[k]

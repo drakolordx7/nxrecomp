@@ -8,16 +8,8 @@ $root  = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $Game) { throw 'pass -Game <game folder> (or set NX_GAME_DIR)' }
 $Game = [IO.Path]::GetFullPath($Game)
 $id = (Get-Content -Raw (Join-Path $Game 'game.json') | ConvertFrom-Json).id
-# NX_ROOT: the folder holding games\ and build\ (default: the nearest parent of this checkout with a games folder)
-$nx = $env:NX_ROOT
-if (-not $nx) { $d = $root; while ($d -and -not (Test-Path (Join-Path $d 'games'))) { $d = Split-Path $d -Parent }; $nx = $d }
-$build = if ($BuildDir) { $BuildDir } elseif ($nx) { Join-Path $nx "build\setup-$id" } else { Join-Path $root "build\$id" }
-$vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
-foreach ($line in (cmd /c "`"$vcvars`" >nul 2>&1 && set")) {
-    $i = $line.IndexOf('=')
-    if ($i -gt 0) { Set-Item -Path ("Env:" + $line.Substring(0, $i)) -Value $line.Substring($i + 1) }
-}
-$env:PATH = "C:\Program Files\LLVM\bin;C:\Program Files\CMake\bin;$env:LOCALAPPDATA\Microsoft\WinGet\Links;$env:PATH"
+. (Join-Path $PSScriptRoot '..\..\..\scripts\nxpaths.ps1')
+$build = if ($BuildDir) { $BuildDir } elseif ($env:NX_ROOT) { Join-Path $env:NX_ROOT "build\setup-$id" } else { Join-Path $root "build\$id" }
 if ($Clean -and (Test-Path $build)) { Remove-Item -Recurse -Force $build }
 cmake -S $root -B $build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DNXS_VERSION="$Version" -DNX_GAME_DIR="$Game"
 if ($LASTEXITCODE) { throw 'cmake configure failed' }
