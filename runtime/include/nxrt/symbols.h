@@ -11,9 +11,9 @@ namespace nxrt {
 
 struct SymbolInfo {
     std::string module;   // "nxrt_tests.exe" (file name only), or "?" when the address is in no loaded module
-    uint64_t offset = 0;  // address - module base
+    uint64_t offset = 0;
     std::string symbol;   // nearest preceding public symbol (undecorated when possible), empty when unknown
-    uint64_t sym_offset = 0;  // address - symbol start
+    uint64_t sym_offset = 0;
     bool from_map = false;
 };
 
@@ -29,4 +29,4 @@ SymbolInfo symbols_lookup(uint64_t host_addr);
 // "module+0xOFFSET (symbol+0xN)" or "module+0xOFFSET" or "0xADDR".
 std::string symbols_describe(uint64_t host_addr);
 
-}  // namespace nxrt
+}

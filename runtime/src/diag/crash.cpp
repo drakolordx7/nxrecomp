@@ -36,7 +36,6 @@ bool g_installed = false;
 LPTOP_LEVEL_EXCEPTION_FILTER g_prev_filter = nullptr;
 void* g_veh = nullptr;
 
-// Options copied at install time and read by the handler.
 bool g_path_given = false;  // false: default "<exe>_crash.txt" next to the exe; true with "" : no file
 std::string g_path;
 bool g_terminate = true;
@@ -44,8 +43,8 @@ uint32_t g_exit_code = 4;
 void (*g_on_report)(const char*, void*) = nullptr;
 void* g_user = nullptr;
 
-std::atomic<bool> g_in_handler{false};          // set while the handler runs: a second exception terminates
-std::atomic<bool> g_overflow_reported{false};   // the vectored handler already reported this stack overflow
+std::atomic<bool> g_in_handler{false};
+std::atomic<bool> g_overflow_reported{false};
 std::atomic<uint32_t> g_reports{0};
 
 // Stack overflow: the faulting thread has no stack left, so its record and context are copied into these statics and a
@@ -96,7 +95,6 @@ bool readable(uint64_t addr, uint64_t n) {
     return true;
 }
 
-// <exe path without extension>_crash.txt
 std::string default_report_path() {
     char exe[1024] = {};
     DWORD n = GetModuleFileNameA(nullptr, exe, sizeof exe);
@@ -116,15 +114,12 @@ bool write_file(const std::string& path, const std::string& text) {
     return ok && done == text.size();
 }
 
-// Builds the whole report text for an exception raised on thread `tid`.
 std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD tid) {
     g_reports.fetch_add(1, std::memory_order_relaxed);
     std::string out;
     const uint64_t rip = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(rec->ExceptionAddress));
     const std::vector<ThreadRecord> threads = diag_threads();
 
-    // The faulting thread: its registered name and Ctx. The current thread uses its thread-local Ctx; another thread
-    // (stack-overflow helper) uses the Ctx its registry record holds.
     std::string tname = "unregistered";
     bool named = false;
     ::Ctx* gctx = nullptr;
@@ -139,7 +134,6 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
     if (tid == GetCurrentThreadId()) gctx = diag_thread_ctx();
     if (gctx && !readable(reinterpret_cast<uint64_t>(gctx), sizeof(::Ctx))) gctx = nullptr;
 
-    // Header.
     const char* code_name = nullptr;
     if (rec->ExceptionCode == kTrapCode) code_name = "GUEST TRAP";
     else if (rec->ExceptionCode == kUntranslatedCode) code_name = "UNTRANSLATED INSTRUCTION";
@@ -160,13 +154,11 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
         appendf(out, "  %s address 0x%llx\n", what, static_cast<unsigned long long>(rec->ExceptionInformation[1]));
     }
 
-    // Last guest function: the lifted function whose host code contains the faulting instruction.
     if (const uint64_t g = guest_function_of(rip))
         appendf(out, "last guest function entered: f_%llx\n", static_cast<unsigned long long>(g));
     else
         out += "last guest function entered: (unknown: fault address is not inside lifted code)\n";
 
-    // Guest registers.
     if (!gctx) {
         out += "guest registers: (no guest context on this thread)\n";
     } else {
@@ -180,7 +172,6 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
                 static_cast<unsigned long long>(tpidr_el0(gctx)), static_cast<unsigned long long>(tpidrro_el0(gctx)));
     }
 
-    // Guest frame chain: lr of the Ctx, then the return address of every frame reachable through x29.
     if (!gctx) {
         out += "guest frame chain (x29): (none)\n";
     } else {
@@ -190,20 +181,18 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
             const uint64_t next = *reinterpret_cast<const uint64_t*>(static_cast<uintptr_t>(f));
             const uint64_t ret = *reinterpret_cast<const uint64_t*>(static_cast<uintptr_t>(f + 8));
             if (ret) appendf(out, " <- 0x%llx", static_cast<unsigned long long>(ret));
-            if (next <= f) break;  // frames must go up the stack; anything else is a broken chain
+            if (next <= f) break;
             f = next;
         }
         out += "\n";
     }
 
-    // Host call stack, symbolised.
     uint64_t frames[kMaxHostFrames] = {};
     const size_t nframes = detail::capture_stack(cx, frames, kMaxHostFrames);
     out += "host call stack (innermost first):\n";
     if (!nframes) out += "  (none)\n";
     for (size_t i = 0; i < nframes; ++i) appendf(out, "  %s\n", symbols_describe(frames[i]).c_str());
 
-    // Guest call stack: the lifted functions among the host frames, consecutive repeats dropped.
     out += "guest call stack (innermost first):";
     uint64_t last = 0;
     bool any = false;
@@ -217,7 +206,6 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
     if (!any) out += " (none)";
     out += "\n";
 
-    // Threads of the registry.
     out += "threads:\n";
     if (threads.empty()) out += "  (none)\n";
     for (const auto& t : threads) {
@@ -228,7 +216,6 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
                 static_cast<unsigned long>(t.host_tid), static_cast<unsigned long long>(t.guest_tid), lrbuf);
     }
 
-    // Recent files, oldest first.
     const std::vector<std::string> files = diag_recent_files();
     out += "last files opened (oldest first):\n";
     if (files.empty()) out += "  (none)\n";
@@ -262,7 +249,7 @@ void emit(const std::string& text) {
 LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
     if (ep && ep->ExceptionRecord && ep->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW &&
         g_overflow_reported.exchange(false))
-        return EXCEPTION_CONTINUE_SEARCH;  // the vectored handler already wrote this report
+        return EXCEPTION_CONTINUE_SEARCH;
     if (g_in_handler.exchange(true)) second_exception();
     if (!ep || !ep->ExceptionRecord || !ep->ContextRecord) {
         g_in_handler = false;
@@ -297,7 +284,7 @@ LONG WINAPI crash_vectored(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-}  // namespace
+}
 
 void crash_install(const CrashOptions& opt) {
     std::lock_guard<std::mutex> lk(g_install_mu);
@@ -332,4 +319,4 @@ std::string crash_build_report(void* exception_pointers) {
 
 uint32_t crash_exceptions_reported() { return g_reports.load(std::memory_order_relaxed); }
 
-}  // namespace nxrt
+}

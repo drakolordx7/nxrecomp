@@ -26,16 +26,13 @@ SRWLOCK g_list_lock = SRWLOCK_INIT;
 std::vector<std::shared_ptr<KThread>> g_all;
 std::atomic<uint64_t> g_next_id{0x50};
 thread_local KThread* t_self = nullptr;
-thread_local std::shared_ptr<KThread> t_keepalive;   // released explicitly before ExitThread (which skips destructors)
+thread_local std::shared_ptr<KThread> t_keepalive;
 
-// Removes its gauge when the file's statics are torn down (declared after g_all, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
-// Thread objects in the list: live threads plus exited ones that something still refers to (a game handle, a waiter). thread_create drops the
-// exited, unreferenced ones, and kernel_reset() drops all of them.
 GaugeHook gauge_threads("kernel.threads", [] {
     AcquireSRWLockShared(&g_list_lock);
     const int64_t n = static_cast<int64_t>(g_all.size());
@@ -69,7 +66,7 @@ DWORD WINAPI host_thread_main(LPVOID param) {
     return 0;
 }
 
-}  // namespace
+}
 
 // The TLS region (tls) and the static TLS block (tp_block) are not freed here: they come from mem::alloc_kernel, a bump allocator with no free,
 // so there is nothing to give back. They cost 0x1000 bytes plus the block (at least 0x1000) per thread ever created, a
@@ -229,14 +226,14 @@ bool thread_set_core_mask(KThread& t, int ideal, uint64_t mask) {
     if (mask & 8) usable |= 4;            // the system core maps onto core 2
     if (!usable) return false;
     if (ideal == -2) ideal = 0;
-    if (ideal == -1) {                                 // IdealCoreDontCare: the first core of the mask
+    if (ideal == -1) {
         ideal = 0;
         for (int k = 0; k < 3; k++)
             if (usable >> k & 1) { ideal = k; break; }
     }
     if (ideal >= 0) {
         if (ideal > 2) ideal = 2;
-        if (!(usable >> ideal & 1)) {                 // ideal core outside the mask: take the first core of the mask
+        if (!(usable >> ideal & 1)) {
             for (int k = 0; k < 3; k++)
                 if (usable >> k & 1) { ideal = k; break; }
         }
@@ -261,4 +258,4 @@ void kernel_reset() {
     detail::sync_reset();
 }
 
-}  // namespace nxrt::kernel
+}

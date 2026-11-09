@@ -72,4 +72,4 @@ class CircularBufferSinkCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

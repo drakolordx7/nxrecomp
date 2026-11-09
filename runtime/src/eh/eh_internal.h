@@ -16,9 +16,9 @@ struct CatchRec {
     jmp_buf jb;
     uint64_t cfa = 0;              // guest SP at entry of the function = its CFA
     volatile uint64_t pad = 0;
-    volatile bool landed = false;  // set by the unwinder right before the longjmp
+    volatile bool landed = false;
 };
 
 std::vector<CatchRec*>& catch_stack();   // thread_local; the top is the innermost activation
 
-}  // namespace nxrt::eh::detail
+}

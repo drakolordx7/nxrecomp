@@ -78,7 +78,7 @@ constexpr int ST_END = 0x2000;
 constexpr int ST_NO_INPUT = 0x1011;
 constexpr int ST_NO_OUTPUT = 0x100e;
 constexpr uint32_t FLAG_EOS = 4;
-constexpr size_t kSlotBytes = 64;                     // one decoder input slot; holds a Token
+constexpr size_t kSlotBytes = 64;
 constexpr uint64_t kTokenMagic = 0x4d4f564945544f4bull;   // "MOVIETOK"
 constexpr uint64_t kObjMarker = 0x4e58524d4f564945ull;    // "NXRMOVIE": byte 0..7 of an object the host owns
 constexpr int kAudioChunk = 0x8000;                   // what GetOutputBufferSize says for audio (the game allocates at least this)
@@ -86,10 +86,10 @@ constexpr size_t kVideoQueueMax = 6, kAudioQueueMax = 64, kOtherQueueMax = 8;
 constexpr int kWaitMs = 8000;                         // longest the extractor makes a game thread wait for the worker
 
 bool g_log = false;
-bool g_lookahead = true, g_preroll = true, g_async_close = true;   // S21: [media] movie_lookahead, movie_preroll, movie_async_close
+bool g_lookahead = true, g_preroll = true, g_async_close = true;
 std::atomic<uint64_t> s_extractors_created{0}, s_extractors_destroyed{0}, s_decoders_created{0}, s_decoders_destroyed{0}, s_frames{0},
     s_audio_blocks{0}, s_audio_bytes{0}, s_samples{0}, s_read_errors{0};
-GaugeCounter g_media_workers("media.worker_threads");   // movie-read threads alive (one per started extractor)
+GaugeCounter g_media_workers("media.worker_threads");
 
 // ---- guest memory --------------------------------------------------------------------------------------------------------------
 inline uint64_t rd64(uint64_t a) { uint64_t v; std::memcpy(&v, reinterpret_cast<const void*>(a), 8); return v; }
@@ -139,7 +139,7 @@ struct MDEntry {
     uint64_t p = 0;
 };
 struct MD {
-    std::map<std::string, MDEntry> e;   // node based: the pointer FindString hands out stays valid until Clear / the destructor
+    std::map<std::string, MDEntry> e;
     void set_i32(const char* k, int32_t v) { MDEntry& x = e[k]; x.t = MDEntry::I32; x.i = v; }
     void set_i64(const char* k, int64_t v) { MDEntry& x = e[k]; x.t = MDEntry::I64; x.i = v; }
     void set_str(const char* k, const char* v) { MDEntry& x = e[k]; x.t = MDEntry::STR; x.s = v ? v : ""; }
@@ -270,11 +270,11 @@ struct Mp4Walker {
 // ---- the extractor -------------------------------------------------------------------------------------------------------------
 struct Item {
     ComPtr<IMFSample> s;
-    int64_t us = 0;          // presentation time after the edit list
+    int64_t us = 0;
     uint32_t skip = 0;       // audio: leading bytes of the PCM to drop (priming)
 };
 struct Track {
-    int kind = 2;            // 0 video, 1 audio, 2 other
+    int kind = 2;
     int mf_index = 0;
     std::string mime;
     int w = 0, h = 0, rate = 0, ch = 0, bitrate = 0, colorspace = 2;
@@ -302,8 +302,7 @@ struct Ext {
     ComPtr<IMFByteStream> bs;
     std::vector<Track> tr;
     int64_t duration_us = 0;
-    // the worker thread
-    std::mutex m;                    // queues, flags, cur, seek state
+    std::mutex m;
     std::mutex reader_mu;            // the source reader: one call at a time (ReadSample, SetCurrentPosition, stream selection)
     std::condition_variable cv_data, cv_work;
     std::thread worker;
@@ -319,8 +318,8 @@ struct Ext {
         int64_t last_us = INT64_MIN;
     };
     std::vector<Ahead> nx;
-    int ahead = 0;                   // 0 off, 1 the worker is positioning the reader, 2 the reader is at the start and fills nx
-    bool ahead_tried = false;        // one attempt per end of stream
+    int ahead = 0;
+    bool ahead_tried = false;
     uint32_t swaps = 0;              // look-aheads swapped in so far: a sample read for the look-ahead while it was swapped in belongs to the queue that replaced it
     // the current sample as NuMediaExtractor defines it: the earliest head among the selected tracks
     bool cur_valid = false;
@@ -348,7 +347,7 @@ constexpr uint32_t fourcc_of(char a, char b, char c, char d) { return uint32_t(u
 bool ext_open(Ext* e, unsigned char* data, size_t size) {
     if (!mf_ready()) return false;
     ComPtr<IStream> st;
-    st.Attach(SHCreateMemStream(data, static_cast<UINT>(size)));   // copies the bytes
+    st.Attach(SHCreateMemStream(data, static_cast<UINT>(size)));
     if (!st) return false;
     HRESULT hr = MFCreateMFByteStreamOnStream(st.Get(), &e->bs);
     if (FAILED(hr)) { NXLOG_W("movie", "MFCreateMFByteStreamOnStream 0x%08lx", static_cast<unsigned long>(hr)); return false; }
@@ -364,9 +363,8 @@ bool ext_open(Ext* e, unsigned char* data, size_t size) {
     if (SUCCEEDED(e->rd->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var)) && var.vt == VT_UI8)
         e->duration_us = static_cast<int64_t>(var.uhVal.QuadPart / 10);
     PropVariantClear(&var);
-    e->rd->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);   // the game selects what it decodes
+    e->rd->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
 
-    // the container's own view of the tracks: order in the file and the edit lists
     Mp4Walker mw{data, size};
     if (e->container == 1) mw.walk(0, size, 0, -1);
 
@@ -452,7 +450,6 @@ bool ext_open(Ext* e, unsigned char* data, size_t size) {
     return true;
 }
 
-// Sets the output type of the stream to NV12 / PCM16 (decoded samples) and reads back the real geometry.
 int ext_select_locked(Ext* e, int i, bool on) {
     if (!e->rd || i < 0 || i >= static_cast<int>(e->tr.size())) return ST_INVALID;
     Track& t = e->tr[static_cast<size_t>(i)];
@@ -517,7 +514,7 @@ int ext_select_locked(Ext* e, int i, bool on) {
 }
 
 void worker_main(Ext* e) {
-    struct Alive {   // counts this thread while it runs, whatever way it leaves
+    struct Alive {
         Alive() { g_media_workers.add(1); }
         ~Alive() { g_media_workers.sub(1); }
     } alive;
@@ -580,7 +577,7 @@ void worker_main(Ext* e) {
                 continue;
             }
         }
-        const bool ah_read = e->ahead == 2;          // the sample about to be read belongs to the look-ahead
+        const bool ah_read = e->ahead == 2;
         const uint32_t swaps0 = e->swaps;
         const bool ah_pick = ah_read;
         bool ah = ah_pick;
@@ -610,7 +607,7 @@ void worker_main(Ext* e) {
             hr = e->rd->ReadSample(static_cast<DWORD>(mf_index), 0, &idx, &flags, &ts, &s);
         }
         lk.lock();
-        if (e->seek_pending || e->stop) continue;   // the sample belongs to the old position
+        if (e->seek_pending || e->stop) continue;
         if ((e->ahead == 2) != ah_pick) {
             // the look-ahead changed while the read ran: swapped in (the sample is the next one of the queue that replaced it) or dropped (it belongs to a position nobody wants)
             if (ah_pick && e->swaps != swaps0) ah = false;
@@ -639,7 +636,7 @@ void worker_main(Ext* e) {
         if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) {   // the geometry of the stream changed: the game does not expect that
             NXLOG_W("movie", "track %zu: media type changed mid-stream", ti);
         }
-        if (!s) continue;                                          // a gap marker or a tick without data
+        if (!s) continue;
         Item it;
         it.us = static_cast<int64_t>(ts / 10) + offset_us;
         it.s = s;
@@ -655,7 +652,7 @@ void worker_main(Ext* e) {
                 if (drop >= len) keep = false;
                 else { it.skip = static_cast<uint32_t>(drop); it.us = 0; }
             } else {
-                keep = false;                                      // a video frame the edit list cuts
+                keep = false;
             }
         }
         if (keep) {
@@ -707,7 +704,6 @@ void ext_destroy_async(Ext* e) {
     }
 }
 
-// True when every selected track that has not ended has a decoded sample queued. Caller holds e->m.
 bool ext_ready_locked(const Ext* e) {
     if (e->seek_pending) return false;
     for (const Track& t : e->tr)
@@ -838,7 +834,7 @@ void ext_track_config(::Ctx* c) {            // GetTrackConfiguration(int track,
         m->set_i32("sample-rate", t.rate);
         m->set_i32("channel-count", t.ch);
     }
-    m->set_ptr("nn-extractor", reinterpret_cast<uint64_t>(e));   // lets the decoder find its source
+    m->set_ptr("nn-extractor", reinterpret_cast<uint64_t>(e));
     m->set_i32("nn-track", i);
     RET(ST_OK);
 }
@@ -888,7 +884,7 @@ void ext_seek(::Ctx* c) {                    // SeekTo(int64 timeUs)
     } else {
         us = 0;
     }
-    if (us == 0 && e->ahead != 0) {                // a loop: the start was decoded ahead
+    if (us == 0 && e->ahead != 0) {
         const auto wait_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(kWaitMs);
         while (e->ahead == 1 && e->cv_data.wait_until(lk, wait_until) != std::cv_status::timeout) {}
         if (e->ahead == 2 && !e->seek_pending && e->nx.size() == e->tr.size()) {
@@ -941,7 +937,7 @@ void ext_track_for_data(::Ctx* c) {          // GetTrackIndexForAvailableData(si
 
 struct Token {
     uint64_t magic;
-    IMFSample* s;          // one reference, owned by the token until a decoder takes it
+    IMFSample* s;
     int64_t ts;
     uint32_t skip;
     uint32_t pad;
@@ -1003,19 +999,19 @@ enum { OUT_FREE = 0, OUT_READY, OUT_CLIENT };
 struct OutBuf {
     int state = OUT_FREE;
     ComPtr<IMFSample> s;
-    uint32_t off = 0, len = 0;         // audio: the bytes of the sample this buffer carries
+    uint32_t off = 0, len = 0;
     int64_t ts = 0;
     uint32_t flags = 0;
 };
 struct DecItem {
     ComPtr<IMFSample> s;
-    uint32_t off = 0, remaining = 0;   // audio: the bytes still to hand out
+    uint32_t off = 0, remaining = 0;
     int64_t ts = 0;
     uint32_t flags = 0;
     int in_idx = 0;
 };
 struct Dec;
-std::mutex g_decs_mu;                    // registry of live decoders (see g_exts_mu)
+std::mutex g_decs_mu;
 std::set<Dec*> g_decs;
 
 struct Dec {
@@ -1053,7 +1049,6 @@ int64_t queued_samples(int kind) {
     }
     return n;
 }
-// Input items the decoders hold for the transforms, over every live decoder.
 int64_t decoder_queue() {
     std::lock_guard<std::mutex> lk(g_decs_mu);
     int64_t n = 0;
@@ -1063,7 +1058,6 @@ int64_t decoder_queue() {
     }
     return n;
 }
-// Removes its gauge when this file's statics are torn down (declared after the registries, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
@@ -1078,9 +1072,9 @@ GaugeHook gauge_extractors("media.extractors_open", [] {
 GaugeHook gauge_decoders("media.decoders_open", [] {
     return static_cast<int64_t>(s_decoders_created.load()) - static_cast<int64_t>(s_decoders_destroyed.load());
 });
-GaugeHook gauge_video_frames("media.video_frames", [] { return static_cast<int64_t>(s_frames.load()); });   // frames handed to the game
+GaugeHook gauge_video_frames("media.video_frames", [] { return static_cast<int64_t>(s_frames.load()); });
 GaugeHook gauge_audio_blocks("media.audio_blocks", [] { return static_cast<int64_t>(s_audio_blocks.load()); });
-GaugeHook gauge_samples_read("media.samples_read", [] { return static_cast<int64_t>(s_samples.load()); });   // samples read from the source
+GaugeHook gauge_samples_read("media.samples_read", [] { return static_cast<int64_t>(s_samples.load()); });
 GaugeHook gauge_read_errors("media.read_errors", [] { return static_cast<int64_t>(s_read_errors.load()); });
 
 void dec_release_all(Dec* d) {
@@ -1088,7 +1082,7 @@ void dec_release_all(Dec* d) {
     for (int i = 0; i < d->nin; i++) {
         Token t;
         std::memcpy(&t, d->mem.get() + static_cast<size_t>(i) * kSlotBytes, sizeof t);
-        if (t.magic == kTokenMagic && t.s) t.s->Release();       // read into the slot but never sent
+        if (t.magic == kTokenMagic && t.s) t.s->Release();
         std::memset(d->mem.get() + static_cast<size_t>(i) * kSlotBytes, 0, kSlotBytes);
         d->in_state[i] = IN_CODEC;
     }
@@ -1096,7 +1090,6 @@ void dec_release_all(Dec* d) {
     d->in_n = d->out_n = 0;
 }
 
-// The codec's own progress: what waits in the decode queue moves to a free output buffer and its input buffer is offered again.
 void dec_pump(Dec* d) {
     while (!d->dec_q.empty()) {
         int o = -1;
@@ -1291,7 +1284,7 @@ void dec_send_input(::Ctx* c) {              // SendInputBufferForDecode(int ind
     }
     d->in_count++;
     const bool empty_audio = sample && !d->is_video && !(flags & FLAG_EOS) && [&] { DWORD len = 0; sample->GetTotalLength(&len); return len <= skip; }();
-    if ((!sample || empty_audio) && !(flags & FLAG_EOS)) {   // nothing to decode: the buffer is offered again
+    if ((!sample || empty_audio) && !(flags & FLAG_EOS)) {
         d->dropped++;
         d->in_state[i] = IN_OFFERED;
         d->in_list[d->in_n++] = i;
@@ -1340,7 +1333,6 @@ void dec_acquire_output(::Ctx* c) {          // AcquireOutputBufferIndex(int* in
     RET(r);
 }
 
-// Copies the decoded sample of an output slot into the game's buffer; returns the bytes written.
 size_t copy_out(Dec* d, const OutBuf& s, unsigned char* dst, size_t cap) {
     if (!s.s) return 0;
     ComPtr<IMFMediaBuffer> mb;
@@ -1481,7 +1473,7 @@ constexpr size_t kImportCount = sizeof(kImports) / sizeof(kImports[0]);
 
 const char* g_names[kImportCount];
 
-}  // namespace
+}
 
 const char* const* movie_import_names(size_t* count) {
     for (size_t i = 0; i < kImportCount; i++) g_names[i] = kImports[i].name;
@@ -1526,4 +1518,4 @@ MovieStats movie_stats() {
     return s;
 }
 
-}  // namespace nxrt::media
+}

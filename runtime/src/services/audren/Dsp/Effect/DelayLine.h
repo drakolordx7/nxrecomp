@@ -72,4 +72,4 @@ class DelayLine : public IDelayLine {
     }
 };
 
-}  // namespace nxrt::audren
+}

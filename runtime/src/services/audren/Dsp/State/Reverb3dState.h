@@ -122,4 +122,4 @@ struct Reverb3dState {
     }
 };
 
-}  // namespace nxrt::audren
+}

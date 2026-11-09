@@ -66,4 +66,4 @@ class MultiTapBiquadFilterCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

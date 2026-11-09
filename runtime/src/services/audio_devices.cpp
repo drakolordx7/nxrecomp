@@ -25,7 +25,7 @@ std::string wide_to_utf8(const wchar_t* w) {
     return out;
 }
 
-}  // namespace
+}
 
 std::vector<OutputDevice> list_output_devices() {
     std::vector<OutputDevice> out;
@@ -86,4 +86,4 @@ std::vector<OutputDevice> list_output_devices() {
     return out;
 }
 
-}  // namespace nxrt::audio
+}

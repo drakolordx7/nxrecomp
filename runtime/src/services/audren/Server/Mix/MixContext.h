@@ -23,15 +23,12 @@ namespace nxrt::audren {
 
 class MixContext {
   public:
-    // Graph state (C# public NodeStates NodeStates { get; }).
     nxrt::audren::NodeStates NodeStates;
 
-    // The instance of the adjacent matrix (C# public EdgeMatrix EdgeMatrix { get; }).
     nxrt::audren::EdgeMatrix EdgeMatrix;
 
     MixContext() = default;
 
-    // Initialize the MixContext. The node states and the edge matrix are only initialized when both work buffers are given.
     void Initialize(Span<int32_t> sortedMixes, Span<MixInfo> mixes, Span<uint8_t> nodeStatesWorkBuffer, Span<uint8_t> edgeMatrixWorkBuffer) {
         _mixesCount = static_cast<uint32_t>(mixes.Length);
         _mixes = mixes;
@@ -48,23 +45,18 @@ class MixContext {
         }
     }
 
-    // Get a reference to the final MixInfo.
     MixInfo& GetFinalState() { return GetState(Constants::FinalMixId); }
 
-    // Get a reference to a MixInfo at the given id.
     MixInfo& GetState(int32_t id) { return SpanIOHelper<uint8_t>::GetFromMemory(_mixes, id, _mixesCount); }
 
-    // Get a reference to a MixInfo at the given id of the sorted mix info.
     MixInfo& GetSortedState(int32_t id) {
         NXAUDREN_ASSERT(id >= 0 && static_cast<uint32_t>(id) < _mixesCount);
 
         return GetState(_sortedMixes[static_cast<size_t>(id)]);
     }
 
-    // Get the total mix count.
     uint32_t GetCount() const { return _mixesCount; }
 
-    // Sort the mixes using distance from the final mix (C# Sort()).
     void Sort() {
         UpdateDistancesFromFinalMix();
 
@@ -109,13 +101,10 @@ class MixContext {
     }
 
   private:
-    // Associate the given targetIndex to a given sorted id.
     void SetSortedState(int32_t id, int32_t targetIndex) { _sortedMixes[static_cast<size_t>(id)] = targetIndex; }
 
-    // C# int.CompareTo / uint.CompareTo: -1, 0 or 1.
     static int32_t CompareUInt32(uint32_t lhs, uint32_t rhs) { return lhs < rhs ? -1 : (lhs > rhs ? 1 : 0); }
 
-    // Update the distance from the final mix of every MixInfo (C# UpdateDistancesFromFinalMix).
     void UpdateDistancesFromFinalMix() {
         for (MixInfo& mix : _mixes) {
             mix.ClearDistanceFromFinalMix();
@@ -164,7 +153,6 @@ class MixContext {
         }
     }
 
-    // Update the buffer offset of all MixInfo, in index order (C# UpdateMixBufferOffset).
     void UpdateMixBufferOffset() {
         uint32_t offset = 0;
 
@@ -175,12 +163,9 @@ class MixContext {
         }
     }
 
-    // The total mix count.
     uint32_t _mixesCount = 0;
-    // Storage for MixInfo.
     Span<MixInfo> _mixes;
-    // Storage of the sorted indices to MixInfo.
     Span<int32_t> _sortedMixes;
 };
 
-}  // namespace nxrt::audren
+}

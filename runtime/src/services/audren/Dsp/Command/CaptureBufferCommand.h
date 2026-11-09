@@ -49,11 +49,8 @@ class CaptureBufferCommand : public ICommand {
         Span<float> inputBuffer = context.GetBuffer(static_cast<int32_t>(InputBufferIndex));
         if (IsEffectEnabled) {
             Span<int32_t> inputBufferInt = inputBuffer.Cast<int32_t>();
-            // Convert input data to the target format for user (int)
             DataSourceHelper::ToInt(inputBufferInt, inputBuffer, static_cast<int32_t>(inputBuffer.Length));
-            // Send the input to the user
             Write(OutputBuffer, CountMax, inputBufferInt, context.SampleCount, WriteOffset, UpdateCount);
-            // Convert back to float
             DataSourceHelper::ToFloat(inputBuffer, inputBufferInt, static_cast<int32_t>(inputBuffer.Length));
         } else {
             Info::Reset(DspBufferInfoAddress);
@@ -114,4 +111,4 @@ class CaptureBufferCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

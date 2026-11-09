@@ -31,15 +31,13 @@ inline Matrix2x2 operator*(const Matrix2x2& value1, float value2) {
 }
 
 inline Matrix2x2 operator*(const Matrix2x2& value1, const Matrix2x2& value2) {
-    // First row
     float m11 = value1.M11 * value2.M11 + value1.M12 * value2.M21;
     float m12 = value1.M11 * value2.M12 + value1.M12 * value2.M22;
 
-    // Second row
     float m21 = value1.M21 * value2.M11 + value1.M22 * value2.M21;
     float m22 = value1.M21 * value2.M12 + value1.M22 * value2.M22;
 
     return Matrix2x2(m11, m12, m21, m22);
 }
 
-}  // namespace nxrt::audren
+}

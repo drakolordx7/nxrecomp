@@ -38,7 +38,7 @@ enum class LatencyMode : uint8_t { Off = 0, Auto, On, Boost };   // Auto: whiche
 struct LatencySettings {
     LatencyMode mode = LatencyMode::Off;
     int frames_ahead = 1;            // with the mode on: simulation of a frame waits until at most this many earlier frames are still unpresented (0 .. 3; -1 = no wait)
-    bool log_timings = false;        // log one line of timings per second
+    bool log_timings = false;
 };
 
 struct Settings {
@@ -65,7 +65,7 @@ const char* output_kind_name(OutputKind k);
 
 struct HdrState {
     bool scene_hdr = false;          // the game runs the HDR scene pipeline: float window / post targets, patched tone-map shader and curve
-    OutputKind output = OutputKind::Sdr8;   // what the swapchain carries
+    OutputKind output = OutputKind::Sdr8;
     float paper_white_nits = 203;
     float peak_nits = 1000;
     float peak_ratio = 1;            // asymptote of the extended shoulder, in paper-white units (1 = the game's own SDR curve)
@@ -85,4 +85,4 @@ void hdr_refresh_levels();
 // Resolves the numbers the settings leave at 0 ("auto") against what the display reports.
 void hdr_resolve_levels(const HdrSettings& s, bool display_hdr, float display_peak_nits, float display_sdr_white_nits, float* paper, float* peak);
 
-}  // namespace nxrt::extras
+}

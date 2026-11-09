@@ -59,7 +59,6 @@ constexpr uint32_t kNativeWindowSize = 0x3c;
 
 // ============================================================ shared helpers
 
-// A byte span the nvdrv ioctl code reads and writes (a guest buffer, or a copy of one)
 struct Arg {
     uint8_t* p = nullptr;
     uint64_t n = 0;
@@ -83,7 +82,6 @@ struct Arg {
 
 Arg arg_of(const ipc::Buffer& b) { return Arg{buf_mut(b), b.size}; }
 
-// The NUL-terminated string a guest buffer holds (at most the buffer's size).
 std::string c_string(const ipc::Buffer& b) {
     std::string s;
     if (!b.addr) return s;
@@ -99,7 +97,6 @@ void warn_once(uint32_t code, const char* what) {
     if (!(seen.fetch_or(bit) & bit)) NXLOG_W(kTagVi, "binder transaction %u %s", code, what);
 }
 
-// Registers a command that is accepted and does nothing (logged at Debug).
 void accept_cmd(ipc::Service& s, uint32_t id, const char* name, const char* tag) {
     s.add_cmd(id, name, [name, tag](ipc::Request&, ipc::Response&) -> uint32_t {
         NXLOG_D(tag, "%s accepted, nothing done", name);
@@ -121,7 +118,6 @@ bool display_id_of(const char* name40, uint64_t* id) {
     return false;
 }
 
-// The DisplayName a command carries as its first 0x40 raw bytes.
 bool display_from_raw(const ipc::Request& r, uint64_t* id) {
     char nm[0x41] = {};
     if (r.in) std::memcpy(nm, r.in, std::min<size_t>(0x40, r.in_size));
@@ -185,7 +181,6 @@ void vsync_stop_and_join() {
     s.vsync_stop = false;
 }
 
-// Caller holds vi().mu. Layer lookups: a binder id is the slot + 1; nullptr when no layer is open there.
 Layer* layer_by_binder(int32_t binder) {
     if (binder < 1 || binder > static_cast<int32_t>(kLayerSlots)) return nullptr;
     Layer& l = vi().layers[binder - 1];
@@ -259,7 +254,7 @@ struct ParcelIn {
         uint32_t off = 0;
         if (n >= 8) std::memcpy(&off, d + 4, 4);
         pos = off < n ? off : n;
-        u32();                                       // strict policy
+        u32();
         const uint32_t len = u32();
         if (len < 0x100) pos += (((len + 1) * 2) + 3) & ~3u;
         if (pos > n) pos = n;
@@ -281,7 +276,6 @@ struct ParcelOut {
     }
 };
 
-// The reply: the header (data size, data offset 16, no objects, objects offset after the data) and the data.
 void reply_parcel(const ipc::Buffer& reply, const std::vector<uint8_t>& data) {
     const uint32_t hdr[4] = {static_cast<uint32_t>(data.size()), 16, 0, static_cast<uint32_t>(16 + data.size())};
     std::vector<uint8_t> out(16 + data.size());
@@ -423,7 +417,7 @@ void write_display_info(const ipc::Buffer& out) {
     buf_write(out, info, sizeof info);
 }
 
-std::shared_ptr<ipc::Service> make_binder_driver();   // forward: the IHOSBinderDriver interface
+std::shared_ptr<ipc::Service> make_binder_driver();
 
 void setup_binder_driver(ipc::Service& s) {
     s.add_cmd(0, "TransactParcel", [](ipc::Request& r, ipc::Response&) -> uint32_t {
@@ -448,8 +442,8 @@ std::shared_ptr<ipc::Service> make_binder_driver() {
     return make_iface("nns::hosbinder::IHOSBinderDriver", setup_binder_driver);
 }
 
-std::shared_ptr<ipc::Service> make_system_display();    // forward
-std::shared_ptr<ipc::Service> make_manager_display();   // forward
+std::shared_ptr<ipc::Service> make_system_display();
+std::shared_ptr<ipc::Service> make_manager_display();
 
 void setup_system_display(ipc::Service& s) {
     s.add_cmd(1200, "GetZOrderCountMin", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
@@ -659,7 +653,7 @@ struct NvMapObj {
 
 struct NvFile {
     Dev dev = Dev::Other;
-    std::map<uint32_t, std::shared_ptr<ServiceEvent>> events;   // QueryEvent: one event per slot or id
+    std::map<uint32_t, std::shared_ptr<ServiceEvent>> events;
     uint64_t user_data = 0;                                     // gpu channel: SET_USER_DATA
     uint32_t syncpt = 0;                                        // gpu channel: its syncpoint (ALLOC_GPFIFO_EX2)
     uint64_t big_page = 0x20000;                                // as-gpu: INITIALIZE_EX
@@ -674,8 +668,8 @@ struct NvState {
     uint32_t next_syncpt = 1;
     std::map<uint32_t, std::shared_ptr<NvFile>> files;
     std::map<uint32_t, NvMapObj> maps;
-    std::set<uint64_t> seen;     // ioctls logged once at Info
-    std::set<uint64_t> warned;   // unhandled ioctls warned once
+    std::set<uint64_t> seen;
+    std::set<uint64_t> warned;
     bool submit_logged = false;
 };
 NvState& nv() {
@@ -684,18 +678,17 @@ NvState& nv() {
 }
 
 // ---- gauges (include/nxrt/gauge.h): the nvdrv tables, counted under the state lock ----
-// Removes its gauge when this file's statics are torn down.
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
-GaugeHook gauge_nv_files("nv.files", [] {   // open nvdrv device files (nvmap, gpu channels, as-gpu, ...)
+GaugeHook gauge_nv_files("nv.files", [] {
     NvState& s = nv();
     std::lock_guard<std::mutex> lk(s.mu);
     return static_cast<int64_t>(s.files.size());
 });
-GaugeHook gauge_nv_maps("nv.nvmap_objects", [] {   // nvmap allocations alive (removed when the last reference is freed)
+GaugeHook gauge_nv_maps("nv.nvmap_objects", [] {
     NvState& s = nv();
     std::lock_guard<std::mutex> lk(s.mu);
     return static_cast<int64_t>(s.maps.size());
@@ -740,7 +733,6 @@ constexpr Region kRegions[2] = {{0x100000000ull, 0x400000000ull, 0x1000}, {0x400
 
 const Region& region_for(uint64_t page) { return page == 0x10000 ? kRegions[1] : kRegions[0]; }
 
-// The first run of `size` bytes in [lo, hi) that no range of `ranges` covers, aligned to `align`; 0 when there is none.
 uint64_t find_gap(const std::map<uint64_t, uint64_t>& ranges, uint64_t lo, uint64_t hi, uint64_t size, uint64_t align) {
     if (align == 0) align = 1;
     uint64_t cand = (lo + align - 1) / align * align;
@@ -1073,7 +1065,6 @@ uint32_t gpu_ioctl(NvFile& f, uint32_t nr, Arg a, bool& handled) {
     }
 }
 
-// Dispatch on the device, then on the command word's type and number. xout is the inline output of Ioctl3 (empty otherwise).
 uint32_t dispatch(NvFile& f, uint32_t cmd, Arg a, Arg xout, bool& handled) {
     const uint32_t type = (cmd >> 8) & 0xFF, nr = cmd & 0xFF;
     handled = true;
@@ -1273,7 +1264,7 @@ void setup_nvdrv(ipc::Service& s) {
     });
 }
 
-}  // namespace
+}
 
 // ============================================================ registration
 
@@ -1314,4 +1305,4 @@ void vi_nv_reset() {
     }
 }
 
-}  // namespace nxrt::services
+}

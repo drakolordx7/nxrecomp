@@ -18,17 +18,13 @@ namespace nxrt::audren {
 
 class BiquadFilterEffect : public BaseEffect {
   public:
-    // The biquad filter parameter (C# BiquadFilterEffectParameter2 Parameter; default-initialised).
     BiquadFilterEffectParameter2 Parameter{};
 
-    // The biquad filter state (C# Memory<BiquadFilterState>, Constants.ChannelCountMax elements).
     Span<BiquadFilterState> State;
 
-    // The biquad filter effect version (1 or 2).
     int32_t BiquadFilterEffectVersion = 0;
 
   private:
-    // POD state, so value-initialised storage is the C# default value.
     std::vector<BiquadFilterState> _state;
 
   public:
@@ -74,4 +70,4 @@ class BiquadFilterEffect : public BaseEffect {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -54,4 +54,4 @@ class DepopPrepareCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -40,10 +40,9 @@ namespace nxrt::services::fs {
 constexpr size_t kRomfsMaxName = 255;     // bytes of UTF-8 in one RomFS name
 constexpr size_t kRomfsMaxPath = 0x300;   // SDK FS_MAX_PATH (0x301 with the terminator); the path counts its leading '/'
 
-// What load_mods() needs; mods_config_from_runtime() fills it from [mods], the exe folder and the running title.
 struct ModsConfig {
-    bool enabled = true;     // [mods] enabled
-    std::string mods_dir;    // UTF-8, the folder holding the mods
+    bool enabled = true;
+    std::string mods_dir;
     std::string ini_path;    // mods.ini (order and enabled flags); empty: not read and not written
     uint64_t title_id = 0;   // program id used to pick <title id> folders; 0 accepts every one
 };
@@ -51,7 +50,7 @@ ModsConfig mods_config_from_runtime();
 
 // Where the bytes of one mod file are: a host file, or a member of a packed romfs.bin (offset/size inside that file).
 struct ModSource {
-    std::wstring host;       // ready to open (absolute, \\?\ prefix when long)
+    std::wstring host;
     uint64_t offset = 0;
     uint64_t size = 0;
     std::shared_ptr<const std::vector<uint8_t>> mem;   // generated content (ModsIndexEdit::replace_file): host and offset are unused
@@ -65,15 +64,14 @@ public:
         std::string name;
         bool is_dir = false;
     };
-    // One line per mod in the order of mods.ini (highest priority first), for the log and the tests.
     struct ModInfo {
         std::string name;
         bool enabled = false;
-        std::string folder;                 // the folder that was found (the mod's first root)
-        size_t files = 0;                   // files found in the mod
+        std::string folder;
+        size_t files = 0;
         size_t overrides = 0, additions = 0;   // files served from this mod: replacing a game file / new ones
         size_t lost = 0;                    // found but beaten by a higher-priority mod or hidden by one
-        size_t hides = 0;                   // game entries its .stub markers hide
+        size_t hides = 0;
         std::vector<std::string> unsupported;   // exefs, exefs_patches, cheats, ... (ignored)
     };
 
@@ -90,10 +88,10 @@ public:
     }
     // A folder some mod provides: a host folder it exists in (only for times), or null.
     const std::wstring* dir_host(const std::string& path) const;
-    const std::vector<Child>* children(const std::string& dir) const;   // the mods' entries of a folder, unsorted
+    const std::vector<Child>* children(const std::string& dir) const;
     // True when `path` or one of its parents is hidden from the game's own tree (a mod entry at that path can still exist).
     bool hidden(const std::string& path) const;
-    const std::vector<std::string>& dirs_sorted() const { return dir_list_; }      // every folder the mods provide, "/" first
+    const std::vector<std::string>& dirs_sorted() const { return dir_list_; }
     const std::vector<std::string>& hidden_paths() const { return hidden_list_; }
     const std::vector<ModInfo>& mods() const { return infos_; }
 
@@ -106,13 +104,13 @@ private:
         uint32_t mod = 0;
     };
     struct DirRec {
-        bool base = true;       // the game has this folder (set by the comparison with the game's tree)
+        bool base = true;
         std::wstring host;
         std::vector<Child> kids;
     };
     std::unordered_map<std::string, FileRec> files_;
     std::unordered_map<std::string, DirRec> dirs_;
-    std::unordered_map<std::string, uint32_t> hidden_;   // hidden game path -> index of the mod whose .stub hides it
+    std::unordered_map<std::string, uint32_t> hidden_;
     std::vector<std::string> dir_list_, hidden_list_;
     std::vector<ModInfo> infos_;
 };
@@ -127,19 +125,17 @@ private:
 // The hook is not called when no mod provides anything, so the no-mods path is untouched.
 struct ModFileChange {
     std::string path;                    // "/System/Resource/ResourceSizeTable.srsizetable"
-    bool replaces_game_file = false;     // false: the mods add this file; the game has none
-    uint64_t old_size = 0;               // the game's file size (0 when it adds)
-    uint64_t new_size = 0;               // the size that is served
-    std::string mod;                     // the mod the served file comes from
+    bool replaces_game_file = false;
+    uint64_t old_size = 0;
+    uint64_t new_size = 0;
+    std::string mod;
 };
 
 class OverlayBuilder;
 
 class ModsIndexEdit {
 public:
-    // Every file the mods serve, sorted by path.
     const std::vector<ModFileChange>& changes() const { return changes_; }
-    // The game paths the mods hide (files or folders), sorted.
     const std::vector<std::string>& hidden() const { return hidden_; }
     // The content `path` has in the merged view (a mod's file if one provides it, else the game's); false when absent or hidden.
     bool read_file(const std::string& path, std::vector<uint8_t>* out) const;
@@ -171,11 +167,11 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
 // Reads a packed RomFS image (romfs.bin) and lists its files with their absolute offsets in the file. False with *err set when the
 // header or the tables are not those of a RomFS image. Entries that point outside the file are skipped (counted in *skipped).
 struct PackedEntry {
-    std::string path;       // "/a/b.bin"
-    uint64_t offset = 0;    // in the image file
+    std::string path;
+    uint64_t offset = 0;
     uint64_t size = 0;
 };
 bool read_packed_romfs(const std::wstring& file, std::vector<PackedEntry>* files, std::vector<std::string>* dirs, size_t* skipped,
                        std::string* err);
 
-}  // namespace nxrt::services::fs
+}

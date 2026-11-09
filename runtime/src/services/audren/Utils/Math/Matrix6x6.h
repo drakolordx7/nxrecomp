@@ -32,4 +32,4 @@ struct Matrix6x6 {
     bool operator==(const Matrix6x6& other) const = default;
 };
 
-}  // namespace nxrt::audren
+}

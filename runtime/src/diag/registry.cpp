@@ -21,7 +21,7 @@ std::mutex g_files_lock;
 std::string g_files[kRing];
 size_t g_files_next = 0, g_files_count = 0;
 
-}  // namespace
+}
 
 size_t diag_register_thread(const char* name, ::Ctx* ctx, uint64_t guest_tid) {
     HANDLE real = nullptr;
@@ -35,7 +35,6 @@ size_t diag_register_thread(const char* name, ::Ctx* ctx, uint64_t guest_tid) {
     r.guest_tid = guest_tid;
     t_ctx = ctx;
     std::lock_guard<std::mutex> lk(g_lock);
-    // reuse a free slot (host_tid == 0)
     for (size_t i = 0; i < g_threads.size(); i++)
         if (g_threads[i].host_tid == 0) {
             g_threads[i] = r;
@@ -123,4 +122,4 @@ void diag_clear_recent_files() {
     g_files_next = g_files_count = 0;
 }
 
-}  // namespace nxrt
+}

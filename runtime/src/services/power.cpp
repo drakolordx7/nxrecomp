@@ -39,7 +39,7 @@ uint32_t apm_invalid_parameters() { return res(148, 1); }
 
 struct PowerState {
     uint32_t performance_mode = kModeUnset;   // set by apm:sys RequestPerformanceMode; until then it follows the operation mode
-    uint32_t config[2] = {kConfigNormal, kConfigBoost};   // indexed by PerformanceMode (Normal, Boost)
+    uint32_t config[2] = {kConfigNormal, kConfigBoost};
     bool cpu_overclock = false;
     uint32_t cpu_boost_mode = 0;
     ServiceEvent perf_events[kEventTargets];
@@ -231,7 +231,7 @@ std::shared_ptr<ipc::Service> make_psm() {
     });
 }
 
-}  // namespace
+}
 
 void register_power() {
     add("apm", [] { return make_apm_manager("apm", true); });
@@ -252,4 +252,4 @@ void power_reset() {
     s.battery_charging = true;
 }
 
-}  // namespace nxrt::services
+}

@@ -43,7 +43,6 @@ struct FloatingPointHelper {
         return res;
     }
 
-    // Map decibel to linear.
     static float DecibelToLinear(float db) { return std::pow(10.0f, db / 20.0f); }
 
     static float DegreesToRadians(float degrees) { return degrees * 3.14159265358979323846f / 180.0f; }
@@ -53,4 +52,4 @@ struct FloatingPointHelper {
     static float Sin(float value) { return std::sin(DegreesToRadians(value)); }
 };
 
-}  // namespace nxrt::audren
+}

@@ -217,7 +217,7 @@ void svc_return_from_exception(::Ctx* c) {
     RaiseException(0xE0000003, EXCEPTION_NONCONTINUABLE, 0, nullptr);
 }
 
-}  // namespace
+}
 
 void svc_register_thread_group() {
     svc_register(0x07, svc_exit_process);
@@ -251,4 +251,4 @@ void svc_register_thread_group() {
     svc_register(0x45, svc_create_event);
 }
 
-}  // namespace nxrt
+}

@@ -12,7 +12,6 @@ namespace nxrt::audren {
 
 namespace Numerics {
 
-// System.Numerics.Vector2 stand-in.
 struct Vector2 {
     float X = 0.0f;
     float Y = 0.0f;
@@ -23,7 +22,6 @@ struct Vector2 {
     bool operator==(const Vector2& other) const = default;
 };
 
-// System.Numerics.Vector4 stand-in.
 struct Vector4 {
     float X = 0.0f;
     float Y = 0.0f;
@@ -48,7 +46,7 @@ struct Matrix4x4 {
     bool operator==(const Matrix4x4& other) const = default;
 };
 
-}  // namespace Numerics
+}
 
 // Static class MatrixHelper: row-vector times matrix.
 struct MatrixHelper {
@@ -75,4 +73,4 @@ struct MatrixHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

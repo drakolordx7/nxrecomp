@@ -27,14 +27,13 @@ size_t recv_list_entries(uint32_t flags) {
 void put16(uint8_t* p, uint16_t v) { std::memcpy(p, &v, 2); }
 void put32(uint8_t* p, uint32_t v) { std::memcpy(p, &v, 4); }
 
-// Word and byte layout of a message, computed once and shared by build() and built_size_words().
 struct Plan {
     bool special = false;
     bool aligned = false;
-    size_t desc_end_bytes = 0;  // header + special header + descriptors, in bytes from the message start
-    size_t pad_before = 0;      // bytes
+    size_t desc_end_bytes = 0;
+    size_t pad_before = 0;
     size_t pad_after = 0;       // bytes; pad_before + pad_after is 0x10 for aligned raw data
-    size_t payload_bytes = 0;   // raw payload rounded up to a whole word
+    size_t payload_bytes = 0;
     size_t raw_words = 0;       // header1 raw size: pad_before + payload + pad_after + u16 sizes, rounded to words
     size_t recv_entries = 0;
     size_t total_words = 0;
@@ -87,14 +86,13 @@ bool make_plan(const Message& m, Plan& p, std::string* err) {
     return true;
 }
 
-}  // namespace
+}
 
 bool parse(const uint32_t* words, size_t nwords, Message& out, std::string* err) {
     out = Message{};
     if (err) err->clear();
     if (nwords < 2) return fail_(err, "message shorter than its 2-word header");
 
-    // pos is always <= nwords; every read is preceded by a check against nwords - pos.
     size_t pos = 2;
     const uint32_t h0 = words[0];
     const uint32_t h1 = words[1];
@@ -186,7 +184,6 @@ size_t build(const Message& m, uint32_t* out, size_t cap_words, std::string* err
         return 0;
     }
 
-    // Assemble in a byte buffer (zero-filled, so every padding word is zero), then copy out in one step.
     std::vector<uint8_t> buf(p.total_words * 4, 0);
     uint8_t* d = buf.data();
     put32(d, static_cast<uint32_t>(m.type) | (static_cast<uint32_t>(m.ptrs.size()) << 16) |
@@ -239,7 +236,6 @@ size_t build(const Message& m, uint32_t* out, size_t cap_words, std::string* err
         pos += 2;
     }
 
-    // Receive list entries follow the raw section.
     pos = p.desc_end_bytes + p.raw_words * 4;
     for (const RecvDesc& r : m.recv_list) {
         put32(d + pos, static_cast<uint32_t>(r.addr));
@@ -256,4 +252,4 @@ size_t built_size_words(const Message& m) {
     return make_plan(m, p, nullptr) ? p.total_words : 0;
 }
 
-}  // namespace nxrt::hipc
+}

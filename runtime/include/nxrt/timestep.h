@@ -60,11 +60,11 @@ struct Config {
     uint64_t game_base = 0x7100000000ull;
 };
 
-Config load_config();                       // reads [time]
+Config load_config();
 const char* mode_name(Mode m);
 
 // The retail step (what the code loads, 0x3C888889 as a float).
-constexpr float kGameStep = 0.016666668f;   // 1/60
+constexpr float kGameStep = 0.016666668f;
 float scale60(float dt);                    // dt / (1/60): exactly 1.0f when dt is the game's own step
 
 // ---- where the step goes: the game's sites (offsets in main, nxrt/game.h Info::timestep) ------------------------------------------------
@@ -102,7 +102,7 @@ public:
     double step(double elapsed);
     double dt() const { return dt_; }
     uint64_t frames() const { return frames_; }
-    uint64_t restarts() const { return restarts_; }   // smoothing windows dropped because of a jump
+    uint64_t restarts() const { return restarts_; }
     uint64_t clamped() const { return clamped_; }     // frames whose time was outside [1/max_rate, 1/min_rate]
     double min_period() const;                        // shortest frame the mode allows (0 in off mode)
 private:
@@ -118,7 +118,6 @@ private:
 void install(const Config& c);
 void remove();
 bool installed();
-// Called from nxrt::init: reads [time] and installs.
 void init();
 void shutdown();
 
@@ -130,11 +129,11 @@ bool active();
 struct Stats {
     uint64_t frames = 0;
     double last_dt = 0, last_elapsed = 0;
-    double sim_seconds = 0;          // sum of the steps given to the game
-    double min_elapsed = 0, max_elapsed = 0, mean_elapsed = 0;    // since the last reset_stats()
-    uint64_t waits = 0;              // frames the pacing held
+    double sim_seconds = 0;
+    double min_elapsed = 0, max_elapsed = 0, mean_elapsed = 0;
+    uint64_t waits = 0;
     uint64_t movie_calls = 0;
-    double movie_total = 0;          // seconds handed to the movie list since the start
+    double movie_total = 0;
     uint64_t render_timing_calls = 0;
     double render_seconds = 0;       // the render-timing clock (seconds, wraps at 53000 / 60)
 };
@@ -149,4 +148,4 @@ void set_deterministic_for_tests(double step_seconds);
 // The script step `@rate <hz>` (test tooling): from the next frame on the game step is exactly 1/hz, nothing waits (hz > 0), or the configured mode again (0).
 void set_run_rate(double hz);
 
-}  // namespace nxrt::timestep
+}

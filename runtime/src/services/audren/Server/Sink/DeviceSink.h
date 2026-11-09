@@ -14,9 +14,7 @@ namespace nxrt::audren {
 
 class DeviceSink : public BaseSink {
   public:
-    // The downmix coefficients (C# float[4], allocated once).
     std::vector<float> DownMixCoefficients;
-    // The device parameters.
     DeviceParameter Parameter{};
     // The upsampler instance used by this sink, or null if no upsampling is needed.
     // Written as nxrt::audren::UpsamplerInfo because the member name is the same as the type name.
@@ -63,4 +61,4 @@ class DeviceSink : public BaseSink {
     }
 };
 
-}  // namespace nxrt::audren
+}

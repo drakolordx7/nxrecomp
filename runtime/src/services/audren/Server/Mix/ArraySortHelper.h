@@ -14,7 +14,6 @@ namespace nxrt::audren {
 
 class ArraySortHelper {
   public:
-    // C# Array.Sort(keys, comparison): sorts keys in place.
     template <class T, class TCmp>
     static void IntrospectiveSort(Span<T> keys, TCmp comparer) {
         if (keys.Length > 1) {
@@ -72,7 +71,6 @@ class ArraySortHelper {
 
             int32_t p = PickPivotAndPartition(keys, partitionSize, comparer);
 
-            // The pivot is already in place: recurse on the right part and loop on the left part.
             IntroSort(keys + (p + 1), partitionSize - (p + 1), depthLimit, comparer);
             partitionSize = p;
         }
@@ -107,7 +105,6 @@ class ArraySortHelper {
             Swap(keys, left, right);
         }
 
-        // Put the pivot in the right location.
         if (left != hi - 1) {
             Swap(keys, left, hi - 1);
         }
@@ -167,4 +164,4 @@ class ArraySortHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

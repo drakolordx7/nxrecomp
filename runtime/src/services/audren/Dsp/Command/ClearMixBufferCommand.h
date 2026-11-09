@@ -24,4 +24,4 @@ class ClearMixBufferCommand : public ICommand {
     void Process(CommandList& context) override { context.ClearBuffers(); }
 };
 
-}  // namespace nxrt::audren
+}

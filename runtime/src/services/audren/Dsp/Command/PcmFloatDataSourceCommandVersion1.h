@@ -66,4 +66,4 @@ class PcmFloatDataSourceCommandVersion1 : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

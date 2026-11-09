@@ -77,13 +77,11 @@ class UpsamplerHelper {
     }
 
     static void NextInput(UpsamplerBufferState& state, float input) {
-        // History[1..] -> History[0..]
         std::memmove(state.History.data(), state.History.data() + 1, sizeof(float) * (HistoryLength - 1));
         state.History[static_cast<size_t>(HistoryLength - 1)] = input;
     }
 
   public:
-    // Polyphase upsampling algorithm
     static void Upsample(Span<float> outputBuffer, Span<const float> inputBuffer, int32_t outputSampleCount, int32_t inputSampleCount,
                          UpsamplerBufferState& state) {
         if (!state.Initialized) {
@@ -173,4 +171,4 @@ class UpsamplerHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

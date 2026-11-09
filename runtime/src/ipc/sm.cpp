@@ -27,7 +27,7 @@ std::shared_ptr<Service> make_sm() {
         const std::string n(name);
         if (n.empty()) return kernel::make_result(21, 6);   // sm InvalidServiceName (0xC15)
         NXLOG_I("sm", "sm: GetServiceHandle(%s)", n.c_str());
-        rsp.push_object(make_service(n));                    // a move handle to the new session
+        rsp.push_object(make_service(n));
         return 0;
     });
     s->add_cmd(2, "RegisterService", [](Request&, Response&) -> uint32_t {
@@ -42,4 +42,4 @@ std::shared_ptr<Service> make_sm() {
     return s;
 }
 
-}  // namespace nxrt::ipc
+}

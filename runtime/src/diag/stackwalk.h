@@ -12,4 +12,4 @@ namespace nxrt::detail {
 // addresses (the first is ctx->Rip). Does not modify *ctx. Never allocates.
 size_t capture_stack(const CONTEXT* ctx, uint64_t* frames, size_t max);
 
-}  // namespace nxrt::detail
+}

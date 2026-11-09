@@ -29,4 +29,4 @@ struct LimiterState {
     static void UpdateParameter([[maybe_unused]] LimiterParameter& parameter) {}
 };
 
-}  // namespace nxrt::audren
+}

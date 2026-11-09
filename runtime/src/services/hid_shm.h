@@ -51,7 +51,7 @@ constexpr uint64_t kJoyLeftSixAxisLifo = 0x3378;
 constexpr uint64_t kJoyRightSixAxisLifo = 0x3A80;
 constexpr uint64_t kDeviceType = 0x4188;              // u32 DeviceType bits
 constexpr uint64_t kSystemProperties = 0x4190;        // u64 NpadSystemProperties
-constexpr uint64_t kSystemButtonProperties = 0x4198;  // u32
+constexpr uint64_t kSystemButtonProperties = 0x4198;
 constexpr uint64_t kBatteryJoyDual = 0x419C;          // u32 NpadBatteryLevel (4 = 100 percent)
 constexpr uint64_t kBatteryJoyLeft = 0x41A0;
 constexpr uint64_t kBatteryJoyRight = 0x41A4;
@@ -81,8 +81,8 @@ constexpr uint32_t kTagJoyRight = 1u << 4;
 struct NpadCommonState {
     uint64_t sampling;
     uint64_t buttons;
-    int32_t lx, ly;       // analog stick L
-    int32_t rx, ry;       // analog stick R
+    int32_t lx, ly;
+    int32_t rx, ry;
     uint32_t attributes;
     uint32_t reserved;
 };
@@ -129,7 +129,6 @@ struct DebugPadState {
     int32_t rx, ry, lx, ly;
 };
 
-// One ring: header plus 17 entries of (sampling number, state).
 template <class T>
 struct Ring {
     uint64_t unused;
@@ -158,7 +157,7 @@ static_assert(sizeof(Ring<DebugPadState>) == 0x2C8, "debug pad lifo");
 static_assert(kNpads + kNpadCount * kNpadEntrySize == 0x3BA00, "npad block");
 static_assert(kKeyboard + sizeof(Ring<KeyboardState>) <= kDebugMouse, "keyboard ring fits before the debug mouse");
 
-}  // namespace hidshm
+}
 
 // Runs one sampling step now: reads the input source (or the default pads) and appends one entry to every lifo that is live.
 // The hid service's thread calls this every 5 ms while an applet resource exists; tests call it directly.
@@ -166,4 +165,4 @@ void hid_sample_once();
 // Turns the background thread's sampling on or off (default on). Tests switch it off so that their sampling is deterministic.
 void hid_set_background_sampling(bool enabled);
 
-}  // namespace nxrt::services
+}

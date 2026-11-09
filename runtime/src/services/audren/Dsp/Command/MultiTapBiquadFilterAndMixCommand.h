@@ -100,16 +100,13 @@ class MultiTapBiquadFilterAndMixCommand : public ICommand {
   private:
     void UpdateState(Span<BiquadFilterState> state, Span<BiquadFilterState> previousState, bool needInitialization) {
         if (needInitialization) {
-            // If there is no previous state, initialize to zero.
             state[0] = BiquadFilterState{};
         } else if (IsFirstMixBuffer) {
-            // This is the first buffer, set previous state to current state.
             previousState[0] = state[0];
         } else {
-            // Rewind the current state by copying back the previous state.
             state[0] = previousState[0];
         }
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -15,12 +15,12 @@ namespace nxrt::audio {
 
 // Counters a sink keeps over its life. open() does not reset them. A sink with nothing to report leaves a field at zero.
 struct SinkStats {
-    uint64_t frames_written = 0;    // frames passed to write()
-    uint64_t frames_accepted = 0;   // frames the sink queued for playback
-    uint64_t frames_dropped = 0;    // frames write() could not queue (device queue full)
+    uint64_t frames_written = 0;
+    uint64_t frames_accepted = 0;
+    uint64_t frames_dropped = 0;
     uint64_t underruns = 0;         // times the device ran out of queued audio after playback had started
-    uint32_t queued_peak = 0;       // most buffers the device held queued at one time
-    uint32_t queued_peak_frames = 0;   // most frames queued at one time (sinks that can measure it)
+    uint32_t queued_peak = 0;
+    uint32_t queued_peak_frames = 0;
     uint32_t queued_low_frames = 0;    // fewest frames queued after playback had started (the margin against an underrun)
 };
 
@@ -33,7 +33,6 @@ public:
     // Queues `frames` frames (frames * channels int16 values). Returns the number of frames accepted (the rest is dropped when the
     // device queue is full). Never blocks for long.
     virtual uint32_t write(const int16_t* pcm, uint32_t frames) = 0;
-    // Frames queued but not yet played.
     virtual uint32_t queued_frames() = 0;
     // True when queued_frames() follows a real (or simulated) device clock that drains at the sample rate. The audio renderer then
     // paces itself by the queue level (it keeps about 40 ms queued) instead of by the host clock, so a device that runs a little fast
@@ -48,7 +47,7 @@ public:
 class NullSink : public AudioSink {
 public:
     bool open(uint32_t sr, uint32_t ch) override { rate = sr; channels = ch; return true; }
-    void close() override;   // logs the stats line (src/services/audio_sink.cpp)
+    void close() override;
     uint32_t write(const int16_t*, uint32_t frames) override { total_frames += frames; return frames; }
     uint32_t queued_frames() override { return 0; }
     const char* name() const override { return "null"; }
@@ -62,7 +61,7 @@ public:
     uint64_t total_frames = 0;
 };
 
-void set_sink(std::shared_ptr<AudioSink> s);          // replaces the active sink (closing the old one)
+void set_sink(std::shared_ptr<AudioSink> s);
 // Never null. [audio] sink: auto (default: XAudio2 when it can open the default output device, else the null sink), xaudio2 (the same,
 // but a failure is a warning), paced (a simulated device), null (discard). With [audio] wav_dump set, the chosen sink is wrapped in
 // a WAV tee (make_wav_tee).
@@ -107,8 +106,8 @@ private:
     uint32_t sample_rate_ = 0;
     uint32_t channels_ = 0;
     uint64_t frames_ = 0;
-    uint64_t data_bytes_ = 0;          // sample bytes written so far
-    uint64_t bytes_at_patch_ = 0;      // data_bytes_ when the header was last patched
+    uint64_t data_bytes_ = 0;
+    uint64_t bytes_at_patch_ = 0;
     uint64_t bytes_per_second_ = 0;
     size_t header_size_ = 0;           // 44 for stereo, 68 for extensible
 };
@@ -125,10 +124,10 @@ std::string format_stats(const char* sink_name, const SinkStats& s);
 // An active render endpoint. `id` is the endpoint id (what [audio] device accepts as an exact value); `name` is the friendly name.
 struct OutputDevice {
     std::wstring id;
-    std::string name;   // UTF-8
+    std::string name;
     bool is_default = false;
 };
 // The active render endpoints, in the system's order. Empty when there are none or enumeration fails. src/services/audio_devices.cpp.
 std::vector<OutputDevice> list_output_devices();
 
-}  // namespace nxrt::audio
+}

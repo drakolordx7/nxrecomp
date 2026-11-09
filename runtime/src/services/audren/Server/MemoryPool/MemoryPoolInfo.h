@@ -11,29 +11,20 @@ namespace nxrt::audren {
 struct MemoryPoolInfo {
     static constexpr uint32_t Alignment = 0x10;
 
-    // C# nested enum LocationType : uint.
     enum class LocationType : uint32_t {
-        // MemoryPoolInfo located on the CPU side for user use.
         Cpu,
-        // MemoryPoolInfo located on the DSP side for system use.
         Dsp,
     };
 
-    // The CPU address associated to the MemoryPoolInfo.
     uint64_t CpuAddress = 0;
     // The DSP address associated to the MemoryPoolInfo (0 when not mapped).
     uint64_t DspAddress = 0;
-    // The size associated to the MemoryPoolInfo.
     uint64_t Size = 0;
-    // The LocationType associated to the MemoryPoolInfo.
     LocationType Location = LocationType::Cpu;
-    // Set to true if the MemoryPoolInfo is used.
     bool IsUsed = false;
 
-    // C# `public static unsafe MemoryPoolInfo* Null` (a null pointer).
     static MemoryPoolInfo* Null() { return nullptr; }
 
-    // Create a new MemoryPoolInfo with the given LocationType.
     static MemoryPoolInfo Create(LocationType location) {
         MemoryPoolInfo info;
         info.CpuAddress = 0;
@@ -43,13 +34,11 @@ struct MemoryPoolInfo {
         return info;
     }
 
-    // Set the CpuAddress and size of the MemoryPoolInfo.
     void SetCpuAddress(uint64_t cpuAddress, uint64_t size) {
         CpuAddress = cpuAddress;
         Size = size;
     }
 
-    // Check if the given CpuAddress and size are contained in the MemoryPoolInfo.
     bool Contains(uint64_t targetCpuAddress, uint64_t size) const {
         if (CpuAddress <= targetCpuAddress && size + targetCpuAddress <= Size + CpuAddress) {
             return true;
@@ -69,8 +58,7 @@ struct MemoryPoolInfo {
         return 0;
     }
 
-    // Is the MemoryPoolInfo mapped on the DSP?
     bool IsMapped() const { return DspAddress != 0; }
 };
 
-}  // namespace nxrt::audren
+}

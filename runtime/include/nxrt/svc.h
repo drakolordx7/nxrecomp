@@ -17,7 +17,7 @@ using SvcHandler = void (*)(::Ctx*);
 
 constexpr uint32_t kSvcCount = 0x100;
 
-void svc_init();                                           // registers every built-in handler (idempotent)
+void svc_init();
 void svc_register(uint32_t number, SvcHandler fn);         // add or replace a handler (game-specific SVCs, tests)
 SvcHandler svc_handler(uint32_t number);                   // nullptr when none
 const char* svc_name(uint32_t number);                     // Switchbrew name or "?" for a number nobody documents
@@ -37,14 +37,14 @@ struct SvcUnknownRecord {
 std::vector<SvcUnknownRecord> svc_unknown_records();
 uint64_t svc_unknown_total();
 uint64_t svc_call_count(uint32_t number);                  // calls dispatched to a handler or counted as unknown
-void svc_reset_counters();                                 // tests
+void svc_reset_counters();
 std::string svc_summary();                                 // "svc: N calls, M distinct, K unknown (0x.., ...)" for the end-of-run log
 
 // ---- groups registered by svc_init (one source file each) ------------------------------------------------------------------------
-void svc_register_memory_group();                          // svc_memory.cpp: heap, MapMemory, QueryMemory, shared/transfer memory
-void svc_register_info_group();                            // svc_info.cpp: GetInfo, GetSystemInfo, resource limits, process/thread ids
-void svc_register_thread_group();                          // svc_thread.cpp: threads, events, sync, time, handles, break
-void svc_register_ipc_group();                             // svc_ipc.cpp: ConnectToNamedPort, SendSyncRequest*
+void svc_register_memory_group();
+void svc_register_info_group();
+void svc_register_thread_group();
+void svc_register_ipc_group();
 
 // Current size set by svcSetHeapSize (0 before the first call); implemented by the memory group, read by the info group.
 uint64_t svc_current_heap_size();
@@ -53,7 +53,6 @@ uint64_t svc_current_heap_size();
 // [memory] app_memory_mb overrides.
 uint64_t svc_total_memory();
 
-// Helper for handlers.
 inline void svc_ret(::Ctx* c, uint32_t rc) { c->x[0] = rc; }
 
-}  // namespace nxrt
+}

@@ -17,8 +17,6 @@
 namespace nxrt {
 namespace {
 
-// Forces the import of `sym` to the host handler and replaces the SDK's own definition in the call table (an indirect call that reaches
-// it by address).
 void force_to_host(const char* sym, HleFn fn) {
     module_override_symbol(sym);
     if (const uint64_t def = nxmodule_find_export(sym)) fn_register(def, fn);
@@ -167,7 +165,7 @@ void traced_resolver(::Ctx* c) {
     g_orig_resolver(c);
 }
 
-}  // namespace
+}
 
 void install_sdk_standins() {
     // The game reaches NVN only through `nvnBootstrapLoader` (an import of main that the sdk defines: Nintendo's driver). The lifted PLT stub
@@ -197,4 +195,4 @@ bool install_rtld_standins(uint64_t rtld_base) {
     return fn_lookup(rtld_base) != nullptr;
 }
 
-}  // namespace nxrt
+}

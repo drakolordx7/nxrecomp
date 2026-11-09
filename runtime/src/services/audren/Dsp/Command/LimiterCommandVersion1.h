@@ -32,7 +32,6 @@ class LimiterCommandVersion1 : public ICommand {
     LimiterCommandVersion1()
         : OutputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0), InputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0) {}
 
-    // C# `public LimiterParameter Parameter => _parameter;`
     LimiterParameter Parameter() const { return _parameter; }
 
     LimiterCommandVersion1& Initialize(uint32_t bufferOffset, LimiterParameter parameter, Span<LimiterState> state, bool isEnabled, CpuAddress workBuffer,
@@ -147,4 +146,4 @@ class LimiterCommandVersion1 : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

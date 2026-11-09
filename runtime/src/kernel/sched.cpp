@@ -50,7 +50,6 @@ std::vector<uint64_t> cores_fastest_first(uint64_t proc) {
     return out;
 }
 
-// Slot k = the three fastest cores not taken by a lower slot (a named mutex per slot, held while the process lives).
 uint64_t take_core_slot(const std::vector<uint64_t>& cores, int* slot_out) {
     for (size_t k = 0; k + 3 <= cores.size(); k += 3) {
         char name[64];
@@ -130,14 +129,14 @@ void init_locked() {
         usable = take_slot(usable, &slot);
     }
     int n = 0;
-    for (int b = 63; b >= 0 && n < 3; b--)      // from the top, every second processor: not two hardware threads of one core
+    for (int b = 63; b >= 0 && n < 3; b--)
         if (usable >> b & 1) {
             g_info.host_masks[n++] = 1ull << b;
             b--;
         }
     g_info.slot = slot;
     g_info.active = n == 3;
-    if (!g_info.active) {                       // second chance without skipping: any three processors
+    if (!g_info.active) {
         n = 0;
         for (int b = 63; b >= 0 && n < 3; b--)
             if (usable >> b & 1) g_info.host_masks[n++] = 1ull << b;
@@ -150,7 +149,7 @@ void init_locked() {
         NXLOG_W("sched", "console core model NOT possible: fewer than 3 usable host processors");
 }
 
-}  // namespace
+}
 
 SchedInfo sched_info() {
     std::lock_guard<std::mutex> lk(g_lock);
@@ -162,7 +161,7 @@ void sched_reset_for_tests() {
     std::lock_guard<std::mutex> lk(g_lock);
     g_done = false;
     g_info = SchedInfo{};
-    if (g_slot_mutex) { CloseHandle(g_slot_mutex); g_slot_mutex = nullptr; }     // so the next sched_info() can take the same slot again
+    if (g_slot_mutex) { CloseHandle(g_slot_mutex); g_slot_mutex = nullptr; }
 }
 
 // nn::os priorities run 0 (highest) .. 31 (lowest); HOS priority = nn::os + 28. Six bands under the model:
@@ -232,4 +231,4 @@ void sched_apply(KThread& t) {
     SetThreadPriority(h, sched_host_priority(t.prio));
 }
 
-}  // namespace nxrt::kernel
+}

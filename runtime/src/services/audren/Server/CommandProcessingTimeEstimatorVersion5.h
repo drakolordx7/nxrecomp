@@ -9,7 +9,6 @@ class CommandProcessingTimeEstimatorVersion5 : public CommandProcessingTimeEstim
   public:
     CommandProcessingTimeEstimatorVersion5(uint32_t sampleCount, uint32_t bufferCount) : CommandProcessingTimeEstimatorVersion4(sampleCount, bufferCount) {}
 
-    // Keeps the version 3 and 4 overloads visible next to the ones overridden here (C# inherits them).
     using CommandProcessingTimeEstimatorVersion4::Estimate;
 
     uint32_t Estimate(const DelayCommand& command) override {
@@ -135,4 +134,4 @@ class CommandProcessingTimeEstimatorVersion5 : public CommandProcessingTimeEstim
     uint32_t Estimate(const FillBufferCommand& command) override { return 0; }
 };
 
-}  // namespace nxrt::audren
+}

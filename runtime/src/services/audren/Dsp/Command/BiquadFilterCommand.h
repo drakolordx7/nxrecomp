@@ -59,4 +59,4 @@ class BiquadFilterCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

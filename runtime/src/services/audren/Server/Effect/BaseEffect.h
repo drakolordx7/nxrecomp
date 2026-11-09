@@ -27,19 +27,13 @@ class BaseEffect {
     // The EffectType of the effect. The base class leaves it Invalid; derived constructors set it from TargetEffectType()
     // (a virtual call is not dispatched from a base constructor in C++).
     EffectType Type = EffectType::Invalid;
-    // Set to true if the effect must be active.
     bool IsEnabled = false;
-    // Set to true if the internal effect work buffers used were not mapped.
     bool BufferUnmapped = false;
-    // The current state of the effect.
     ::nxrt::audren::UsageState UsageState = ::nxrt::audren::UsageState::Invalid;
-    // The target mix id of the effect.
     int32_t MixId = Constants::UnusedMixId;
-    // Position of the effect while processing effects.
     uint32_t ProcessingOrder = std::numeric_limits<uint32_t>::max();
 
   protected:
-    // Array of all the work buffers used by the effect (C# AddressInfo[2]).
     std::vector<AddressInfo> WorkBuffers;
 
   public:
@@ -48,16 +42,13 @@ class BaseEffect {
     BaseEffect& operator=(const BaseEffect&) = delete;
     virtual ~BaseEffect() = default;
 
-    // The target EffectType handled by this effect (C# `TargetEffectType => EffectType.Invalid`).
     virtual EffectType TargetEffectType() const { return EffectType::Invalid; }
 
-    // Check if the EffectType sent by the user matches the internal EffectType.
     template <IEffectInParameter T>
     bool IsTypeValid(const T& parameter) const {
         return parameter.type == TargetEffectType();
     }
 
-    // Force unmap all the work buffers.
     void ForceUnmapBuffers(PoolMapper& mapper) {
         for (AddressInfo& info : WorkBuffers) {
             if (info.GetReference(false) != 0) {
@@ -66,19 +57,14 @@ class BaseEffect {
         }
     }
 
-    // Check if the effect needs to be skipped.
     bool ShouldSkip() const { return BufferUnmapped; }
 
-    // Update the BaseEffect state during command generation.
     virtual void UpdateForCommandGeneration() { NXAUDREN_ASSERT(Type == TargetEffectType()); }
 
-    // Initialize the given result state.
     virtual void InitializeResultState([[maybe_unused]] EffectResultState& state) {}
 
-    // Update the destState result state with srcState.
     virtual void UpdateResultState([[maybe_unused]] EffectResultState& destState, [[maybe_unused]] EffectResultState& srcState) {}
 
-    // Update the internal state from a user version 1 parameter.
     virtual void Update(BehaviourParameter::ErrorInfo& updateErrorInfo, [[maybe_unused]] const EffectInParameterVersion1& parameter,
                         [[maybe_unused]] PoolMapper& mapper) {
         NXAUDREN_ASSERT(IsTypeValid(parameter));
@@ -86,7 +72,6 @@ class BaseEffect {
         updateErrorInfo = BehaviourParameter::ErrorInfo{};
     }
 
-    // Update the internal state from a user version 2 parameter.
     virtual void Update(BehaviourParameter::ErrorInfo& updateErrorInfo, [[maybe_unused]] const EffectInParameterVersion2& parameter,
                         [[maybe_unused]] PoolMapper& mapper) {
         NXAUDREN_ASSERT(IsTypeValid(parameter));
@@ -94,10 +79,8 @@ class BaseEffect {
         updateErrorInfo = BehaviourParameter::ErrorInfo{};
     }
 
-    // Get the work buffer DSP address at the given index.
     virtual DspAddress GetWorkBuffer([[maybe_unused]] int index) { NXAUDREN_FATAL("GetWorkBuffer is not implemented for this effect"); }
 
-    // Store the output status to the given user output.
     template <IEffectOutStatus T>
     void StoreStatus(T& outStatus, bool isAudioRendererActive) const {
         if (isAudioRendererActive) {
@@ -140,12 +123,10 @@ class BaseEffect {
     }
 
   protected:
-    // C# UpdateUsageStateForCommandGeneration.
     void UpdateUsageStateForCommandGeneration() {
         UsageState = IsEnabled ? ::nxrt::audren::UsageState::Enabled : ::nxrt::audren::UsageState::Disabled;
     }
 
-    // C# UpdateParameterBase: the mix id and processing order common to every effect parameter.
     template <IEffectInParameter T>
     void UpdateParameterBase(const T& parameter) {
         MixId = parameter.mix_id;
@@ -171,4 +152,4 @@ class BaseEffect {
     }
 };
 
-}  // namespace nxrt::audren
+}

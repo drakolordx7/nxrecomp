@@ -15,7 +15,7 @@
 
 namespace nxrt::services::fs {
 
-class ModOverlay;   // fs_mods.h
+class ModOverlay;
 
 class RomfsImage {
 public:
@@ -27,13 +27,13 @@ public:
     // sees one tree through the image (open, size, listing, hash lookups).
     bool build(const std::string& host_dir, std::string* err = nullptr, const ModOverlay* mods = nullptr);
     bool built() const;
-    uint64_t size() const;                                  // total image size in bytes
+    uint64_t size() const;
     // Copies [offset, offset + len) of the image into dst. False when the range is outside the image or a host file cannot be read
     // (a file that shrank since build() reads as an error, not as zeros). Thread safe; any number of readers may call it at once.
     bool read(uint64_t offset, void* dst, uint64_t len) const;
     struct Stats {
         uint32_t files = 0, dirs = 0;                       // dirs counts the root
-        uint64_t data_bytes = 0;                            // sum of file sizes
+        uint64_t data_bytes = 0;
         uint64_t data_offset = 0;                           // header.file_partition_ofs
     };
     Stats stats() const;
@@ -45,4 +45,4 @@ private:
     std::unique_ptr<Impl> p_;
 };
 
-}  // namespace nxrt::services::fs
+}

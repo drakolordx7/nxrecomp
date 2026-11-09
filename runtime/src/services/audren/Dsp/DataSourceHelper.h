@@ -65,7 +65,6 @@ struct DataSourceHelper {
         return (static_cast<uint16_t>(value) & f) == f;
     }
 
-    // VoiceState.MarkEndOfBufferWaveBufferProcessing (Renderer/Common/VoiceState.cs).
     static void MarkEndOfBufferWaveBufferProcessing(VoiceState& voiceState, WaveBuffer& waveBuffer, int32_t& waveBufferIndex, uint32_t& waveBufferConsumed, uint64_t& playedSampleCount) {
         voiceState.is_wave_buffer_valid[waveBufferIndex++] = false;
         voiceState.loop_count = 0;
@@ -83,7 +82,6 @@ struct DataSourceHelper {
     static void ProcessWaveBuffers(Span<float> outputBuffer, WaveBufferInformation& info, Span<WaveBuffer> wavebuffers, VoiceState& voiceState, uint32_t targetSampleRate, int32_t sampleCount) {
         constexpr int32_t TempBufferSize = 0x3F00;
 
-        // C# stackalloc: zero-initialised.
         int16_t tempBuffer[TempBufferSize] = {};
 
         float sampleRateRatio = static_cast<float>(info.SourceSampleRate) / static_cast<float>(targetSampleRate) * info.Pitch;
@@ -103,7 +101,7 @@ struct DataSourceHelper {
 
             int32_t maxSampleCountPerIteration = std::min(FloatToInt32(std::trunc((static_cast<float>(TempBufferSize) - fraction) / sampleRateRatio)), sampleCount);
 
-            [[maybe_unused]] bool isStarving = false;  // only read by the C# Debug.Assert
+            [[maybe_unused]] bool isStarving = false;
 
             int32_t i = 0;
 
@@ -277,7 +275,6 @@ struct DataSourceHelper {
         }
     }
 
-    // SIMD variants are not ported; the scalar one is used.
     static void ToFloat(Span<float> output, Span<const int32_t> input, int32_t sampleCount) { ToFloatSlow(output, input, sampleCount); }
 
     static void ToIntSlow(Span<int32_t> output, Span<const float> input, int32_t sampleCount) {
@@ -286,7 +283,6 @@ struct DataSourceHelper {
         }
     }
 
-    // SIMD variants are not ported; the scalar one is used.
     static void ToInt(Span<int32_t> output, Span<const float> input, int32_t sampleCount) { ToIntSlow(output, input, sampleCount); }
 
     static void RemapLegacyChannelEffectMappingToChannelResourceMapping(bool isSupported, Span<uint16_t> bufferIndices, uint32_t channelCount) {
@@ -318,4 +314,4 @@ struct DataSourceHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

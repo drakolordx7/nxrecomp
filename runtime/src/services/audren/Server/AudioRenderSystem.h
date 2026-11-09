@@ -61,8 +61,6 @@
 
 namespace nxrt::audren {
 
-// Gauges (audio.cpp registers them): totals over every open renderer. Each renderer adds its change at each update (gauge_set) and gives
-// its share back when it is destroyed. Read from the sampler thread: relaxed atomics only.
 inline std::atomic<int64_t> g_gauge_voices_in_use{0};
 inline std::atomic<int64_t> g_gauge_wavebuffers_queued{0};
 inline std::atomic<int64_t> g_gauge_memory_pools{0};
@@ -104,10 +102,8 @@ class AudioRenderSystem {
     uint32_t _memoryPoolCount = 0;
     uint32_t _processHandle = 0;
     uint64_t _appletResourceId = 0;
-    // What this renderer last added to the gauges above.
     int64_t _gaugeVoices = 0, _gaugeWaves = 0, _gaugePools = 0;
 
-    // The work buffer backing store, owned by the renderer (C# Memory<byte> workBufferMemory, pinned).
     std::vector<uint8_t> _workBufferMemory;
 
     Span<float> _mixBuffer;
@@ -130,10 +126,8 @@ class AudioRenderSystem {
 
     std::atomic<int32_t> _disposeState{0};
 
-    // Ticks of the system clock (C# GetSystemTicks: TickSource.ElapsedSeconds * TargetTimerFrequency). Defined in AudioRendererManager.h.
     uint64_t GetSystemTicks();
 
-    // C# ComputeVoiceDrop. Returns the count of voices dropped for this frame.
     uint32_t ComputeVoiceDrop(CommandBuffer& commandBuffer, uint32_t voicesEstimatedTime, int64_t deltaTimeDsp) {
         CommandList& commandList = commandBuffer.CommandList;
         const size_t count = commandList.Commands.size();
@@ -168,7 +162,6 @@ class AudioRenderSystem {
                 break;
             }
 
-            // We can safely drop this voice, disable all associated commands while activating depop preparation commands.
             voiceDropped++;
             voice.VoiceDropFlag = true;
 
@@ -196,7 +189,6 @@ class AudioRenderSystem {
         return voiceDropped;
     }
 
-    // C# GenerateCommandList(out CommandList). The caller owns the returned list.
     std::unique_ptr<CommandList> GenerateCommandList() {
         NXAUDREN_ASSERT(_executionMode == server::AudioRendererExecutionMode::Auto);
 
@@ -256,7 +248,7 @@ class AudioRenderSystem {
 
         _renderingStartTick = GetSystemTicks();
         _elapsedFrameCount++;
-        {   // gauges: voices in use and their queued wave buffers, and the frame count (relaxed atomics, read by the sampler)
+        {
             int64_t voices = 0, waves = 0;
             for (uint32_t i = 0; i < _voiceContext.GetCount(); i++) {
                 const VoiceInfo& v = _voiceContext.GetState(static_cast<int32_t>(i));
@@ -273,16 +265,13 @@ class AudioRenderSystem {
         return commandList;
     }
 
-    // C# GetMaxAllocatedTimeForDsp.
     int32_t GetMaxAllocatedTimeForDsp() {
         return static_cast<int32_t>(static_cast<float>(Constants::AudioProcessorMaxUpdateTimePerSessions) *
                                     _behaviourInfo.GetAudioRendererProcessingTimeLimit() * (static_cast<float>(GetRenderingTimeLimit()) / 100.0f));
     }
 
-    // C# GetContext(): the lite context the command generator reads. Defined in AudioRendererManager.h (needs the output device).
     RendererSystemContext GetContext();
 
-    // The work of Dispose(true). Defined in AudioRendererManager.h (unregisters from the manager).
     void DisposeImpl();
 
   public:
@@ -296,7 +285,6 @@ class AudioRenderSystem {
         _voiceDropParameter = 1.0f;
     }
 
-    // Defined in AudioRendererManager.h: Dispose() then the manager is told that the session is gone.
     ~AudioRenderSystem();
 
     AudioRenderSystem(const AudioRenderSystem&) = delete;
@@ -375,8 +363,6 @@ class AudioRenderSystem {
             splitterBqfStates.Clear();
         }
 
-        // C# AudioProcessorMemoryManager.InvalidateDspCache: no DSP cache in this port (guest memory is host memory).
-
         NXAUDREN_ASSERT((workBufferAllocator.Offset % Constants::BufferAlignment) == 0);
 
         Span<VoiceInfo> voices = workBufferAllocator.Allocate<VoiceInfo>(parameter.voice_count, VoiceInfo::Alignment);
@@ -389,14 +375,12 @@ class AudioRenderSystem {
             voice.Initialize();
         }
 
-        // A pain to handle as we can't have VoiceInfo*, use indices to be a bit more safe
         Span<int32_t> sortedVoices = workBufferAllocator.Allocate<int32_t>(parameter.voice_count, 0x10);
 
         if (sortedVoices.IsEmpty()) {
             return ResultCode::WorkBufferTooSmall;
         }
 
-        // Clear memory (use -1 as it's an invalid index)
         sortedVoices.Fill(-1);
 
         Span<VoiceChannelResource> voiceChannelResources =
@@ -441,7 +425,6 @@ class AudioRenderSystem {
             }
         }
 
-        // Initialize the final mix id
         mixes[0].MixId = Constants::FinalMixId;
 
         Span<int32_t> sortedMixesInfo = workBufferAllocator.Allocate<int32_t>(mixesCount, 0x10);
@@ -450,7 +433,6 @@ class AudioRenderSystem {
             return ResultCode::WorkBufferTooSmall;
         }
 
-        // Clear memory (use -1 as it's an invalid index)
         sortedMixesInfo.Fill(-1);
 
         Span<uint8_t> nodeStatesWorkBuffer;
@@ -517,8 +499,6 @@ class AudioRenderSystem {
         _totalElapsedTicks = 0;
         _renderingTimeLimitPercent = 100;
         _voiceDropEnabled = parameter.voice_drop_enabled && _executionMode == server::AudioRendererExecutionMode::Auto;
-
-        // C# AudioProcessorMemoryManager.InvalidateDataCache: no DSP cache in this port.
 
         _processHandle = processHandle;
         _elapsedFrameCount = 0;
@@ -648,7 +628,6 @@ class AudioRenderSystem {
                 _usage.effect_type_mask >> 1, static_cast<unsigned long long>(_usage.drop_flag_voices));
     }
 
-    // C# Update(output, performanceOutput, input). Applies the user's request, in the C# order.
     ResultCode Update(Span<uint8_t> output, Span<uint8_t> performanceOutput, Span<const uint8_t> input) {
         std::lock_guard<std::mutex> guard(_lock);
 
@@ -755,7 +734,6 @@ class AudioRenderSystem {
         return result;
     }
 
-    // C# SendCommands: generates the frame's command list and queues it for the AudioProcessor. Defined in AudioRendererManager.h.
     void SendCommands();
 
     uint32_t GetMixBufferCount() const { return _mixBufferCount; }
@@ -780,7 +758,6 @@ class AudioRenderSystem {
 
     int32_t GetSessionId() const { return _sessionId; }
 
-    // C# static GetWorkBufferSize: the arithmetic is written term by term, in the C# order.
     static uint64_t GetWorkBufferSize(AudioRendererConfiguration& parameter) {
         BehaviourInfo behaviourInfo;
 
@@ -792,29 +769,24 @@ class AudioRenderSystem {
 
         uint64_t size = 0;
 
-        // Mix Buffers
         size = WorkBufferAllocator::GetTargetSize<float>(
             size, static_cast<uint64_t>(parameter.sample_count) * (static_cast<uint64_t>(Constants::VoiceChannelCountMax) + parameter.mix_buffer_count),
             0x10);
 
-        // Upsampler workbuffer
         size = WorkBufferAllocator::GetTargetSize<float>(
             size,
             static_cast<uint64_t>(Constants::TargetSampleCount) * (static_cast<uint64_t>(Constants::VoiceChannelCountMax) + parameter.mix_buffer_count) *
                 (static_cast<uint64_t>(parameter.sink_count) + parameter.sub_mix_buffer_count),
             0x10);
 
-        // Depop buffer
         size = WorkBufferAllocator::GetTargetSize<float>(size, BitUtils::AlignUp<uint64_t>(parameter.mix_buffer_count, Constants::BufferAlignment),
                                                          Constants::BufferAlignment);
 
-        // Voice
         size = WorkBufferAllocator::GetTargetSize<VoiceInfo>(size, parameter.voice_count, VoiceInfo::Alignment);
         size = WorkBufferAllocator::GetTargetSize<int32_t>(size, parameter.voice_count, 0x10);
         size = WorkBufferAllocator::GetTargetSize<VoiceChannelResource>(size, parameter.voice_count, VoiceChannelResource::Alignment);
         size = WorkBufferAllocator::GetTargetSize<VoiceState>(size, parameter.voice_count, VoiceState::Align);
 
-        // Mix
         size = WorkBufferAllocator::GetTargetSize<MixInfo>(size, mixesCount, MixInfo::Alignment);
         size = WorkBufferAllocator::GetTargetSize<int32_t>(size, static_cast<uint64_t>(parameter.effect_count) * mixesCount, 0x10);
         size = WorkBufferAllocator::GetTargetSize<int32_t>(size, mixesCount, 0x10);
@@ -824,10 +796,8 @@ class AudioRenderSystem {
                 NodeStates::GetWorkBufferSize(static_cast<int32_t>(mixesCount)) + EdgeMatrix::GetWorkBufferSize(static_cast<int32_t>(mixesCount)), 0x10));
         }
 
-        // Memory Pool
         size = WorkBufferAllocator::GetTargetSize<MemoryPoolInfo>(size, memoryPoolCount, MemoryPoolInfo::Alignment);
 
-        // Splitter
         size = SplitterContext::GetWorkBufferSize(size, behaviourInfo, parameter);
 
         if (behaviourInfo.IsBiquadFilterParameterForSplitterEnabled() && parameter.splitter_count > 0 && parameter.splitter_destination_count > 0) {
@@ -835,10 +805,8 @@ class AudioRenderSystem {
                 size, static_cast<uint64_t>(parameter.splitter_destination_count) * SplitterContext::BqfStatesPerDestination, 0x10);
         }
 
-        // DSP Voice
         size = WorkBufferAllocator::GetTargetSize<VoiceState>(size, parameter.voice_count, VoiceState::Align);
 
-        // Performance
         if (parameter.performance_metric_frames_count > 0) {
             uint64_t performanceMetricsPerFramesSize =
                 PerformanceManager::GetRequiredBufferSizeForPerformanceMetricsPerFrame(parameter, behaviourInfo) *
@@ -863,7 +831,6 @@ class AudioRenderSystem {
         return ResultCode::Success;
     }
 
-    // C# Dispose(): idempotent. Stops the session, unmaps its pools and unregisters it from the manager. Defined in AudioRendererManager.h.
     void Dispose() {
         if (_disposeState.exchange(1) == 0) {
             if (_usage.updates > 0) {
@@ -887,7 +854,7 @@ class AudioRenderSystem {
     }
 };
 
-}  // namespace nxrt::audren
+}
 
 // The members that need the manager are defined in AudioRendererManager.h, which needs this header complete.
 #include "AudioRendererManager.h"

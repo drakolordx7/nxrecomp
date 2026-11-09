@@ -50,4 +50,4 @@ void soak_stop();
 // Called by diag_frame_tick(): records the time of a presented frame for the window statistics. Cheap (two relaxed stores).
 void soak_note_frame();
 
-}  // namespace nxrt
+}

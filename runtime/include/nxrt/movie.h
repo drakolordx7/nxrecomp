@@ -30,12 +30,12 @@ struct MovieStats {
     uint64_t extractors_destroyed = 0;
     uint64_t decoders_created = 0;
     uint64_t decoders_destroyed = 0;
-    uint64_t video_frames_delivered = 0;   // copied into a game buffer
+    uint64_t video_frames_delivered = 0;
     uint64_t audio_blocks_delivered = 0;
     uint64_t audio_bytes_delivered = 0;
-    uint64_t samples_read = 0;             // decoded samples taken from Media Foundation
+    uint64_t samples_read = 0;
     uint64_t read_errors = 0;
 };
 MovieStats movie_stats();
 
-}  // namespace nxrt::media
+}

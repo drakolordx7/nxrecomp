@@ -27,7 +27,6 @@ constexpr uint64_t kMaxDataBytes = 0xFFFFFFFFull - 64;
 // KSDATAFORMAT_SUBTYPE_PCM {00000001-0000-0010-8000-00aa00389b71} as it is stored in the file (little-endian first three fields).
 constexpr uint8_t kSubtypePcm[16] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
 
-// Little-endian byte builder for the header. The sample data is written as the host stores it (x64 is little-endian).
 class ByteBuf {
 public:
     void raw(const void* p, size_t n) {
@@ -69,7 +68,6 @@ public:
 
     bool open(uint32_t rate, uint32_t channels) override {
         const bool ok = inner_->open(rate, channels);
-        // The file is kept while the format stays the same; a different format (or a reopen after close) starts a numbered file.
         if (!file_open_ || rate_ != rate || channels_ != channels) {
             Job j;
             j.kind = Job::Close;
@@ -99,7 +97,7 @@ public:
 
     uint32_t write(const int16_t* pcm, uint32_t frames) override {
         frames_written_ += frames;
-        if (file_open_ && channels_ != 0) {   // every frame, whether or not the inner sink queues it
+        if (file_open_ && channels_ != 0) {
             Job j;
             j.kind = Job::Data;
             j.pcm.assign(pcm, pcm + static_cast<size_t>(frames) * channels_);
@@ -134,7 +132,6 @@ private:
         cv_.notify_one();
     }
 
-    // Waits until the writer thread has handled everything queued so far.
     void drain() {
         std::unique_lock<std::mutex> lk(mu_);
         idle_cv_.wait(lk, [this] { return queue_.empty() && !busy_; });
@@ -146,7 +143,7 @@ private:
             {
                 std::unique_lock<std::mutex> lk(mu_);
                 cv_.wait(lk, [this] { return quit_ || !queue_.empty(); });
-                if (queue_.empty()) return;   // quit_ and nothing left
+                if (queue_.empty()) return;
                 j = std::move(queue_.front());
                 queue_.pop_front();
                 busy_ = true;
@@ -198,7 +195,7 @@ private:
     std::thread thread_;
 };
 
-}  // namespace
+}
 
 WavWriter::~WavWriter() { close(); }
 
@@ -219,7 +216,7 @@ bool WavWriter::open(const std::string& path, uint32_t sample_rate, uint32_t cha
     const bool extensible = channels == 6;
     ByteBuf h;
     h.raw("RIFF", 4);
-    h.u32(0);                                   // patched
+    h.u32(0);
     h.raw("WAVE", 4);
     h.raw("fmt ", 4);
     h.u32(extensible ? 40 : 16);
@@ -236,7 +233,7 @@ bool WavWriter::open(const std::string& path, uint32_t sample_rate, uint32_t cha
         h.raw(kSubtypePcm, sizeof kSubtypePcm);
     }
     h.raw("data", 4);
-    h.u32(0);                                   // patched
+    h.u32(0);
     header_size_ = h.size();
 
     if (std::fwrite(h.data(), 1, h.size(), file_) != h.size()) {
@@ -287,4 +284,4 @@ std::shared_ptr<AudioSink> make_wav_tee(std::shared_ptr<AudioSink> inner, const 
     return std::make_shared<WavTeeSink>(std::move(inner), path);
 }
 
-}  // namespace nxrt::audio
+}

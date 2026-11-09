@@ -30,7 +30,7 @@ constexpr uint32_t kNullDeviceNicknameBuffer = 808;   // GetDeviceNickName witho
 constexpr uint32_t kLanguageCount = static_cast<uint32_t>(Language::Count);
 // GetAvailableLanguageCodes and its count answer at most 0xF entries (Switchbrew: max_entries 0xF; ScarletNX and Ryujinx cap at 15).
 constexpr uint32_t kLanguageCountV1 = 15;
-constexpr size_t kNickNameSize = 0x80;                // nn::settings::system::DeviceNickName
+constexpr size_t kNickNameSize = 0x80;
 constexpr size_t kFirmwareSize = 0x100;               // nn::settings::system::FirmwareVersion (user processes: hard-coded 0x100)
 constexpr size_t kSerialSize = 0x18;                  // nn::settings::factory::SerialNumber (Switchbrew: 0x18-byte string)
 constexpr size_t kSettingsNameSize = 0x48;            // nn::settings::SettingsName and SettingsItemKey
@@ -56,7 +56,6 @@ void put_code(uint8_t* dst, Language l) {
     std::memcpy(dst, c, std::min<size_t>(std::strlen(c), 7));
 }
 
-// GetAvailableLanguageCodes(2): as many codes as the out buffer holds, at most `max`; the count goes in the response.
 uint32_t put_codes(ipc::Request& req, ipc::Response& rsp, uint32_t max) {
     const ipc::Buffer b = req.out_buf(0);
     const uint64_t n = std::min<uint64_t>(b.size / 8, max);
@@ -74,7 +73,6 @@ int32_t region_code() {
     return r >= 0 && r <= 5 ? r : 1;
 }
 
-// "major.minor.micro" into out[0..2]; missing trailing parts stay 0. False when even the major part is not a number.
 bool parse_version(const std::string& s, uint8_t out[3]) {
     const char* p = s.data();
     const char* end = p + s.size();
@@ -109,8 +107,8 @@ std::array<uint8_t, kFirmwareSize> firmware_version() {
     v[0] = ver[0];
     v[1] = ver[1];
     v[2] = ver[2];
-    v[4] = 1;   // revision major
-    v[5] = 0;   // revision minor
+    v[4] = 1;
+    v[5] = 0;
     std::memcpy(&v[0x08], "NX", 2);
     if (fw == "12.1.0") std::memcpy(&v[0x28], kHash121, 40);
     std::memcpy(&v[0x68], fw.data(), std::min<size_t>(fw.size(), 0x17));
@@ -139,8 +137,8 @@ struct SettingEntry {
     const char* name;
     const char* key;
     SettingKind kind;
-    int32_t i;            // Bool (0 or 1) and Int values
-    const char* s;        // Str value
+    int32_t i;
+    const char* s;
 };
 constexpr SettingEntry kSettings[] = {
     {"account", "na_required_for_network_service", SettingKind::Bool, 1, nullptr},
@@ -173,7 +171,6 @@ std::vector<uint8_t> setting_bytes(const SettingEntry& e) {
     return {};
 }
 
-// A SettingsName or SettingsItemKey buffer as text: the bytes up to the first NUL, at most 0x48 of them.
 std::string read_setting_text(const ipc::Buffer& b) {
     char tmp[kSettingsNameSize] = {};
     buf_read(b, tmp, sizeof tmp - 1);
@@ -294,7 +291,7 @@ void setup_set_sys(ipc::Service& s) {
     });
 }
 
-}  // namespace
+}
 
 void register_settings() {
     add("set", [] { return make_iface("set", setup_set); });
@@ -306,4 +303,4 @@ void settings_reset() {
     state().lock_screen = 0;
 }
 
-}  // namespace nxrt::services
+}

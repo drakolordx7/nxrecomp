@@ -24,4 +24,4 @@ void install_sdk_standins();
 // [boot] probe = no-sdk-services runs nn::init::Start's steps without nninitInitializeSdkModule.
 bool install_rtld_standins(uint64_t rtld_base);
 
-}  // namespace nxrt
+}

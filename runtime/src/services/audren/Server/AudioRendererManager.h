@@ -45,38 +45,27 @@ class AudioRendererManager {
     // Lock used for session allocation (C# _sessionLock). Not reentrant: the *Locked helpers below expect it to be held.
     std::mutex _sessionLock;
 
-    // Lock used to control the AudioProcessor running state (C# _audioProcessorLock).
     std::mutex _audioProcessorLock;
 
-    // The session ids allocation table (C# int[] _sessionIds).
     std::vector<int32_t> _sessionIds;
 
-    // The events linked to each session (C# IWritableEvent[] _sessionsSystemEvent). Owned by the caller.
     std::vector<IWritableEvent*> _sessionsSystemEvent;
 
-    // The AudioRenderSystem sessions instances (C# AudioRenderSystem[]). Non-owning.
     std::vector<AudioRenderSystem*> _sessions;
 
-    // The count of active sessions.
     int32_t _activeSessionCount = 0;
 
-    // The worker thread used to run SendCommands.
     std::thread _workerThread;
 
-    // Indicate if the worker thread and AudioProcessor are running.
     std::atomic<bool> _isRunning{false};
 
-    // The audio device driver to create audio outputs.
     IHardwareDeviceDriver* _deviceDriver = nullptr;
 
-    // The dispose state (C# _disposeState).
     std::atomic<int32_t> _disposeState{0};
 
   public:
-    // Tick source used to measure elapsed time (C# TickSource { get; }).
     nxrt::audren::TickSource TickSource;
 
-    // The AudioProcessor instance associated to this manager (C# Processor { get; }).
     AudioProcessor Processor;
 
     explicit AudioRendererManager(nxrt::audren::TickSource tickSource = {}) : TickSource(tickSource) {
@@ -94,16 +83,13 @@ class AudioRendererManager {
 
     ~AudioRendererManager() { Dispose(); }
 
-    // Initialize the manager (C# Initialize). `sessionSystemEvents` has one event per session id; the events are owned by the caller.
     void Initialize(std::vector<IWritableEvent*> sessionSystemEvents, IHardwareDeviceDriver* deviceDriver) {
         _sessionsSystemEvent = std::move(sessionSystemEvents);
         _deviceDriver = deviceDriver;
     }
 
-    // The work buffer size required by a session (C# static GetWorkBufferSize).
     static uint64_t GetWorkBufferSize(AudioRendererConfiguration& parameter) { return AudioRenderSystem::GetWorkBufferSize(parameter); }
 
-    // Stop sending commands to the AudioProcessor without stopping the worker thread. C# StopSendingCommands.
     void StopSendingCommands() {
         {
             std::lock_guard<std::mutex> guard(_sessionLock);
@@ -152,7 +138,6 @@ class AudioRendererManager {
         return result;
     }
 
-    // C# Dispose: disposes every open session, stops the worker and the processor.
     void Dispose() {
         if (_disposeState.exchange(1) == 0) {
             DisposeImpl();
@@ -161,7 +146,6 @@ class AudioRendererManager {
 
   private:
     void DisposeImpl() {
-        // Copy the sessions table and dispose the sessions outside the lock (each one unregisters itself).
         std::vector<AudioRenderSystem*> sessions;
 
         {
@@ -184,7 +168,6 @@ class AudioRendererManager {
         }
     }
 
-    // C# AcquireSessionId.
     int32_t AcquireSessionId() {
         std::lock_guard<std::mutex> guard(_sessionLock);
 
@@ -243,7 +226,6 @@ class AudioRendererManager {
         NXLOG_I("AudioRenderer", "Stopped audio renderer");
     }
 
-    // C# SendCommands (the worker main function): dispatches every session's commands to the AudioProcessor, one frame at a time.
     void SendCommandsWorker() {
         BoostAudioThread();
         TimerResolutionScope::Acquire();
@@ -285,7 +267,6 @@ class AudioRendererManager {
         TimerResolutionScope::Release();
     }
 
-    // C# Register: adds the session to the table and starts the processor if needed.
     void Register(AudioRenderSystem* renderer) {
         {
             std::lock_guard<std::mutex> guard(_sessionLock);
@@ -302,7 +283,6 @@ class AudioRendererManager {
         }
     }
 
-    // C# internal Unregister: removes the session, releases its id and stops the processor when no session is left.
     void Unregister(AudioRenderSystem* renderer) {
         {
             std::lock_guard<std::mutex> guard(_sessionLock);
@@ -328,11 +308,8 @@ class AudioRendererManager {
         }
     }
 
-    // Lets AudioRenderSystem::DisposeImpl and the renderer's destructor reach the private Unregister.
     friend class AudioRenderSystem;
 };
-
-// ---- Members of AudioRenderSystem that need the manager (declared in AudioRenderSystem.h) ----
 
 inline uint64_t AudioRenderSystem::GetSystemTicks() { return _manager.TickSource.Counter(); }
 
@@ -385,7 +362,6 @@ inline void AudioRenderSystem::DisposeImpl() {
 
     _manager.Unregister(this);
 
-    // C# _workBufferMemoryPin.Dispose() and MemoryManager release: the work buffer vector is freed with the renderer.
 }
 
 inline AudioRenderSystem::~AudioRenderSystem() {
@@ -395,4 +371,4 @@ inline AudioRenderSystem::~AudioRenderSystem() {
     g_gauge_memory_pools.fetch_sub(_gaugePools, std::memory_order_relaxed);
 }
 
-}  // namespace nxrt::audren
+}

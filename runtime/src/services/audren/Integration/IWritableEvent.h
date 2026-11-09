@@ -9,11 +9,9 @@ class IWritableEvent {
   public:
     virtual ~IWritableEvent() = default;
 
-    // Signal the event.
     virtual void Signal() = 0;
 
-    // Clear the signaled state of the event.
     virtual void Clear() = 0;
 };
 
-}  // namespace nxrt::audren
+}

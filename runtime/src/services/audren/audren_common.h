@@ -84,7 +84,6 @@ struct Span {
     }
     void Fill(const T& v) const { std::fill(Data, Data + Length, v); }
     void Clear() const { if (Length) std::memset(static_cast<void*>(const_cast<std::remove_const_t<T>*>(Data)), 0, Length * sizeof(T)); }
-    // CopyTo: dst must hold at least Length elements.
     void CopyTo(Span<std::remove_const_t<T>> dst) const {
         NXAUDREN_ASSERT(dst.Length >= Length);
         if (Length) std::memmove(static_cast<void*>(dst.Data), static_cast<const void*>(Data), Length * sizeof(T));
@@ -111,4 +110,4 @@ inline T* GuestPtr(CpuAddress address) {
 template <class T>
 inline T ClampT(T v, T lo, T hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-}  // namespace nxrt::audren
+}

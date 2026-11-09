@@ -48,19 +48,19 @@ struct Event {
 // ---- the queue --------------------------------------------------------------------------------------------------------
 // Bounded ring (kQueueCapacity events). When full the oldest event is dropped and queue_dropped() counts it.
 constexpr size_t kQueueCapacity = 4096;
-void queue_push(const Event& e);                 // also usable for synthetic events (tests, scripted runs)
+void queue_push(const Event& e);
 size_t queue_drain(Event* out, size_t max);      // removes up to max events, oldest first; returns how many
-bool queue_pop(Event* out);                      // removes the oldest event
+bool queue_pop(Event* out);
 size_t queue_size();
-uint64_t queue_dropped();                        // since the last queue_clear
-uint64_t queue_pushed();                         // total pushed since the last queue_clear
+uint64_t queue_dropped();
+uint64_t queue_pushed();
 void queue_clear();
 
 // ---- raw mouse accumulator --------------------------------------------------------------------------------------------
 // Relative motion (SDL relative mouse mode, raw and unaccelerated) is also summed here so that aim code can read it as late as
 // possible, once per rendered frame, without draining the queue: mouse deltas go straight into the aim code.
 struct MouseDelta { double dx = 0, dy = 0; uint64_t events = 0; };
-void mouse_delta_add(double dx, double dy);      // called by the platform for every relative motion event
+void mouse_delta_add(double dx, double dy);
 MouseDelta mouse_delta_take();                   // returns the sum since the last take and resets it
 MouseDelta mouse_delta_peek();
 
@@ -70,16 +70,16 @@ MouseDelta mouse_delta_peek();
 enum class PadKind : uint8_t { Other = 0, Xbox, PlayStation, Switch };
 
 struct GamepadInfo {
-    uint32_t id = 0;                // SDL instance id, as in the events
+    uint32_t id = 0;
     char name[64] = {};
     bool rumble = false;
     bool gyro = false;
     PadKind kind = PadKind::Other;
 };
 size_t gamepad_count();
-size_t gamepad_list(GamepadInfo* out, size_t max);   // returns the number written
+size_t gamepad_list(GamepadInfo* out, size_t max);
 PadKind gamepad_kind_of(uint32_t id);                // Other when the id is not open
-void gamepad_set_info(const GamepadInfo& info);      // platform use: add or replace an entry
-void gamepad_remove_info(uint32_t id);               // platform use
+void gamepad_set_info(const GamepadInfo& info);
+void gamepad_remove_info(uint32_t id);
 
-}  // namespace nxrt::input
+}

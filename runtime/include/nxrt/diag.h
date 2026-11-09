@@ -17,22 +17,22 @@ namespace nxrt {
 // Ctx and the watchdog can dump its stack. The registry is independent of the kernel's thread objects.
 struct ThreadRecord {
     std::string name;
-    uint32_t host_tid = 0;        // GetCurrentThreadId
+    uint32_t host_tid = 0;
     void* host_handle = nullptr;  // a real HANDLE opened with THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION
-    ::Ctx* ctx = nullptr;         // guest registers of the thread (may be null for a host-only thread)
+    ::Ctx* ctx = nullptr;
     uint64_t guest_tid = 0;       // kernel thread id (0 = none)
 };
 // Registers the calling thread (duplicates the pseudo handle into a real one). Sets the thread-local "current Ctx" used by
 // the crash handler. Returns the record index (handle for diag_unregister_thread).
 size_t diag_register_thread(const char* name, ::Ctx* ctx, uint64_t guest_tid = 0);
-void diag_unregister_thread();                 // the calling thread; closes its handle
+void diag_unregister_thread();
 void diag_set_thread_ctx(::Ctx* ctx);          // the Ctx now running on this thread (call_guest nesting restores the old one)
-::Ctx* diag_thread_ctx();                      // thread-local current Ctx or nullptr
+::Ctx* diag_thread_ctx();
 std::vector<ThreadRecord> diag_threads();      // snapshot of the registry (names, tids, Ctx only: host_handle is always null; use diag_threads_dup for a usable handle)
 // Like diag_threads, but every host_handle is a private duplicate made under the registry lock, so a thread that unregisters meanwhile cannot
 // close it under the caller. The caller must pass the vector to diag_threads_release when done.
 std::vector<ThreadRecord> diag_threads_dup();
-void diag_threads_release(std::vector<ThreadRecord>& recs);   // closes the duplicates and clears the vector
+void diag_threads_release(std::vector<ThreadRecord>& recs);
 
 // ---- recent files ------------------------------------------------------------------------------------------------------
 // A ring of the last 32 file/dir opens of any thread, printed by the crash handler: what the game was loading.
@@ -64,7 +64,7 @@ void crash_uninstall();
 //   guest call stack (innermost first): f_<hex> ...        (lifted functions found on the host stack)
 //   threads: one line per registered thread (name, guest tid, lr)
 //   last files opened (oldest first): ...
-std::string crash_build_report(void* exception_pointers /* EXCEPTION_POINTERS* */);
+std::string crash_build_report(void* exception_pointers);
 // Number of exceptions the installed handler has turned into reports (tests).
 uint32_t crash_exceptions_reported();
 
@@ -91,7 +91,7 @@ void watchdog_start(const WatchdogOptions& opt = {});
 void watchdog_stop();
 bool watchdog_running();
 void diag_progress();                  // a heartbeat that is not a frame: long work that is moving (texture transcodes on a cold cache) keeps the watchdog quiet
-void diag_frame_tick();                // call once per presented frame (or any heartbeat)
+void diag_frame_tick();
 void diag_frame_tick_nolisten();       // the same without calling the frame listener (the test tooling's own boundary)
 void diag_set_frame_listener(void (*fn)());   // called by diag_frame_tick after counting (test tooling's frame source "tick"); null removes it
 uint64_t diag_frame_count();
@@ -100,4 +100,4 @@ uint32_t watchdog_fire_count();
 void diag_add_report(std::string (*fn)());
 std::string diag_thread_dump();        // the dump text the watchdog produces, on demand (also used by the SIGUSR-style "dump_threads" file)
 
-}  // namespace nxrt
+}

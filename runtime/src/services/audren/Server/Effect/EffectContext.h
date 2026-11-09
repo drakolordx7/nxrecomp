@@ -19,10 +19,8 @@ namespace nxrt::audren {
 
 class EffectContext {
   private:
-    // Storage for the effects (C# BaseEffect[]).
     std::vector<std::unique_ptr<BaseEffect>> _effects;
 
-    // The total effect count.
     uint32_t _effectCount = 0;
 
     std::vector<EffectResultState> _resultStatesCpu;
@@ -31,7 +29,6 @@ class EffectContext {
   public:
     EffectContext() = default;
 
-    // Initialize the EffectContext: every effect starts as a BaseEffect (EffectType.Invalid), result states are zeroed.
     void Initialize(uint32_t effectCount, uint32_t resultStateCount) {
         _effectCount = effectCount;
 
@@ -45,10 +42,8 @@ class EffectContext {
         _resultStatesDsp.assign(resultStateCount, EffectResultState{});
     }
 
-    // Get the total effect count.
     uint32_t GetCount() const { return _effectCount; }
 
-    // Get a reference to the effect slot at the given index (may be replaced by assignment).
     std::unique_ptr<BaseEffect>& GetEffect(int index) {
         NXAUDREN_ASSERT(index >= 0 && static_cast<uint32_t>(index) < _effectCount);
         return _effects[static_cast<size_t>(index)];
@@ -66,7 +61,6 @@ class EffectContext {
         return _resultStatesDsp[static_cast<size_t>(index)];
     }
 
-    // A one-element view of the DSP EffectResultState at the given index (C# SpanIOHelper.GetMemory).
     Span<EffectResultState> GetDspStateMemory(int index) {
         NXAUDREN_ASSERT(index >= 0 && static_cast<size_t>(index) < _resultStatesDsp.size());
         return Span<EffectResultState>(_resultStatesDsp.data() + index, 1);
@@ -85,4 +79,4 @@ class EffectContext {
     }
 };
 
-}  // namespace nxrt::audren
+}

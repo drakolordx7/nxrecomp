@@ -42,7 +42,7 @@ public:
     void set_visible(bool v);
     bool visible() const;
     void toggle();
-    int toggle_scancode() const;             // SDL scancode of the toggle key
+    int toggle_scancode() const;
     void set_toggle_scancode(int sc);
     bool wants_input() const;                // visible and ImGui wants the mouse or keyboard
     bool wants_mouse() const;                // visible and the pointer is over the menu or a widget is being dragged
@@ -73,7 +73,7 @@ public:
 
     // The Renderer overlay hook: builds and draws the menu on top of the frame (no-op while hidden, unless the counter is on).
     void draw(const FrameInfo& f);
-    void install_on_renderer();              // renderer->set_overlay_hook(draw)
+    void install_on_renderer();
 
     uint64_t frames_drawn() const;
 
@@ -83,4 +83,4 @@ private:
     Impl* impl_ = nullptr;
 };
 
-}  // namespace nxrt::gfx
+}

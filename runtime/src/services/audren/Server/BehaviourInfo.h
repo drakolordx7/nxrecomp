@@ -29,38 +29,27 @@ class BehaviourInfo {
     static constexpr int32_t Revision13 = 13 << 24;
     static constexpr int32_t Revision14 = 14 << 24;
     static constexpr int32_t Revision15 = 15 << 24;
-    // Last revision supported by the implementation.
     static constexpr int32_t LastRevision = Revision15;
-    // Target revision magic supported by the implementation.
     static constexpr int32_t ProcessRevision = BaseRevisionMagic + LastRevision;
 
-    // Get the revision number from the revision magic.
     static constexpr int32_t GetRevisionNumber(int32_t revision) { return (revision - BaseRevisionMagic) >> 24; }
 
-    // Current active revision (C# `{ get; private set; }`, so it is a plain member set through SetUserRevision).
     int32_t UserRevision = 0;
 
   private:
-    // Current flags of the BehaviourInfo.
     uint64_t _flags = 0;
-    // Error storage (C# Array10<ErrorInfo>, zero-initialised).
     std::array<BehaviourParameter::ErrorInfo, static_cast<size_t>(Constants::MaxErrorInfos)> _errorInfos{};
-    // Current position in _errorInfos.
     uint32_t _errorIndex = 0;
 
   public:
     BehaviourInfo() = default;
 
-    // Set the active revision.
     void SetUserRevision(int32_t userRevision) { UserRevision = userRevision; }
 
-    // Update flags of the BehaviourInfo.
     void UpdateFlags(uint64_t flags) { _flags = flags; }
 
-    // Check if a given revision is valid/supported.
     static bool CheckValidRevision(int32_t revision) { return GetRevisionNumber(revision) <= GetRevisionNumber(ProcessRevision); }
 
-    // Check if the given revision is greater than or equal the supported revision.
     static bool CheckFeatureSupported(int32_t revision, int32_t supportedRevision) {
         int32_t revA = GetRevisionNumber(revision);
         int32_t revB = GetRevisionNumber(supportedRevision);
@@ -76,13 +65,11 @@ class BehaviourInfo {
         return revA >= revB;
     }
 
-    // Check if the memory pool mapping bypass flag is active.
     bool IsMemoryPoolForceMappingEnabled() const { return (_flags & 1) != 0; }
 
     // Check if the audio renderer should fix the GC-ADPCM context not being provided to the DSP.
     bool IsAdpcmLoopContextBugFixed() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision2); }
 
-    // Check if the audio renderer should accept splitters.
     bool IsSplitterSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision2); }
 
     // Check if the audio renderer should use a max pre-delay of 350 instead of 150.
@@ -104,16 +91,13 @@ class BehaviourInfo {
         return 0.70f;
     }
 
-    // Check if the audio render should support voice flushing.
     bool IsFlushVoiceWaveBuffersSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision5); }
 
     // Check if the audio renderer should trust the user destination count in the splitter update.
     bool IsSplitterBugFixed() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision5); }
 
-    // Check if the audio renderer should supply the elapsed frame count to the user when updating.
     bool IsElapsedFrameCountSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision5); }
 
-    // Get the performance metric data format version.
     uint32_t GetPerformanceMetricsDataFormat() const {
         if (CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision5)) {
             return 2;
@@ -122,19 +106,15 @@ class BehaviourInfo {
         return 1;
     }
 
-    // Check if the audio renderer should support VoiceInParameter1.DecodingBehaviour.
     bool IsDecodingBehaviourFlagSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision5); }
 
     // Check if the audio renderer should fix the biquad filter command not clearing up its state with the New usage state.
     bool IsBiquadFilterEffectStateClearBugFixed() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision6); }
 
-    // Check if the audio renderer should accept partial mix updates.
     bool IsMixInParameterDirtyOnlyUpdateSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision7); }
 
-    // Check if the audio renderer should use the new wavebuffer format.
     bool IsWaveBufferVersion2Supported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision8); }
 
-    // Check if the audio renderer should use the new effect info format.
     bool IsEffectInfoVersion2Supported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision9); }
 
     // Check if the audio renderer should use an optimized Biquad Filter (Direct Form 1) when two biquad filters are defined on a voice.
@@ -143,19 +123,15 @@ class BehaviourInfo {
     // Check if the audio renderer should support new channel resource mapping for 5.1 on Delay, Reverb and Reverb 3D effects.
     bool IsNewEffectChannelMappingSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision11); }
 
-    // Check if the audio renderer should support biquad filter on splitter.
     bool IsBiquadFilterParameterForSplitterEnabled() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision12); }
 
-    // Check if the audio renderer should support explicit previous mix volume reset on splitter.
     bool IsSplitterPrevVolumeResetSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision13); }
 
     // Check if the audio renderer should support the depop bug fix.
     bool IsSplitterDepopBugFixEnabled() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision14); }
 
-    // Check if the audio renderer should support biquad filter with float coefficients.
     bool IsBiquadFilterParameterFloatSupported() const { return CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision15); }
 
-    // Get the version of the ICommandProcessingTimeEstimator.
     int32_t GetCommandProcessingTimeEstimatorVersion() const {
         if (CheckFeatureSupported(UserRevision, BaseRevisionMagic + Revision11)) {
             return 5;
@@ -187,7 +163,6 @@ class BehaviourInfo {
         }
     }
 
-    // Copy the internal ErrorInfo array to the given span and output the count of valid entries.
     void CopyErrorInfo(Span<BehaviourParameter::ErrorInfo> errorInfos, uint32_t& errorCount) const {
         if (errorInfos.Length != static_cast<size_t>(Constants::MaxErrorInfos)) {
             NXAUDREN_FATAL("Invalid size of errorInfos span!");
@@ -198,8 +173,7 @@ class BehaviourInfo {
         Span<const BehaviourParameter::ErrorInfo>(_errorInfos.data(), _errorInfos.size()).CopyTo(errorInfos);
     }
 
-    // Clear the ErrorInfo array.
     void ClearError() { _errorIndex = 0; }
 };
 
-}  // namespace nxrt::audren
+}

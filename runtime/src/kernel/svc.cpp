@@ -39,23 +39,22 @@ std::atomic<uint64_t> g_unknown_total{0};
 std::atomic<int64_t> g_log_limit{-1};
 
 // ---- gauges (include/nxrt/gauge.h) ----
-// Removes its gauge when the file's statics are torn down (declared after the tables above, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { gauge_register(n, std::move(f)); }
     ~GaugeHook() { gauge_unregister(name); }
 };
-GaugeHook gauge_svc_calls("kernel.svc_calls", [] {   // SVCs answered since start (all numbers)
+GaugeHook gauge_svc_calls("kernel.svc_calls", [] {
     uint64_t n = 0;
     for (auto& c : g_calls) n += c.load(std::memory_order_relaxed);
     return static_cast<int64_t>(n);
 });
-GaugeHook gauge_svc_unknown_kinds("kernel.svc_unknown_kinds", [] {   // distinct unknown SVC numbers seen (the map only grows)
+GaugeHook gauge_svc_unknown_kinds("kernel.svc_unknown_kinds", [] {
     std::lock_guard<std::mutex> lk(g_unk_lock);
     return static_cast<int64_t>(g_unknown.size());
 });
 
-}  // namespace
+}
 
 const char* svc_name(uint32_t number) {
     for (auto& e : kNames)
@@ -152,7 +151,6 @@ std::string svc_summary() {
     for (auto& c : g_calls)
         if (c.load()) { total += c.load(); distinct++; }
     std::string s = "svc: " + std::to_string(total) + " calls, " + std::to_string(distinct) + " distinct, " + std::to_string(g_unknown_total.load()) + " unknown";
-    // The busiest three, so a guest spinning on one SVC shows which.
     std::vector<std::pair<uint64_t, uint32_t>> top;
     for (uint32_t n = 0; n < kSvcCount; n++)
         if (const uint64_t k = g_calls[n].load()) top.emplace_back(k, n);
@@ -175,4 +173,4 @@ std::string svc_summary() {
     return s;
 }
 
-}  // namespace nxrt
+}

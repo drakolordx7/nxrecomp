@@ -44,4 +44,4 @@ class PerformanceCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

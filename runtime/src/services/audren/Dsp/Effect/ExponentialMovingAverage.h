@@ -21,4 +21,4 @@ struct ExponentialMovingAverage {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -55,4 +55,4 @@ struct Rela {
 #pragma pack(pop)
 static_assert(sizeof(Ehdr) == 64 && sizeof(Phdr) == 56 && sizeof(Shdr) == 64 && sizeof(Dyn) == 16 && sizeof(Sym) == 24 && sizeof(Rela) == 24);
 
-}  // namespace nxrt::elf
+}

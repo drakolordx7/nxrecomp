@@ -13,17 +13,12 @@ namespace nxrt::audren {
 
 class CircularBufferSink : public BaseSink {
   public:
-    // The circular buffer parameter.
     CircularBufferParameter Parameter{};
-    // The current offset to write data on the circular buffer (C# `{ get; private set; }`).
     uint32_t CurrentWriteOffset = 0;
-    // The AddressInfo of the circular buffer.
     AddressInfo CircularBufferAddressInfo;
 
   private:
-    // The last written data offset on the circular buffer.
     uint32_t _lastWrittenOffset = 0;
-    // The previous written offset of the circular buffer.
     uint32_t _oldWrittenOffset = 0;
 
   public:
@@ -94,4 +89,4 @@ class CircularBufferSink : public BaseSink {
     }
 };
 
-}  // namespace nxrt::audren
+}

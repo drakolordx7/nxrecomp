@@ -53,7 +53,6 @@ struct DelayState {
         LowPassBaseGain = 1.0f - LowPassFeedbackGain;
     }
 
-    // C# `ref float tempRawRef` + Unsafe.Add(ref tempRawRef, i): element i of the array starting at tempRawRef.
     void UpdateLowPassFilter(float& tempRawRef, uint32_t channelCount) {
         for (uint32_t i = 0; i < channelCount; i++) {
             float lowPassResult = LowPassFeedbackGain * LowPassZ[i] + (&tempRawRef)[i] * LowPassBaseGain;
@@ -64,4 +63,4 @@ struct DelayState {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -28,7 +28,7 @@ std::set<std::string>& names() {
     static std::set<std::string> s;
     return s;
 }
-}  // namespace
+}
 
 void add(const std::string& name, ipc::ServiceFactory f) {
     {
@@ -281,9 +281,8 @@ TitleProfile game_defaults() {
 
 TitleProfile load_profile() {
     TitleProfile p = game_defaults();
-    const uint64_t game_owner = p.save_data_owner_id;      // 0: the save data owner is the program id
+    const uint64_t game_owner = p.save_data_owner_id;
     p.program_id = static_cast<uint64_t>(config_get_int("title", "program_id", static_cast<int64_t>(p.program_id)));
-    // [process] program_id (kernel GetInfo ProgramId) overrides when it is set explicitly.
     if (config_has("process", "program_id")) p.program_id = static_cast<uint64_t>(config_get_int("process", "program_id", 0));
     p.name = config_get_str("title", "name", p.name.c_str());
     p.display_version = config_get_str("title", "display_version", p.display_version.c_str());
@@ -330,7 +329,7 @@ std::mutex g_prof_mu;
 TitleProfile g_prof;
 bool g_prof_loaded = false;
 
-}  // namespace
+}
 
 const TitleProfile& profile() {
     std::lock_guard<std::mutex> lk(g_prof_mu);
@@ -365,7 +364,7 @@ uint64_t language_code_u64(Language l) {
     return v;
 }
 
-std::string romfs_dir() { return config_get_str("fs", "romfs", "romfs"); }   // the game exe sets the default for its layout
+std::string romfs_dir() { return config_get_str("fs", "romfs", "romfs"); }
 
 std::string save_dir() {
     std::string d = config_get_str("fs", "save_dir", "");
@@ -375,4 +374,4 @@ std::string save_dir() {
     return std::string(appdata && *appdata ? appdata : ".") + "\\" + (folder && *folder ? folder : "nxrt") + "\\save";
 }
 
-}  // namespace nxrt::services
+}

@@ -42,7 +42,6 @@ struct ISplitterDestinationInParameter<SplitterDestinationInParameterVersion2a> 
     static bool IsUsed(const SplitterDestinationInParameterVersion2a& p) { return p.is_used; }
     static bool ResetPrevVolume(const SplitterDestinationInParameterVersion2a& p) { return p.reset_prev_volume; }
     static bool IsMagicValid(const SplitterDestinationInParameterVersion2a& p) { return p.IsMagicValid(); }
-    // C# converts the version 1 style filters (BiquadFilterParameter1) to the version 2 ones.
     static std::array<BiquadFilterParameter2, 2> BiquadFilters2(const SplitterDestinationInParameterVersion2a& p) {
         return {BiquadFilterHelper::ToBiquadFilterParameter2(p.biquad_filters[0]),
                 BiquadFilterHelper::ToBiquadFilterParameter2(p.biquad_filters[1])};
@@ -64,4 +63,4 @@ struct ISplitterDestinationInParameter<SplitterDestinationInParameterVersion2b> 
     }
 };
 
-}  // namespace nxrt::audren
+}

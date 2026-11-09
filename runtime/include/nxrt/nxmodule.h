@@ -40,8 +40,8 @@ enum class RegStatus {
 
 struct RegResult {
     RegStatus status = RegStatus::Ok;
-    size_t functions = 0;       // entries added to the call table
-    std::string message;        // why a registration was refused (also logged)
+    size_t functions = 0;
+    std::string message;
     bool ok() const { return status == RegStatus::Ok; }
 };
 
@@ -51,9 +51,9 @@ RegResult nxmodule_register(Module* image, const NxModule* nx, uint32_t abi_vers
 
 const NxModule* nxmodule_by_index(uint32_t index);
 const NxModule* nxmodule_by_name(const char* name);
-const NxModule* nxmodule_at(uint64_t addr);        // the registered module whose [base, text_end) contains addr, or null
-std::vector<const NxModule*> nxmodules();          // registration order
-void nxmodules_clear();                            // tests (also done by modules_unload_all)
+const NxModule* nxmodule_at(uint64_t addr);
+std::vector<const NxModule*> nxmodules();
+void nxmodules_clear();
 
 // The name behind an import id ("" for an unknown id).
 const char* import_name(uint32_t import_id);
@@ -77,4 +77,4 @@ namespace detail {
 void count_import();      // abi_glue.cpp: host_import bookkeeping
 }
 
-}  // namespace nxrt
+}

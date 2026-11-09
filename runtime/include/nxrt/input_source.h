@@ -16,7 +16,6 @@
 
 namespace nxrt::hid {
 
-// nn::hid::NpadButton bit numbers.
 enum NpadButtonBit : uint32_t {
     kBtnA = 0, kBtnB, kBtnX, kBtnY, kBtnStickL, kBtnStickR, kBtnL, kBtnR, kBtnZL, kBtnZR, kBtnPlus, kBtnMinus,
     kBtnLeft, kBtnUp, kBtnRight, kBtnDown,
@@ -77,7 +76,7 @@ struct MouseInput {
 };
 
 struct InputSnapshot {
-    NpadInput npad[kNpadSlots];                          // see kNpadSlot*
+    NpadInput npad[kNpadSlots];
     TouchInput touch;
     KeyboardInput keyboard;
     MouseInput mouse;
@@ -96,7 +95,6 @@ public:
 void set_input_source(std::shared_ptr<InputSource> src);
 std::shared_ptr<InputSource> input_source();
 
-// A source driven by code: the tests and scripted runs. Thread safe.
 class ManualInputSource : public InputSource {
 public:
     void poll(InputSnapshot& out) override {
@@ -136,6 +134,6 @@ struct VibrationValue {
     float amp_low = 0, freq_low = 160.0f, amp_high = 0, freq_high = 320.0f;   // amplitudes 0..1, frequencies in Hz
 };
 using VibrationSink = void (*)(uint32_t npad_slot, int hand, const VibrationValue& v, void* user);   // hand 0 = left (or the only one), 1 = right
-void set_vibration_sink(VibrationSink fn, void* user = nullptr);        // nullptr removes it
+void set_vibration_sink(VibrationSink fn, void* user = nullptr);
 
-}  // namespace nxrt::hid
+}

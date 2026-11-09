@@ -37,7 +37,6 @@ class CompressorCommand : public ICommand {
     CompressorCommand()
         : OutputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0), InputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0) {}
 
-    // C# `public CompressorParameter Parameter => _parameter;`
     CompressorParameter Parameter() const { return _parameter; }
 
     CompressorCommand& Initialize(uint32_t bufferOffset, CompressorParameter parameter, Span<CompressorState> state, Span<EffectResultState> resultState,
@@ -84,7 +83,6 @@ class CompressorCommand : public ICommand {
   private:
     static bool IsChannelCountValid(uint16_t channelCount) { return channelCount == 1 || channelCount == 2 || channelCount == 4 || channelCount == 6; }
 
-    // C# CompressorStatistics.Reset(ushort channelCount)
     static void ResetStatistics(CompressorStatistics& statistics, uint16_t channelCount) {
         statistics.maximum_mean = 0.0f;
         statistics.minimum_gain = 1.0f;
@@ -198,4 +196,4 @@ class CompressorCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

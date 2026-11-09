@@ -38,7 +38,6 @@ constexpr uint32_t kAudioModule = 153;
 const uint32_t kResultUnsupportedRevision = res(kAudioModule, 2);
 const uint32_t kResultNotImplemented = res(kAudioModule, 513);
 
-// An IWritableEvent over a service event: the renderer signals it at the end of every rendered frame.
 class SessionEvent : public audren::IWritableEvent {
 public:
     void Signal() override { ev.signal(); }
@@ -48,7 +47,7 @@ public:
 
 struct DeviceInfo {
     const char* name;
-    uint32_t channels;   // 0: the configured channel count
+    uint32_t channels;
 };
 
 // Ryujinx VirtualDeviceSessionRegistry devices, in its order.
@@ -99,8 +98,7 @@ audren::AudioRendererConfiguration read_config(const Request& req) {
 }
 
 // ---- gauges (include/nxrt/gauge.h): audren.* (the renderer totals are kept by AudioRenderSystem, see audren/Server/AudioRenderSystem.h)
-GaugeCounter g_audren_renderers("audren.renderers");   // open IAudioRenderer objects
-// Removes its gauge when this file's statics are torn down.
+GaugeCounter g_audren_renderers("audren.renderers");
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
@@ -186,14 +184,13 @@ public:
     ~AudioRendererObj() override { g_audren_renderers.sub(1); }
 
     void on_close() override {
-        // The renderer leaves the manager (its destructor unregisters the session and joins the DSP thread when it was the last one).
         std::lock_guard<std::mutex> lk(st().mu);
         sys_.reset();
         NXLOG_D("audren", "audio renderer closed");
     }
 
 private:
-    std::shared_ptr<audren::AudioRendererManager> mgr_;   // keeps the manager alive for as long as the renderer exists
+    std::shared_ptr<audren::AudioRendererManager> mgr_;
     std::unique_ptr<audren::AudioRenderSystem> sys_;
 };
 
@@ -211,7 +208,7 @@ std::shared_ptr<Service> make_audio_device(uint32_t revision) {
             int32_t n = 0;
             for (const DeviceInfo& d : kDevices) {
                 if (static_cast<size_t>(n) >= cap) break;
-                if (std::string(d.name) == "AudioUsbDeviceOutput") continue;   // not offered
+                if (std::string(d.name) == "AudioUsbDeviceOutput") continue;
                 DeviceName dn{};
                 std::strncpy(dn.name, d.name, sizeof dn.name - 1);
                 std::memcpy(buf_mut(out) + n * sizeof(DeviceName), &dn, sizeof dn);
@@ -354,7 +351,7 @@ std::shared_ptr<Service> make_audren() {
     return s;
 }
 
-}  // namespace
+}
 
 void register_audio() {
     add("audren:u", [] { return make_audren(); });
@@ -364,7 +361,7 @@ void register_audio() {
 void audio_reset() {
     {
         std::lock_guard<std::mutex> lk(st().mu);
-        st().manager.reset();   // disposes the sessions and joins the DSP thread
+        st().manager.reset();
         st().driver.reset();
         for (auto& e : st().events) e.reset();
         for (auto& e : st().device_events) e.reset();
@@ -373,4 +370,4 @@ void audio_reset() {
     audio_out_reset();
 }
 
-}  // namespace nxrt::services
+}

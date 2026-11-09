@@ -28,10 +28,8 @@ class PerformanceManagerGeneric : public PerformanceManager {
     static_assert(IPerformanceDetailEntry<TEntryDetail>);
 
   private:
-    // The magic used for the THeader.
     static constexpr uint32_t MagicPerformanceBuffer = 0x46524550;
 
-    // The fixed amount of TEntryDetail that can be stored in a frame.
     static constexpr int32_t MaxFrameDetailCount = 100;
 
     Span<uint8_t> _buffer;
@@ -47,15 +45,10 @@ class PerformanceManagerGeneric : public PerformanceManager {
     int32_t _indexHistoryRead = 0;
     uint32_t _historyFrameIndex = 0;
 
-    // C# `CurrentBuffer => _buffer[.._frameSize]`
     Span<uint8_t> CurrentBuffer() const { return _buffer.Slice(0, static_cast<size_t>(_frameSize)); }
-    // C# `CurrentBufferData => CurrentBuffer[Unsafe.SizeOf<THeader>()..]`
     Span<uint8_t> CurrentBufferData() const { return CurrentBuffer().Slice(sizeof(THeader)); }
-    // C# `ref CurrentHeader => ref MemoryMarshal.template Cast<byte, THeader>(CurrentBuffer.Span)[0]`
     THeader& CurrentHeader() const { return CurrentBuffer().template Cast<THeader>()[0]; }
-    // C# `Entries => MemoryMarshal.template Cast<byte, TEntry>(CurrentBufferData.Span[..GetEntriesSize()])`
     Span<TEntry> Entries() const { return CurrentBufferData().Slice(0, static_cast<size_t>(GetEntriesSize())).template Cast<TEntry>(); }
-    // C# `EntriesDetail => MemoryMarshal.template Cast<byte, TEntryDetail>(CurrentBufferData.Span.Slice(GetEntriesSize(), GetEntriesDetailSize()))`
     Span<TEntryDetail> EntriesDetail() const {
         return CurrentBufferData()
             .Slice(static_cast<size_t>(GetEntriesSize()), static_cast<size_t>(GetEntriesDetailSize()))
@@ -284,7 +277,6 @@ class PerformanceManagerGeneric : public PerformanceManager {
             targetHeader.SetStartRenderingTicks(startRenderingTicks);
             targetHeader.SetIndex(targetHistoryFrameIndex);
 
-            // Finally setup the new header
             SetupNewHeader();
         }
     }
@@ -327,4 +319,4 @@ std::unique_ptr<PerformanceManager> PerformanceManager::Create(Span<uint8_t> per
     }
 }
 
-}  // namespace nxrt::audren
+}

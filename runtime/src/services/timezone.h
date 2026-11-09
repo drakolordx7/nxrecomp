@@ -19,15 +19,14 @@ struct CalendarTime {            // nn::time::CalendarTime (8 bytes): Switchbrew
 struct CalendarAdditionalInfo {  // nn::time::CalendarAdditionalInfo (0x18 bytes)
     uint32_t day_of_week;        // 0 = Sunday
     uint32_t day_of_year;        // 0-based
-    char tz_name[8];             // abbreviation ("UTC", "CET" ...), NUL padded
+    char tz_name[8];
     int32_t is_dst;
-    int32_t utc_offset;          // seconds east of UTC
+    int32_t utc_offset;
 };
 static_assert(sizeof(CalendarTime) == 8);
 static_assert(sizeof(CalendarAdditionalInfo) == 0x18);
 
-// UTC rule: no transitions, one type ("UTC", offset 0).
-void make_utc_rule(uint8_t* out /*kRuleSize bytes*/);
+void make_utc_rule(uint8_t* out);
 // A rule for the host's Windows time zone with explicit transitions for the years 1970..2037 (falls back to the UTC rule and returns
 // false when the host zone cannot be read). *name_out receives a location name for GetDeviceLocationName ("Europe/Berlin" when the
 // Windows zone maps to one, else the Windows zone id; "UTC" for the fallback).
@@ -38,4 +37,4 @@ bool to_calendar(const uint8_t* rule, int64_t posix, CalendarTime* cal, Calendar
 // tzcode time2: the posix times that map to `cal` in `rule` (0 = none, 1, or 2 for an ambiguous DST hour). out[] receives them.
 int to_posix(const uint8_t* rule, const CalendarTime& cal, int64_t out[2]);
 
-}  // namespace nxrt::services::tz
+}

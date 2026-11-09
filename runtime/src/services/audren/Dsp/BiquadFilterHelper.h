@@ -287,4 +287,4 @@ class BiquadFilterHelper {
     }
 };
 
-}  // namespace nxrt::audren
+}

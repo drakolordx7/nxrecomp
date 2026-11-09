@@ -68,19 +68,14 @@ class AuxiliaryBufferCommand : public ICommand {
             _inputInt.resize(inputLength);
             _outputInt.resize(outputBuffer.Length);
 
-            // Convert input data to the target format for user (int)
             DataSourceHelper::ToInt(Span<int32_t>(_inputInt.data(), inputLength), inputBuffer, static_cast<int32_t>(inputBuffer.Length));
 
-            // Send the input to the user
             Write(OutputBuffer, CountMax, _inputInt.data(), context.SampleCount, WriteOffset, UpdateCount);
 
-            // Convert back to float just in case it's reused
             DataSourceHelper::ToFloat(inputBuffer, Span<const int32_t>(_inputInt.data(), inputLength), static_cast<int32_t>(inputBuffer.Length));
 
-            // Retrieve the input from user
             uint32_t readResult = Read(InputBuffer, CountMax, _outputInt.data(), context.SampleCount, WriteOffset, UpdateCount);
 
-            // Convert the outputBuffer back to the target format of the renderer (float)
             DataSourceHelper::ToFloat(outputBuffer, Span<const int32_t>(_outputInt.data(), _outputInt.size()),
                                       static_cast<int32_t>(outputBuffer.Length));
 
@@ -177,4 +172,4 @@ class AuxiliaryBufferCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Guest-address keyed sync objects. Contract and design: include/nxrt/sync.h.
 //
-// Table: 4096 buckets, each a chain guarded by its own SRWLOCK. Lookups take the bucket shared; creating, replacing or
-// destroying an entry takes it exclusive. Objects are never freed while the process runs unless reset_all() is called:
-// destroy() and kind replacement park the old object on a graveyard list, so a thread that already holds a pointer can
-// finish its wait on it safely.
-//
 // Lock order, outermost first: bucket lock, cond lock, mutex lock. The bucket lock and the graveyard lock are never held
 // while an object lock is taken, and nothing takes a cond lock while holding a mutex lock.
 
@@ -46,8 +41,8 @@ struct Object {
     virtual ~Object() = default;
     uint64_t addr;
     Kind kind;
-    Object* next = nullptr;   // bucket chain while live
-    Object* gnext = nullptr;  // graveyard chain once destroyed
+    Object* next = nullptr;
+    Object* gnext = nullptr;
 };
 
 struct Mutex : Object {
@@ -57,9 +52,9 @@ struct Mutex : Object {
         InitializeConditionVariable(&cv);
     }
     SRWLOCK lk;
-    CONDITION_VARIABLE cv;   // lock waiters; signalled whenever the mutex becomes free
-    DWORD owner = 0;         // holder's thread id, 0 = free
-    uint32_t rec = 0;        // nesting depth held by owner
+    CONDITION_VARIABLE cv;
+    DWORD owner = 0;
+    uint32_t rec = 0;
     bool recursive = false;
 };
 
@@ -77,7 +72,7 @@ struct Cond : Object {
         InitializeConditionVariable(&cv);
     }
     SRWLOCK lk;
-    CONDITION_VARIABLE cv;  // shared by all waiters; every wakeup is a WakeAll and each waiter checks its own node
+    CONDITION_VARIABLE cv;
     CondWaiter* head = nullptr;
     CondWaiter* tail = nullptr;
 };
@@ -108,14 +103,14 @@ struct Sem : Object {
 
 struct Bucket {
     SRWLOCK lock;  // zero-initialised static storage is a valid unlocked SRWLOCK
-    Object* head;  // nullptr-initialised
+    Object* head;
 };
 
 Bucket g_buckets[kBuckets];
 SRWLOCK g_grave_lock;
 Object* g_grave = nullptr;
 std::atomic<size_t> g_live{0};
-std::atomic<size_t> g_grave_n{0};   // objects on the graveyard list (park adds, reset_all clears)
+std::atomic<size_t> g_grave_n{0};
 
 // ---- gauges (include/nxrt/gauge.h) ----
 // Removes its gauge when this file's statics are torn down (declared after the counters above, so it goes first).
@@ -156,7 +151,6 @@ void unlink_locked(Bucket& b, Object* o) {
     park(o);
 }
 
-// Returns the live object at addr, creating it (or replacing a different kind) with defaults.
 template <class T>
 T* get(uint64_t addr) {
     Bucket& b = g_buckets[bucket_index(addr)];
@@ -169,7 +163,7 @@ T* get(uint64_t addr) {
     ReleaseSRWLockShared(&b.lock);
 
     AcquireSRWLockExclusive(&b.lock);
-    o = find_in(b.head, addr);  // another thread may have created it in the gap
+    o = find_in(b.head, addr);
     if (!o || o->kind != T::kKind) {
         if (o) {
             NXLOG_D(kTag, "guest address 0x%llx: %s replaced by %s", static_cast<unsigned long long>(addr),
@@ -188,7 +182,6 @@ T* get(uint64_t addr) {
 
 // ---- timing -----------------------------------------------------------------------------------------------------------
 
-// Monotonic nanoseconds from QueryPerformanceCounter, split so the multiplication cannot overflow.
 int64_t now_ns() {
     static const int64_t freq = [] {
         LARGE_INTEGER f;
@@ -203,8 +196,8 @@ int64_t now_ns() {
 }
 
 struct Deadline {
-    bool forever;  // true: no deadline (timeout_ns < 0)
-    int64_t at;    // now_ns() value at which a timed wait gives up
+    bool forever;
+    int64_t at;
 };
 
 Deadline deadline_for(int64_t timeout_ns) {
@@ -232,7 +225,6 @@ bool wait_step(CONDITION_VARIABLE* cv, SRWLOCK* lk, const Deadline& d) {
 
 // ---- mutex helpers ------------------------------------------------------------------------------------------------------
 
-// Gives the mutex up completely (for cond_wait) and returns the nesting depth the caller held.
 uint32_t mutex_release_all(Mutex* m) {
     AcquireSRWLockExclusive(&m->lk);
     const uint32_t held = m->rec;
@@ -243,7 +235,6 @@ uint32_t mutex_release_all(Mutex* m) {
     return held;
 }
 
-// Blocks until the mutex is free, then takes it with nesting depth `rec`.
 void mutex_take_blocking(Mutex* m, uint32_t rec) {
     const DWORD me = GetCurrentThreadId();
     AcquireSRWLockExclusive(&m->lk);
@@ -276,12 +267,12 @@ bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) 
     AcquireSRWLockExclusive(&c->lk);
     if (c->tail) c->tail->next = &node; else c->head = &node;
     c->tail = &node;
-    const uint32_t held = mutex_release_all(m);  // order: cond lock, then mutex lock
+    const uint32_t held = mutex_release_all(m);
     while (!node.woken) {
         if (!wait_step(&c->cv, &c->lk, d)) break;
     }
     const bool signalled = node.woken;
-    if (!signalled) {  // timed out: leave the queue
+    if (!signalled) {
         CondWaiter** pp = &c->head;
         CondWaiter* prev = nullptr;
         while (*pp && *pp != &node) { prev = *pp; pp = &(*pp)->next; }
@@ -328,7 +319,7 @@ bool sem_acquire_impl(uint64_t addr, const Deadline& d) {
     return ok;
 }
 
-}  // namespace
+}
 
 // ---- mutex --------------------------------------------------------------------------------------------------------------
 
@@ -337,7 +328,7 @@ bool sem_acquire_impl(uint64_t addr, const Deadline& d) {
 void mutex_init(uint64_t addr, bool recursive) {
     Mutex* m = get<Mutex>(addr);
     AcquireSRWLockExclusive(&m->lk);
-    m->recursive = recursive;  // only the flag changes; owner and depth of a held mutex are kept
+    m->recursive = recursive;
     ReleaseSRWLockExclusive(&m->lk);
 }
 
@@ -415,7 +406,7 @@ bool mutex_is_locked(uint64_t addr) {
 // ---- condition variable -------------------------------------------------------------------------------------------------
 
 void cond_init(uint64_t addr) {
-    (void)get<Cond>(addr);  // existence is all there is to initialise; waiter counts are never reset
+    (void)get<Cond>(addr);
 }
 
 void cond_wait(uint64_t cond, uint64_t mutex) {
@@ -591,4 +582,4 @@ void reset_all() {
     }
 }
 
-}  // namespace nxrt::sync
+}

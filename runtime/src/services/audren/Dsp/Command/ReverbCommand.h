@@ -61,7 +61,6 @@ class ReverbCommand : public ICommand {
     ReverbCommand()
         : OutputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0), InputBufferIndices(static_cast<size_t>(Constants::VoiceChannelCountMax), 0) {}
 
-    // C# `public ReverbParameter Parameter => _parameter;`
     ReverbParameter Parameter() const { return _parameter; }
 
     ReverbCommand& Initialize(uint32_t bufferOffset, ReverbParameter parameter, Span<ReverbState> state, bool isEnabled, CpuAddress workBuffer,
@@ -258,4 +257,4 @@ class ReverbCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

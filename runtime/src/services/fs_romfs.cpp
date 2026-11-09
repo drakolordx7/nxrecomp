@@ -34,9 +34,9 @@ constexpr uint64_t kPartitionOfs = 0x200;   // file data starts here; the header
 constexpr uint64_t kDataAlign = 0x10;       // each file starts at a multiple of this, counted from the partition start
 constexpr uint64_t kDirFixed = 0x18;        // directory entry without its name
 constexpr uint64_t kFileFixed = 0x20;       // file entry without its name
-constexpr size_t kMaxName = 255;            // bytes of UTF-8 in one name
+constexpr size_t kMaxName = 255;
 constexpr size_t kMaxPath = 0x300;          // SDK FS_MAX_PATH (0x301 with the terminator); the path counts its leading '/'
-constexpr size_t kOpenFiles = 16;           // host files kept open by the cache
+constexpr size_t kOpenFiles = 16;
 constexpr size_t kLongPath = 240;           // host paths this long or longer get the \\?\ prefix
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) / a * a; }
@@ -97,25 +97,24 @@ std::wstring long_path(std::wstring p) {
 
 // One folder or file of the host tree. Layout fields are filled in once the tree is complete.
 struct Node {
-    std::string name;            // UTF-8; empty for the root
+    std::string name;
     std::string path;            // image path: "" for the root, "/a/b" otherwise
-    std::wstring host;           // host path to open
+    std::wstring host;
     bool is_dir = false;
-    uint64_t size = 0;           // files only
+    uint64_t size = 0;
     std::shared_ptr<const std::vector<uint8_t>> mem;   // files: content generated in memory (the host path is then unused)
     uint64_t src_off = 0;        // files: where the data starts inside the host file (non-zero for members of a mod's romfs.bin)
-    std::vector<Node> kids;      // sorted by name bytes
-    uint32_t entry = 0;          // offset of this entry in its table
-    uint32_t parent = 0;         // entry offset of the parent directory (the root's is 0)
+    std::vector<Node> kids;
+    uint32_t entry = 0;
+    uint32_t parent = 0;
     uint32_t sibling = kNone;    // next entry in the parent's chain of the same kind
-    uint32_t first_child = kNone;  // directories: first subdirectory entry
-    uint32_t first_file = kNone;   // directories: first file entry
+    uint32_t first_child = kNone;
+    uint32_t first_file = kNone;
     uint64_t data = 0;           // files: offset of the data from the partition start
 };
 
 std::string shown(const Node& n) { return n.path.empty() ? std::string("/") : n.path; }
 
-// Fills dir.kids from the host folder dir.host, recursively. False with msg set at the first entry that cannot be described.
 bool scan(Node& dir, std::string& msg) {
     std::error_code ec;
     std::filesystem::directory_iterator it(std::filesystem::path(dir.host), ec);
@@ -188,23 +187,22 @@ void flatten(Node& n, std::vector<Node*>& dirs, std::vector<Node*>& files) {
 
 struct Segment {
     enum class Kind : uint8_t { kHeader, kTables, kZero, kFile };
-    uint64_t off = 0;            // image offset
+    uint64_t off = 0;
     uint64_t len = 0;
     Kind kind = Kind::kZero;
     uint64_t src = 0;            // kHeader/kTables: offset in that buffer; kFile: offset in the host file
-    uint32_t file = 0;           // kFile: index into Layout::files
+    uint32_t file = 0;
 };
 
 struct FileRec {
     std::wstring host;
     uint64_t size = 0;
     uint64_t image_off = 0;
-    uint64_t src_off = 0;       // offset of the data in the host file
-    std::shared_ptr<const std::vector<uint8_t>> mem;   // generated content instead of a host file
+    uint64_t src_off = 0;
+    std::shared_ptr<const std::vector<uint8_t>> mem;
     std::string path;            // path inside the image ("/a/b.bin"), for the first-read note
 };
 
-// Everything build() produces. Replaced as a whole.
 struct Layout {
     bool built = false;
     uint64_t size = 0;
@@ -212,13 +210,12 @@ struct Layout {
     std::array<uint8_t, kHeaderSize> header{};
     std::vector<uint8_t> tables;        // dir hash, dir table, file hash, file table, in that order from dir_hash_table_ofs
     std::vector<Segment> segs;          // contiguous, covering [0, size)
-    std::vector<FileRec> files;         // in data order
+    std::vector<FileRec> files;
     std::map<std::string, uint32_t> by_path;
 };
 
 // ---- mods (fs_mods.h) --------------------------------------------------------------------------------------------------------------
 
-// Looks in the first `n` kids, which are sorted (the ones appended since are not yet).
 Node* find_kid(Node& d, const std::string& name, size_t n) {
     auto last = d.kids.begin() + static_cast<std::ptrdiff_t>(n);
     auto it = std::lower_bound(d.kids.begin(), last, name, [](const Node& k, const std::string& nm) { return k.name < nm; });
@@ -226,7 +223,6 @@ Node* find_kid(Node& d, const std::string& name, size_t n) {
 }
 Node* find_kid(Node& d, const std::string& name) { return find_kid(d, name, d.kids.size()); }
 
-// The folder node of an image path ("/" is the root); null when a part is missing or is a file.
 Node* walk(Node& root, const std::string& path) {
     Node* n = &root;
     size_t i = 1;
@@ -331,7 +327,6 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const
     std::sort(dirs.begin(), dirs.end(), by_path);
     std::sort(files.begin(), files.end(), by_path);
 
-    // Entry offsets in the two tables (root first: its path is empty).
     uint64_t dir_bytes = 0, file_bytes = 0;
     for (Node* d : dirs) {
         d->entry = static_cast<uint32_t>(dir_bytes);
@@ -346,7 +341,6 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const
         return false;
     }
 
-    // File data: each file at a multiple of 16 from the partition start.
     uint64_t part = 0;
     for (Node* f : files) {
         part = align_up(part, kDataAlign);
@@ -354,7 +348,6 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const
         part += f->size;
     }
 
-    // Links: each directory's children in name order, as chains of sibling entries.
     for (Node* d : dirs) {
         std::vector<Node*> sub, fil;
         for (Node& k : d->kids) (k.is_dir ? sub : fil).push_back(&k);
@@ -426,7 +419,6 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const
     put64(L.header.data() + 64, file_bytes);
     put64(L.header.data() + 72, kPartitionOfs);
 
-    // Segments: header, padding, then each file's data with the zero gaps between, the zero gap up to the tables, the tables.
     L.segs.clear();
     L.files.clear();
     L.by_path.clear();
@@ -473,12 +465,12 @@ struct OpenSlot {
     std::shared_ptr<HandleBox> box;
 };
 
-}  // namespace
+}
 
 struct RomfsImage::Impl {
     Layout l;
     mutable std::mutex mu;                  // guards cache, tick and read_seen
-    mutable std::vector<uint8_t> read_seen; // per file: read at least once (the game's loads, in the log and the crash report)
+    mutable std::vector<uint8_t> read_seen;
     void note_read(uint32_t idx) const {
         {
             std::lock_guard<std::mutex> lk(mu);
@@ -489,10 +481,9 @@ struct RomfsImage::Impl {
         NXLOG_D("fs", "romfs: first read of %s", path.c_str());
         diag_note_file("rom", path.c_str());
     }
-    mutable std::vector<OpenSlot> cache;    // at most kOpenFiles entries
+    mutable std::vector<OpenSlot> cache;
     mutable uint64_t tick = 0;
 
-    // The handle for file idx, opened if it is not cached. The least recently used entry is dropped when the cache is full.
     std::shared_ptr<HandleBox> acquire(uint32_t idx) const {
         std::lock_guard<std::mutex> lk(mu);
         for (OpenSlot& s : cache) {
@@ -519,7 +510,7 @@ struct RomfsImage::Impl {
 
     // Positioned reads (OVERLAPPED offset), so concurrent readers of one handle need no seek lock.
     bool read_host(uint32_t idx, uint64_t ofs, uint8_t* out, uint64_t n) const {
-        if (const auto& mem = l.files[idx].mem) {   // generated by a game module: nothing to open
+        if (const auto& mem = l.files[idx].mem) {
             if (ofs > mem->size() || n > mem->size() - ofs) return false;
             if (n) std::memcpy(out, mem->data() + ofs, n);
             return true;
@@ -599,4 +590,4 @@ bool RomfsImage::file_extent(const std::string& path, uint64_t* offset, uint64_t
     return true;
 }
 
-}  // namespace nxrt::services::fs
+}

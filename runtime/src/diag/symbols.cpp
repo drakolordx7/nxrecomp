@@ -24,16 +24,16 @@ namespace nxrt {
 namespace {
 
 constexpr uint64_t kDefaultPreferredBase = 0x140000000ull;  // MSVC default exe base, used when the map has no such line
-constexpr uint64_t kMaxSymbolDistance = 1ull << 20;          // a symbol start further back than 1 MiB is not used
+constexpr uint64_t kMaxSymbolDistance = 1ull << 20;
 constexpr size_t kMaxDescribeName = 120;
 
 struct Entry {
     uint64_t rva;      // relative to the image base the map was written for
-    std::string name;  // undecorated when dbghelp could do it, otherwise the raw name
+    std::string name;
 };
 
 struct Table {
-    std::vector<Entry> entries;  // sorted by rva
+    std::vector<Entry> entries;
 };
 
 // Copy-on-write: a load builds a new table and swaps the pointer; readers keep the table they copied.
@@ -197,7 +197,6 @@ std::shared_ptr<Table> build_table(const ParsedMap& pm) {
     return t;
 }
 
-// <exe path with .map instead of the extension>
 std::string default_map_path() {
     char buf[1024];
     DWORD n = GetModuleFileNameA(nullptr, buf, sizeof buf);
@@ -215,7 +214,7 @@ std::string hex64(uint64_t v) {
     return b;
 }
 
-}  // namespace
+}
 
 size_t symbols_load_map(const char* map_path) {
     std::string path = map_path ? std::string(map_path) : default_map_path();
@@ -257,7 +256,7 @@ SymbolInfo symbols_lookup(uint64_t host_addr) {
 
     uint64_t base = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(mod));
     info.offset = host_addr - base;
-    if (mod != GetModuleHandleA(nullptr)) return info;  // the map describes the main exe only
+    if (mod != GetModuleHandleA(nullptr)) return info;
 
     auto table = current_table();
     const auto& es = table->entries;
@@ -284,4 +283,4 @@ std::string symbols_describe(uint64_t host_addr) {
     return out;
 }
 
-}  // namespace nxrt
+}

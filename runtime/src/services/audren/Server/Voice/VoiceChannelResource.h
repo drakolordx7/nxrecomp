@@ -12,16 +12,12 @@ namespace nxrt::audren {
 struct alignas(0x10) VoiceChannelResource {
     static constexpr uint32_t Alignment = 0x10;
 
-    // Mix volumes for the resource (C# Array24<float>).
     std::array<float, MixBufferCountMax> Mix{};
 
-    // Previous mix volumes for resource (C# Array24<float>).
     std::array<float, MixBufferCountMax> PreviousMix{};
 
-    // The id of the resource.
     uint32_t Id = 0;
 
-    // Indicate if the resource is used.
     bool IsUsed = false;
 
     void UpdateState() { PreviousMix = Mix; }
@@ -29,4 +25,4 @@ struct alignas(0x10) VoiceChannelResource {
 
 static_assert(sizeof(VoiceChannelResource) == 0xD0);
 
-}  // namespace nxrt::audren
+}

@@ -60,60 +60,44 @@ class VoiceInfo {
   public:
     static constexpr int32_t Alignment = 0x10;
 
-    // Set to true if the voice is used.
     bool InUse = false;
 
-    // Set to true if the voice is new.
     bool IsNew = false;
 
     bool WasPlaying = false;
 
-    // The SampleFormat of the voice.
     ::nxrt::audren::SampleFormat SampleFormat = ::nxrt::audren::SampleFormat::Invalid;
 
-    // The sample rate of the voice.
     uint32_t SampleRate = 0;
 
-    // The total channel count used.
     uint32_t ChannelsCount = 0;
 
-    // Id of the voice.
     int32_t Id = 0;
 
-    // Node id of the voice.
     int32_t NodeId = 0;
 
-    // The target mix id of the voice.
     int32_t MixId = 0;
 
     // The current voice PlayState (server). The zero value is Started, as in the C# default.
     server::PlayState PlayState = server::PlayState::Started;
 
-    // The previous voice PlayState (server).
     server::PlayState PreviousPlayState = server::PlayState::Started;
 
-    // The priority of the voice.
     uint32_t Priority = 0;
 
     // Target sorting position of the voice. (used to sort voice with the same Priority)
     uint32_t SortingOrder = 0;
 
-    // The pitch used on the voice.
     float Pitch = 0.0f;
 
-    // The output volume of the voice.
     float Volume = 0.0f;
 
-    // The previous output volume of the voice.
     float PreviousVolume = 0.0f;
 
-    // Biquad filters to apply to the output of the voice (C# Array2<BiquadFilterParameter2>).
     std::array<BiquadFilterParameter2, VoiceBiquadFilterCount> BiquadFilters{};
 
-    // Total count of WaveBufferInternal of the voice.
     uint32_t WaveBuffersCount = 0;
 
-    // Current playing WaveBufferInternal of the voice.
     uint32_t WaveBuffersIndex = 0;
 
     // Change the behaviour of the voice. (REV5)
@@ -122,45 +106,34 @@ class VoiceInfo {
     // User state AddressInfo required by the data source. Only used for SampleFormat.Adpcm.
     AddressInfo DataSourceStateAddressInfo;
 
-    // The wavebuffers of this voice (C# Array4<WaveBuffer>).
     std::array<server::WaveBuffer, VoiceWaveBufferCount> WaveBuffers{};
 
-    // The channel resource ids associated to the voice (C# Array6<int>).
     std::array<int32_t, VoiceChannelCountMax> ChannelResourceIds{};
 
-    // The target splitter id of the voice.
     uint32_t SplitterId = 0;
 
     // Change the Sample Rate Conversion (SRC) quality of the voice. (REV8)
     ::nxrt::audren::SampleRateConversionQuality SrcQuality = ::nxrt::audren::SampleRateConversionQuality::Default;
 
-    // If set to true, the voice was dropped.
     bool VoiceDropFlag = false;
 
-    // Set to true if the data source state work buffer wasn't mapped.
     bool DataSourceStateUnmapped = false;
 
-    // Set to true if any of the WaveBuffer.BufferAddressInfo work buffer wasn't mapped.
     bool BufferInfoUnmapped = false;
 
     // Flush the amount of wavebuffer specified. This will result in the wavebuffer being skipped and marked played. (REV5)
     uint8_t FlushWaveBufferCount = 0;
 
   private:
-    // The biquad filter initialization state storage. Mutable so that the const accessor below can return a writable view,
-    // as the C# property does.
     mutable std::array<bool, VoiceBiquadFilterCount> _biquadFilterNeedInitialization{};
 
-    // C# static List<ErrorInfo> _waveBufferUpdaterErrorInfosList (shared by all voices, as in C#).
     inline static std::vector<BehaviourParameter::ErrorInfo> _waveBufferUpdaterErrorInfosList;
 
   public:
-    // The biquad filter initialization state array (C# property with a body).
     Span<bool> BiquadFilterNeedInitialization() const {
         return Span<bool>(_biquadFilterNeedInitialization.data(), _biquadFilterNeedInitialization.size());
     }
 
-    // Initialize the VoiceInfo.
     void Initialize() {
         IsNew = false;
         VoiceDropFlag = false;
@@ -187,13 +160,10 @@ class VoiceInfo {
         InitializeWaveBuffers();
     }
 
-    // Check if the voice needs to be skipped. Returns true if the voice needs to be skipped.
     bool ShouldSkip() const { return !InUse || WaveBuffersCount == 0 || DataSourceStateUnmapped || BufferInfoUnmapped || VoiceDropFlag; }
 
-    // Return true if the mix has any destinations.
     bool HasAnyDestination() const { return MixId != Constants::UnusedMixId || SplitterId != Constants::UnusedSplitterId; }
 
-    // Update the internal state from a user parameter (VoiceInParameter2).
     void UpdateParameters2(BehaviourParameter::ErrorInfo& outErrorInfo, const VoiceInParameter2& parameter, PoolMapper& poolMapper,
                            BehaviourInfo& behaviourInfo) {
         InUse = parameter.in_use;
@@ -251,7 +221,6 @@ class VoiceInfo {
         }
     }
 
-    // Update the internal state from a user parameter (VoiceInParameter1).
     void UpdateParameters1(BehaviourParameter::ErrorInfo& outErrorInfo, const VoiceInParameter1& parameter, PoolMapper& poolMapper,
                            BehaviourInfo& behaviourInfo) {
         InUse = parameter.in_use;
@@ -308,7 +277,6 @@ class VoiceInfo {
         }
     }
 
-    // Update the internal play state from user play state (C# Common.PlayState).
     void UpdatePlayState(::nxrt::audren::PlayState userPlayState) {
         server::PlayState oldServerPlayState = PlayState;
 
@@ -340,24 +308,20 @@ class VoiceInfo {
         PlayState = newServerPlayState;
     }
 
-    // Write the status of the voice to the given user output (VoiceInParameter2).
     void WriteOutStatus2(VoiceOutStatus& outStatus, const VoiceInParameter2& parameter, Span<const Span<VoiceState>> voiceStates) {
         WriteOutStatusCommon(outStatus, parameter.is_new, voiceStates);
     }
 
-    // Write the status of the voice to the given user output (VoiceInParameter1).
     void WriteOutStatus1(VoiceOutStatus& outStatus, const VoiceInParameter1& parameter, Span<const Span<VoiceState>> voiceStates) {
         WriteOutStatusCommon(outStatus, parameter.is_new, voiceStates);
     }
 
-    // Update the internal state of all the WaveBuffer of the voice (VoiceInParameter2).
     void UpdateWaveBuffers2(std::vector<BehaviourParameter::ErrorInfo>& errorInfos, const VoiceInParameter2& parameter,
                             Span<const Span<VoiceState>> voiceStates, PoolMapper& mapper, BehaviourInfo& behaviourInfo) {
         UpdateWaveBuffersCommon(errorInfos, parameter.is_new, parameter.channel_count, parameter.sample_format, parameter.wave_buffers,
                                 voiceStates, mapper, behaviourInfo);
     }
 
-    // Update the internal state of all the WaveBuffer of the voice (VoiceInParameter1).
     void UpdateWaveBuffers1(std::vector<BehaviourParameter::ErrorInfo>& errorInfos, const VoiceInParameter1& parameter,
                             Span<const Span<VoiceState>> voiceStates, PoolMapper& mapper, BehaviourInfo& behaviourInfo) {
         UpdateWaveBuffersCommon(errorInfos, parameter.is_new, parameter.channel_count, parameter.sample_format, parameter.wave_buffers,
@@ -458,11 +422,9 @@ class VoiceInfo {
         }
     }
 
-    // Update the internal state for command generation (defined in VoiceContext.h, needs VoiceContext complete).
     bool UpdateForCommandGeneration(VoiceContext& context);
 
   private:
-    // Reset the resources associated to this voice (defined in VoiceContext.h, needs VoiceContext complete).
     void ResetResources(VoiceContext& context);
 
     // C# ShouldUpdateParameters1 / ShouldUpdateParameters2 (identical bodies in C#).
@@ -478,7 +440,6 @@ class VoiceInfo {
     // Shared body of C# WriteOutStatus1 / WriteOutStatus2.
     void WriteOutStatusCommon(VoiceOutStatus& outStatus, bool parameterIsNew, Span<const Span<VoiceState>> voiceStates) {
 #ifndef NDEBUG
-        // Sanity check in debug mode of the internal state.
         if (!parameterIsNew && !IsNew) {
             for (uint32_t i = 1; i < ChannelsCount; i++) {
                 const VoiceState& stateA = voiceStates[i - 1][0];
@@ -532,7 +493,6 @@ class VoiceInfo {
         errorInfos = _waveBufferUpdaterErrorInfosList;
     }
 
-    // Initialize the WaveBuffer in this voice.
     void InitializeWaveBuffers() {
         for (server::WaveBuffer& waveBuffer : WaveBuffers) {
             waveBuffer.StartSampleOffset = 0;
@@ -545,7 +505,6 @@ class VoiceInfo {
         }
     }
 
-    // Update the internal state of one of the WaveBuffer of the voice.
     void UpdateWaveBuffer(std::vector<BehaviourParameter::ErrorInfo>& errorInfos, server::WaveBuffer& waveBuffer,
                           const WaveBufferInternal& inputWaveBuffer, ::nxrt::audren::SampleFormat sampleFormat, bool isValid, PoolMapper& mapper,
                           BehaviourInfo& behaviourInfo) {
@@ -601,7 +560,6 @@ class VoiceInfo {
         }
     }
 
-    // Flush a certain amount of WaveBuffer.
     void FlushWaveBuffers(uint32_t waveBufferCount, Span<Span<VoiceState>> voiceStates, uint32_t channelCount) {
         uint32_t waveBufferIndex = WaveBuffersIndex;
 
@@ -625,7 +583,7 @@ class VoiceInfo {
     }
 };
 
-}  // namespace nxrt::audren
+}
 
 // Defines VoiceInfo::UpdateForCommandGeneration and VoiceInfo::ResetResources (needs VoiceContext complete).
 #include "VoiceContext.h"

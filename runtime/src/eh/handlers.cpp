@@ -26,7 +26,7 @@ int hook_unwind_resume(::Ctx* c, uint64_t, void*) { unwind_resume(c); return 1; 
 int hook_unwind_resume_or_rethrow(::Ctx* c, uint64_t, void*) { unwind_resume_or_rethrow(c); return 1; }
 int hook_unwind_delete_exception(::Ctx* c, uint64_t, void*) { unwind_delete_exception(c); return 1; }
 
-}  // namespace nxrt::eh
+}
 
 extern "C" {
 void h_nxrt_unwind_raise_exception(Ctx* c) { nxrt::eh::unwind_raise_exception(c); }

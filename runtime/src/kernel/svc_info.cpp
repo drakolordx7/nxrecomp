@@ -34,7 +34,7 @@ constexpr uint32_t kInfoThreadTickCount = 25;                   // ThreadTickCou
 constexpr uint64_t kProcessStateStarted = 2;                    // Switchbrew ProcessState 2 = Started (not debugged)
 constexpr uint64_t kSubAllCores = 0xFFFFFFFFFFFFFFFFull;        // ThreadTickCount sub-argument: the total over all cores (Switchbrew)
 
-}  // namespace
+}
 uint64_t svc_total_memory() {
     const int64_t mb = config_get_int("memory", "app_memory_mb", 0);
     return mb > 0 ? static_cast<uint64_t>(mb) << 20 : kTotalMemoryAvailable;
@@ -46,7 +46,6 @@ uint64_t used_memory() {
     return svc_current_heap_size() + kUsedMemoryOverhead + images;
 }
 
-// UserExceptionContextAddress: one committed kernel page, made on first use and again only if it has been unmapped.
 uint64_t user_exception_context() {
     static uint64_t page = 0;
     if (page == 0 || !mem::is_mapped(page, mem::kPage)) page = mem::alloc_kernel(mem::kPage);
@@ -55,7 +54,7 @@ uint64_t user_exception_context() {
 
 // CPU time a thread has used, in system ticks. Win32 gives kernel + user time in 100 ns units; the split keeps the product in 64 bits.
 uint64_t thread_cpu_ticks(HANDLE h) {
-    if (!h) return 0;                                      // thread not started yet
+    if (!h) return 0;
     FILETIME created{}, exited{}, kernel_time{}, user_time{};
     if (!GetThreadTimes(h, &created, &exited, &kernel_time, &user_time)) return 0;
     auto to_u64 = [](const FILETIME& f) { return (static_cast<uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
@@ -107,7 +106,7 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
             // Core sub-argument: 0..3 names a console core, all-ones asks for the total over all cores (Switchbrew).
             if (sub != kSubAllCores && sub > 3) return kInvalidCombination;
             auto t = kernel::handle_as<kernel::KThread>(handle);
-            if (!t) return kernel::kOk;                    // pseudo handle outside a guest thread: 0
+            if (!t) return kernel::kOk;
             // nxrt pins each thread to its ideal core: that core reports the total, the other cores report 0.
             if (sub != kSubAllCores && static_cast<int64_t>(sub) != t->ideal_core) return kernel::kOk;
             // The pseudo handle is GetCurrentThread() (the calling thread); any other handle uses the thread's own host handle.
@@ -243,7 +242,7 @@ void get_process_info(::Ctx* c) {
     svc_ret(c, kInvalidCombination);
 }
 
-}  // namespace
+}
 
 void svc_register_info_group() {
     svc_register(0x29, info_get_info);
@@ -256,4 +255,4 @@ void svc_register_info_group() {
     svc_register(0x7C, get_process_info);
 }
 
-}  // namespace nxrt
+}

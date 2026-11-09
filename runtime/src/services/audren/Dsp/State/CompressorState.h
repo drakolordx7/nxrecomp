@@ -45,4 +45,4 @@ struct CompressorState {
     }
 };
 
-}  // namespace nxrt::audren
+}

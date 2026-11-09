@@ -67,4 +67,4 @@ class PcmInt16DataSourceCommandVersion1 : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

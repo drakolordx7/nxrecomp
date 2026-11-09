@@ -20,22 +20,15 @@ class PoolMapper {
     // Pseudo handle of the current process (C# CurrentProcessPseudoHandle).
     static constexpr uint32_t CurrentProcessPseudoHandle = 0xFFFF8001;
 
-    // The result of Update (C# enum UpdateResult : uint).
     enum class UpdateResult : uint32_t {
-        // No error reported.
         Success = 0,
-        // The user parameters were invalid.
         InvalidParameter = 1,
-        // Mapping failed.
         MapError = 2,
-        // Unmapping failed.
         UnmapError = 3,
     };
 
   private:
-    // The handle of the process owning the CPU memory manipulated.
     uint32_t _processHandle;
-    // The memory pools that will be manipulated (C# Memory<MemoryPoolInfo>, non-owning).
     Span<MemoryPoolInfo> _memoryPools;
     // If set to true, this will try to force map memory pool even if their state are considered invalid.
     bool _isForceMapEnabled;
@@ -54,7 +47,6 @@ class PoolMapper {
         (void)size;
     }
 
-    // Find a MemoryPoolInfo associated to the region given. Returns an empty span if not found.
     Span<MemoryPoolInfo> FindMemoryPool(uint64_t cpuAddress, uint64_t size) const {
         if (!_memoryPools.IsEmpty() && _memoryPools.Length > 0) {
             for (size_t i = 0; i < _memoryPools.Length; i++) {
@@ -67,7 +59,6 @@ class PoolMapper {
         return Span<MemoryPoolInfo>();
     }
 
-    // Map the AddressInfo to the processor.
     bool AssignDspAddress(AddressInfo& addressInfo) {
         if (addressInfo.CpuAddress == 0) {
             return false;
@@ -98,11 +89,9 @@ class PoolMapper {
     }
 
   public:
-    // Create a new PoolMapper used for system mapping (no user pools).
     PoolMapper(uint32_t processHandle, bool isForceMapEnabled)
         : _processHandle(processHandle), _memoryPools(), _isForceMapEnabled(isForceMapEnabled) {}
 
-    // Create a new PoolMapper used for user mapping.
     PoolMapper(uint32_t processHandle, Span<MemoryPoolInfo> memoryPool, bool isForceMapEnabled)
         : _processHandle(processHandle), _memoryPools(memoryPool), _isForceMapEnabled(isForceMapEnabled) {}
 
@@ -115,14 +104,12 @@ class PoolMapper {
         return InitializePool(memoryPool, cpuAddress, size);
     }
 
-    // Initialize the MemoryPoolInfo. Returns true if mapping succeeded.
     bool InitializePool(MemoryPoolInfo& memoryPool, uint64_t cpuAddress, uint64_t size) {
         memoryPool.SetCpuAddress(cpuAddress, size);
 
         return Map(memoryPool) != 0;
     }
 
-    // Get the process handle associated to the MemoryPoolInfo.
     uint32_t GetProcessHandle(const MemoryPoolInfo& memoryPool) const {
         if (memoryPool.Location == MemoryPoolInfo::LocationType::Cpu) {
             return CurrentProcessPseudoHandle;
@@ -160,7 +147,6 @@ class PoolMapper {
         return true;
     }
 
-    // Force unmap the given AddressInfo (only when force mapping is enabled).
     void ForceUnmap(AddressInfo& addressInfo) {
         if (_isForceMapEnabled) {
             Span<MemoryPoolInfo> memoryPool = FindMemoryPool(addressInfo.CpuAddress, addressInfo.Size);
@@ -175,7 +161,6 @@ class PoolMapper {
         }
     }
 
-    // Try to attach the given region to the AddressInfo. Returns true if mapping was performed.
     bool TryAttachBuffer(BehaviourParameter::ErrorInfo& errorInfo, AddressInfo& addressInfo, uint64_t cpuAddress, uint64_t size) {
         errorInfo = BehaviourParameter::ErrorInfo{};
 
@@ -194,7 +179,6 @@ class PoolMapper {
         return _isForceMapEnabled;
     }
 
-    // Update a MemoryPoolInfo using user parameters.
     UpdateResult Update(MemoryPoolInfo& memoryPool, const MemoryPoolInParameter& inParameter, MemoryPoolOutStatus& outStatus) {
         const MemoryPoolUserState inputState = inParameter.state;
 
@@ -245,7 +229,6 @@ class PoolMapper {
         return UpdateResult::Success;
     }
 
-    // Remove the usage flag from all the MemoryPoolInfo.
     static void ClearUsageState(Span<MemoryPoolInfo> memoryPool) {
         for (size_t i = 0; i < memoryPool.Length; i++) {
             memoryPool.Data[i].IsUsed = false;
@@ -253,4 +236,4 @@ class PoolMapper {
     }
 };
 
-}  // namespace nxrt::audren
+}

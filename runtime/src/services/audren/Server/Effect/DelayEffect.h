@@ -13,10 +13,8 @@ namespace nxrt::audren {
 
 class DelayEffect : public BaseEffect {
   public:
-    // The delay parameter (C# DelayParameter Parameter; default-initialised).
     DelayParameter Parameter{};
 
-    // The delay state (C# Memory<DelayState>, one element).
     Span<DelayState> State;
 
   private:
@@ -79,4 +77,4 @@ class DelayEffect : public BaseEffect {
     }
 };
 
-}  // namespace nxrt::audren
+}

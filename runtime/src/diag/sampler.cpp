@@ -34,8 +34,8 @@ namespace {
 constexpr size_t kDepth = 32;
 
 struct Sample {
-    uint32_t thread = 0;    // index into names
-    uint32_t label = 0;     // index into labels
+    uint32_t thread = 0;
+    uint32_t label = 0;
     uint8_t waiting = 0;
     uint8_t n = 0;
     uint64_t frames[kDepth];
@@ -45,7 +45,7 @@ struct State {
     std::mutex ctl;
     std::thread th;
     std::atomic<bool> stop{false};
-    std::mutex lm;                       // labels
+    std::mutex lm;
     std::vector<std::string> labels{std::string()};
     std::atomic<uint32_t> label{0};
     std::vector<std::string> names;
@@ -87,8 +87,8 @@ void loop() {
     while (!s.stop.load()) {
         std::this_thread::sleep_until(next);
         next += period;
-        if (next < std::chrono::steady_clock::now()) next = std::chrono::steady_clock::now() + period;   // do not catch up after a stall
-        std::vector<ThreadRecord> recs = diag_threads_dup();   // private handles: a thread unregistering mid-sample cannot close ours
+        if (next < std::chrono::steady_clock::now()) next = std::chrono::steady_clock::now() + period;
+        std::vector<ThreadRecord> recs = diag_threads_dup();
         batch.assign(recs.size(), Sample{});
         std::vector<char> ok(recs.size(), 0);
         const uint32_t label = s.label.load(std::memory_order_relaxed);
@@ -105,7 +105,7 @@ void loop() {
             }
             ResumeThread(h);
         }
-        const std::vector<std::string> names = [&] {   // the names are copied: the records go away with the handles
+        const std::vector<std::string> names = [&] {
             std::vector<std::string> n;
             for (const ThreadRecord& r : recs) n.push_back(r.name);
             return n;
@@ -178,7 +178,7 @@ void flush_samples(State& s) {
     std::fflush(s.f);
 }
 
-}  // namespace
+}
 
 void prof_sampler_label(const char* label) {
     State& s = st();
@@ -222,4 +222,4 @@ void prof_sampler_stop() {
     NXLOG_I("prof", "sampling profiler: samples written to %s", s.out.c_str());
 }
 
-}  // namespace nxrt
+}

@@ -55,4 +55,4 @@ class FillBufferCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

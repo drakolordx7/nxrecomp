@@ -12,10 +12,8 @@ namespace nxrt::audren {
 
 class WorkBufferAllocator {
 public:
-    // C# public Memory<byte> BackingMemory { get; }
     Span<uint8_t> BackingMemory;
 
-    // C# public ulong Offset { get; private set; }. Only Allocate changes it.
     uint64_t Offset = 0;
 
     explicit WorkBufferAllocator(Span<uint8_t> backingMemory) : BackingMemory(backingMemory) {}
@@ -32,7 +30,6 @@ public:
 
                 Offset = alignedOffset + size;
 
-                // Clear the memory to be sure that is does not contain any garbage.
                 result.Clear();
 
                 return result;
@@ -42,7 +39,6 @@ public:
         return Span<uint8_t>();
     }
 
-    // Allocate `count` elements of T, aligned to `align`.
     template <class T>
     Span<T> Allocate(uint64_t count, int32_t align) {
         static_assert(std::is_trivially_copyable_v<T>, "unmanaged");
@@ -65,4 +61,4 @@ public:
     }
 };
 
-}  // namespace nxrt::audren
+}

@@ -35,7 +35,6 @@ bool fail(std::string* err, const char* fmt, ...) {
 template <class T>
 T rd(const uint8_t* p) { T v; std::memcpy(&v, p, sizeof v); return v; }
 
-// LZ4 block decompression of exactly dst_size bytes. False on any malformed or truncated stream.
 bool lz4_block_decode(const uint8_t* src, size_t n, uint8_t* dst, size_t dst_size) {
     size_t ip = 0, op = 0;
     while (ip < n) {
@@ -69,13 +68,13 @@ bool lz4_block_decode(const uint8_t* src, size_t n, uint8_t* dst, size_t dst_siz
         }
         len += 4;
         if (len > dst_size - op) return false;
-        for (size_t i = 0; i < len; i++) dst[op + i] = dst[op - off + i];   // overlapping copies are the point of LZ4
+        for (size_t i = 0; i < len; i++) dst[op + i] = dst[op - off + i];
         op += len;
     }
     return op == dst_size;
 }
 
-}  // namespace
+}
 
 Module* module_load_nso_memory(const void* data, size_t size, const LoadOptions& opt, std::string* err) {
     const uint8_t* d = static_cast<const uint8_t*>(data);
@@ -189,4 +188,4 @@ Module* module_load_nso_file(const char* path, const LoadOptions& opt_in, std::s
     return module_load_nso_memory(bytes.data(), bytes.size(), opt, err);
 }
 
-}  // namespace nxrt
+}

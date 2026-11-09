@@ -35,7 +35,6 @@ uint64_t g_next_base = 0;
 TlsInfo g_tls;
 
 // ---- gauges (include/nxrt/gauge.h); each callback takes g_lock, the lock of the data it counts ----
-// Removes its gauge when this file's statics are torn down (declared after them, so it goes first).
 struct GaugeHook {
     const char* name;
     GaugeHook(const char* n, std::function<int64_t()> f) : name(n) { nxrt::gauge_register(n, std::move(f)); }
@@ -45,7 +44,7 @@ GaugeHook gauge_modules("loader.modules", [] {
     std::lock_guard<std::recursive_mutex> lk(g_lock);
     return static_cast<int64_t>(g_modules.size());
 });
-GaugeHook gauge_data_symbols("loader.data_symbols", [] {   // data symbols the host has published (g_data only grows until reset)
+GaugeHook gauge_data_symbols("loader.data_symbols", [] {
     std::lock_guard<std::recursive_mutex> lk(g_lock);
     return static_cast<int64_t>(g_data.size());
 });
@@ -67,9 +66,8 @@ bool fail(std::string* err, const char* fmt, ...) {
     NXLOG_E(kTag, "%s", buf);
     return false;
 }
-}  // namespace
+}
 
-// Gives the helper functions below access to Module's private state.
 struct LoaderAccess {
     static Module* create_and_map(const uint8_t* d, size_t n, const LoadOptions& opt, std::string* err);
     static bool parse_dynamic(Module& m, const uint8_t* d, size_t n, std::string* err);
@@ -83,7 +81,7 @@ struct LoaderAccess {
 // ---- Module ----------------------------------------------------------------------------------------------------------
 
 uint64_t Module::find_symbol(const char* sym) const {
-    std::call_once(index_once_, [this] {          // the game's modules define 100k symbols and import thousands: no linear scans
+    std::call_once(index_once_, [this] {
         index_.reserve(symbols_.size());
         for (uint32_t i = 0; i < symbols_.size(); i++)
             if (symbols_[i].defined() && symbols_[i].bind != 0 && !symbols_[i].name.empty()) index_.emplace(symbols_[i].name, i);
@@ -144,7 +142,7 @@ Module* LoaderAccess::create_and_map(const uint8_t* d, size_t n, const LoadOptio
             m.tls_.file_size = p.filesz;
             m.tls_.mem_size = p.memsz;
             m.tls_.align = p.align ? p.align : 1;
-            m.tls_.init_addr = p.vaddr;      // made absolute below
+            m.tls_.init_addr = p.vaddr;
             m.tls_.tp_offset = align_up(16, m.tls_.align);
         } else if (p.type == PT_GNU_RELRO) {
             m.relro_start_ = p.vaddr;
@@ -163,7 +161,7 @@ Module* LoaderAccess::create_and_map(const uint8_t* d, size_t n, const LoadOptio
         base = opt.base;
         if (!base) base = g_modules.empty() ? mem::kMainBase : std::max(g_next_base, mem::kSdkBase);
         base = align_up(base, mem::kAllocGranularity);
-        m.bias_ = base - lo;       // lo is normally 0
+        m.bias_ = base - lo;
     }
     m.base_ = base;
     m.size_ = hi - lo;
@@ -177,7 +175,7 @@ Module* LoaderAccess::create_and_map(const uint8_t* d, size_t n, const LoadOptio
     if (!mem::reserve_fixed(base, align_up(m.size_, mem::kAllocGranularity), m.name_.c_str())) { fail(err, "cannot reserve 0x%llx bytes at 0x%llx for %s (range in use)", (unsigned long long)m.size_, (unsigned long long)base, m.name_.c_str()); return nullptr; }
     if (!mem::commit(base, m.size_, mem::Prot::RW)) { mem::release_fixed(base); fail(err, "cannot commit the image of %s", m.name_.c_str()); return nullptr; }
     for (auto& s : m.segs_)
-        if (s.filesz) memcpy(reinterpret_cast<void*>(m.bias_ + s.vaddr), d + s.offset, s.filesz);   // bss and the segment tail are already zero
+        if (s.filesz) memcpy(reinterpret_cast<void*>(m.bias_ + s.vaddr), d + s.offset, s.filesz);
 
     if (!parse_dynamic(m, d, n, err)) { mem::release_fixed(base); return nullptr; }
     g_next_base = base + align_up(m.size_, mem::kAllocGranularity);
@@ -221,7 +219,7 @@ void LoaderAccess::load_static_symtab(Module& m, const uint8_t* d, size_t n, con
 
 bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::string* err) {
     using namespace elf;
-    const uint64_t lo = m.base_ - m.bias_;    // lowest mapped ELF vaddr (page aligned)
+    const uint64_t lo = m.base_ - m.bias_;
     const uint64_t hi = lo + m.size_;
     auto in_image = [&](uint64_t vaddr, uint64_t len) { return vaddr >= lo && vaddr <= hi && len <= hi - vaddr; };
     auto at = [&](uint64_t vaddr) { return reinterpret_cast<const uint8_t*>(m.bias_ + vaddr); };
@@ -233,7 +231,7 @@ bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::str
     uint64_t dyn_vaddr = 0, dyn_size = 0;
     for (auto& p : ph)
         if (p.type == PT_DYNAMIC) { dyn_vaddr = p.vaddr; dyn_size = p.memsz; }
-    if (!dyn_vaddr) {                  // a static image: nothing to relocate; its .symtab (when the section headers are there) names the code
+    if (!dyn_vaddr) {
         load_static_symtab(m, d, n, eh);
         return true;
     }
@@ -296,7 +294,7 @@ bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::str
                     last = std::max(last, b);
                 }
                 if (last >= symoffset) {
-                    for (;;) {       // walk the chain of the highest bucket to its end marker
+                    for (;;) {
                         uint64_t ea = chains + uint64_t(last - symoffset) * 4;
                         if (!in_image(ea, 4)) break;
                         uint32_t e;
@@ -337,7 +335,6 @@ bool LoaderAccess::parse_dynamic(Module& m, const uint8_t* d, size_t n, std::str
 
 // ---- phase 2: link ---------------------------------------------------------------------------------------------------
 
-// Absolute address a relocation against symbol `symidx` of module m stands for.
 uint64_t LoaderAccess::resolve(Module& m, const std::vector<elf::Sym>&, uint32_t symidx, bool* weak_null) {
     *weak_null = false;
     if (symidx == 0) return 0;
@@ -360,7 +357,6 @@ uint64_t LoaderAccess::resolve(Module& m, const std::vector<elf::Sym>&, uint32_t
         if (s.name == "__rel_plt_start") { st.to_own++; return m.bias_ + m.jmprel_; }
         if (s.name == "__rel_plt_end") { st.to_own++; return m.bias_ + m.jmprel_ + m.jmprel_sz_; }
     }
-    // Undefined: another module, host data, HLE handler, weak null, logging stub - in that order.
     for (auto& o : g_modules) {
         if (o.get() == &m) continue;
         if (uint64_t a = o->find_symbol(s.name.c_str())) { st.to_other_module++; return a; }
@@ -380,7 +376,6 @@ bool LoaderAccess::link(Module& m, bool guest_relinks) {
     const uint64_t lo = m.base_ - m.bias_, hi = lo + m.size_;
     std::vector<Sym> unused;
     bool ok = true;
-    // guest_relinks: every slot written here, with the image's value, to put back once the module is checked (see below)
     std::vector<std::pair<uint64_t, uint64_t>> written;
     const uint64_t tables[2][2] = {{m.rela_, m.rela_sz_}, {m.jmprel_, m.jmprel_sz_}};
     for (auto& t : tables) {
@@ -460,7 +455,6 @@ bool LoaderAccess::link(Module& m, bool guest_relinks) {
             }
         }
     }
-    // Init / fini arrays are read after relocation (their slots were filled by RELATIVE relocations).
     auto read_array = [&](uint64_t vaddr, uint64_t bytes, std::vector<uint64_t>& out) {
         if (!vaddr || !bytes) return;
         if (vaddr < lo || vaddr > hi || bytes > hi - vaddr) { NXLOG_E(kTag, "%s: init/fini array is outside the image", m.name_.c_str()); ok = false; return; }
@@ -487,7 +481,6 @@ bool LoaderAccess::link(Module& m, bool guest_relinks) {
     return ok;
 }
 
-// Page protections from the segment flags (union per page), then RELRO pages become read-only.
 void LoaderAccess::protect(Module& m) {
     using namespace elf;
     const uint64_t lo = m.base_ - m.bias_;
@@ -499,7 +492,7 @@ void LoaderAccess::protect(Module& m) {
         uint64_t first = (align_down(s.vaddr, mem::kPage) - lo) / mem::kPage, last = (align_up(s.vaddr + s.memsz, mem::kPage) - lo) / mem::kPage;
         for (uint64_t p = first; p < last && p < pages; p++) { perm[p] |= static_cast<uint8_t>(s.flags & 7); has[p] = 1; }
     }
-    if (m.relro_size_) {   // whole pages inside RELRO lose write permission once relocations are done
+    if (m.relro_size_) {
         uint64_t first = (align_up(m.relro_start_, mem::kPage) - lo) / mem::kPage, last = (align_down(m.relro_start_ + m.relro_size_, mem::kPage) - lo) / mem::kPage;
         for (uint64_t p = first; p < last && p < pages; p++) perm[p] &= ~static_cast<uint8_t>(PF_W);
     }
@@ -592,7 +585,7 @@ bool run_one(Module* m, ::Ctx* ctx, uint64_t addr, const char* what) {
     dispatch_call(ctx, addr);
     return true;
 }
-}  // namespace
+}
 
 bool module_run_init(Module* m, ::Ctx* ctx) {
     if (!m->linked()) { NXLOG_E(kTag, "%s: init before link", m->name().c_str()); return false; }
@@ -667,7 +660,7 @@ void module_override_symbol(const char* sym) {
         std::lock_guard<std::recursive_mutex> lk(g_lock);
         g_overrides.insert(sym);
     }
-    import_cache_invalidate();       // an import resolved before the override must be resolved again
+    import_cache_invalidate();
 }
 
 const TlsInfo& module_tls_template() { return g_tls; }
@@ -684,4 +677,4 @@ void modules_unload_all() {
     nxmodules_clear();
 }
 
-}  // namespace nxrt
+}

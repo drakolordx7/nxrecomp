@@ -16,13 +16,13 @@ namespace nxrt::ft {
 extern std::atomic<bool> g_on;
 inline bool on() { return g_on.load(std::memory_order_relaxed); }
 
-uint64_t now_ns();                         // monotonic, same base as FrameLimiter::now_ns
-uint16_t zone_id(const char* name);        // registers a name once (static local at each site)
+uint64_t now_ns();
+uint16_t zone_id(const char* name);
 void event(uint16_t zone, uint64_t t0, uint64_t t1, uint32_t arg = 0);
 void mark(const char* name, uint32_t arg = 0);
 void frame();                              // the "frame" mark (one per presented frame); also feeds the stall sampler
 void start_from_config();                  // reads [prof] trace / trace_events; a no-op when unset or already started
-void stop();                               // final flush
+void stop();
 
 struct Scope {
     uint16_t id;
@@ -39,7 +39,7 @@ struct Scope {
     }
 };
 
-}  // namespace nxrt::ft
+}
 
 #define NXFT_CAT2(a, b) a##b
 #define NXFT_CAT(a, b) NXFT_CAT2(a, b)

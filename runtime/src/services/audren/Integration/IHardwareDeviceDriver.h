@@ -17,14 +17,12 @@ class IHardwareDeviceDriver {
   public:
     virtual ~IHardwareDeviceDriver() = default;
 
-    // Open an output device at `sampleRate` Hz with `channelCount` interleaved PCM16 channels (C# HardwareDeviceImpl constructor path).
     virtual std::unique_ptr<IHardwareDevice> OpenHardwareDevice(uint32_t sampleRate, uint32_t channelCount) = 0;
 
-    // True if the driver can open a device with this channel count (C# SupportsChannelCount).
     virtual bool SupportsChannelCount(uint32_t channelCount) const {
         (void)channelCount;
         return false;
     }
 };
 
-}  // namespace nxrt::audren
+}

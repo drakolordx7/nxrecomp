@@ -30,12 +30,12 @@ class Service;
 struct Request {
     ::Ctx* ctx = nullptr;                  // the calling guest thread's registers (may be null in tests)
     uint32_t cmd = 0;                      // CMIF method id, or the TIPC command (message type - 16)
-    uint16_t msg_type = 0;                 // hipc message type of the request
+    uint16_t msg_type = 0;
     bool tipc = false;
     const uint8_t* in = nullptr;           // raw arguments: after the SFCI header (CMIF) or the whole raw payload (TIPC)
     size_t in_size = 0;
     uint64_t pid = 0;                      // process id sent with the request (0 if none)
-    std::vector<uint32_t> in_copy, in_move;           // handles sent along
+    std::vector<uint32_t> in_copy, in_move;
     std::vector<Buffer> a, b, w, x, c;                // A (send), B (receive), W (exchange), X (pointer), C (receive list) buffers
     std::vector<std::shared_ptr<Service>> in_services;    // interfaces passed in: domain objects or moved session handles, resolved (null = invalid)
     template <typename T>
@@ -51,7 +51,7 @@ struct Request {
 
 struct Response {
     std::vector<uint8_t> out;                              // raw return values (after SFCO / after the TIPC result word)
-    std::vector<uint32_t> out_copy, out_move;              // handles returned
+    std::vector<uint32_t> out_copy, out_move;
     std::vector<std::shared_ptr<Service>> out_objects;     // interfaces returned: new session handles (move) or domain object ids
     template <typename T>
     void push(const T& v) {
@@ -74,7 +74,6 @@ public:
     virtual uint32_t handle(Request& req, Response& rsp);
     virtual void on_close() {}                              // the last session/object referencing the service was released
     void add_cmd(uint32_t id, const char* cmd_name, Handler h) { cmds_[id] = {cmd_name, std::move(h)}; }
-    // Command ids that were requested but have no handler, with counts (for the end-of-run report).
     std::map<uint32_t, uint64_t> unhandled;
     uint64_t requests = 0;
 
@@ -95,10 +94,10 @@ public:
 // ---- registry ---------------------------------------------------------------------------------------------------------------
 using ServiceFactory = std::function<std::shared_ptr<Service>()>;
 void register_service(const std::string& name, ServiceFactory f);   // replaces an earlier registration of the same name
-bool has_service(const std::string& name);                           // a real (non-stub) registration exists
+bool has_service(const std::string& name);
 // Instantiates the service for `name`; an unregistered name yields a StubService (logged once per name). "sm:" is built in.
 std::shared_ptr<Service> make_service(const std::string& name);
-std::vector<std::string> service_names();                            // registered real services
+std::vector<std::string> service_names();
 std::vector<std::string> stub_names_requested();                     // names that were asked for and answered by a stub
 void registry_reset();                                               // tests: forget registrations and counters, keep the built-in sm:
 
@@ -116,14 +115,14 @@ struct DomainState {
 struct KSession : kernel::KObject {
     std::shared_ptr<Service> svc;
     bool domain = false;
-    std::shared_ptr<DomainState> dom;                 // shared by clones
+    std::shared_ptr<DomainState> dom;
     kernel::ObjType type() const override { return kernel::ObjType::Session; }
     ~KSession() override;                             // calls svc->on_close() when this was the last reference
 };
 
 // svcConnectToNamedPort: "sm:" gives the service manager; any other registered/stub name its service. Result code; handle in *out.
 uint32_t connect_named_port(const char* name, uint32_t* out_handle);
-uint32_t create_session_handle(std::shared_ptr<Service> svc);        // new KSession handle for a service object (used by sm GetServiceHandle)
+uint32_t create_session_handle(std::shared_ptr<Service> svc);
 // svcSendSyncRequest / ...WithUserBuffer: reads the request message (`msg_size` bytes at msg_addr; 0x100 for the TLS buffer), runs it,
 // writes the response over the same buffer. Returns the SVC result code (0 on any answered request, even one carrying an error
 // Result inside the CMIF header; kInvalidHandle for a bad session handle; 0xF601 for a bad domain object).
@@ -135,7 +134,7 @@ struct ServiceStats {
     bool stub = false;
     std::map<uint32_t, uint64_t> unhandled;
 };
-std::vector<ServiceStats> service_stats();                           // per service name, accumulated over sessions
+std::vector<ServiceStats> service_stats();
 std::string ipc_summary();                                           // one-line-per-service end-of-run summary text
 
-}  // namespace nxrt::ipc
+}

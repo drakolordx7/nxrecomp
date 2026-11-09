@@ -13,10 +13,8 @@ namespace nxrt::audren {
 
 class CaptureBufferEffect : public BaseEffect {
   public:
-    // The capture buffer parameter (C# AuxiliaryBufferParameter Parameter; default-initialised).
     AuxiliaryBufferParameter Parameter{};
 
-    // Capture buffer state (C# AuxiliaryBufferAddresses State, a plain value).
     AuxiliaryBufferAddresses State{};
 
     CaptureBufferEffect() { Type = TargetEffectType(); }
@@ -69,4 +67,4 @@ class CaptureBufferEffect : public BaseEffect {
     void UpdateForCommandGeneration() override { UpdateUsageStateForCommandGeneration(); }
 };
 
-}  // namespace nxrt::audren
+}

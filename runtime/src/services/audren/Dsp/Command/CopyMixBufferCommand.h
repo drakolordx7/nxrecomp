@@ -28,4 +28,4 @@ class CopyMixBufferCommand : public ICommand {
     void Process(CommandList& context) override { context.CopyBuffer(OutputBufferIndex, InputBufferIndex); }
 };
 
-}  // namespace nxrt::audren
+}

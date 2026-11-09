@@ -51,7 +51,7 @@ struct FnCacheEntry {
 constexpr size_t kFnCache = 1024;
 thread_local FnCacheEntry t_fn_cache[kFnCache];
 thread_local uint32_t t_fn_epoch = 0;
-std::vector<std::unique_ptr<Table>> g_all_tables;   // owns current + retired tables
+std::vector<std::unique_ptr<Table>> g_all_tables;
 std::atomic<size_t> g_fn_count{0};
 
 inline size_t hash_addr(uint64_t a) { return static_cast<size_t>(((a >> 2) * 0x9E3779B97F4A7C15ull) >> 24); }
@@ -78,9 +78,8 @@ Table* table_for_write() {
     return raw;
 }
 
-// host-address order for guest_function_of: rebuilt lazily when the table changed
 struct ByHost {
-    std::vector<std::pair<uint64_t, uint64_t>> v;   // (host fn address, guest address) sorted by host address
+    std::vector<std::pair<uint64_t, uint64_t>> v;
     size_t built_for = ~size_t(0);
 };
 std::mutex g_byhost_lock;
@@ -89,13 +88,13 @@ ByHost g_byhost;
 // ---- HLE thunks
 struct Thunk {
     std::string name;
-    HleFn fn = nullptr;       // null: logging stub
+    HleFn fn = nullptr;
     std::atomic<uint64_t> calls{0};
-    std::atomic<int> ft_zone{-1};   // frame trace zone ("hle:<name>"), registered on the first slow call
+    std::atomic<int> ft_zone{-1};
 };
 std::mutex g_hle_lock;
-std::vector<std::unique_ptr<Thunk>> g_thunks;        // index = (addr - kHleBase) / 16
-std::atomic<size_t> g_thunk_count{0};                // published size (thunks are never removed outside hle_clear)
+std::vector<std::unique_ptr<Thunk>> g_thunks;
+std::atomic<size_t> g_thunk_count{0};
 std::unordered_map<std::string, size_t> g_thunk_by_name;
 thread_local const char* t_hle_name = nullptr;
 
@@ -121,7 +120,7 @@ constexpr size_t kMaxThunks = mem::kHleSize / 16;
 
 size_t thunk_index(uint64_t addr) { return static_cast<size_t>((addr - mem::kHleBase) / 16); }
 
-}  // namespace
+}
 
 void fn_register(uint64_t guest_addr, GuestFn fn) {
     if (!guest_addr || !fn) return;
@@ -132,7 +131,7 @@ void fn_register(uint64_t guest_addr, GuestFn fn) {
         uint64_t a = t->slots[h].addr.load(std::memory_order_relaxed);
         if (a == guest_addr) {
             t->slots[h].fn.store(fn, std::memory_order_release);
-            g_fn_epoch.fetch_add(1, std::memory_order_release);      // a replaced function: the per-thread caches may hold the old one
+            g_fn_epoch.fetch_add(1, std::memory_order_release);
             return;
         }
         if (!a) break;
@@ -195,7 +194,7 @@ uint64_t guest_function_of(uint64_t host_rip) {
 
 uint64_t hle_register(const char* name, HleFn fn) {
     std::lock_guard<std::mutex> lk(g_hle_lock);
-    if (g_thunks.capacity() < kMaxThunks) g_thunks.reserve(kMaxThunks);   // never reallocates: dispatch reads without the lock
+    if (g_thunks.capacity() < kMaxThunks) g_thunks.reserve(kMaxThunks);
     auto it = g_thunk_by_name.find(name);
     size_t i;
     if (it != g_thunk_by_name.end()) {
@@ -221,7 +220,7 @@ uint64_t hle_address(const char* name) {
         auto it = g_thunk_by_name.find(name);
         if (it != g_thunk_by_name.end()) return mem::kHleBase + it->second * 16;
     }
-    return hle_register(name, nullptr);   // no handler: a logging stub
+    return hle_register(name, nullptr);
 }
 
 HleFn hle_lookup(const char* name) {
@@ -278,7 +277,6 @@ void trap(const char* what, uint64_t addr) {
 }
 
 void dispatch_call(::Ctx* c, uint64_t addr) {
-    // HLE thunks live in their own address range, away from every lifted function: no hash lookup for them
     const bool in_hle_range = addr - mem::kHleBase < mem::kHleSize;
     if (!in_hle_range) {
         const uint32_t ep = g_fn_epoch.load(std::memory_order_acquire);
@@ -304,7 +302,6 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
         t.calls.fetch_add(1, std::memory_order_relaxed);
         const char* saved = t_hle_name;
         t_hle_name = t.name.c_str();
-        // [hle] trace: the line is written after the handler ran, so it carries the result (x0) next to the arguments
         const HleTrace& tr = hle_trace();
         const bool traced = !tr.prefix.empty() && t.name.compare(0, tr.prefix.size(), tr.prefix) == 0;
         uint64_t targs[4] = {};
@@ -318,7 +315,7 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
                 const uint64_t t0 = ft::now_ns();
                 t.fn(c);
                 const uint64_t t1 = ft::now_ns();
-                if (t1 - t0 >= 100000) {       // frame trace: HLE calls (services, NVN entry points) of at least 100 us
+                if (t1 - t0 >= 100000) {
                     int z = t.ft_zone.load(std::memory_order_relaxed);
                     if (z < 0) { z = ft::zone_id(("hle:" + t.name).c_str()); t.ft_zone.store(z, std::memory_order_relaxed); }
                     ft::event(static_cast<uint16_t>(z), t0, t1, 0);
@@ -346,4 +343,4 @@ void dispatch_call(::Ctx* c, uint64_t addr) {
     trap("indirect call to an address that is not a known function", addr);
 }
 
-}  // namespace nxrt
+}

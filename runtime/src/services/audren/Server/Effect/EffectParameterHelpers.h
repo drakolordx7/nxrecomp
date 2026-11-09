@@ -30,7 +30,6 @@ concept IEffectInParameter = requires(const T& p) {
     p.specific_data;
 };
 
-// C# interface IEffectOutStatus (State is the only member it requires).
 template <class T>
 concept IEffectOutStatus = requires(T& s) {
     s.state;
@@ -45,26 +44,22 @@ concept HasChannelCounts = requires(const T& p) {
 };
 
 struct EffectParameterHelpers {
-    // C# EffectInParameterVersion1.IsChannelCountValid(int): 1, 2, 4 or 6 channels.
     static bool IsChannelCountValid(int32_t channelCount) {
         return channelCount == 1 || channelCount == 2 || channelCount == 4 || channelCount == 6;
     }
 
-    // C# instance member IsChannelCountValid() of the parameter structs.
     template <class TParam>
         requires HasChannelCounts<TParam>
     static bool IsChannelCountValid(const TParam& parameter) {
         return IsChannelCountValid(static_cast<int32_t>(parameter.channel_count));
     }
 
-    // C# instance member IsChannelCountMaxValid() of the parameter structs.
     template <class TParam>
         requires HasChannelCounts<TParam>
     static bool IsChannelCountMaxValid(const TParam& parameter) {
         return IsChannelCountValid(static_cast<int32_t>(parameter.channel_count_max));
     }
 
-    // C# LimiterStatistics.Reset(): input maxima to 0, compression gain minima to 1.
     static void Reset(LimiterStatistics& statistics) {
         for (float& value : statistics.input_max) {
             value = 0.0f;
@@ -74,8 +69,6 @@ struct EffectParameterHelpers {
         }
     }
 
-    // C# CompressorStatistics.Reset(ushort channelCount): maximum mean 0, minimum gain 1, and the first channelCount last
-    // samples cleared (C# `LastSamples.AsSpan()[..channelCount].Clear()` throws above 6, so that case is fatal here).
     static void Reset(CompressorStatistics& statistics, uint16_t channelCount) {
         if (channelCount > 6) {
             NXAUDREN_FATAL("CompressorStatistics.Reset: channelCount above the 6 last samples");
@@ -87,7 +80,6 @@ struct EffectParameterHelpers {
         }
     }
 
-    // Read a T from the raw bytes at source (C# MemoryMarshal.Cast<byte, T>(span)[0]). Copies, so no alignment is assumed.
     template <class T>
     static T LoadBytes(const uint8_t* source) {
         T value{};
@@ -95,7 +87,6 @@ struct EffectParameterHelpers {
         return value;
     }
 
-    // Write a T to the raw bytes at destination.
     template <class T>
     static void StoreBytes(uint8_t* destination, const T& value) {
         std::memcpy(destination, &value, sizeof(T));
@@ -129,7 +120,6 @@ class EffectStateSlot {
     EffectStateSlot(const EffectStateSlot&) = delete;
     EffectStateSlot& operator=(const EffectStateSlot&) = delete;
 
-    // The one-element view (C# Memory<T> of length 1).
     Span<T> View() { return Span<T>(Object(), 1); }
 
   private:
@@ -138,4 +128,4 @@ class EffectStateSlot {
     alignas(T) unsigned char _storage[sizeof(T)];
 };
 
-}  // namespace nxrt::audren
+}

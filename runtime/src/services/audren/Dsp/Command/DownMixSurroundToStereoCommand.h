@@ -70,4 +70,4 @@ class DownMixSurroundToStereoCommand : public ICommand {
     }
 };
 
-}  // namespace nxrt::audren
+}

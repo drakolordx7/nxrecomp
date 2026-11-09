@@ -19,10 +19,8 @@ class SpanIOHelper {
 public:
     explicit SpanIOHelper(Span<TByte> backingMemory) : _backingMemory(backingMemory) {}
 
-    // The bytes that have not been consumed yet (the C# cursor's current value).
     Span<TByte> Remaining() const { return _backingMemory; }
 
-    // Write the given data to the backing memory and move cursor after the written data.
     template <class T>
     void Write(const T& data)
         requires(!std::is_const_v<TByte>)
@@ -40,7 +38,6 @@ public:
         _backingMemory = _backingMemory.Slice(size);
     }
 
-    // Get a Span<T> out of the backing memory and move cursor after T size.
     template <class T>
     Span<T> GetWriteRef()
         requires(!std::is_const_v<TByte>)
@@ -60,7 +57,6 @@ public:
         return result;
     }
 
-    // Read data from the backing memory and move cursor after the read data.
     template <class T>
     T Read() {
         static_assert(std::is_trivially_copyable_v<T>, "unmanaged");
@@ -79,7 +75,6 @@ public:
         return result;
     }
 
-    // Extract a Span<T> at the given index. (count: the max allowed count, checked in debug builds only)
     template <class T>
     static Span<T> GetMemory(Span<T> memory, int32_t id, uint32_t count) {
         NXAUDREN_ASSERT(id >= 0 && static_cast<uint32_t>(id) < count);
@@ -87,15 +82,13 @@ public:
         return memory.Slice(static_cast<size_t>(id), 1);
     }
 
-    // Extract a ref T at the given index. (count: the max allowed count, checked in debug builds only)
     template <class T>
     static T& GetFromMemory(Span<T> memory, int32_t id, uint32_t count) {
         return GetMemory(memory, id, count)[0];
     }
 
 private:
-    // The cursor: the bytes not consumed yet.
     Span<TByte> _backingMemory;
 };
 
-}  // namespace nxrt::audren
+}

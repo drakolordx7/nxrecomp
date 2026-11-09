@@ -31,7 +31,7 @@ namespace nxrt {
 namespace {
 std::mutex g_lock;
 bool g_up = false;
-}  // namespace
+}
 
 bool init(const InitOptions& opt) {
     std::lock_guard<std::mutex> lk(g_lock);
@@ -65,11 +65,11 @@ bool init(const InitOptions& opt) {
     if (opt.memguard) memguard_start();
     if (opt.watchdog) watchdog_start();
     config_log_effective();
-    soak_start();               // gauge sampler ([diag] soak_csv); a no-op when unset
-    prof_sampler_start();       // sampling profiler ([prof] sample_hz); a no-op when unset
-    ft::start_from_config();    // frame trace ([prof] trace); a no-op when unset
-    tt::init();                 // test tooling (deterministic mode, scripted runs, traces); a no-op unless a [test] key asks for it
-    timestep::init();           // real-time frame step for the game ([time] section; the hooks do nothing until the lifted game calls them)
+    soak_start();
+    prof_sampler_start();
+    ft::start_from_config();
+    tt::init();
+    timestep::init();
     g_up = ok;
     return ok;
 }
@@ -121,4 +121,4 @@ bool initialised() {
     return g_up;
 }
 
-}  // namespace nxrt
+}

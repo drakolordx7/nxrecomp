@@ -23,7 +23,7 @@ extern "C" void nx_catch_call(Ctx* c, void (*body)(Ctx*, uint64_t)) {
             body(c, pad);
             break;
         }
-        pad = rec.pad;                                   // landed here by an exception
+        pad = rec.pad;
         nxrt::hle_restore_current(saved_hle);
         c->in_import = saved_in_import;
         c->import_from = saved_import_from;

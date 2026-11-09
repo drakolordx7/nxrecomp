@@ -15,7 +15,7 @@ std::shared_ptr<InputSource> g_src;
 std::mutex g_vib_mu;
 VibrationSink g_vib_fn = nullptr;
 void* g_vib_user = nullptr;
-}  // namespace
+}
 
 void set_input_source(std::shared_ptr<InputSource> src) {
     std::lock_guard<std::mutex> lk(g_mu);
@@ -33,7 +33,7 @@ void set_vibration_sink(VibrationSink fn, void* user) {
     g_vib_user = user;
 }
 
-}  // namespace nxrt::hid
+}
 
 namespace nxrt::services {
 
@@ -43,4 +43,4 @@ void vibration_dispatch(uint32_t npad_slot, int hand, const nxrt::hid::Vibration
     if (nxrt::hid::g_vib_fn) nxrt::hid::g_vib_fn(npad_slot, hand, v, nxrt::hid::g_vib_user);
 }
 
-}  // namespace nxrt::services
+}

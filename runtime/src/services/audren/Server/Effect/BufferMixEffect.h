@@ -12,7 +12,6 @@ namespace nxrt::audren {
 
 class BufferMixEffect : public BaseEffect {
   public:
-    // The buffer mix parameter (C# BufferMixParameter Parameter; default-initialised).
     BufferMixParameter Parameter{};
 
     BufferMixEffect() { Type = TargetEffectType(); }
@@ -42,4 +41,4 @@ class BufferMixEffect : public BaseEffect {
     void UpdateForCommandGeneration() override { UpdateUsageStateForCommandGeneration(); }
 };
 
-}  // namespace nxrt::audren
+}

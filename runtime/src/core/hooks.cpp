@@ -34,8 +34,8 @@ using Snapshot = std::unordered_map<uint64_t, Chain>;
 
 std::mutex g_write;
 std::atomic<const Snapshot*> g_snap{nullptr};
-std::vector<std::unique_ptr<const Snapshot>> g_retired;          // owns every published snapshot (the current one is the last)
-std::vector<std::shared_ptr<Hook>> g_all;                        // by registration order, for hook_calls / counting
+std::vector<std::unique_ptr<const Snapshot>> g_retired;
+std::vector<std::shared_ptr<Hook>> g_all;
 uint32_t g_next_id = 1;
 std::atomic<uint64_t> g_site_calls[3];
 
@@ -70,7 +70,7 @@ uint32_t add(HookKind kind, uint64_t addr, InlineHookFn inl, SiteHookFn site, vo
     return h->id;
 }
 
-}  // namespace
+}
 
 uint32_t hook_add_inline(uint64_t addr, InlineHookFn fn, void* user) { return add(HookKind::Inline, addr, fn, nullptr, user); }
 uint32_t hook_add_mid(uint64_t addr, SiteHookFn fn, void* user) { return add(HookKind::Mid, addr, nullptr, fn, user); }
@@ -126,7 +126,7 @@ void hooks_clear() {
     for (auto& c : g_site_calls) c.store(0);
 }
 
-}  // namespace nxrt
+}
 
 extern "C" {
 
@@ -158,4 +158,4 @@ static int run_chain(Ctx* c, uint64_t addr, nxrt::HookKind kind) {
 int nx_site_midhook(Ctx* c, uint64_t addr) { return run_chain(c, addr, nxrt::HookKind::Mid); }
 int nx_hook_entry(Ctx* c, uint64_t addr) { return run_chain(c, addr, nxrt::HookKind::Entry); }
 
-}  // extern "C"
+}

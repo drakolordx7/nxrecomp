@@ -61,18 +61,17 @@ const uint32_t kInvalidStorage = res(128, 511);      // ResultInvalidStorageType
 const uint32_t kOutOfMemory = res(128, 600);         // MemoryAllocationFailed
 const uint32_t kLibraryAppletFailed = res(128, 35);  // AppletLaunchFailed (a library applet that is not supported here)
 
-// Everything the applet manager keeps for the process. Replaced by fresh_state() on start-up and by am_reset().
 struct AmState {
-    std::deque<uint32_t> msgs;                         // the AppletMessage queue, oldest first
-    ServiceEvent msg_event{false};                     // signalled while msgs is not empty
+    std::deque<uint32_t> msgs;
+    ServiceEvent msg_event{false};
     ServiceEvent sleep_lock_event{false};
     ServiceEvent launchable_event{true};               // a library applet can always be launched
-    ServiceEvent tick_event{true};                     // accumulated suspended tick changed
-    ServiceEvent never_event{false};                   // the events that never fire
+    ServiceEvent tick_event{true};
+    ServiceEvent never_event{false};
     bool docked = true;
     uint8_t focus = kFocusInFocus;
-    bool operation_notify = false;                     // SetOperationModeChangedNotification
-    bool performance_notify = false;                   // SetPerformanceModeChangedNotification
+    bool operation_notify = false;
+    bool performance_notify = false;
     bool vr_mode = false;
     bool vr_mode_3d = false;
     bool auto_sleep_disabled = false;
@@ -106,7 +105,6 @@ AmState& st() {
     return s;
 }
 
-// Queues one AppletMessage and signals the message event. The caller holds mu().
 void queue_message(uint32_t msg) {
     st().msgs.push_back(msg);
     st().msg_event.signal();
@@ -125,14 +123,12 @@ Handler ignored(const char* name, size_t zero_bytes = 0) {
 // Copy handles belong to the client (HIPC copies them, the guest closes its own afterwards): nothing to close here (debug note 122).
 void close_copies(const Request&) {}
 
-// Byte range [off, off + n) lies inside a storage of `size` bytes.
 bool span_ok(uint64_t size, int64_t off, uint64_t n) {
     return off >= 0 && static_cast<uint64_t>(off) <= size && n <= size - static_cast<uint64_t>(off);
 }
 
 bool storage_size_ok(int64_t size) { return size >= 0 && size <= kMaxStorageSize; }
 
-// Appends `n` bytes of `src` (padded with zeros) to a reply: fixed-size outputs such as the display version.
 void push_bytes(Response& rsp, const void* src, size_t src_len, size_t n) {
     const size_t at = rsp.out.size();
     rsp.out.resize(at + n, 0);
@@ -286,7 +282,6 @@ void default_resolution(bool docked, uint32_t* w, uint32_t* h) {
 // The events that never fire (GetDefaultDisplayResolutionChangeEvent and the rest): each call hands out a new handle onto this one.
 ServiceEvent& never_event() { return st().never_event; }
 
-// ICommonStateGetter: the message queue, the operation and performance modes, VR mode, the default resolution and the boost calls.
 ServicePtr make_common_state_getter() {
     return make_iface("ICommonStateGetter", [](Service& s) {
         s.add_cmd(0, "GetEventHandle", [](Request&, Response& rsp) -> uint32_t {
@@ -422,7 +417,6 @@ ServicePtr make_common_state_getter() {
     });
 }
 
-// ISelfController: exit, the notification flags (real state), the display layers, the idle and sleep settings.
 ServicePtr make_self_controller() {
     return make_iface("ISelfController", [](Service& s) {
         // Exit: the application asks to end. The run is ended by the graphics shell (src/gfx), which this library does not link, so
@@ -531,7 +525,6 @@ constexpr size_t kCfgUseTextCheck = 0x3D0;
 constexpr size_t kCfgCommonSize = 0x3D4;
 constexpr size_t kCommonArgsLibraryVersion = 8;               // CommonArguments: version, size, library_version, theme ...
 
-// UTF-8 to UTF-16 code units. Bad sequences become U+FFFD.
 std::u16string utf8_to_utf16(const std::string& s) {
     std::u16string out;
     for (size_t i = 0; i < s.size();) {
@@ -577,7 +570,6 @@ std::u16string utf8_to_utf16(const std::string& s) {
     return out;
 }
 
-// UTF-16 code units back to UTF-8 (the keyboard's use_utf8 mode, and the log).
 std::string utf16_to_utf8(const std::u16string& s) {
     std::string out;
     for (size_t i = 0; i < s.size(); ++i) {
@@ -625,18 +617,16 @@ struct AppletState {
     ServiceEvent state_event{false};                       // signalled once the applet has ended
     ServiceEvent out_event{false};                         // signalled while out_data is not empty
     ServiceEvent interactive_out_event{false};             // signalled while interactive_out is not empty
-    bool utf8 = false;                                     // software keyboard: the config's use_utf8
-    bool text_check = false;                               // software keyboard: the config's use_text_check
-    std::u16string text;                                   // software keyboard: the text answered
+    bool utf8 = false;
+    bool text_check = false;
+    std::u16string text;
 };
 
-// Ends the applet: it has exited and its state-changed event fires. The caller holds mu().
 void applet_finish(AppletState& a) {
     a.completed = true;
     a.state_event.signal();
 }
 
-// Copies `text` into a zeroed buffer of `cap` bytes at `dst`, as UTF-8 or UTF-16LE, leaving room for the NUL.
 void put_text(uint8_t* dst, size_t cap, const std::u16string& text, bool utf8) {
     if (utf8) {
         const std::string t = utf16_to_utf8(text);
@@ -705,14 +695,12 @@ void swkbd_interactive(AppletState& a) {
     }
 }
 
-// The bytes of the storage handed in (an IStorage this file made). Null when there is none or it is not one.
 std::shared_ptr<Bytes> storage_bytes(const Request& req) {
     if (req.in_services.empty() || !req.in_services[0]) return nullptr;
     auto src = std::dynamic_pointer_cast<AmStorage>(req.in_services[0]);
     return src ? src->data : nullptr;
 }
 
-// Pops the oldest storage of `q` as a new IStorage; `ev` is cleared once `q` is empty.
 uint32_t pop_storage(std::deque<std::shared_ptr<Bytes>>& q, ServiceEvent& ev, Response& rsp) {
     std::shared_ptr<Bytes> d;
     {
@@ -775,7 +763,7 @@ ServicePtr make_library_applet_accessor(uint32_t id, uint32_t mode) {
             return pop_storage(a->out_data, a->out_event, rsp);
         });
         s.add_cmd(102, "PushExtraStorage", [](Request& req, Response&) -> uint32_t {
-            return storage_bytes(req) ? 0 : kInvalidStorage;   // nothing the keyboard reads comes this way
+            return storage_bytes(req) ? 0 : kInvalidStorage;
         });
         s.add_cmd(103, "PushInteractiveInData", [a](Request& req, Response&) -> uint32_t {
             std::shared_ptr<Bytes> d = storage_bytes(req);
@@ -871,7 +859,6 @@ ServicePtr preselected_user_storage() {
     return new_storage(d);
 }
 
-// The language the game is shown in: the system's when the game supports it, else the first language the game supports.
 Language desired_language() {
     const TitleProfile& p = profile();
     const uint32_t mask = p.supported_languages;
@@ -882,7 +869,6 @@ Language desired_language() {
     return p.language;
 }
 
-// IApplicationFunctions: launch parameters, save data sizes, the language and display version, and the events that never fire.
 ServicePtr make_application_functions() {
     return make_iface("IApplicationFunctions", [](Service& s) {
         s.add_cmd(1, "PopLaunchParameter", [](Request& req, Response& rsp) -> uint32_t {
@@ -915,7 +901,7 @@ ServicePtr make_application_functions() {
         });
         // EnsureSaveData(Uid) -> u64 required size: the account save data of the title, created when it is missing.
         s.add_cmd(20, "EnsureSaveData", [](Request& req, Response& rsp) -> uint32_t {
-            const uint64_t hi = req.arg<uint64_t>(0);   // Uid in memory order: first u64 = hi
+            const uint64_t hi = req.arg<uint64_t>(0);
             const uint64_t lo = req.arg<uint64_t>(8);
             bool created = false;
             const uint32_t rc = fsapi::ensure_account_save(hi, lo, &created);
@@ -1052,7 +1038,6 @@ ServicePtr make_application_functions() {
     });
 }
 
-// IApplicationProxy: the interfaces of one application. Display, process-winding and debug functions are empty here.
 ServicePtr make_application_proxy() {
     return make_iface("IApplicationProxy", [](Service& s) {
         s.add_cmd(0, "GetCommonStateGetter", [](Request&, Response& rsp) -> uint32_t {
@@ -1101,14 +1086,14 @@ ServicePtr make_applet_service(const char* name, bool is_system) {
         const uint32_t open_cmd = is_system ? 350u : 0u;
         s.add_cmd(open_cmd, is_system ? "OpenSystemApplicationProxy" : "OpenApplicationProxy",
                   [](Request& req, Response& rsp) -> uint32_t {
-                      close_copies(req);   // the process handle is not kept
+                      close_copies(req);
                       rsp.push_object(make_application_proxy());
                       return 0;
                   });
     });
 }
 
-}  // namespace
+}
 
 void register_am() {
     add("appletOE", [] { return make_applet_service("appletOE", false); });
@@ -1145,6 +1130,6 @@ bool in_focus() {
     return st().focus == kFocusInFocus;
 }
 
-}  // namespace amctl
+}
 
-}  // namespace nxrt::services
+}
