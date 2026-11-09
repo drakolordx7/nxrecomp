@@ -2,8 +2,8 @@
 
 Turns the code of a Nintendo Switch program (NSO modules, or any static AArch64 ELF) into C++ that builds natively on Windows
 x64 with clang-cl. The translation is done by deterministic code. There is no inline assembly and no
-interpreter. It is the CPU half of the Metroid Prime Remastered PC port; nothing here
-is specific to that game except `games/mpr/config.py`, which is a placeholder until the binary is dumped.
+interpreter. It is the CPU half of the NX base, shared by every game: nothing here is specific to one game. A game supplies its
+own configuration (modules, extra entries, overrides), hook-site list and build from its own folder.
 
 Licence: GPL-3.0-or-later (`LICENSE`). Borrowed code and its licences: `THIRD_PARTY.md`.
 
@@ -22,18 +22,19 @@ version is `NXRECOMP_ABI_VERSION` (3).
 
 ## Use
 
-Python is `tools\.venv\Scripts\python.exe` at the repository root (3.13; packages in `requirements.txt`). Build tools: LLVM
-23 clang-cl, CMake, Ninja, sccache; `scripts\nx_env.cmd <command>` runs a command with the MSVC environment set up.
+Python 3.13 with the packages of `requirements.txt` (`tools\.venv` beside `recomp/` when it exists, else the Python on PATH).
+Build tools: LLVM 23 clang-cl, CMake, Ninja, sccache; `scripts\nx_env.cmd <command>` runs a command with the MSVC environment
+set up. Where the tools are found is decided in one place, `cmake/nx_toolchain.cmake` (environment `LLVM_BIN`, `NX_PYTHON`,
+`NX_NO_SCCACHE`), with `scripts\nx_env.cmd` as its shell side.
 
-    python -m nxrecomp lift  <module.nso|prog.elf> <outdir> [--game mpr] [--base 0x7100000000] [--name main] [--index N]
-                             [--shards 16] [--jobs 8] [--patches FILE] [--sites FILE]
-    python -m nxrecomp cover <module.nso|prog.elf> [--game mpr]      per-instruction-word translation coverage of .text
+    python -m nxrecomp lift  <module.nso|prog.elf> <outdir> [--game <id>] [--base 0x7100000000] [--name main] [--index N]
+                             [--shards 16] [--jobs 8] [--sites FILE]
+    python -m nxrecomp cover <module.nso|prog.elf> [--game <id>]     per-instruction-word translation coverage of .text
     python -m nxrecomp.funcs <module> --out functions.tsv             function boundaries and the evidence for each
 
 In a CMake build (the game, or an oracle), `cmake/NxRecomp.cmake` gives `nxrecomp_add_module(<target> INPUT <file> ...)`, which
-lifts as a build step and builds the result as a static library (flags: C++20, `-fno-strict-aliasing`, `-ffp-contract=off`,
-`-mcx16`, optnone for functions over `optnone_insns` instructions; `NX_USE_LAUNCHER` adds a time-limit fallback). Presets:
-`cmake --preset default`.
+lifts as a build step and builds the result as a static library (flags: C++20, /O1, `-fno-strict-aliasing`,
+`-ffp-contract=off`, `-mcx16`, optnone for functions over `OPTNONE_INSNS` instructions).
 
 ## How it is built
 
@@ -42,8 +43,11 @@ lifts as a build step and builds the result as a static library (flags: C++20, `
   `program.py` lifts and writes the sources.
 - Instruction lifting has two tiers. Tier 1 (`lift/a64.py`) decodes bit fields and is the reference where it applies. Tier 2
   (`lift/tier2/`) is Capstone-driven and covers what tier 1 does not: LSE atomics, crypto, the long tail of AdvSIMD, structure
-  loads and stores. The files `x_*.py` there override or add handlers; the ported emitters beside them are kept as the base.
-- `games/<name>/config.py` is the per-game seam (module list and bases, function overrides, extra entries, patches).
+  loads and stores. The files `x_*.py` there hold the handlers rewritten or added here; the ported emitters beside them hold the
+  rest.
+- `nxrecomp/config.py` `GameConfig` is the per-game seam (module list and bases, function overrides, extra entries); a game's
+  site list (`--sites`) carries its instruction patches and hooks. SDK facts are the lifter's own: rtld's process entry is rooted
+  automatically, and a `bl` followed by a data word returns after the call (the SDK rtld `bl f; .word` idiom).
 
 ## Oracles (pass/fail checks under `oracle/`, hash-locked in `oracle/SHA256SUMS`)
 
@@ -56,5 +60,6 @@ lifts as a build step and builds the result as a static library (flags: C++20, `
 | Known answers | `python oracle/ka/run_ka.py` | 108 cases of the rEden / dynarmic A64 tests (through ScarletNX), no emulator involved: 89 pass, 0 fail, 7 skipped, 6 need FPSR flags and 5 need FPCR (both documented gaps) |
 | Corpus | `python oracle/difftest/gen_corpus.py` | regenerates `corpus.json` (deterministic) |
 
-Lifting and compiling the game itself (`scripts\build_mpr.cmd`) is described in `docs/S1b.md`. Gaps that remain are listed with numbers in `docs/GAPS.md`. The S1 log is `docs/S1.md`, numbered bug notes are in
-`docs/debug/`.
+Each game's own lift and build notes live in that game's repository. Gaps that remain are listed with numbers in
+`docs/GAPS.md`. The S1 log is `docs/S1.md`, numbered bug notes are in `docs/debug/`, and the lifter notes is the developer
+guide for adding an instruction family.
