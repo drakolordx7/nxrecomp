@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Tests of the texture pixel edit hook (nxrt/tex_edit.h, src/gfx/nvn/nvn_tex_edit.cpp) through prepare_texture: the host sees the decoded levels,
+// Tests of the texture upload hook (nxrt/tex_upload.h, src/gfx/nvn/nvn_tex_upload.cpp) through prepare_texture: the host sees the decoded levels,
 // its edit reaches the output (RGBA8 compared texel by texel, BC7 by size and difference), the edited data is kept and reused per generation,
-// it never reaches the BC7 disk cache, and textures the host does not match come out as before.
+// it never reaches the BC7 disk cache, and textures the host does not match come out as before. Several subscribers keep their ids apart; a small BC7
+// texture is replaced whole by the subscriber.
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -10,7 +11,7 @@
 #include <vector>
 
 #include <nxrt/config.h>
-#include <nxrt/tex_edit.h>
+#include <nxrt/tex_upload.h>
 
 #include "nvn_settings.h"
 #include "nvn_core.h"
@@ -19,7 +20,7 @@
 #include "nvn_texture_layout.h"
 #include "tegra_tiling.h"
 #include "test_framework.h"
-NXTEST_GROUP(gfx_nvn_tex_edit)
+NXTEST_GROUP(gfx_nvn_tex_upload)
 
 using namespace nxrt;
 using namespace nxrt::nvn;
@@ -80,12 +81,12 @@ struct Host {
 };
 Host g_host;
 
-uint64_t h_match(const gfx::TexEditReq& r, void* u) {
+uint64_t h_match(const gfx::TexUploadReq& r, void* u) {
     Host* h = static_cast<Host*>(u);
-    return r.width == h->want_w && r.levels == 3 && r.block_w == 8 && r.block_h == 5 && r.tiled && r.tiled_size > 0 ? 42 : 0;
+    return r.astc && r.width == h->want_w && r.levels == 3 && r.block_w == 8 && r.block_h == 5 && r.tiled && r.tiled_size > 0 ? 42 : 0;
 }
 uint64_t h_gen(void* u) { return static_cast<Host*>(u)->gen; }
-void h_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void* u) {
+bool h_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void* u) {
     Host* hs = static_cast<Host*>(u);
     CHECK_EQ(id, 42u);
     CHECK_EQ(level, static_cast<uint32_t>(hs->levels_seen % 3));   // level 0 first, then 1, 2
@@ -96,6 +97,7 @@ void h_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, 
         rgba[i * 4 + 1] = static_cast<uint8_t>(255 - rgba[i * 4 + 1]);
         rgba[i * 4 + 2] = static_cast<uint8_t>(255 - rgba[i * 4 + 2]);
     }
+    return true;
 }
 
 size_t files_in(const fs::path& d) {
@@ -121,12 +123,13 @@ NXTEST(edit_reaches_rgba8_output_and_is_reused) {
     REQUIRE(prepare_texture(*bt.tex, rgba, plain));
 
     g_host = Host{};
-    gfx::TexEditHooks hk;
+    gfx::TexUploadHooks hk;
     hk.match = &h_match;
     hk.generation = &h_gen;
     hk.edit = &h_edit;
     hk.user = &g_host;
-    gfx::set_texture_edit(&hk);
+    const int sub = gfx::texture_upload_subscribe(hk);
+    REQUIRE(sub > 0);
 
     PreparedTexture ed;
     REQUIRE(prepare_texture(*bt.tex, rgba, ed));
@@ -141,12 +144,12 @@ NXTEST(edit_reaches_rgba8_output_and_is_reused) {
     CHECK(all_inverted);
 
     // the same generation: kept data, no new edit
-    const gfx::TexEditStats s0 = gfx::texture_edit_stats();
+    const gfx::TexUploadStats s0 = gfx::texture_upload_stats();
     PreparedTexture again;
     REQUIRE(prepare_texture(*bt.tex, rgba, again));
     CHECK_EQ(g_host.calls, 3);
     CHECK(again.data == ed.data);
-    CHECK_EQ(gfx::texture_edit_stats().reuses, s0.reuses + 1);
+    CHECK_EQ(gfx::texture_upload_stats().reuses, s0.reuses + 1);
 
     // a new generation: edited again
     g_host.gen = 2;
@@ -162,7 +165,7 @@ NXTEST(edit_reaches_rgba8_output_and_is_reused) {
     CHECK(other.data == plain.data);
     CHECK_EQ(g_host.calls, 6);
 
-    gfx::set_texture_edit(nullptr);
+    gfx::texture_upload_unsubscribe(sub);
     PreparedTexture off;
     REQUIRE(prepare_texture(*bt.tex, rgba, off));
     CHECK(off.data == plain.data);
@@ -179,12 +182,13 @@ NXTEST(edited_bc7_stays_out_of_the_disk_cache) {
     build(bt);
 
     g_host = Host{};
-    gfx::TexEditHooks hk;
+    gfx::TexUploadHooks hk;
     hk.match = &h_match;
     hk.generation = &h_gen;
     hk.edit = &h_edit;
     hk.user = &g_host;
-    gfx::set_texture_edit(&hk);
+    const int sub = gfx::texture_upload_subscribe(hk);
+    REQUIRE(sub > 0);
     PreparedTexture ed;
     REQUIRE(prepare_texture(*bt.tex, TexCaps(), ed));
     CHECK(ed.format == VK_FORMAT_BC7_UNORM_BLOCK);
@@ -192,7 +196,7 @@ NXTEST(edited_bc7_stays_out_of_the_disk_cache) {
     CHECK_EQ(g_host.calls, 3);
     CHECK_EQ(files_in(dir), 0u);   // nothing written for the edited texture
 
-    gfx::set_texture_edit(nullptr);
+    gfx::texture_upload_unsubscribe(sub);
     PreparedTexture plain;
     REQUIRE(prepare_texture(*bt.tex, TexCaps(), plain));
     CHECK_EQ(files_in(dir), 1u);   // the game's own data is cached as always
@@ -205,14 +209,65 @@ NXTEST(edited_bc7_stays_out_of_the_disk_cache) {
 
     // with the hooks back, the cache entry of the game's data is not used for the edited texture
     g_host.gen = 5;
-    gfx::set_texture_edit(&hk);
+    const int sub2 = gfx::texture_upload_subscribe(hk);
+    REQUIRE(sub2 > 0);
     PreparedTexture ed2;
     REQUIRE(prepare_texture(*bt.tex, TexCaps(), ed2));
     CHECK(!ed2.from_cache);
     CHECK(ed2.data == ed.data);
-    gfx::set_texture_edit(nullptr);
+    gfx::texture_upload_unsubscribe(sub2);
 
     set_env("NXRT_NVN_BC7_CACHE", "");
     nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     fs::remove_all(dir, ec);
+}
+
+// Two subscribers: the first that matches wins, and each gets its own ids back (the slot the runtime adds in the top byte is not seen).
+namespace {
+struct Seen {
+    uint64_t id = 0;
+    int calls = 0;
+};
+uint64_t m_any64(const gfx::TexUploadReq& r, void*) { return r.astc && r.width == 64 ? 7 : 0; }
+uint64_t m_any32(const gfx::TexUploadReq& r, void*) { return r.astc && (r.width == 64 || r.width == 32) ? 9 : 0; }
+bool e_seen(uint64_t id, uint32_t, uint32_t, uint32_t, uint8_t*, void* u) {
+    Seen* s = static_cast<Seen*>(u);
+    s->id = id;
+    s->calls++;
+    return true;
+}
+}  // namespace
+
+NXTEST(subscribers_are_asked_in_order_and_see_their_own_ids) {
+    set_env("NXRT_NVN_BC7_CACHE", "");
+    nxrt::nvn::be::nvn_settings_reload();
+    Built bt;
+    build(bt);
+    TexCaps rgba;
+    rgba.bc7_transcode = false;
+    Seen a, b;
+    gfx::TexUploadHooks ha, hb;
+    ha.match = &m_any64;
+    ha.edit = &e_seen;
+    ha.user = &a;
+    hb.match = &m_any32;
+    hb.edit = &e_seen;
+    hb.user = &b;
+    const int sa = gfx::texture_upload_subscribe(ha);
+    const int sb = gfx::texture_upload_subscribe(hb);
+    REQUIRE(sa > 0);
+    REQUIRE(sb > 0);
+    CHECK(sa != sb);
+    PreparedTexture out;
+    REQUIRE(prepare_texture(*bt.tex, rgba, out));
+    CHECK_EQ(a.calls, 3);   // the first subscriber took the 64 wide texture, all three levels
+    CHECK_EQ(a.id, 7u);
+    CHECK_EQ(b.calls, 0);
+    gfx::texture_upload_unsubscribe(sa);   // the second one takes it over, with its own id
+    PreparedTexture out2;
+    REQUIRE(prepare_texture(*bt.tex, rgba, out2));
+    CHECK_EQ(b.calls, 3);
+    CHECK_EQ(b.id, 9u);
+    gfx::texture_upload_unsubscribe(sb);
+    gfx::texture_upload_unsubscribe(sb);   // twice: nothing
 }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Button prompts (S17): replaces the pixels of the game's button icon textures with Xbox, PlayStation or keyboard and mouse icons.
 //
-// How it works: the game draws its prompts from 19 small BC7 textures (prompt_resolve.h). The graphics back end asks a hook
-// (nxrt/tex_override.h) about every small single-level BC7 sRGB texture it uploads; the hook recognises an icon by a hash of the
+// How it works: the game draws its prompts from 19 small BC7 textures (prompt_resolve.h). The graphics back end asks the texture
+// upload subscribers (nxrt/tex_upload.h) about every small single-level BC7 sRGB texture it uploads; the hook recognises an icon by a hash of the
 // texture's tiled bytes, which it learned at first use by reading the same textures from the player's own paks (the RomFS folder), and
 // answers with the pixels of the pack entry the resolver picked. When the style, the context, the bindings or the last used device change,
 // the hook's answers change and every small BC7 texture is uploaded again.

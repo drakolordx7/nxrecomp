@@ -13,6 +13,7 @@
 //   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/runtime/mpr_defaults.cpp
 //   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/runtime/mpr_play.cpp
 //   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      games/mpr/runtime/mpr_prompts.cpp
+//   render           the tone-map shader and its HDR patch, the render-target rule, NVN sizes (nxrt/game_render.h)  games/mpr/runtime/mpr_render.cpp
 // The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
 #pragma once
 #include <cstdint>
@@ -26,6 +27,8 @@ namespace play { struct GamePlay; struct GameDefaults; struct PromptGame; }
 }  // namespace nxrt
 
 namespace nxrt::game {
+
+struct GameRender;   // game_render.h
 
 struct Info {
     // ---- identity ----
@@ -52,6 +55,7 @@ struct Info {
     const play::GameDefaults* play_defaults = nullptr;
     const play::GamePlay* play = nullptr;
     const play::PromptGame* prompts = nullptr;
+    const GameRender* render = nullptr;
     // Called once the RomFS mods are merged, before they are served: fixes up game tables that depend on the served files
     // (src/services/fs_mods.h ModsIndexEdit). Not called when no mod provides anything.
     void (*mods_index_hook)(services::fs::ModsIndexEdit& edit) = nullptr;

@@ -8,6 +8,8 @@
 #include <mutex>
 
 #include "nxrt/config.h"
+#include "nxrt/game.h"
+#include "nxrt/game_render.h"
 #include "extras/hdr_math.h"
 
 namespace nxrt::extras {
@@ -24,6 +26,12 @@ bool g_settings_set = false;
 std::atomic<int> g_upscale_mode{-1};          // -1: not read yet
 std::atomic<float> g_upscale_sharp{0.8f};
 std::atomic<int> g_scene_scale{100};
+
+// The live scene scale also goes to the game (GameRender::scene_scale), which applies it through its own resolution path.
+void publish_scene_scale(int percent) {
+    g_scene_scale.store(percent);
+    if (const game::GameRender* r = game::info().render; r && r->scene_scale) r->scene_scale(percent);
+}
 
 // The state is a handful of floats read by the render thread, the guest threads (hooks) and the UI. A seqlock keeps readers lock-free
 // and consistent without a mutex on the hot path.
@@ -85,7 +93,7 @@ Settings settings() {
         g_settings_set = true;
         g_upscale_mode.store(static_cast<int>(g_settings.upscale.mode));
         g_upscale_sharp.store(static_cast<float>(g_settings.upscale.sharpness));
-        g_scene_scale.store(g_settings.upscale.scene_scale);
+        publish_scene_scale(g_settings.upscale.scene_scale);
     }
     return g_settings;
 }
@@ -96,7 +104,7 @@ void set_settings(const Settings& s) {
     g_settings_set = true;
     g_upscale_mode.store(static_cast<int>(s.upscale.mode));
     g_upscale_sharp.store(static_cast<float>(s.upscale.sharpness));
-    g_scene_scale.store(s.upscale.scene_scale);
+    publish_scene_scale(s.upscale.scene_scale);
 }
 
 UpscaleMode upscale_mode() {
