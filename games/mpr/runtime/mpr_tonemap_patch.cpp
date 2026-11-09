@@ -5,7 +5,7 @@
 #include <cstring>
 #include <unordered_map>
 
-#include "nvn/spirv_module.h"
+#include "nxrt/game/spirv_module.h"
 
 namespace nxrt::games::mpr {
 namespace {
