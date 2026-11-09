@@ -37,7 +37,6 @@ class Gdb:
         self.send("QStartNoAckMode")
         self.no_ack = True
 
-    # ---- framing
     @staticmethod
     def _cksum(b):
         return sum(b) & 0xFF
@@ -62,7 +61,6 @@ class Gdb:
             chunk = self.sock.recv(65536)
             if not chunk:
                 raise GdbError("connection closed")
-            # drop acks
             self.buf += chunk.replace(b"+", b"") if b"$" not in self.buf and b"$" not in chunk else chunk
 
     def send(self, payload, timeout=30.0):
@@ -70,7 +68,6 @@ class Gdb:
         r = self._read_packet(timeout)
         return r.decode(errors="replace")
 
-    # ---- high level
     def monitor(self, cmd):
         self._write("qRcmd," + cmd.encode().hex())
         out = b""

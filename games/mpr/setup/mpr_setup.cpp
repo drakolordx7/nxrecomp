@@ -42,7 +42,7 @@ TexTarget target_of(TxtrKind k) {
     }
 }
 
-}  // namespace
+}
 
 AstcTexture astc_texture_of(const TxtrInfo& info, std::function<std::vector<u8>()> read_tiled) {
     const TxtrFormat& f = txtr_format(info.format);
@@ -105,7 +105,7 @@ ProgramList list_programs(const std::string& romfs_dir, int threads, const std::
     return out;
 }
 
-}  // namespace nxs::mpr
+}
 
 namespace nxs {
 
@@ -121,4 +121,4 @@ const GameSetup* game_setup() {
     return &hook;
 }
 
-}  // namespace nxs
+}

@@ -101,7 +101,7 @@ struct State {
     uint64_t chosen = 0;                      // the widget a click goes to
     uint64_t hover_w = 0;                     // the widget a hover selects (an arrow button's row label)
     uint64_t hover_menu = 0;                  // the menu hover_w belongs to
-    bool over_value_goc = false;              // the pointer is over an option's arrow buttons: the wheel steps the value                      // the widget the pointer means this tick (set by the menu hook)
+    bool over_value_goc = false;              // the pointer is over an option's arrow buttons: the wheel steps the value
     uint32_t capable = 0;                     // widgets with a usable box seen while a click was pending: a screen without any takes the click as a plain confirm
     int log = 0;                             // NXRT_MENUMOUSE_LOG: 1 = the widgets the pointer hits, 2 = every widget it looks at
     bool force_pos = false;                  // GetTouchScreenPosition answers `pos` while the game's touch routine runs
@@ -271,7 +271,7 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
     struct Cand { uint64_t w; uint32_t mode, state; float box[4]; bool hit; float dist; uint64_t btn; };
     std::vector<Cand> cands;
     struct Slider { uint64_t goc; float ticks; };
-    std::vector<Slider> sliders;                                   // in the order of the menu's widgets: top row first
+    std::vector<Slider> sliders;
     for (int32_t i = 0; i < n && i < 64; ++i) {
         uint32_t cid = 0;
         if (!play::guest_read(ids + 4ull * i, &cid, 4)) continue;
@@ -311,7 +311,7 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
             }
         }
         if (s.log >= 3 && btn) log_button_parts(c, btn, sm);
-        if (s.log >= 4) {   // debug: which of the widget's fields name a slider component?
+        if (s.log >= 4) {
             for (uint64_t off = 0; off < 0x200; off += 4) {
                 uint32_t v = 0;
                 if (!play::guest_read(w + off, &v, 4) || v < 0x10000 || v > 0x1ffff) continue;
@@ -324,7 +324,7 @@ int menu_hook(::Ctx* c, uint64_t, void*) {
         const bool valid = btn && k.box[2] > k.box[0] && k.box[3] > k.box[1];
         k.hit = valid && pt[0] >= k.box[0] && pt[0] <= k.box[2] && pt[1] >= k.box[1] && pt[1] <= k.box[3];
         const float cx = 0.5f * (k.box[0] + k.box[2]), cy = 0.5f * (k.box[1] + k.box[3]);
-        k.dist = (pt[0] - cx) * (pt[0] - cx) * 0.01f + (pt[1] - cy) * (pt[1] - cy);   // rows: the vertical distance decides
+        k.dist = (pt[0] - cx) * (pt[0] - cx) * 0.01f + (pt[1] - cy) * (pt[1] - cy);
         if (valid) { s.capable++; }
         if (s.log >= 2 || (s.log && k.hit))
             NXLOG_I(kTag, "  menu %llx widget %08x state=%u mode=%u box=(%.3f %.3f)-(%.3f %.3f) hit=%d", static_cast<unsigned long long>(menu), wi.id, wi.state, wi.touch_mode, k.box[0], k.box[1],
@@ -632,7 +632,7 @@ int table_row_at(::Ctx* c, uint64_t table, uint64_t cam, float gx, float gy, int
     for (int32_t i = 0; i < rows; ++i) {
         const NdcRect& q = r[static_cast<size_t>(i)];
         if (!q.valid()) continue;
-        float pitch = 1e9f;                                        // distance to the nearest other row on the main axis
+        float pitch = 1e9f;
         const float ci = vertical ? 0.5f * (q.y0 + q.y1) : 0.5f * (q.x0 + q.x1);
         for (int32_t j = 0; j < rows; ++j) {
             if (j == i || !r[static_cast<size_t>(j)].valid()) continue;
@@ -640,7 +640,7 @@ int table_row_at(::Ctx* c, uint64_t table, uint64_t cam, float gx, float gy, int
             pitch = std::min(pitch, std::fabs((vertical ? 0.5f * (o.y0 + o.y1) : 0.5f * (o.x0 + o.x1)) - ci));
         }
         const float hw = 0.5f * (q.x1 - q.x0), hh = 0.5f * (q.y1 - q.y0);
-        float ex = hw * 1.5f, ey = hh * 1.5f;                       // across the main axis: a little more than the text
+        float ex = hw * 1.5f, ey = hh * 1.5f;
         if (pitch < 1e8f) { if (vertical) ey = 0.5f * pitch; else ex = 0.5f * pitch; }
         const float cx = 0.5f * (q.x0 + q.x1), cy = 0.5f * (q.y0 + q.y1);
         const float dx = std::fabs(gx - cx), dy = std::fabs(gy - cy);
@@ -755,7 +755,7 @@ void gui_pointer(::Ctx* c, uint64_t frame) {
         float e[3], cb[3], st[3], se[3], ee[3];
         call_guest_vec3(c, kFnGuiWorldPos, ends[1], 0, e);
         call_guest_vec3(c, kFnGuiWorldPos, bar, 0, cb);
-        st[0] = 2.f * cb[0] - e[0]; st[1] = 2.f * cb[1] - e[1]; st[2] = 2.f * cb[2] - e[2];   // the bar is centred between the two ends
+        st[0] = 2.f * cb[0] - e[0]; st[1] = 2.f * cb[1] - e[1]; st[2] = 2.f * cb[2] - e[2];
         call_guest_vec3(c, kFnGuiToScreen, cam, reinterpret_cast<uint64_t>(st), se);
         call_guest_vec3(c, kFnGuiToScreen, cam, reinterpret_cast<uint64_t>(e), ee);
         const float x0 = std::min(se[0], ee[0]), x1 = std::max(se[0], ee[0]);
@@ -815,7 +815,7 @@ int frame_hook(::Ctx* c, uint64_t, void*) {
 }
 
 int widget_hook(::Ctx* c, uint64_t addr, void*) {
-    if (t_in_widget) return 0;                              // the nested call that runs the game's own function
+    if (t_in_widget) return 0;
     State& s = S();
     if (!s.snap.active || (!s.chosen && !s.hover_w) || (c->x[0] != s.chosen && c->x[0] != s.hover_w)) return 0;
     s.widget_calls++;
@@ -826,7 +826,7 @@ int widget_hook(::Ctx* c, uint64_t addr, void*) {
     t_in_widget = false;
     uint64_t r = c->x[0] & 0xff;
     *c = saved;
-    if (r == 0) r = pointer_widget(c, w, sm);               // nothing came from the pad or keys for this widget: act on the pointer
+    if (r == 0) r = pointer_widget(c, w, sm);
     if (w == s.chosen) s.chosen = 0;
     if (w == s.hover_w) s.hover_w = 0;
     c->x[0] = r;
@@ -841,7 +841,7 @@ int position_hook(::Ctx* c, uint64_t, void*) {
     return 1;
 }
 
-}  // namespace
+}
 
 void game_install(uint64_t module_base) {
     State& s = S();
@@ -890,4 +890,4 @@ GameStats game_stats() {
     return GameStats{s.hovers.load(), s.clicks.load(), s.widget_calls.load()};
 }
 
-}  // namespace nxrt::play::mm
+}

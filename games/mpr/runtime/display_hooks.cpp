@@ -18,11 +18,9 @@
 
 namespace nxrt::play {
 
-// ---- the game side -------------------------------------------------------------------------------------------------------------
 namespace {
 
 constexpr const char* kTag = "display";
-// offsets in main
 constexpr uint64_t kGetScreenWidth = 0x1248, kGetScreenHeight = 0x1250;
 constexpr uint64_t kGetResolutionScale = 0x3c08a0;
 constexpr uint64_t kUpdateCameraNodes = 0xafe41c;
@@ -32,7 +30,6 @@ constexpr uint64_t kUiUpdateCameraNodes = 0xb0e5ec;       // CUIDisplayManager::
 constexpr uint64_t kBloomRender = 0x3a450c;
 constexpr uint64_t kChromaticRender = 0x3a69b0;
 constexpr uint64_t kDefaultAspectGlobal = 0x20e7a7c;      // CCameraManagerMP1's cached aspect (written by CreateCameras)
-// object layouts
 constexpr size_t kProxyAspect = 152;       // [CDisplayManager + 16] + 152
 constexpr size_t kGuiCamType = 264, kGuiCamA = 268, kGuiCamB = 272, kGuiCamC = 276, kGuiCamD = 280;   // CGuiCamera
 constexpr size_t kCameraVerticalFov = 1120;               // CGameCamera, radians
@@ -99,7 +96,7 @@ int hook_camera_nodes(::Ctx* c, uint64_t, void*) {
     *reinterpret_cast<float*>(node + kProxyAspect) = a;
     if (s.base) *reinterpret_cast<float*>(s.base + kDefaultAspectGlobal) = a;
     s.calls.fetch_add(1, std::memory_order_relaxed);
-    return 0;                                                    // the game's function runs with the aspect in place
+    return 0;
 }
 
 int hook_ui_camera_nodes(::Ctx* c, uint64_t, void*) {
@@ -168,7 +165,7 @@ int hook_vertical_fov(::Ctx* c, uint64_t, void*) {
     const uint64_t cam = c->x[0];
     if (!cam) return 0;
     const float base = *reinterpret_cast<const float*>(cam + kCameraVerticalFov);
-    if (!(base > 0.05f && base < 3.0f)) return 0;                // not an angle in radians: leave it alone
+    if (!(base > 0.05f && base < 3.0f)) return 0;
     c->v[0].f32[0] = fov_with_offset(base, off);
     s.calls.fetch_add(1, std::memory_order_relaxed);
     return 1;
@@ -193,7 +190,7 @@ int hook_chromatic(::Ctx* c, uint64_t, void*) {
     return 0;
 }
 
-}  // namespace
+}
 
 void display_set_scene_scale(int percent) { st().scene_scale.store(percent, std::memory_order_relaxed); }
 
@@ -252,4 +249,4 @@ DisplayLive display_live() {
 
 uint32_t display_hook_calls() { return st().calls.load(); }
 
-}  // namespace nxrt::play
+}

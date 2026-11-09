@@ -152,9 +152,7 @@ void write_file(const std::filesystem::path& p, const std::string& text) {
     out << text;
 }
 
-}  // namespace
-
-// ---- names -------------------------------------------------------------------------------------------------------------------
+}
 
 NXTEST(parse_act_is_lenient) {
     Act a = Act::None;

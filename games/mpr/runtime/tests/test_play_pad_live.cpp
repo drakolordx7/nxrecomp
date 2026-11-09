@@ -158,7 +158,7 @@ bool probe_kind(uint16_t vendor, uint16_t product, nxrt::input::PadKind* out) {
     return found && !listed(id);
 }
 
-}  // namespace
+}
 
 NXTEST(virtual_pad_is_seen_and_player_one_is_connected) {
     CHECK(setup());

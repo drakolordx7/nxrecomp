@@ -46,4 +46,4 @@ private:
     std::vector<std::pair<Uuid, u32>> meta_index_;       // asset id -> offset of its (u32 size, bytes) record inside meta_chunk_
 };
 
-}  // namespace nxs
+}

@@ -171,7 +171,7 @@ struct Props {
     double unit_xyz = 0;             // fraction whose (2c-1) RGB vector has length within 0.1 of 1 (normal map, 3 channels)
     double unit_xy_z = 0;            // same for RG with Z reconstructed (always true if length<=1): fraction with |xy|<=1.02
     double grey = 0;                 // fraction with R==G==B
-    int alpha_min = 255;             // smallest alpha value
+    int alpha_min = 255;
     size_t alpha_nonop_n = 0;        // pixels with alpha != 255
 };
 
@@ -216,7 +216,7 @@ void write_raw(const std::filesystem::path& p, const std::vector<u8>& v, int w, 
     std::fclose(f);
 }
 
-}  // namespace
+}
 
 int wmain(int argc, wchar_t** wargv) {
     std::vector<std::string> args;
@@ -302,7 +302,6 @@ int wmain(int argc, wchar_t** wargv) {
             }
         }
     }
-    // unique by id, stable order
     std::stable_sort(jobs.begin(), jobs.end(), [](const Job& a, const Job& b) { return a.info.id.str() < b.info.id.str(); });
     jobs.erase(std::unique(jobs.begin(), jobs.end(), [](const Job& a, const Job& b) { return a.info.id.str() == b.info.id.str(); }), jobs.end());
     std::vector<Job> picked;

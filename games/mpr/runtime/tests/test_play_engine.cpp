@@ -24,7 +24,6 @@ using play::Engine;
 using play::EngineOut;
 using play::Settings;
 
-// Nanoseconds from milliseconds.
 constexpr uint64_t ms(uint64_t v) { return v * 1000000ull; }
 
 // The [timing] defaults (play_types.h), put in front of every test settings text.
@@ -72,7 +71,7 @@ const char* const kLayers =
     "[bindings.all]\nMouse1 = fire\nW = move_forward\nLeft Ctrl = morph\n"
     "[bindings.menu]\nMouse1 = confirm\nLeft Ctrl = none\n";
 
-}  // namespace
+}
 
 NXTEST(press_key_and_mouse) {
     Engine e(settings_from("[bindings.all]\nSpace = jump\nMouse1 = fire\n"));

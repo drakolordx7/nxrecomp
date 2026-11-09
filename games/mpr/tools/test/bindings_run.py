@@ -170,7 +170,6 @@ def build(name):
     return setup + P.body + ['@log DONE'], P.plan
 
 
-# ---- analysis ----
 def load_trace(path):
     markers, rows = {}, []
     for line in open(path, encoding='utf-8', errors='replace'):

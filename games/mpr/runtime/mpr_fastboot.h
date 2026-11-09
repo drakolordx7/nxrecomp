@@ -20,7 +20,7 @@
 //                    transition movies (title -> main menu 8 s, into the menu background 3.6 s, Play -> save slots 5.9 s, into Extras
 //                    4.0 s, out of Extras 3.7 s), which the menus wait for, are cut with their own Skip(immediate) after 1/menu_speed of
 //                    their length, timed per movie object (a background loop thinks in the same frames).
-// Hook sites: recomp games/mpr/main.sites, "S46" block. Without them (an older lift) nothing fires and the game runs as before.
+// Hook sites: recomp/main.sites, "S46" block. Without them (an older lift) nothing fires and the game runs as before.
 #pragma once
 #include <cstdint>
 
@@ -48,4 +48,4 @@ bool fastboot_is_title_intro_movie(const uint8_t id[16]);
 bool fastboot_is_opening_skip(const uint8_t id[16]);            // the GUID of the opening cutscene's CinematicSkip special function
 double fastboot_menu_transition_length(const uint8_t id[16]);   // seconds for a front-end transition movie, else 0
 
-}  // namespace nxrt::play
+}

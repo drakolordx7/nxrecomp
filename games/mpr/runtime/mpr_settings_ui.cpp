@@ -5,8 +5,8 @@
 
 namespace nxrt::play {
 
-bool glow_tab(Settings& edit);      // play_glow_ui.cpp
-bool fastboot_ui(Settings& edit);   // mpr_ui_fastboot.cpp
+bool glow_tab(Settings& edit);
+bool fastboot_ui(Settings& edit);
 
 const GameSection& mpr_settings_section() {
     static const GameSection s = [] {
@@ -19,4 +19,4 @@ const GameSection& mpr_settings_section() {
     return s;
 }
 
-}  // namespace nxrt::play
+}

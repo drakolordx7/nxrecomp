@@ -81,7 +81,7 @@ int scan(const std::string& romfs, void (*found_fn)(void* user, Icon icon, const
     return found;
 }
 
-}  // namespace
+}
 
 const PromptGame& mpr_prompt_game() {
     static const PromptGame g = [] {
@@ -96,4 +96,4 @@ const PromptGame& mpr_prompt_game() {
     return g;
 }
 
-}  // namespace nxrt::play
+}

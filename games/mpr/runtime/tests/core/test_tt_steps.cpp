@@ -43,7 +43,7 @@ void expect_err(const std::string& text, int line, const std::string& needle, co
     CHECK_MSG(err.find(needle) != std::string::npos, err);
 }
 
-}  // namespace
+}
 
 NXTEST(warp_resolves_region_names) {
     RegionTable rt;
@@ -167,7 +167,6 @@ NXTEST(error_lines_of_the_world_steps) {
     expect_err("@probe a.txt\n", 1, "@probe <in-file> <out-file>");
 }
 
-// One table of item names serves @give and @grant.
 NXTEST(give_and_grant_share_the_item_names) {
     Script sc;
     REQUIRE(parse_ok("@give MorphBall 1\n@give charge_beam 1\n@give 4 50\n@grant MorphBall\n@grant Charge_Beam\n@grant 4 250 250\n@grant bombs\n", sc));
@@ -185,7 +184,6 @@ NXTEST(give_and_grant_share_the_item_names) {
     expect_err("@give MorphBall\n", 1, "@give <item> <amount>");
 }
 
-// The game's state keys are what @assert and @mashuntil can name besides the base fields.
 NXTEST(state_keys_of_the_game_are_assert_fields) {
     Script sc;
     REQUIRE(parse_ok("@assert state == 2\n@assert MSL >= 5\n@mashuntil START every 5 until state >= 0\n", sc));

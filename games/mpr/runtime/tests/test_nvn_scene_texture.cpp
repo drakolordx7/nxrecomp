@@ -54,7 +54,7 @@ struct FreshBc7Cache {
     }
     ~FreshBc7Cache() {
         _putenv_s("NXRT_NVN_BC7_CACHE", had_old ? old.c_str() : "");
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
     }
@@ -69,7 +69,6 @@ Rgb at(const std::vector<uint8_t>& px, uint32_t x, uint32_t y) {
 }
 int rnd(double v) { return static_cast<int>(std::lround(v)); }
 
-// ---- frame comparison --------------------------------------------------------------------------------------------------------
 struct Cmp {
     int n = 0, bad = 0, worst = 0;
     int fx = -1, fy = -1;   // first pixel outside the tolerance
@@ -170,7 +169,6 @@ void check_clean(App& app) {
     CHECK_EQ(st.unsupported_ops, 0ull);
 }
 
-// ---- shaders and geometry ----------------------------------------------------------------------------------------------------
 bool load_quad_shaders(App::ShaderBlob* vs, App::ShaderBlob* fs) {
     return App::load_shader("2bf6629719b97303", vs) && App::load_shader("2192ff78120fa063", fs);
 }
@@ -263,7 +261,6 @@ int make_sampler_linear(App& app, NVNwrapMode wu = NVN_WRAP_MODE_CLAMP_TO_EDGE, 
     });
 }
 
-// ---- tiling ------------------------------------------------------------------------------------------------------------------
 // The block-linear layout the back end computes for a single-layer 2D texture (same rules as nvn_texture_layout.cpp: GOB block
 // height from the level-0 block rows, tight linear rows).
 struct Lay {
@@ -336,7 +333,6 @@ Rgbf pattern16_frame(uint32_t x, uint32_t y) {
     return {static_cast<double>(c.r), static_cast<double>(c.g), static_cast<double>(c.b)};
 }
 
-// ---- CPU references ----------------------------------------------------------------------------------------------------------
 struct Texels {
     int w = 0, h = 0;
     std::vector<Rgb> t;
@@ -485,9 +481,8 @@ double srgb_to_linear_byte(int v) {
 // Scene pixel to the 8x8 texture of the block scenes: texel (x / 8, y / 6).
 // Block of texel (tx, ty) in a texture that is blocks_per_row blocks wide: index (ty / 4) * blocks_per_row + tx / 4.
 
-}  // namespace
+}
 
-// ================================================================================================================================
 // Scene 1: nearest magnification of a tiled 16x16 RGBA8 texture.
 NXTEST(nearest_magnify_rgba8_pattern) {
     if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }

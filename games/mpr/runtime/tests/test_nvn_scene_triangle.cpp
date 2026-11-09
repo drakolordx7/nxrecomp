@@ -13,7 +13,7 @@ Rgba at(const std::vector<uint8_t>& px, uint32_t w, uint32_t x, uint32_t y) {
     const uint8_t* p = &px[(static_cast<size_t>(y) * w + x) * 4];
     return {p[0], p[1], p[2], p[3]};
 }
-}  // namespace
+}
 
 NXTEST(triangle_with_real_shaders) {
     if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }

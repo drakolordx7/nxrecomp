@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// S45: the suit and arm cannon colour (games/mpr/mpr_tint.cpp): the paint mask, the recolour, the paint reference, the texture table and the
+// S45: the suit and arm cannon colour (runtime/mpr_tint.cpp): the paint mask, the recolour, the paint reference, the texture table and the
 // [tweaks] suit_color / gun_color keys. Synthetic texels only; the game's textures are checked in game (docs/S45.md).
 #include <algorithm>
 #include <cmath>
@@ -40,7 +40,7 @@ double lin(uint8_t c) {
 }
 double luma(const uint8_t* p) { return 0.2126 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.0722 * lin(p[2]); }
 
-}  // namespace
+}
 
 // The paint of each suit is inside its window; the visor glass and the lights are outside every window.
 NXTEST(mask_takes_paint_and_leaves_lights) {

@@ -22,7 +22,7 @@ void set_probe_layout(const ProbeLayout& l);
 // The state-pointer capture, called from the ProcessInput hook (x0 = CPlayerMP1*, x2 = CStateManager&); tests call it directly.
 void set_player_pointers(uint64_t player, uint64_t state_manager);
 
-const GameProbes& mpr_game_probes();            // mpr_tt_probe.cpp
+const GameProbes& mpr_game_probes();
 const GameStepDef* mpr_game_steps();            // mpr_tt_steps.cpp: @warp @give @grant @call @objs @probe @rays @watch
 size_t mpr_game_step_count();
 
@@ -40,6 +40,6 @@ bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path
 bool watch_start(::Ctx* c, int what);          // 1 vel.y, 2 pos.y, 3 both; false when the player is not readable yet
 void watch_stop();
 void watch_flush(uint64_t frame);
-}  // namespace detail
+}
 
-}  // namespace nxrt::tt::mpr
+}

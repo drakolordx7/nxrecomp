@@ -26,7 +26,6 @@ const uint8_t kNullUid[16] = {};
 // 1546300800 = 2019-01-01 00:00 UTC, the ProfileBase timestamp (ScarletNX).
 constexpr uint64_t kLastEdit = 1546300800ull;
 
-// A fresh start: the default profile, every service reset (acc_reset takes the profile's user).
 void fresh_profile() {
     config_clear();
     services::profile_reload();
@@ -43,7 +42,7 @@ void check_profile_base(const nxsvc::Reply& r) {
     for (size_t i = 0x18 + 5; i < 0x38 && i < r.out.size(); ++i) CHECK(r.out[i] == 0);
 }
 
-}  // namespace
+}
 
 NXTEST(acc_user_count_and_existence) {
     nxsvc::Env env;

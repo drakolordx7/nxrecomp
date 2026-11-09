@@ -58,7 +58,7 @@ template <class T>
 bool rd(uint64_t a, T* v) { return guest_read(a, v, sizeof(T)); }
 uint64_t rd64(uint64_t a) { uint64_t v = 0; rd(a, &v); return v; }
 constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
-}  // namespace
+}
 
 const char* aim_block_name(AimBlock b) {
     switch (b) {
@@ -157,7 +157,7 @@ double wrap_pi(double a) {
     while (a < -3.14159265358979323846) a += 2.0 * 3.14159265358979323846;
     return a;
 }
-}  // namespace
+}
 
 bool keep_in_view(const double d[3], double* yaw, double* pitch, double tan_h, double tan_v, double pitch_limit) {
     const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
@@ -317,4 +317,4 @@ bool AimDriver::apply(uint64_t player, uint64_t mgr, double dx, double dy, const
     return true;
 }
 
-}  // namespace nxrt::play
+}

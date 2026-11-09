@@ -29,4 +29,4 @@ bool fastboot_ui(Settings& edit) {
     return changed;
 }
 
-}  // namespace nxrt::play
+}

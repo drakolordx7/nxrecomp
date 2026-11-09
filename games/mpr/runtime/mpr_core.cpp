@@ -61,7 +61,7 @@ const timestep::Sites kTimestep = [] {
     return s;
 }();
 
-}  // namespace
+}
 
 const game::Info& core_info() {
     static const game::Info info = [] {
@@ -74,6 +74,6 @@ const game::Info& core_info() {
     return info;
 }
 
-}  // namespace nxrt::games::mpr
+}
 
 void nxrt_register_game_mpr_core() { nxrt::game::set_current(&nxrt::games::mpr::core_info()); }

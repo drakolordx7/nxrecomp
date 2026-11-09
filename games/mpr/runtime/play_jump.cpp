@@ -71,14 +71,14 @@ int blend_hook(::Ctx* c, uint64_t, void*) {
             guest_write(vel, h, sizeof h);
         }
         const uint64_t n = g_s.capped.fetch_add(1, std::memory_order_relaxed) + 1;
-        if ((n & (n - 1)) == 0)        // 1, 2, 4, 8, ...
+        if ((n & (n - 1)) == 0)
             NXLOG_I(kTag, "jump timer ended inside a %.2f ms step at the rise cap: jump part %.3f -> %.3f (v %.3f, cap %.3f, %llu so far)",
                     static_cast<double>(dt) * 1000.0, static_cast<double>(jump_part), static_cast<double>(part), static_cast<double>(v),
                     static_cast<double>(vmax), static_cast<unsigned long long>(n));
     }
     return 0;
 }
-}  // namespace
+}
 
 float jump_part_capped(float jump_part, float v, float vmax, float dt, float mass) {
     if (!(dt > 0.f) || !(mass > 0.f) || !std::isfinite(jump_part) || !std::isfinite(v) || !std::isfinite(vmax) || !std::isfinite(dt)) return jump_part;
@@ -122,4 +122,4 @@ void jump_remove() {
 uint64_t jump_blend_frames() { return g_s.blends.load(); }
 uint64_t jump_capped_frames() { return g_s.capped.load(); }
 
-}  // namespace nxrt::play
+}

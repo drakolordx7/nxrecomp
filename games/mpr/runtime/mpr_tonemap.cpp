@@ -21,7 +21,7 @@ std::atomic<uint32_t> g_calls{0};
 thread_local bool t_nested = false;
 
 int hook(::Ctx* c, uint64_t addr, void*) {
-    if (t_nested) return 0;                                  // the call that runs the game's own function
+    if (t_nested) return 0;
     const HdrState hs = hdr_state();
     if (!hs.scene_hdr || hs.peak_ratio <= 1.001f) return 0;
     const uint64_t out = c->x[8];                            // sret: the 80-byte block
@@ -44,7 +44,7 @@ int hook(::Ctx* c, uint64_t addr, void*) {
     }
     return 1;
 }
-}  // namespace
+}
 
 void tonemap_hook_install(uint64_t module_base) {
     if (g_hook_id.load()) return;
@@ -57,4 +57,4 @@ void tonemap_hook_remove() {
 
 uint32_t tonemap_hook_calls() { return g_calls.load(); }
 
-}  // namespace nxrt::extras
+}

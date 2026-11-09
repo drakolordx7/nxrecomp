@@ -90,11 +90,9 @@ def parse_file(path, relpath, known, out_items, mang_comments):
         s = l.strip()
         if not s:
             i += 1; continue
-        # namespace
         m = re.match(r'^namespace\s+(\w+)', s)
         if m and '{' in s and not stack_in_class(stack):
             stack.append(('ns', m.group(1), None)); i += 1; continue
-        # enum
         m = re.match(r'^(?:typedef\s+)?enum\s+(?:class\s+|struct\s+)?(\w+)?\s*(?::\s*([\w:]+))?\s*(\{.*)?$', s)
         if m and not s.endswith(';') or (m and '{' in s):
             name, under, rest = m.group(1), m.group(2), m.group(3) or ''
@@ -115,7 +113,6 @@ def parse_file(path, relpath, known, out_items, mang_comments):
                                   'src': {'path': relpath, 'line': i + 1, 'evidence': s[:100]}})
                 known.setdefault(name, {'size': 4, 'align': 4})
             i = j + 1; continue
-        # class / struct start
         m = re.match(r'^(?:template\s*<[^>]*>\s*)?(class|struct)\s+(\w+)\s*(?:final\s*)?(?::\s*([^{;]+?))?\s*(\{)?\s*$', s)
         if m and not s.endswith(';'):
             kind, name, bases, br = m.groups()
@@ -137,7 +134,6 @@ def parse_file(path, relpath, known, out_items, mang_comments):
                 kind, name, data = stack.pop()
                 if kind == 'class': finish_class(data, relpath, known, out_items)
             i += 1; continue
-        # inside a class?
         if stack and stack[-1][0] == 'class':
             data = stack[-1][2]
             m = re.match(r'^(public|private|protected)\s*:', s)
@@ -215,7 +211,6 @@ def handle_member(stmt, line0, relpath, data, known, out_items, comments, mang_c
                                'confidence': 'source-stated', 'src': {'path': relpath, 'line': line0 + 1, 'evidence': mg.group(0)}})
         return
     if '(' in s:
-        # method
         s0 = re.sub(r'\b(inline|static|constexpr|explicit|ALWAYS_INLINE)\b', ' ', s)
         isvirt = bool(re.match(r'^\s*virtual\b', s0)) or bool(re.search(r'\boverride\b', s0))
         decl = s0.split('{')[0].strip().rstrip(';').strip()
@@ -234,7 +229,6 @@ def handle_member(stmt, line0, relpath, data, known, out_items, comments, mang_c
             data['methods'].append(rec)
         if isvirt: data['anyvirt'] = True
         return
-    # field
     fl, pk, al = strip_attrs(s)
     fl = fl.rstrip(';').strip()
     fl = re.sub(r'=\s*[^,]+$', '', fl).strip()
@@ -262,7 +256,6 @@ def handle_member(stmt, line0, relpath, data, known, out_items, comments, mang_c
 
 
 def finish_class(data, relpath, known, out_items):
-    # layout
     pos = None
     if data['bases']:
         b = known.get(data['bases'][0].split('::')[-1])
@@ -331,7 +324,6 @@ def finish_class(data, relpath, known, out_items):
                               'slot_confidence': 'inferred from declaration order (Itanium ABI, dtor = 2 slots)'} for v in virt_list],
                 'src': {'path': relpath, 'line': data['line'], 'evidence': data['ev']}}
         out_items.append(item)
-    # symbols
     for kind, name, decl, src, mangs in data['methods'] + [('virt', v['name'], v['decl'], v['src'], []) for v in virt_list] + [(k, n, d, s, m) for (k, n, d, s, m) in data.get('virt_over', [])]:
         if name.startswith('~') and False: continue
         sym = {'type': 'symbol', 'name': f"{data['qual']}::{name}", 'mangled': mangs[0] if mangs else None,
@@ -360,7 +352,6 @@ def main(outdir):
                 try: parse_file(p, rel, known, items, mc)
                 except Exception as e:
                     print('PARSE FAIL', rel, repr(e))
-        # dedupe by (type,name,path,line)
         seen, ded = set(), []
         for it in items:
             k = (it['type'], it['name'], it['src']['path'], it['src']['line'])

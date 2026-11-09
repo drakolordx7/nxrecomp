@@ -17,14 +17,14 @@ int look_steps(double* acc, double dt, int max_calls) {
         return n;
     }
     *acc -= n * kLookStep;
-    if (*acc < -kLookStep) *acc = -kLookStep;      // cannot happen with the rounding above; keeps a bad value from sticking
+    if (*acc < -kLookStep) *acc = -kLookStep;
     return n;
 }
 
 double look_carry_target(double pprev, double prev, double cur, double phase, double limit) {
     if (!std::isfinite(cur) || !std::isfinite(phase)) return cur;
-    const double v1 = cur - prev, v0 = prev - pprev;      // the speeds (per call) of the last call and of the one before
-    if (!std::isfinite(v0) || !std::isfinite(v1) || !(v0 * v1 > 0.0)) return cur;      // different directions, or one of them at rest
+    const double v1 = cur - prev, v0 = prev - pprev;
+    if (!std::isfinite(v0) || !std::isfinite(v1) || !(v0 * v1 > 0.0)) return cur;
     const double ratio = v1 / v0;
     if (!(ratio >= kCarryRatioMin && ratio <= kCarryRatioMax)) return cur;
     double out = cur + v1 * std::clamp(phase, 0.0, 1.0);
@@ -37,4 +37,4 @@ double look_rate_scale(double dt) {
     return std::clamp(dt * 60.0, 0.05, 4.0);
 }
 
-}  // namespace nxrt::play
+}

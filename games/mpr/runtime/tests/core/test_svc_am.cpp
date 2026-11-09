@@ -30,7 +30,6 @@ nxsvc::Session open_proxy() {
     return oe.sub(r);
 }
 
-// Is an event signalled right now (a zero timeout poll)?
 bool signalled(uint32_t h) {
     int32_t idx = -1;
     return kernel::wait_synchronization(&h, 1, 0, &idx) == 0;
@@ -48,7 +47,7 @@ void clear_config() {
     services::profile_reload();
 }
 
-}  // namespace
+}
 
 NXTEST(am_application_functions_fixed_replies) {
     nxsvc::Env env;
@@ -65,7 +64,6 @@ NXTEST(am_application_functions_fixed_replies) {
     const uint8_t want_dv[16] = {'1', '.', '0', '.', '0', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     CHECK(std::memcmp(dv.out.data(), want_dv, 16) == 0);
 
-    // NotifyRunning returns 1.
     CHECK_EQ(app.call(40).get<uint8_t>(0), 1u);
 
     // GetPseudoDeviceId: the fixed 16 bytes "NXRT-DEVICE-0001".
@@ -87,7 +85,6 @@ NXTEST(am_application_functions_fixed_replies) {
     CHECK_EQ(app.call(151).result, 0x480u);
     CHECK_EQ(app.call(141).result, 0x480u);
 
-    // Accepted commands answer success.
     CHECK_EQ(app.call(22, nxsvc::Args().u32(0x2A2)).result, 0u);
     CHECK_EQ(app.call(33).result, 0u);
     CHECK_EQ(app.call(90, nxsvc::Args().u8(1)).result, 0u);

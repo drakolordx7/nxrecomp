@@ -277,7 +277,7 @@ int update_sm_hook(::Ctx* c, uint64_t addr, void*) {
     return 1;
 }
 
-}  // namespace
+}
 
 bool fastboot_is_intro_area(const uint8_t world[16], const uint8_t area[16]) {
     return std::memcmp(world, kFrigateWorld, 16) == 0 && std::memcmp(area, kDockingHangar, 16) == 0;
@@ -329,4 +329,4 @@ FastbootStats fastboot_stats() {
     return st;
 }
 
-}  // namespace nxrt::play
+}

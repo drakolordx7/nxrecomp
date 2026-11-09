@@ -155,7 +155,7 @@ void decompress_into(const u8* in, size_t in_len, u8* out, size_t out_len) {
             if (nb > out_len - o) fail(Fail::Input, "A compressed texture buffer decompresses to more than its declared size.");
             const size_t s = o - length;
             if (length >= nb) {
-                std::memcpy(out + o, out + s, nb);  // source and destination do not overlap
+                std::memcpy(out + o, out + s, nb);
             } else {
                 for (size_t k = 0; k < nb; ++k) out[o + k] = out[s + k];  // overlapping: repeats the last `length` bytes
             }
@@ -169,7 +169,7 @@ void decompress_into(const u8* in, size_t in_len, u8* out, size_t out_len) {
              out_len);
 }
 
-}  // namespace
+}
 
 std::vector<u8> txtr_decompress(const u8* in, size_t in_len, size_t out_len) {
     std::vector<u8> out(out_len);
@@ -295,4 +295,4 @@ std::vector<u8> txtr_read_tiled(const Pak& pak, const PakEntry& e, const TxtrInf
     return out;
 }
 
-}  // namespace nxs
+}

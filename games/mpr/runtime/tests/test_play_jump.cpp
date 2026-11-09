@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The jump timer's last frame (S50, games/mpr/play_jump.cpp): the force rule, and a jump stepped through the game's integration rule at many step patterns.
+// The jump timer's last frame (S50, runtime/play_jump.cpp): the force rule, and a jump stepped through the game's integration rule at many step patterns.
 #include "test_framework.h"
 
 #include <algorithm>
@@ -61,7 +61,7 @@ double apex(const std::vector<double>& steps, bool fix) {
     }
     return top;
 }
-}  // namespace
+}
 
 NXTEST(below_the_cap_the_force_is_unchanged_bit_for_bit) {
     // Rising slowly: the jump part keeps the speed under the cap, so the game's own value comes back unchanged.

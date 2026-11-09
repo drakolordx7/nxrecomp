@@ -9,13 +9,13 @@
 #include "mpr_settings.h"
 
 namespace nxrt::play {
-const GamePlay& mpr_game_play();          // mpr_play.cpp
-const PromptGame& mpr_prompt_game();      // mpr_prompts.cpp
-}  // namespace nxrt::play
+const GamePlay& mpr_game_play();
+const PromptGame& mpr_prompt_game();
+}
 
 namespace nxrt::games::mpr {
-bool boot(std::string& error);            // mpr_boot.cpp
-}  // namespace nxrt::games::mpr
+bool boot(std::string& error);
+}
 
 namespace nxrt::games::mpr {
 
@@ -31,6 +31,6 @@ const game::Info& full_info() {
     return info;
 }
 
-}  // namespace nxrt::games::mpr
+}
 
 void nxrt_register_game_mpr() { nxrt::game::set_current(&nxrt::games::mpr::full_info()); }

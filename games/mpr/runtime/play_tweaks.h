@@ -9,7 +9,7 @@
 //   ball_glow  = auto | off | R,G,B
 //   gun_glow   = auto | off | R,G,B
 //   suit_color = off | R,G,B               the suit's paint, the morph ball and the spider ball with it (S45; texture recolour that keeps the
-//                                           detail and shading of every texel; Metroid Prime Remastered: games/mpr/mpr_tint.h)
+//                                           detail and shading of every texel; Metroid Prime Remastered: runtime/mpr_tint.h)
 //   gun_color  = off | R,G,B               the arm cannon's shell (first person, every suit and beam)
 //
 // R, G and B are 0..255 (sRGB, as a colour picker shows them). (#RRGGBB is accepted by parse_glow_rgb, but the settings file reads a '#' after
@@ -75,7 +75,7 @@ inline int hexval(char c) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     return -1;
 }
-}  // namespace tweaks_detail
+}
 
 // "R,G,B" (0..255 each, spaces allowed) or "#RRGGBB". False for anything else.
 inline bool parse_glow_rgb(const std::string& text, GlowRgb* out) {
@@ -197,4 +197,4 @@ inline std::string format_tweaks(const TweakSettings& t) {
     return o;
 }
 
-}  // namespace nxrt::play
+}

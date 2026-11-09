@@ -89,9 +89,7 @@ bool shader_present() {
     return fs::is_regular_file(kTonemapPath, ec);
 }
 
-}  // namespace
-
-// ---- case 1: the real shader is patched into a well-formed module ------------------------------------------------------------------------
+}
 
 NXTEST(real_shader_patch_shape) {
     if (!shader_present()) {
@@ -128,8 +126,6 @@ NXTEST(real_shader_patch_shape) {
     CHECK(census(out).ok);
 }
 
-// ---- case 2: the instruction content of the patch -----------------------------------------------------------------------------------------
-
 NXTEST(real_shader_patch_instruction_delta) {
     if (!shader_present()) {
         nxtest::skip("shader cache not present");
@@ -150,8 +146,6 @@ NXTEST(real_shader_patch_instruction_delta) {
     CHECK_EQ(co.store, ci.store);
     CHECK_EQ(co.sample, ci.sample);
 }
-
-// ---- case 3: the Vulkan validator accepts the patched module ------------------------------------------------------------------------------
 
 NXTEST(spirv_val_accepts_patched_output) {
     if (!shader_present()) {
@@ -180,8 +174,6 @@ NXTEST(spirv_val_accepts_patched_output) {
     CHECK_EQ(rc, 0);
     fs::remove(tmp, ec);
 }
-
-// ---- case 4: negative inputs return false and leave out empty -----------------------------------------------------------------------------
 
 NXTEST(rejects_empty_input) {
     std::vector<uint32_t> in, out;

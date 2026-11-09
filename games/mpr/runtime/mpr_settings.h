@@ -21,4 +21,4 @@ inline MprSettings& mpr_settings(Settings& s) { return s.game.get<MprSettings>()
 const GameSection& mpr_settings_section_data();   // mpr_settings.cpp: [tweaks] reader and writer (what the launcher links)
 const GameSection& mpr_settings_section();        // mpr_settings_ui.cpp: the same plus the F1 tab and Extras rows
 
-}  // namespace nxrt::play
+}

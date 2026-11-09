@@ -24,7 +24,7 @@ std::string fourcc_text(const u8* p) {
     return s;
 }
 
-}  // namespace
+}
 
 // Pak declares this struct as its friend; it fills the private members while the archive is opened.
 struct PakImpl {
@@ -177,4 +177,4 @@ std::vector<u8> Pak::read_meta(const PakEntry& e) const {
     return std::vector<u8>(p + 4, p + 4 + n);
 }
 
-}  // namespace nxs
+}

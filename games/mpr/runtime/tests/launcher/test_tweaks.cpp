@@ -24,7 +24,7 @@ using nxrt::play::Settings;
 using nxrt::play::TweakSettings;
 using nxrt::play::mpr_settings;
 
-}  // namespace
+}
 
 NXTEST(tweaks_factory_file_has_the_section_off) {
     Settings s;

@@ -22,7 +22,7 @@ namespace play = nxrt::play;
     } while (0)
 
 constexpr double kTol = 0.1;
-}  // namespace
+}
 
 NXTEST(steps_at_60) {
     // From an empty clock (what the hook starts with) every tick is exactly one call, with the double 1/60 and with the float-rounded 1/60 the frame time arrives as.

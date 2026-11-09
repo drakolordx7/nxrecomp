@@ -115,7 +115,6 @@ class LoadGen:
             self.job = None
 
 
-# ---- statistics ----
 def pct(sorted_vals, p):
     """Nearest-rank percentile of an already sorted list."""
     n = len(sorted_vals)
@@ -129,7 +128,6 @@ def stats(ms):
             'over50': sum(1 for x in s if x > 50.0), 'over100': sum(1 for x in s if x > 100.0)}
 
 
-# ---- scripted run ----
 WALK = ['stick left 0 1.0', '@run 6', 'stick left 0 -1.0', '@run 6'] * 3  # 36 game seconds, back and forth
 
 

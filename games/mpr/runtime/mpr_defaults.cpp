@@ -267,7 +267,7 @@ const GameDefaultChange kChanges[] = {
     {3, "aim", "lock_mode", "classic", "free"},   // Free lock-on is the default (playtest: players never found it)
 };
 
-}  // namespace
+}
 
 const GameVocabulary& mpr_vocabulary();     // mpr_vocabulary.cpp
 
@@ -277,4 +277,4 @@ const GameDefaults& mpr_game_defaults() {
     return d;
 }
 
-}  // namespace nxrt::play
+}

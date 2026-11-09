@@ -39,4 +39,4 @@ TxtrInfo txtr_read_info(const Pak& pak, const PakEntry& e);
 // The tiled GPU buffer, gpu_size bytes: every buffer in the META read list is decompressed (LZSS or stored) into its place.
 std::vector<u8> txtr_read_tiled(const Pak& pak, const PakEntry& e, const TxtrInfo& info);
 
-}  // namespace nxs
+}

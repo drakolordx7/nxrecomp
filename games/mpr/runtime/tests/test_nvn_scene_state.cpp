@@ -209,7 +209,7 @@ void ref_check(const char* name, const std::vector<std::vector<uint8_t>>& frames
     CHECK(df.fraction_over_8 <= 0.0005);
 }
 
-}  // namespace
+}
 
 // 1. Depth test. Two overlapping quads, far (z 0.75, magenta) and near (z 0.25, red), drawn in both orders, into the window with
 // a D32F depth target. The overlap is columns 24..40, far-only 16..23, near-only 41..48, rows 12..36. Depth write is off except in
@@ -699,9 +699,9 @@ NXTEST(logic_op_xor_on_white) {
     app.shutdown();
 }
 
-// 10. Partial clear mask (KNOWN GAP: the back end clears all four channels, see do_clear_color in nvn_replay.cpp). Background
+// 10. Partial clear mask. Background
 // black (0,0,0,1), then ClearColor of (1,1,1,0) with mask R|B, read back from an RGBA8 target. Correct result: (255, 0, 255, 255).
-// This assertion is the correct one; the gap is closed (masked clears are a draw with a colour write mask, nvn_mask_clear.cpp).
+// Masked clears are a draw with a colour write mask (nvn_mask_clear.cpp).
 NXTEST(clear_color_partial_mask_known_gap) {
     App app;
     App::Opts o;
@@ -780,7 +780,7 @@ bool partial_stencil_frame(App& app, Progs& sh, NVNtexture* ds, const std::vecto
     return true;
 }
 
-}  // namespace
+}
 
 // 11. Partial stencil mask clear. Stencil cleared to 0xF0 everywhere (full mask), then ClearDepthStencil with depth not cleared,
 // stencil value 0x0F and stencil mask 0x03: bits 0..1 become 0x0F & 0x03 = 0x03, the other bits keep 0xF0, so the stencil is 0xF3.

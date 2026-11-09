@@ -61,7 +61,6 @@ def frames(sec, rate):
     return max(1, int(round(sec * rate)))
 
 
-# ---- script ---------------------------------------------------------------------------------------------------------------------------------
 def actions(scen, rate):
     if scen == 'walk':
         return ['stick left 0 1.0', '@run %g' % WALK_HOLD_S, 'stick left 0 0', '@run %g' % WALK_TAIL_S]
@@ -85,7 +84,6 @@ def script_all(rates=RATES, scenarios=SCENARIOS):
     return lines + ['']
 
 
-# ---- trace and windows ----------------------------------------------------------------------------------------------------------------------
 def load_trace(d):
     """All trace lines (player samples and '@hash' label lines)."""
     path = os.path.join(d, 'out', 'trace.jsonl')
@@ -126,7 +124,6 @@ def window(rows, cps, scen, rate):
     return [r for r in rows if 'pos' in r and 'igt' in r and fs <= r['f'] <= fe]
 
 
-# ---- metrics (game time = igt) --------------------------------------------------------------------------------------------------------------
 def _split(series, ts):
     """trapezoid integral of (igt, value) pairs, split at igt = ts (value at ts interpolated). Returns (before, after)."""
     before = after = 0.0
@@ -195,7 +192,6 @@ def turn_metrics(pl, rate):
 FUNCS = {'walk': walk_metrics, 'jump': jump_metrics, 'turn': turn_metrics}
 
 
-# ---- checks ---------------------------------------------------------------------------------------------------------------------------------
 def print_table(scen, res, rates):
     """res: rate -> metric dict or None. Prints the table, returns True when every cell is within tolerance of the 60 Hz run."""
     keys = list(TOL[scen])

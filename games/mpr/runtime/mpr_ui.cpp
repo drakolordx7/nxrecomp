@@ -19,7 +19,7 @@ bool slider(const char* label, double* v, double lo, double hi, const char* form
     return true;
 }
 
-}  // namespace
+}
 
 bool mpr_mouse_tab(int where, Settings& edit) {
     bool changed = false;
@@ -71,4 +71,4 @@ bool mpr_mouse_tab(int where, Settings& edit) {
     return changed;
 }
 
-}  // namespace nxrt::play
+}

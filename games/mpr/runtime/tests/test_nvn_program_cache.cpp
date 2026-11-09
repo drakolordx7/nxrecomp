@@ -101,7 +101,7 @@ NVNshaderData shader_data(const std::vector<uint8_t>& code, const std::vector<ui
     return d;
 }
 
-}  // namespace
+}
 
 
 NXTEST(set_shaders_vertex_and_fragment_from_cache) {

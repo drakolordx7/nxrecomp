@@ -122,7 +122,7 @@ std::set<uint32_t> locations(const std::vector<ShaderIo>& v) {
     return s;
 }
 
-}  // namespace
+}
 
 NXTEST(add_outputs_to_real_vertex_shader) {
     if (const char* why = absent_input()) {

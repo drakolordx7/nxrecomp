@@ -7,7 +7,7 @@
 // mouse: a hook on CUIWidgetGOC::ProcessInput hit-tests the cursor against the widget's own box and, on hover, queues a selection exactly the way a
 // touch does ("deferred selection"), on a click runs the game's own CUIWidgetGOC::ProcessWidgetTouchScreenInput with the cursor position.
 //
-// Hooks (entry hooks in recomp/games/mpr/main.sites, the "S28" block):
+// Hooks (entry hooks in recomp/main.sites, the "S28" block):
 //   0x88cb74  CUIWidgetGOC::ProcessInput(CStateManager&, float)       x0 = widget, x1 = state manager
 //   0x35322c  CFinalInput::GetTouchScreenPosition(CTransform4f const*) returns the position in UI units in s0, s1
 //
@@ -29,4 +29,4 @@ bool game_over_value();                             // the pointer is over a sli
 const Snapshot& game_snapshot();                    // what the hooks see this frame (tests, status log)
 uint64_t game_hook_calls();                         // calls into the two hooks since install
 
-}  // namespace nxrt::play::mm
+}

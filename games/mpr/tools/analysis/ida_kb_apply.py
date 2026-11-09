@@ -38,7 +38,6 @@ def apply_kb(kb_dir, force=False, include_unverified=False, apply_types=True, lo
     stats = dict(types_ok=None, types_errors=None, renamed=0, kept_existing=0, func_comments=0, site_comments=0, patch_comments=0,
                  skipped_fail=0, skipped_unverified=0, skipped_nosegment=0, labels_not_named=0)
 
-    # ---- types -----------------------------------------------------------------------
     if apply_types and (kb / 'structs.h').exists():
         text = (kb / 'structs.h').read_text(encoding='utf-8')
         errs = idc.parse_decls(text, 0)       # returns number of errors, prints them to the output window
@@ -46,7 +45,6 @@ def apply_kb(kb_dir, force=False, include_unverified=False, apply_types=True, lo
         stats['types_ok'] = errs == 0
         log(f'types: parsed structs.h with {errs} error(s)')
 
-    # ---- names + comments ---------------------------------------------------------------
     def has_real_name(ea):
         n = ida_name.get_name(ea)
         return bool(n) and not re.match(r'^(sub_|loc_|unk_|off_|byte_|word_|dword_|qword_|flt_|dbl_|nullsub_|j_)[0-9A-Fa-f]+$', n)
@@ -97,7 +95,6 @@ def apply_kb(kb_dir, force=False, include_unverified=False, apply_types=True, lo
                  'KB: ' + (st or 'unverified') + ((' ' + v['note']) if v.get('note') else '')]
         put_cmt(ea, ' | '.join(p for p in parts if p)[:500], is_func_entry)
 
-    # ---- patch sets ----------------------------------------------------------------------
     pj = kb / 'patches.json'
     if pj.exists():
         for s in json.load(open(pj, encoding='utf-8'))['sets']:

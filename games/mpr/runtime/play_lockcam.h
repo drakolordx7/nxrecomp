@@ -18,7 +18,7 @@
 //                            camera Think hook in play.cpp leaves the camera on its own transform without the bob, hands the difference to lockcam_set_gun_delta,
 //                            and the hook on CPlayerGunMP1::Update moves the gun by that difference: the view stays still and the gun sways on screen.
 //
-// The hook sites must be in recomp games/mpr/main.sites (entryhook 0x7100c77854 0x7100c71638 0x7100cefa54 0x7100c765d0 0x7100d710ac 0x7100c93950 0x7100c7ad8c 0x7100cb6250 0x71004d7540);
+// The hook sites must be in recomp/main.sites (entryhook 0x7100c77854 0x7100c71638 0x7100cefa54 0x7100c765d0 0x7100d710ac 0x7100c93950 0x7100c7ad8c 0x7100cb6250 0x71004d7540);
 // without them the options do nothing and everything else works. (The pitch step rate also calls NSharedPlayerControls::GetGyroFreelookControl, 0xc3af10, directly.)
 #pragma once
 #include <cstdint>
@@ -76,7 +76,7 @@ public:
 private:
     bool have_ = false;
     uint64_t player_ = 0;
-    float written_ = 0.f;      // the target as the hook left it
+    float written_ = 0.f;
     double pprev_ = 0.0, prev_ = 0.0, cur_ = 0.0;      // the game's target after the third last, second last and last call
 };
 
@@ -85,4 +85,4 @@ struct LockCamStats {
 };
 LockCamStats lockcam_stats();
 
-}  // namespace nxrt::play
+}

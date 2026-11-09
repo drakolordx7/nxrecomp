@@ -8,7 +8,7 @@
 
 namespace nxrt::play {
 const GameDefaults& mpr_game_defaults();      // mpr_defaults.cpp
-}  // namespace nxrt::play
+}
 
 namespace nxrt::games::mpr {
 
@@ -38,6 +38,6 @@ const game::Info& data_info() {
     return info;
 }
 
-}  // namespace nxrt::games::mpr
+}
 
 void nxrt_register_game_mpr_data() { nxrt::game::set_current(&nxrt::games::mpr::data_info()); }

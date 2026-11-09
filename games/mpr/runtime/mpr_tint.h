@@ -27,11 +27,10 @@ namespace nxrt::play {
 
 void tint_install();                       // play mode start (no hook sites: it only needs the texture hook)
 void tint_remove();
-void tint_set(const TweakSettings& t);      // the saved settings
+void tint_set(const TweakSettings& t);
 void tint_preview(const TweakSettings& t);  // the F1 page's unsaved values, used while the page keeps calling this
 void tint_frame();                          // frame boundary: applies a change once it has been still for 250 ms
 
-// ---- the parts, for the tests --------------------------------------------------------------------------------------------------
 namespace tint {
 
 enum class Part : uint8_t { Suit, Gun };
@@ -69,5 +68,5 @@ struct Stats {
 };
 Stats stats();
 
-}  // namespace tint
-}  // namespace nxrt::play
+}
+}

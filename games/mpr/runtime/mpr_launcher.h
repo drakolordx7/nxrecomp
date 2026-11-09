@@ -8,7 +8,7 @@
 
 namespace nxl {
 
-std::unique_ptr<Page> make_tweaks_page();    // mpr_page_tweaks.cpp
-void add_fastboot_rows(Form& f);             // mpr_page_fastboot.cpp
+std::unique_ptr<Page> make_tweaks_page();
+void add_fastboot_rows(Form& f);
 
-}  // namespace nxl
+}

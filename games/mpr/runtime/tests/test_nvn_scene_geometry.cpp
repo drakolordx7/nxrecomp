@@ -24,7 +24,6 @@ constexpr const char* kFsMagenta = "062cfa5657f5388d";
 constexpr const char* kFsPass = "8b7d1022ca3c42ff";
 constexpr int kW = 64, kH = 48;
 
-// ---- pixels ------------------------------------------------------------------------------------------------------------
 struct Census {
     size_t magenta = 0, green = 0, other = 0;   // exact magenta, exact green, and any other non-black pixel
 };
@@ -79,7 +78,6 @@ void check_reference(const char* name, const std::vector<uint8_t>& px) {
     CHECK(d.same_size && d.mean_abs <= 0.05 && d.max_abs <= 4 && d.fraction_over_8 <= 0.0005);
 }
 
-// ---- back end counters -------------------------------------------------------------------------------------------------
 struct Stats {
     uint64_t draws = 0, skipped = 0, unresolved = 0, unsupported = 0, submits = 0;
 };
@@ -113,7 +111,6 @@ bool have_data() {
     return false;
 }
 
-// ---- recording helpers -------------------------------------------------------------------------------------------------
 // Records one frame: the window texture as the target, the full viewport and scissor, a black clear, then `record`. Submits,
 // presents and reads the frame back. Every frame takes its own command buffer.
 template <class Record>
@@ -303,9 +300,8 @@ void depth_case(bool depth_zero, const char* ref) {
     check_case(app, base, 1, 1);
 }
 
-}  // namespace
+}
 
-// ---- 1. primitive types: triangles, strip, fan -----------------------------------------------------------------------------
 NXTEST(prim_triangles_strip_fan) {
     if (!have_data()) return;
     App app;
@@ -335,7 +331,6 @@ NXTEST(prim_triangles_strip_fan) {
     check_case(app, base, 3, 3);
 }
 
-// ---- 2. indexed drawing: the three index sizes give the same pixels --------------------------------------------------------
 NXTEST(indexed_draw_index_types) {
     if (!have_data()) return;
     App app;
@@ -372,7 +367,6 @@ NXTEST(indexed_draw_index_types) {
     check_case(app, base, 3, 3);
 }
 
-// ---- 3. window origin: the same triangle in both origin modes is mirrored --------------------------------------------------
 NXTEST(origin_upper_left_apex) {
     origin_case(true, "geom_origin_upper_left");
 }
@@ -380,7 +374,6 @@ NXTEST(origin_lower_left_apex) {
     origin_case(false, "geom_origin_lower_left");
 }
 
-// ---- 2b. QUADS, QUAD_STRIP, POLYGON (converted by the back end) -------------------------------------------------------------
 NXTEST(prim_quads_quad_strip_polygon) {
     if (!have_data()) return;
     App app;
@@ -410,7 +403,6 @@ NXTEST(prim_quads_quad_strip_polygon) {
     check_case(app, base, 3, 3);
 }
 
-// ---- 2c. DrawElementsBaseVertex: indices 0..3 read vertices 4..7 ------------------------------------------------------------
 NXTEST(draw_elements_base_vertex) {
     if (!have_data()) return;
     App app;
@@ -442,7 +434,6 @@ NXTEST(draw_elements_base_vertex) {
     check_case(app, base, 1, 1);
 }
 
-// ---- 2d. instancing: DrawElementsInstanced with a divisor-1 stream -----------------------------------------------------------
 // Unit square with per-instance offsets (-0.5, 0) and (+0.5, 0), scale 0.25: two 16 x 12 pixel squares, at x 8..24 and 40..56.
 NXTEST(instanced_elements_divisor) {
     if (!have_data()) return;
@@ -480,7 +471,6 @@ NXTEST(instanced_elements_divisor) {
     check_case(app, base, 1, 1);
 }
 
-// ---- 2e. DrawArraysInstanced with a draw-time base instance: only instance 1 is drawn -------------------------------------
 NXTEST(instanced_arrays_base_instance) {
     if (!have_data()) return;
     App app;
@@ -511,7 +501,6 @@ NXTEST(instanced_arrays_base_instance) {
     check_case(app, base, 1, 1);
 }
 
-// ---- 2f. primitive restart: a strip split into two triangles, U16 (0xFFFF) and U32 (0xFFFFFFFF) ---------------------------
 NXTEST(primitive_restart_u16_u32) {
     if (!have_data()) return;
     App app;
@@ -562,7 +551,6 @@ NXTEST(primitive_restart_u16_u32) {
     check_case(app, base, 2, 2);
 }
 
-// ---- 4. viewport: a sub-rectangle receives the quad, everything outside stays black ------------------------------------------
 NXTEST(viewport_sub_rectangle) {
     if (!have_data()) return;
     App app;
@@ -593,7 +581,6 @@ NXTEST(viewport_sub_rectangle) {
     check_case(app, base, 1, 1);
 }
 
-// ---- 4b. scissor: the full-screen quad is cut to the scissor rectangle x 16..47, y 12..35 --------------------------------
 NXTEST(scissor_cuts_quad) {
     if (!have_data()) return;
     App app;
@@ -625,7 +612,6 @@ NXTEST(scissor_cuts_quad) {
     check_case(app, base, 1, 1);
 }
 
-// ---- 3b. depth mode: NEAR_IS_ZERO and NEAR_IS_MINUS_W draw a flat triangle the same ----------------------------------------
 NXTEST(depth_mode_near_is_zero) {
     depth_case(true, "geom_depth_near_is_zero");
 }
@@ -633,7 +619,6 @@ NXTEST(depth_mode_near_is_minus_w) {
     depth_case(false, "geom_depth_near_is_minus_w");
 }
 
-// ---- 1b. POINTS: three points at pixel centres, one pixel each ------------------------------------------------------------
 NXTEST(prim_points) {
     if (!have_data()) return;
     App app;
@@ -667,7 +652,6 @@ NXTEST(prim_points) {
     check_case(app, base, 1, 1);
 }
 
-// ---- 1c. LINES, LINE_STRIP, LINE_LOOP (the last converted by the back end) ------------------------------------------------
 NXTEST(prim_lines_strip_loop) {
     if (!have_data()) return;
     App app;
@@ -718,7 +702,6 @@ NXTEST(prim_lines_strip_loop) {
     check_case(app, base, 3, 3);
 }
 
-// ---- 5. culling and winding: CULL BACK / FRONT / NONE with CCW and CW triangles -------------------------------------------
 NXTEST(cull_face_and_winding) {
     if (!have_data()) return;
     App app;
@@ -765,7 +748,6 @@ NXTEST(cull_face_and_winding) {
     check_case(app, base, 7, 7);
 }
 
-// ---- 5b. polygon mode LINE and POINT --------------------------------------------------------------------------------------
 NXTEST(polygon_mode_line_and_point) {
     if (!have_data()) return;
     App app;
@@ -811,7 +793,6 @@ NXTEST(polygon_mode_line_and_point) {
     check_case(app, base, 2, 2);
 }
 
-// ---- 6. several draws and state changes in one command buffer ------------------------------------------------------------
 NXTEST(multi_draw_state_changes) {
     if (!have_data()) return;
     App app;
@@ -863,7 +844,6 @@ NXTEST(multi_draw_state_changes) {
     check_case(app, base, 3, 1);
 }
 
-// ---- 6b. two command buffers submitted one after the other: the second draws with the state the first one bound ---------
 NXTEST(two_command_buffers_state_persists) {
     if (!have_data()) return;
     App app;

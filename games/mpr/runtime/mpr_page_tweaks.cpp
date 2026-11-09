@@ -113,13 +113,13 @@ public:
         Settings s = loaded_;
         store(&s);
         const TweakSettings def;
-        if (id == reset_id_) {   // the glow only
+        if (id == reset_id_) {
             mpr_settings(s).tweaks.glow_on = def.glow_on;
             mpr_settings(s).tweaks.glow = def.glow;
             mpr_settings(s).tweaks.suit = def.suit;
             mpr_settings(s).tweaks.ball = def.ball;
             mpr_settings(s).tweaks.gun = def.gun;
-        } else {                 // the paint only
+        } else {
             mpr_settings(s).tweaks.suit_color_on = def.suit_color_on;
             mpr_settings(s).tweaks.suit_color = def.suit_color;
             mpr_settings(s).tweaks.gun_color_on = def.gun_color_on;
@@ -188,8 +188,8 @@ private:
     Settings loaded_;
 };
 
-}  // namespace
+}
 
 std::unique_ptr<Page> make_tweaks_page() { return std::make_unique<TweaksPage>(); }
 
-}  // namespace nxl
+}

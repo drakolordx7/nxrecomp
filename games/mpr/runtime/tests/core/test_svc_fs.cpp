@@ -101,7 +101,7 @@ Reply fs_call_path(Session& fsys, uint32_t cmd, const char* path, Args extra = {
     return fsys.call(cmd, extra);
 }
 
-}  // namespace
+}
 
 NXTEST(account_save_api) {
     Fixture f;

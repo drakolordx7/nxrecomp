@@ -206,7 +206,7 @@ bool is_pak_path(const fs::path& p) {
     return e == L".pak";
 }
 
-}  // namespace
+}
 
 SetResult program_of_raw_set(const std::vector<u8>& raw, ProgramHashes& out, u32* unknown_stage_blocks) {
     std::vector<Block> blocks;
@@ -414,4 +414,4 @@ std::vector<ProgramHashes> scan_shader_programs(const std::string& romfs_dir_utf
     return all;
 }
 
-}  // namespace nxs
+}

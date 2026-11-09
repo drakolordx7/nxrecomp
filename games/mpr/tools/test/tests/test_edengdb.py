@@ -100,7 +100,6 @@ class FakeStub:
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
-    # ---- memory image
     def map(self, addr, data):
         self.regions.append([addr, bytearray(data)])
 
@@ -119,7 +118,6 @@ class FakeStub:
                 return bytes(buf[off:off + n])
         return None
 
-    # ---- wire
     def _send(self, payload):
         data = payload.encode() if isinstance(payload, str) else payload
         with self._lock:

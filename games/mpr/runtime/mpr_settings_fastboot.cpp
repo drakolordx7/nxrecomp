@@ -23,7 +23,7 @@ bool to_bool(const std::string& v, bool* out) {
     return false;
 }
 
-}  // namespace
+}
 
 bool fastboot_apply(const std::string& key, const std::string& value, FastbootSettings* s, bool* known, std::string* msg) {
     *known = true;
@@ -66,4 +66,4 @@ void fastboot_format(const FastbootSettings& s, std::string* out) {
 
 double fastboot_menu_rate(const FastbootSettings& s) { return s.fast_menus ? static_cast<double>(std::clamp(s.menu_speed, 1, 4)) : 1.0; }
 
-}  // namespace nxrt::play
+}

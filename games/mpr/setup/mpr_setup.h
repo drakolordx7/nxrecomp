@@ -22,4 +22,4 @@ AstcTexture astc_texture_of(const TxtrInfo& info, std::shared_ptr<const Pak> pak
 // Every shader program of MaterialArchive.arc and the .pak files under the RomFS (programs.h).
 ProgramList list_programs(const std::string& romfs_dir, int threads, const std::function<bool()>& cancelled);
 
-}  // namespace nxs::mpr
+}

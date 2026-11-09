@@ -56,9 +56,7 @@ float read_f(const void* p) {
 
 void write_f(void* p, float v) { std::memcpy(p, &v, sizeof v); }
 
-}  // namespace
-
-// ---- arithmetic -----------------------------------------------------------------------------------------------------------------
+}
 
 NXTEST(internal_size_scales_the_window) {
     play::DisplaySettings d;
@@ -242,8 +240,6 @@ NXTEST(fov_offset_is_added_in_degrees_and_clamped) {
     CHECK(close_to(play::fov_with_offset(1.0f, -300.0), 10.0 * kPi / 180.0, 1e-5));
     CHECK(close_to(play::fov_with_offset(1.0f, 300.0), 170.0 * kPi / 180.0, 1e-5));
 }
-
-// ---- hooks ----------------------------------------------------------------------------------------------------------------------
 
 NXTEST(hook_resolution_reports_the_internal_size) {
     play::DisplaySettings d;

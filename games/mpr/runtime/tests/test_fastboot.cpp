@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Start-up and menu tweaks (S46, games/mpr/mpr_fastboot.cpp), hook level: the entry hooks driven the way lifted code drives them
+// Start-up and menu tweaks (S46, runtime/mpr_fastboot.cpp), hook level: the entry hooks driven the way lifted code drives them
 // (nx_hook_entry on the guest address) against stand-in guest functions and a fake game state in host memory, at a base of its own.
 #include <windows.h>
 
@@ -98,7 +98,7 @@ const char* const kHangar = "a8444ff6-e4a4-4183-bfec-73d6d6407fa5";
 const char* const kOtherRoom = "11111111-2222-3333-4444-555555555555";
 const char* const kTitleIntro = "45d4dd7e-45af-40f6-b6ed-8b76c33c90fb";
 
-}  // namespace
+}
 
 NXTEST(ids_match_the_region_table) {
     uint8_t w[16], a[16], m[16];

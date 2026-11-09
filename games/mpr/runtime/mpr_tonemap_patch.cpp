@@ -18,13 +18,13 @@ uint32_t float_bits(float f) {
     return u;
 }
 
-}  // namespace
+}
 
 bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
     if (in.size() < 8 || !spirv::is_module(in.data(), in.size())) return false;
     std::vector<Inst> insts;
     if (!spirv::split(in, insts)) return false;
-    std::unordered_map<uint32_t, size_t> def;   // result id -> index into insts
+    std::unordered_map<uint32_t, size_t> def;
     for (size_t k = 0; k < insts.size(); ++k) {
         const Inst& n = insts[k];
         // result id position: types and constants have it at word 1; most value instructions at word 2
@@ -40,7 +40,6 @@ bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& o
         return it == def.end() ? nullptr : &insts[it->second];
     };
 
-    // fragment entry point
     bool fragment = false;
     uint32_t glsl = 0;
     for (const Inst& n : insts) {
@@ -49,7 +48,6 @@ bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& o
     }
     if (!fragment || !glsl) return false;
 
-    // types: 32-bit float, vec3 of it, the constant 1.0
     uint32_t t_float = 0, t_v3 = 0, c_one = 0;
     for (const Inst& n : insts) if (n.op == spirv::OpTypeFloat && in[n.at + 2] == 32) t_float = in[n.at + 1];
     if (!t_float) return false;
@@ -57,7 +55,6 @@ bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& o
     for (const Inst& n : insts) if (n.op == spirv::OpConstant && in[n.at + 1] == t_float && in[n.at + 3] == float_bits(1.0f)) c_one = in[n.at + 2];
     if (!t_v3) return false;
 
-    // the 3D samples in program order
     struct Sample { size_t idx; uint32_t result, coord; };
     std::vector<Sample> s3;
     for (size_t k = 0; k < insts.size(); ++k) {
@@ -95,7 +92,6 @@ bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& o
         if (insts[k].op == spirv::OpStore && insts[k].at > shuf->at && in[insts[k].at + 2] == v3_id) { store = &insts[k]; break; }
     if (!store) return false;
 
-    // build the new module
     out.clear();
     out.reserve(in.size() + 40);
     uint32_t bound = in[3];
@@ -134,7 +130,7 @@ bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& o
             out.push_back(id_mul);
             out.push_back(v3_id);
             out.push_back(id_vec);
-            out.push_back(in[n.at]);                    // the store itself, with the new value
+            out.push_back(in[n.at]);
             out.push_back(in[n.at + 1]);
             out.push_back(id_mul);
             for (uint32_t w = 3; w < n.len; ++w) out.push_back(in[n.at + w]);
@@ -145,4 +141,4 @@ bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& o
     return const_added;
 }
 
-}  // namespace nxrt::games::mpr
+}

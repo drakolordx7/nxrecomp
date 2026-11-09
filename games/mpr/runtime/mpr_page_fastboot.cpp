@@ -49,7 +49,7 @@ bool same_name(const std::string& a, const char* b) {
     return true;
 }
 
-}  // namespace
+}
 
 void add_fastboot_rows(Form& f) {
     f.heading(L"Language");
@@ -83,4 +83,4 @@ void add_fastboot_rows(Form& f) {
            L"slots (used only with Faster menus on). Everything here is off by default.", 2, true);
 }
 
-}  // namespace nxl
+}

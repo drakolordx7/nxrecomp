@@ -18,4 +18,4 @@ namespace nxrt::games::mpr {
 
 bool spirv_hdr_tonemap(const std::vector<uint32_t>& in, std::vector<uint32_t>& out);
 
-}  // namespace nxrt::games::mpr
+}

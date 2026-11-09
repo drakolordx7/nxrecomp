@@ -59,4 +59,4 @@ SetResult program_of_raw_set(const std::vector<u8>& raw, ProgramHashes& out, u32
 // starts with a code magic. Not split yet (use program_of_raw_set).
 std::vector<std::vector<u8>> embedded_raw_sets(const std::vector<u8>& blob);
 
-}  // namespace nxs
+}

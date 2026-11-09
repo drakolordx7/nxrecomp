@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Moved from the base's runtime/tests (test_tt_core.cpp) in the untangle: these cases check Metroid Prime Remastered's tables (title defaults,
 // play-mode vocabulary and factory settings, test-tooling probes), so they run with the mpr module registered.
-// Test tooling core (S5): a fake game whose memory has exactly the shape the registered test game's probes read (games/mpr/mpr_tt_probe.cpp), driven frame by frame
+// Test tooling core (S5): a fake game whose memory has exactly the shape the registered test game's probes read (runtime/mpr_tt_probe.cpp), driven frame by frame
 // through tt::frame_boundary. Covers scripted runs (pass, wait timeout, assert), record -> replay determinism, the virtual clock and RNG,
 // memory-region hashing, the warp sequence (host functions registered at the guest addresses of the real functions) and @shot.
 #include "test_framework.h"
@@ -108,7 +108,6 @@ struct Rig {
         if (with_loader) l.game_globals = reinterpret_cast<uint64_t>(&globals);
         set_probe_layout(l);
     }
-    // one frame of the toy game, using the pad of the frame that just began
     void step(const PadFrame& p) {
         if (p.buttons & (1ull << 13)) xf[7] += 0.5f;
         xf[3] += static_cast<float>(p.lx) / 32767.0f * 0.25f;
@@ -200,7 +199,7 @@ const char* kSession =
     "@pos 2.5 10.0 0.375 0.01\n"
     "@pass\n";
 
-}  // namespace
+}
 
 NXTEST(probes_read_the_fake_game) {
     Rig r("probes");
@@ -291,7 +290,7 @@ void register_warp_fakes() {
     spit("tt_test_out\\regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
 }
 const char* kWarpScript = "2\n@warp frig frig_b\n@assert area == frig_b\n@pass\n";
-}  // namespace
+}
 
 NXTEST(warp_runs_the_practice_mod_sequence) {
     Rig r("warp");
@@ -374,7 +373,7 @@ uint64_t fv(const GameState& g, const char* key) {
     const StateField* f = g.field(key);
     return f ? static_cast<uint32_t>(static_cast<int64_t>(f->value)) : 0;
 }
-}  // namespace
+}
 
 NXTEST(frame_hash_and_trace_keep_the_pre_generic_format) {
     Rig r("legacy");

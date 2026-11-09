@@ -61,4 +61,4 @@ void BallOrbit::add_angles(double dyaw, double dpitch, const LookParams& p) {
     pitch_ = std::clamp(pitch_ + dpitch, -p.pitch_limit_rad, p.pitch_limit_rad);
 }
 
-}  // namespace nxrt::play
+}

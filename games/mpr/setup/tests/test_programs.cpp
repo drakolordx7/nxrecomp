@@ -98,7 +98,7 @@ std::vector<ProgramHashes> read_programs_file(const std::string& path) {
     return out;
 }
 
-}  // namespace
+}
 
 int main() {
     // ---- 1. split, hash and program rules on synthetic sets ----------------------------------------------------------------

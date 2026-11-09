@@ -66,8 +66,6 @@ bool split_files(const std::string& text, std::string* in, std::string* out) {
     return true;
 }
 
-// ---- parsers ------------------------------------------------------------------------------------------------------------------------
-
 bool parse_warp(const StepLine& l, Step* s, std::string* err) {
     if (l.t.size() != 3) return l.usage("@warp <world> <area>", err);
     if (!l.id(l.t[1], false, s->id2, err)) return false;
@@ -139,8 +137,6 @@ bool parse_watch(const StepLine& l, Step* s, std::string* err) {
     }
     return true;
 }
-
-// ---- runners ------------------------------------------------------------------------------------------------------------------------
 
 // The warp's state between the frames it spans (one warp runs at a time); reset when the step starts.
 struct WarpGate {
@@ -266,9 +262,9 @@ const GameStepDef kSteps[] = {
     {"@watch", &parse_watch, &run_watch},
 };
 
-}  // namespace
+}
 
 const GameStepDef* mpr_game_steps() { return kSteps; }
 size_t mpr_game_step_count() { return sizeof kSteps / sizeof kSteps[0]; }
 
-}  // namespace nxrt::tt::mpr
+}

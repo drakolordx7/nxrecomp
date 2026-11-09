@@ -139,7 +139,7 @@ bool load_triangle_program(App::ShaderBlob* vs, App::ShaderBlob* fs) {
     return App::load_shader("a656883b0cdb8ebc", vs) && App::load_shader("062cfa5657f5388d", fs);
 }
 
-}  // namespace
+}
 
 // Scene 6: the window crop presents a quarter of the window texture stretched to the window; three window textures are acquired 0,1,2,0.
 NXTEST(window_crop_and_acquire_order) {

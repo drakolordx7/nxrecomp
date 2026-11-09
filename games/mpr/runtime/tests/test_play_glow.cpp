@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// S44 glow colour (games/mpr/play_glow.cpp): the colour math, the glow textures' identity and the shared texture edit hook.
+// S44 glow colour (runtime/play_glow.cpp): the colour math, the glow textures' identity and the shared texture edit hook.
 #include "test_framework.h"
 
 #include <algorithm>
@@ -28,7 +28,7 @@ using nxrt::play::GlowRgb;
 
 bool near(float a, float b, float eps = 1e-4f) { return std::fabs(a - b) <= eps; }
 
-}  // namespace
+}
 
 NXTEST(glow_srgb_to_linear_ends_and_middle) {
     CHECK(glow_srgb_to_linear(0) == 0.f);
@@ -64,8 +64,6 @@ NXTEST(glow_recolor_hdr_peak) {
     CHECK(near(out[1], 4.f) && out[0] == 0.f && out[2] == 0.f);
 }
 
-// ---- glow ramp texels (S44b): the cannon's panel ramps are sRGB textures recoloured texel by texel -----------------------------------
-
 NXTEST(glow_linear_to_srgb_round_trips_bytes) {
     for (int v = 0; v < 256; ++v) CHECK_EQ(static_cast<int>(nxrt::play::glow_linear_to_srgb(glow_srgb_to_linear(static_cast<uint8_t>(v)))), v);
     CHECK_EQ(static_cast<int>(nxrt::play::glow_linear_to_srgb(-1.f)), 0);
@@ -92,8 +90,6 @@ NXTEST(glow_recolor_texel_replaces_the_hue_and_keeps_the_brightness) {
     CHECK(lin[0] == 0 && lin[1] == 200 && lin[2] == 0);
 }
 
-// ---- glow texture identity (S44b): the game streams a glow map's level 0 in after its smaller levels -------------------------------
-
 NXTEST(glow_texture_tail_hash_ignores_level_0_and_sees_the_tail) {
     using nxrt::play::glow_texture_tail_hash;
     std::vector<uint8_t> tex(1 << 20);
@@ -113,8 +109,6 @@ NXTEST(glow_texture_tail_hash_ignores_level_0_and_sees_the_tail) {
     CHECK(glow_texture_tail_hash(s2.data(), s2.size(), 128, 16, 8) != small);
     CHECK_EQ(glow_texture_tail_hash(nullptr, 0, 1, 1, 1), uint64_t{0});
 }
-
-// ---- glow texture edit ids (S44c): the edited data must follow the texture's content, not only its tail ------------------------------
 
 NXTEST(glow_texture_id_changes_with_level_0_and_keeps_the_row) {
     using namespace nxrt::play;

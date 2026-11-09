@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Display options of play mode (S10), the Metroid Prime Remastered side: entry hooks into the lifted game (recomp/games/mpr/main.sites,
+// Display options of play mode (S10), the Metroid Prime Remastered side: entry hooks into the lifted game (recomp/main.sites,
 // the "S10" block) that apply the options to the game's own objects. The arithmetic is the base's (src/gfx/play/play_display.h). All addresses
 // are offsets in `main` (docs/mpr/hooks.md, validated against the 1.0.0 binary in IDA):
 //
@@ -34,6 +34,6 @@ void display_apply(const DisplaySettings& d);
 DisplayLive display_live();
 // [upscale] scene_scale (percent of the output size, 25..100), told by the base through the render table (mpr_render.cpp). 100 = off.
 void display_set_scene_scale(int percent);
-uint32_t display_hook_calls();             // calls into the hooks since install (tests, log)
+uint32_t display_hook_calls();
 
-}  // namespace nxrt::play
+}

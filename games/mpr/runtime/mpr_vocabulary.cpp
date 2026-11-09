@@ -95,7 +95,7 @@ const GameActLabel kLabels[] = {
     {Act::DpadRight, "D-pad right", "Map and menus"},
 };
 
-}  // namespace
+}
 
 const GameVocabulary& mpr_vocabulary() {
     static const GameVocabulary v = [] {
@@ -121,4 +121,4 @@ const GameVocabulary& mpr_vocabulary() {
     return v;
 }
 
-}  // namespace nxrt::play
+}

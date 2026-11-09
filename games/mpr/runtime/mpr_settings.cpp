@@ -23,7 +23,7 @@ void format(const GameState& st, std::string* out) {
     *out += format_tweaks(m.tweaks);
 }
 
-}  // namespace
+}
 
 const GameSection& mpr_settings_section_data() {
     static const GameSection s = [] {
@@ -36,4 +36,4 @@ const GameSection& mpr_settings_section_data() {
     return s;
 }
 
-}  // namespace nxrt::play
+}

@@ -44,7 +44,7 @@ bool part_combo(const char* label, GlowPart* p) {
     return changed;
 }
 
-}  // namespace
+}
 
 bool glow_tab(Settings& edit) {
     TweakSettings& t = mpr_settings(edit).tweaks;
@@ -78,7 +78,7 @@ bool glow_tab(Settings& edit) {
     ImGui::PopTextWrapPos();
     glow_preview(t);
 
-    // S45: suit and arm cannon paint (texture recolour, games/mpr/mpr_tint.h)
+    // S45: suit and arm cannon paint (texture recolour, runtime/mpr_tint.h)
     ImGui::Separator();
     ImGui::TextUnformatted("Suit and arm cannon colour");
     ImGui::PushTextWrapPos(0.0f);
@@ -104,4 +104,4 @@ bool glow_tab(Settings& edit) {
     return changed;
 }
 
-}  // namespace nxrt::play
+}

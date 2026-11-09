@@ -283,7 +283,7 @@ struct TxtrRef {
     std::string id;
 };
 
-}  // namespace
+}
 
 int main() {
     synthetic_tests();

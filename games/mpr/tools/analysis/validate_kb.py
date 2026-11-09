@@ -208,13 +208,11 @@ def check_symbols(B, kb, rep):
             alt = B.by_base.get(split_top(name)[0], [])
             v = {'status': 'FAIL', 'note': 'mangled name not in symbol table' + ('; binary has ' + ', '.join(c[0] for c in alt[:2]) if alt else ''),
                  'suggest': [c[0] for c in alt[:5]]}
-        # 2. plain C names (nvnBootstrapLoader ...)
         if v is None and found is None and not cands_m and '::' not in name and (name in B.syms or name in B.imports or name in B.extra):
             if name in B.syms:
                 found = (name,) + B.syms[name]; method = 'plain name'
             else:
                 v = {'status': 'PASS', 'method': 'import', 'note': 'imported by main' + (f', defined in {B.extra[name]}' if name in B.extra else '')}
-        # 3. qualified name via the demangled index
         if v is None and found is None and not cands_m and '::' in name and not is_label(name):
             base = split_top(name)[0]
             cands = B.by_base.get(base, [])
@@ -354,7 +352,6 @@ def check_patches(B, pk, rep):
 
 def check_structs(B, sk, rep, symbols):
     """vtable slot order + field-offset corroboration"""
-    # class -> function symbols
     for s in sk['structs']:
         cls = s['name']
         vt = B.syms.get('_ZTV%d%s' % (len(cls), cls)) if '::' not in cls else None

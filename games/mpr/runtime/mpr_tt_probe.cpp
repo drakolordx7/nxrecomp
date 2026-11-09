@@ -51,7 +51,7 @@ namespace nxrt::tt::mpr {
 namespace detail {
 using nxrt::tt::detail::read_mem;
 using nxrt::tt::detail::write_mem;
-}  // namespace detail
+}
 
 namespace {
 
@@ -102,7 +102,7 @@ uint64_t guest_call(::Ctx* c, uint64_t addr, uint64_t a0 = 0, uint64_t a1 = 0, u
 int frame_hook(::Ctx* c, uint64_t, void*) { frame_boundary(c); return 0; }
 int input_hook(::Ctx* c, uint64_t, void*) { set_player_pointers(c->x[0], c->x[2]); g_pi_stamp.store(frame()); return 0; }
 
-}  // namespace
+}
 
 void set_probe_layout(const ProbeLayout& l) { g_layout = l; }
 void set_player_pointers(uint64_t player, uint64_t mgr) { g_player.store(player); g_mgr.store(mgr); }
@@ -128,7 +128,6 @@ LoaderState loader_state(uint32_t* pending) {
 
 bool read_state(GameState* out, ::Ctx* c) {
     GameState g;
-    // what the base state has no slot for goes into g's field list at the end (below)
     uint32_t move_state = 0;
     bool have_phys = false, have_aim = false, have_cam = false, have_ps = false;
     float speed = 0, pitch = 0, cam_yaw = 0, cam_pitch = 0;
@@ -404,9 +403,9 @@ void set_debug_regs(bool on) {
     }
     CloseHandle(snap);
 }
-}  // namespace
+}
 
-void watch_stop();   // below
+void watch_stop();
 
 bool watch_start(::Ctx* c, int what) {
     uint64_t player = g_layout.player ? g_layout.player : g_player.load();
@@ -663,14 +662,14 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
     NXLOG_I("tt", "objs: %zu objects of '%s' written to %s (scanned %llu MB, game base 0x%llx, wanted vptrs +0x%llx...)", hits, classes.c_str(), out_path.c_str(), static_cast<unsigned long long>(scanned >> 20), static_cast<unsigned long long>(base), static_cast<unsigned long long>(want[0].second - base));
     return true;
 }
-}  // namespace detail
+}
 
 namespace {
 void on_frame(uint64_t frame) { detail::watch_flush(frame); }
 void reset() { set_probe_layout(ProbeLayout{}); }
 // The keys of the fields read_state adds that @assert and @mashuntil may name.
 const char* const kStateKeys[] = {"state", "spd", "pitch", "cam", "morph", "orbit", "camyaw", "campitch", "beam", "visor", "msl", nullptr};
-}  // namespace
+}
 
 const GameProbes& mpr_game_probes() {
     static const GameProbes p = [] {
@@ -687,4 +686,4 @@ const GameProbes& mpr_game_probes() {
     return p;
 }
 
-}  // namespace nxrt::tt::mpr
+}

@@ -33,7 +33,7 @@ const game::NvnStructSize kNvnSizes[] = {
     {"NVNtexture", 0x80}, {"NVNprogram", 0x80}, {"NVNsampler", 0x40}, {"NVNsamplerBuilder", 0x40}, {"NVNtextureView", 0x10},
 };
 
-}  // namespace
+}
 
 const game::GameRender& render_table() {
     static const game::GameRender r = [] {
@@ -50,4 +50,4 @@ const game::GameRender& render_table() {
     return r;
 }
 
-}  // namespace nxrt::games::mpr
+}

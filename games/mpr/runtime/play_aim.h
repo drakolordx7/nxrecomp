@@ -116,7 +116,6 @@ public:
     // dx, dy: raw mouse counts since the previous call (the caller takes them once per rendered frame).
     bool apply(uint64_t player, uint64_t mgr, double dx, double dy, const AimParams& p, const std::function<void()>& original);
 
-    // State for the log, the settings page and the tests.
     double pitch() const { return pitch_; }
     bool pitch_tracked() const { return pitch_valid_; }
     AimBlock last_block() const { return block_; }
@@ -158,4 +157,4 @@ bool shift_look_filter(uint64_t filter, float d);
 bool guest_read(uint64_t addr, void* out, size_t n);
 bool guest_write(uint64_t addr, const void* in, size_t n);
 
-}  // namespace nxrt::play
+}

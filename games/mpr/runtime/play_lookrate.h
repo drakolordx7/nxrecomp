@@ -38,4 +38,4 @@ double look_carry_target(double pprev, double prev, double cur, double phase, do
 // Weight of one step of the gyro's rate: dt * 60, kept to a range that stays sane when a frame takes very long or very short.
 double look_rate_scale(double dt);
 
-}  // namespace nxrt::play
+}

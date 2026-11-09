@@ -168,8 +168,8 @@ int freelook_hook(::Ctx* c, uint64_t addr, void*) {
     }
     if (!timed) {
         g_look_clock = 0.0;
-        g_carry.release(player, target_at);      // no carried offset is left behind in the game's target
-        if (!free_lock) return 0;      // the game's own call, as it comes
+        g_carry.release(player, target_at);
+        if (!free_lock) return 0;
     }
     g_h.freelook_calls++;
     const ::Ctx saved = *c;
@@ -304,7 +304,7 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
     return 1;
 }
 
-}  // namespace
+}
 
 bool LookCarry::begin(uint64_t player, uint64_t target_at) {
     float seen = 0.f;
@@ -380,10 +380,8 @@ void xf_mul(const float a[12], const float b[12], float out[12]) {
 
 void xf_rel(const float a[12], const float b[12], float out[12]) {
     float r[12];
-    // rotation: Ra * Rb^T, entry (i, j) = row i of a dotted with row j of b
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j) r[4 * i + j] = a[4 * i] * b[4 * j] + a[4 * i + 1] * b[4 * j + 1] + a[4 * i + 2] * b[4 * j + 2];
-    // translation: ta - (Ra * Rb^T) * tb
     for (int i = 0; i < 3; ++i) r[4 * i + 3] = a[4 * i + 3] - (r[4 * i] * b[3] + r[4 * i + 1] * b[7] + r[4 * i + 2] * b[11]);
     std::memcpy(out, r, sizeof r);
 }
@@ -478,4 +476,4 @@ LockCamStats lockcam_stats() {
     return st;
 }
 
-}  // namespace nxrt::play
+}

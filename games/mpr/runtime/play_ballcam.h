@@ -51,7 +51,6 @@ public:
     void add_mouse(double dx, double dy, const LookParams& p);
     // Radians (a stick: rate times the frame time). dyaw > 0 turns the view left, dpitch > 0 looks up.
     void add_angles(double dyaw, double dpitch, const LookParams& p);
-    // The yaw collected since the last call (Think takes it).
     double take_yaw() { const double y = yaw_; yaw_ = 0; return y; }
     double pending_yaw() const { return yaw_; }
     double pitch() const { return pitch_; }
@@ -69,4 +68,4 @@ private:
 constexpr double kBallMinElevation = 5.0 * 3.14159265358979323846 / 180.0;
 constexpr double kBallMaxElevation = 80.0 * 3.14159265358979323846 / 180.0;
 
-}  // namespace nxrt::play
+}

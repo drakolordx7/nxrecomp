@@ -85,7 +85,7 @@ void guest_set_transform(void* user, uint64_t player, const float xf[12]) {
 thread_local bool t_in_process_input = false;
 
 int process_input_hook(::Ctx* c, uint64_t addr, void*) {
-    if (t_in_process_input) return 0;                 // the nested call that runs the game's own function
+    if (t_in_process_input) return 0;
     M& st = m();
     GameHost& host = *st.host;
     const uint64_t now = now_ns();
@@ -295,11 +295,10 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
     return 1;
 }
 
-// ---- the GamePlay entries ---------------------------------------------------------------------------------------------------------------
 void install_render(uint64_t base, const DisplaySettings& d, int window_w, int window_h) {
     M& st = m();
     st.base = base;
-    st.aim = std::make_unique<AimDriver>(base);     // a fresh one per play-mode start, as the old start() made
+    st.aim = std::make_unique<AimDriver>(base);
     display_install(base, d, window_w, window_h);
     extras::tonemap_hook_install(base);
 }
@@ -401,9 +400,9 @@ void status_text(char* buf, size_t n) {
                   static_cast<unsigned long long>(mm::game_stats().widget_calls), static_cast<unsigned long long>(mm::game_hook_calls()));
 }
 
-}  // namespace
+}
 
-bool mpr_mouse_tab(int where, Settings& edit);     // mpr_ui.cpp
+bool mpr_mouse_tab(int where, Settings& edit);
 
 const GamePlay& mpr_game_play() {
     static const GamePlay t = [] {
@@ -428,4 +427,4 @@ const GamePlay& mpr_game_play() {
     return t;
 }
 
-}  // namespace nxrt::play
+}

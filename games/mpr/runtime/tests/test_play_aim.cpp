@@ -179,7 +179,7 @@ void check_closed_gate(const GateCase& c) {
     CHECK_MSG(!d.pitch_tracked(), std::string(c.name) + ": pitch still tracked");
 }
 
-}  // namespace
+}
 
 NXTEST(yaw_is_linear_in_dx) {
     AimParams p;
@@ -750,7 +750,7 @@ struct LookIir {
     }
 };
 
-}  // namespace
+}
 
 NXTEST(shift_look_filter_moves_every_sample) {
     std::vector<uint8_t> buf(256, 0);

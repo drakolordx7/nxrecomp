@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// S48: the morph ball camera turned by the mouse and the right stick (games/mpr/play_ballcam.cpp): the turn collector, the free-camera gate, the
+// S48: the morph ball camera turned by the mouse and the right stick (runtime/play_ballcam.cpp): the turn collector, the free-camera gate, the
 // camera's heading and elevation, the pitch range, and the turn about the ball that the Think hook hands to the game's TeleportCamera.
 #include "test_framework.h"
 
@@ -46,7 +46,7 @@ double dist(const float xf[12], const float p[3]) {
     const double dx = xf[3] - p[0], dy = xf[7] - p[1], dz = xf[11] - p[2];
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
-}  // namespace
+}
 
 NXTEST(mouse_turn_is_linear_and_signed) {
     play::LookParams p;

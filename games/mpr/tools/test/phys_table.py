@@ -43,7 +43,6 @@ def frames(sec, rate):
     return max(1, int(round(sec * rate)))
 
 
-# ---- script -----------------------------------------------------------------------------------------------------------------------------------
 def pre(scen):
     """actions after the warp and before the start checkpoint"""
     if scen == 'ball':
@@ -80,7 +79,6 @@ def script(rate, scenarios, real):
     return lines + ['']
 
 
-# ---- trace ------------------------------------------------------------------------------------------------------------------------------------
 def load_trace(d):
     rows = []
     p = os.path.join(d, 'out', 'trace.jsonl')
@@ -125,7 +123,6 @@ def window(rows, cps, scen, rate):
     return out
 
 
-# ---- metrics ----------------------------------------------------------------------------------------------------------------------------------
 def at_time(pl, t, f):
     """f(row) interpolated linearly at igt = t"""
     for a, b in zip(pl, pl[1:]):
@@ -269,7 +266,6 @@ def table(res, rates, scenarios):
     return ok
 
 
-# ---- running ----------------------------------------------------------------------------------------------------------------------------------
 def run_one(a, rate, outdir, results):
     d = os.path.join(outdir, '%s_r%d' % (a.tag, rate))
     env = {'NXRT_NVN_SHADER_CACHE': SHADERS, 'NXRT_NVN_BC7_CACHE': BC7, 'NXRT_AUDIO_SINK': 'null'}

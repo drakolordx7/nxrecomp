@@ -165,7 +165,7 @@ struct LockWorld {
     }
 };
 
-}  // namespace
+}
 
 NXTEST(lockcam_keep_in_view_straight_ahead_untouched) {
     double yaw = 0, pitch = 0;
@@ -498,7 +498,7 @@ struct CarryRig {
     }
 };
 
-}  // namespace
+}
 
 NXTEST(carry_accumulating_target_is_carried_on_and_restored) {
     CarryRig r;

@@ -108,7 +108,6 @@ out = {'meta': {'build_id': '67C9CA1428222752F951021464A7B3597EB98FEC', 'offset_
        'sets': sets, 'facts': cheat_facts}
 json.dump(out, open(ROOT / 'docs/mpr/patches.json', 'w', encoding='utf-8'), indent=1)
 
-# snapshot text + symbol fragment ------------------------------------------------
 snap, sym = [], []
 def addsym(name, off, kind, role, tags, line, ev, mangled=None, contains=None):
     it = {'type': 'symbol', 'name': name, 'mangled': mangled, 'kind': kind, 'address': off, 'addr_form': 'main_offset' if off else 'unknown', 'claimed_version': '1.0.0',

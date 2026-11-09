@@ -56,17 +56,17 @@ struct PrewarmConfig {
         nxrt::config_set("nvn", "pipeline_keys", ks.c_str());
         nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "pipeline_cache", cs.c_str());
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         nxrt::config_set("nvn", "prewarm", "1");
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
     }
     ~PrewarmConfig() {
         nxrt::config_set("nvn", "pipeline_keys", keys.c_str());
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         nxrt::config_set("nvn", "pipeline_cache", cache.c_str());
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         nxrt::config_set("nvn", "prewarm", "1");
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
     }
 };
 
@@ -183,7 +183,7 @@ uintmax_t file_bytes(const fs::path& p, bool* exists) {
     return ec ? 0 : n;
 }
 
-}  // namespace
+}
 
 // Run 1 records the triangle's pipeline into the key file; run 2 loads it, its SetShaders queues the pipeline on a worker and its draw
 // takes the finished one.
@@ -241,7 +241,7 @@ NXTEST(disabled_by_config) {
     const fs::path keys = td.path / "pipeline_keys.bin", cache = td.path / "pipeline_cache.bin";
     PrewarmConfig cfg(keys, cache);            // ends with prewarm = 1
     nxrt::config_set("nvn", "prewarm", "0");
-    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+    nxrt::nvn::be::nvn_settings_reload();
     App::Opts o;
     o.width = 64;
     o.height = 48;

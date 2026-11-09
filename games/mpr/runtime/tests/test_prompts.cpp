@@ -67,7 +67,7 @@ std::vector<uint8_t> make_pack(const std::vector<std::pair<std::string, uint8_t>
     return b;
 }
 
-}  // namespace
+}
 
 // ---- the resolver ------------------------------------------------------------------------------------------------------------------
 NXTEST(switch_style_keeps_the_games_icons) {
@@ -361,7 +361,7 @@ bool test_edit(uint64_t, uint32_t, uint32_t, uint32_t, uint8_t* rgba, void* user
     }
     return true;
 }
-}  // namespace
+}
 
 NXTEST(the_upload_path_asks_the_subscriber_and_replaces_the_pixels) {
     using namespace nxrt::nvn;

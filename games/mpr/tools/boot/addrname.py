@@ -45,7 +45,6 @@ def lookup(addr):
     if _keys is None:
         _keys = [r[0] for r in t]
     i = bisect.bisect_right(_keys, addr) - 1
-    # prefer a sized symbol that contains the address; else the nearest preceding one within 64 KiB
     while i >= 0 and addr - t[i][0] < 0x10000:
         a, sz, n = t[i]
         if addr < a + max(sz, 1) or addr - a < 0x400 and sz == 0:

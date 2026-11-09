@@ -39,7 +39,7 @@ namespace detail {
 const char* texcache_reject_reason(const AstcTexture& info, size_t tiled_len, int quality);
 void texcache_set_rgba8_psnr(double db);
 }
-}  // namespace nxs
+}
 
 namespace fs = std::filesystem;
 using namespace nxs;
@@ -58,7 +58,7 @@ int tex_nvn_astc_format(u32 id) {
 }
 // A TXTR as the cache writer takes it (the tests pass the tiled bytes themselves).
 AstcTexture A(const TxtrInfo& info) { return mpr::astc_texture_of(info, nullptr); }
-}  // namespace
+}
 
 namespace {
 
@@ -192,7 +192,7 @@ uint64_t hash_seeded(const uint8_t* p, size_t n, uint64_t seed) {
     h ^= h >> 32;
     return h;
 }
-}  // namespace oracle
+}
 
 // ---- 1. hash ----------------------------------------------------------------------------------------------------------------
 void test_hash() {
@@ -987,7 +987,7 @@ int mkrefs(const std::string& romfs, const std::string& cache, const std::string
     return 0;
 }
 
-}  // namespace
+}
 
 int main(int argc, char** argv) {
     const std::string romfs = env_or("NXS_ROMFS", nxs_test::project_path("game/romfs"));

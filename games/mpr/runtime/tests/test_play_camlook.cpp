@@ -24,7 +24,7 @@ constexpr double kPi = 3.14159265358979323846;
 
 // forward of a transform (column vector convention): +Z of the local frame in world space = column 2
 void forward(const float xf[12], double f[3]) { f[0] = xf[2]; f[1] = xf[6]; f[2] = xf[10]; }
-}  // namespace
+}
 
 NXTEST(offsets_are_linear_and_signed) {
     play::LookOffsets o;

@@ -20,7 +20,7 @@ const GameLauncher& mpr_launcher_pages() {
     return g;
 }
 
-}  // namespace nxl
+}
 
 void nxrt_register_game_mpr_launcher() {
     static const nxrt::game::Info info = [] {

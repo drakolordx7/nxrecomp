@@ -9,6 +9,6 @@ namespace nxrt::extras {
 
 void tonemap_hook_install(uint64_t module_base);
 void tonemap_hook_remove();
-uint32_t tonemap_hook_calls();      // times the hook rewrote a block
+uint32_t tonemap_hook_calls();
 
-}  // namespace nxrt::extras
+}

@@ -33,7 +33,6 @@ constexpr const char* kTag = "tint";
 constexpr uint64_t kDebounceNs = 250ull * 1000000ull;   // a change is applied once the colour has been still this long
 constexpr uint64_t kPreviewNs = 300ull * 1000000ull;    // the F1 page's values count while it keeps sending them
 
-// ---- the textures ------------------------------------------------------------------------------------------------------------
 // Base colour (BCLR) textures of Samus, from the material slots of her models (docs/S45.md; tint_survey.py slots).
 constexpr const char* kDup = "Preload/DuplicateData.pak";
 constexpr const char* kGunPak = "Preload/MPR1/SamusGunMP1.pak";
@@ -57,7 +56,6 @@ const Target kTargets[] = {
 };
 constexpr size_t kTargetCount = sizeof kTargets / sizeof kTargets[0];
 
-// ---- colour math -------------------------------------------------------------------------------------------------------------
 struct Lut {
     float to_lin[256];
     uint8_t to_srgb[4097];   // linear 0..1 in 4096 steps
@@ -140,7 +138,6 @@ const ProfileDef kProfiles[] = {
 
 constexpr float kLMin = 0.24f, kLMax = 0.92f;
 
-// ---- state ---------------------------------------------------------------------------------------------------------------------
 struct Known {
     size_t gpu_size = 0;
     uint64_t hash = 0;
@@ -161,7 +158,7 @@ struct G {
     std::mutex mu;
     bool installed = false;
     bool hooks_set = false;
-    int upload_sub = 0;              // the texture upload subscription (nxrt/tex_upload.h)
+    int upload_sub = 0;
     // what the settings and the F1 page ask for
     Want saved, preview;
     uint64_t preview_ns = 0;
@@ -238,7 +235,6 @@ void start_scan() {
     if (g().scan.compare_exchange_strong(expect, 1)) std::thread(&scan_paks).detach();
 }
 
-// ---- texture edit hooks ------------------------------------------------------------------------------------------------------
 uint64_t hook_match(const gfx::TexUploadReq& r, void*) {
     G& s = g();
     if (!r.astc) return 0;
@@ -353,7 +349,7 @@ void poll_test_file() {
     g().saved = want_of(tw);
 }
 
-}  // namespace
+}
 
 const Target* targets(size_t* count) {
     *count = kTargetCount;
@@ -397,7 +393,6 @@ float weight(uint8_t r8, uint8_t g8, uint8_t b8, Profile p) {
 }
 
 PaintRef paint_ref(const uint8_t* rgba, uint32_t w, uint32_t h, Profile p) {
-    // weighted medians from histograms; every second texel in both directions is plenty
     constexpr int kBins = 512;
     constexpr float kCMax = 0.4f;
     std::vector<double> hl(kBins, 0.0), hc(kBins, 0.0);
@@ -460,7 +455,7 @@ Stats stats() {
     return g().st;
 }
 
-}  // namespace tint
+}
 
 using namespace tint;
 
@@ -480,7 +475,7 @@ void tint_remove() {
     }
     if (s.hooks_set) {
         s.gen.fetch_add(1);
-        gfx::texture_upload_changed();   // the edited textures go back to the game's
+        gfx::texture_upload_changed();
     }
 }
 
@@ -526,4 +521,4 @@ void tint_frame() {
     if (s.hooks_set) gfx::texture_upload_changed();
 }
 
-}  // namespace nxrt::play
+}

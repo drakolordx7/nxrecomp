@@ -56,17 +56,17 @@ struct PrewarmConfig {
         nxrt::config_set("nvn", "pipeline_keys", ks.c_str());
         nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "pipeline_cache", cs.c_str());
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         nxrt::config_set("nvn", "prewarm", "1");
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
     }
     ~PrewarmConfig() {
         nxrt::config_set("nvn", "pipeline_keys", keys.c_str());
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         nxrt::config_set("nvn", "pipeline_cache", cache.c_str());
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
         nxrt::config_set("nvn", "prewarm", "1");
-        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+        nxrt::nvn::be::nvn_settings_reload();
     }
 };
 
@@ -178,7 +178,7 @@ bool render_once(const char* gpl, uint64_t parts_wait, std::vector<uint8_t>* px,
     const fs::path keys = td.path / "pipeline_keys.bin", cache = td.path / "pipeline_cache.bin";
     PrewarmConfig cfg(keys, cache);            // ends with prewarm = 1
     nxrt::config_set("nvn", "prewarm", "0");
-    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
+    nxrt::nvn::be::nvn_settings_reload();
     GplConfig g(gpl);                          // ends with gpl = 1
     App::Opts o;
     o.width = 64;
@@ -193,7 +193,7 @@ bool render_once(const char* gpl, uint64_t parts_wait, std::vector<uint8_t>* px,
     return ok;
 }
 
-}  // namespace
+}
 
 // gpl on, no key file yet: the program's two shader parts are built by the workers when its shaders are set, and the draw links them
 // with the vertex input and fragment output parts it makes itself.
@@ -332,7 +332,7 @@ void upgrade_case(const char* mode) {
     app.shutdown();
 }
 
-}  // namespace
+}
 
 // gpl_upgrade = whole: a background thread builds the whole pipeline of a linked one and the next lookup takes it.
 NXTEST(linked_pipeline_is_replaced_by_whole) { upgrade_case("whole"); }

@@ -25,12 +25,12 @@ namespace nxrt::play {
 
 void glow_install(uint64_t game_base);   // after lockcam_install (it shares CPlayerGunMP1::Update and must run after the decoupled gun's hook)
 void glow_remove();
-void glow_set(const TweakSettings& t);   // the saved settings (settings_changed)
+void glow_set(const TweakSettings& t);
 void glow_preview(const TweakSettings& t);   // the F1 page's unsaved values; used while the page keeps calling this (a quarter of a second)
 void glow_frame();                       // frame boundary, main thread: (re)writes the ball tables when the wanted colours changed
 // From CPlayerMP1::ProcessInput (play.cpp), on the game thread, with that hook's guest context: tints the morph ball's inner glow.
 void glow_player_tick(::Ctx* c, uint64_t player);
-bool glow_tab(Settings& edit);           // the F1 page's Tweaks tab (play_glow_ui.cpp)
+bool glow_tab(Settings& edit);
 
 // The colour math, exposed for the tests. Colours are linear RGBA as the game keeps them.
 float glow_srgb_to_linear(uint8_t c);
@@ -66,4 +66,4 @@ struct GlowStats {
 };
 GlowStats glow_stats();
 
-}  // namespace nxrt::play
+}

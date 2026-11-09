@@ -70,7 +70,7 @@ struct State {
     bool wrong_thread_logged = false;
     std::atomic<uint64_t> gun_writes{0};                 // frames the charge effect was tinted
     // glow ramp textures (S44b), main thread only
-    int upload_sub = 0;                                  // its texture upload subscription (nxrt/tex_upload.h)
+    int upload_sub = 0;
     bool recolor_hook = false;                           // the texture edit client is set (from the first time a ramp part is on)
     uint32_t ramps_applied[2] = {};                      // what the gun's and the suit's ramps were last uploaded with
     uint64_t ramps_changed_ns = 0;                       // when texture_upload_changed was last called
@@ -174,7 +174,7 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
 
 // ---- model incandescence: not used since S44c ----
 // S44 gave the morph ball's draws CModelFlagsMPT colour mode 2 (CModelFlagsMPT::ColorModulateIncan) through three hook sites on
-// CModelDataMP1::Render / RenderGun (0xfa9694, 0xfa6c0c, 0xfa7dd0, still in recomp/games/mpr/main.sites, no longer registered). In the mode-2
+// CModelDataMP1::Render / RenderGun (0xfa9694, 0xfa6c0c, 0xfa7dd0, still in recomp/main.sites, no longer registered). In the mode-2
 // variant of the hull shader (02fe1ae2e1b12445) that colour is a constant emission over the whole hull, so the shell turned pink. The ball's
 // glowing stripes are its inner glow (a particle effect, tinted above) and its light (skBallLightColors), which take the colour without it.
 
@@ -311,7 +311,7 @@ void ramps_frame() {
     gfx::texture_upload_changed();
 }
 
-}  // namespace
+}
 
 void glow_player_tick(::Ctx* c, uint64_t player) {
     if (!g.base || !player) return;
@@ -374,7 +374,7 @@ void poll_test_file() {
     NXLOG_I(kTag, "test file applied: %s", format_tweaks(tw).c_str());
 }
 
-}  // namespace
+}
 
 const GlowTexture* glow_textures(size_t* count) {
     *count = kTextureCount;
@@ -447,7 +447,7 @@ void glow_remove() {
         gfx::texture_upload_unsubscribe(g.upload_sub);
         g.upload_sub = 0;
         g_ramp_gen.fetch_add(1, std::memory_order_acq_rel);
-        gfx::texture_upload_changed();   // the recoloured textures go back to the game's
+        gfx::texture_upload_changed();
     }
     g.recolor_hook = false;
     g.ramps_applied[0] = g.ramps_applied[1] = 0;
@@ -530,4 +530,4 @@ GlowStats glow_stats() {
     return s;
 }
 
-}  // namespace nxrt::play
+}

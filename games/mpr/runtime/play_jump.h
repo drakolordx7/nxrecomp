@@ -25,7 +25,7 @@
 //
 //   [physics] jump_fix = 1     default on; 0 runs the game's code unchanged
 //
-// Hook sites (recomp games/mpr/main.sites): entryhook 0x7100cf0060 (records dt), midhook 0x7100cf0750 (the rule). Without them this does nothing.
+// Hook sites (recomp/main.sites): entryhook 0x7100cf0060 (records dt), midhook 0x7100cf0750 (the rule). Without them this does nothing.
 #pragma once
 #include <cstdint>
 
@@ -48,4 +48,4 @@ void jump_remove();
 uint64_t jump_blend_frames();             // blend frames seen (the timer ended inside a step)
 uint64_t jump_capped_frames();            // ... of which the jump part was lowered
 
-}  // namespace nxrt::play
+}

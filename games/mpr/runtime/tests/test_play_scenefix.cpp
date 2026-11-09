@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// S42: the ModCon render query guard (games/mpr/play_scenefix.cpp), driven the way lifted code drives it: nx_hook_entry on the guest address of
+// S42: the ModCon render query guard (runtime/play_scenefix.cpp), driven the way lifted code drives it: nx_hook_entry on the guest address of
 // CModConSceneNode::ProcessRenderQuery and of the CModConSceneNodeMP1 override, with x0 = a fake scene node in host memory.
 #include <cstdint>
 #include <cstring>
@@ -45,7 +45,7 @@ int call(uint64_t fn, const Node& n) {
     return r;
 }
 
-}  // namespace
+}
 
 NXTEST(rule_skips_only_a_listed_node_without_its_data) {
     Node n;

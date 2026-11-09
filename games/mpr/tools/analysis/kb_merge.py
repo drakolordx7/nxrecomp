@@ -28,7 +28,6 @@ def merge_symbols(items, conflicts):
         return ('n', bare(it['name']), re.sub(r'\s+', '', it.get('signature') or ''))
     for it in items:
         groups.setdefault(gkey(it), []).append(it)
-    # second pass: attach address-less groups to a unique address group of the same bare name
     by_name = collections.defaultdict(list)
     for k, v in groups.items():
         if k[0] in ('m', 'a'): by_name[bare(v[0]['name'])].append(k)
@@ -37,7 +36,6 @@ def merge_symbols(items, conflicts):
     for k, v in list(groups.items()):
         if k[0] == 'n' and len(by_name.get(k[1], [])) == 1:
             groups[by_name[k[1]][0]].extend(v); consumed.add(k)
-    # mangled groups that share an address group name: leave separate
     for k, v in groups.items():
         if k in consumed: continue
         first = v[0]
@@ -125,7 +123,6 @@ def merge_structs(items, conflicts):
             if not f['name'].startswith(('gap', 'via_', 'qword', 'dword', 'byte', 'word', 'unk', 'pad')): nm[f['name']].add(f['offset'])
         for n, offs in nm.items():
             if len(offs) > 1: conflicts.append({'kind': 'struct_field_offsets', 'struct': name, 'field': n, 'offsets': sorted(offs)})
-        # overlap check among source-stated fields
         out.append({'name': name, 'bases': s['bases'], 'size': s['size'], 'sources': s['sources'], 'fields': fl,
                     'virtuals': s['virtuals']})
     return out

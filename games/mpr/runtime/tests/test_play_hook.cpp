@@ -141,7 +141,7 @@ int frame(double dx, double dy) {
 double yaw() { return play::yaw_of_transform(g_w.xf); }
 double pitch() { return get<float>(g_w.player, 0x5cc); }
 
-}  // namespace
+}
 
 NXTEST(hook_turns_the_player_by_counts_times_sensitivity) {
     reset_world();

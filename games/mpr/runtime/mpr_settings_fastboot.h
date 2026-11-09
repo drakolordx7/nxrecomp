@@ -16,9 +16,9 @@
 namespace nxrt::play {
 
 struct FastbootSettings {
-    bool skip_intro = false;        // [tweaks] skip_intro
-    bool skip_boot_logos = false;   // [tweaks] skip_boot_logos
-    bool fast_menus = false;        // [tweaks] fast_menus
+    bool skip_intro = false;
+    bool skip_boot_logos = false;
+    bool fast_menus = false;
     int menu_speed = 2;             // [tweaks] menu_speed, 1..4; read only while fast_menus is on
     std::string language;           // [tweaks] language: a language name (AmericanEnglish, French, ...) or "" = auto (the Windows language).
                                     // Read by the settings service at start-up (services/common.cpp); a change applies at the next start.
@@ -32,4 +32,4 @@ void fastboot_format(const FastbootSettings& s, std::string* out);
 // The factor the front end's clock runs at: 1 with fast_menus off, else menu_speed.
 double fastboot_menu_rate(const FastbootSettings& s);
 
-}  // namespace nxrt::play
+}

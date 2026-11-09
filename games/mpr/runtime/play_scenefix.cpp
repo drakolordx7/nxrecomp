@@ -27,15 +27,15 @@ State g_s;
 
 int query_hook(::Ctx* c, uint64_t, void*) {
     const uint8_t* node = reinterpret_cast<const uint8_t*>(c->x[0]);
-    if (!node || !modcon_query_must_skip(node)) return 0;           // the game's function runs as it is
+    if (!node || !modcon_query_must_skip(node)) return 0;
     // Handled: the lifted function returns at once with x0 = the node, as the original does on its "not listed" path (the callers ignore it).
     const uint64_t n = g_s.skipped.fetch_add(1, std::memory_order_relaxed) + 1;
-    if ((n & (n - 1)) == 0)        // 1, 2, 4, 8, ...
+    if ((n & (n - 1)) == 0)
         NXLOG_I(kTag, "render query skipped a ModCon scene node that is listed but not loaded yet (node 0x%llx, %llu so far)",
                 static_cast<unsigned long long>(c->x[0]), static_cast<unsigned long long>(n));
     return 1;
 }
-}  // namespace
+}
 
 bool modcon_query_must_skip(const uint8_t* node) {
     if ((node[kListedByte] & 1) == 0) return false;                 // not listed: the original returns at once by itself
@@ -63,4 +63,4 @@ void scenefix_remove() {
 
 uint64_t scenefix_modcon_skipped() { return g_s.skipped.load(); }
 
-}  // namespace nxrt::play
+}

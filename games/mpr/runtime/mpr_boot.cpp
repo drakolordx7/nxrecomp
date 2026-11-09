@@ -56,11 +56,11 @@ DWORD WINAPI killer_poll(LPVOID) {
     return 0;
 }
 
-}  // namespace
+}
 
 bool boot(std::string&) {
     if (nxrt::config_get_bool("boot", "dump_killer", false)) { AddVectoredExceptionHandler(1, dump_killer); CreateThread(nullptr, 0, killer_poll, nullptr, 0, nullptr); }
     return true;
 }
 
-}  // namespace nxrt::games::mpr
+}

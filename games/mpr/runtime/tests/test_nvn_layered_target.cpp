@@ -148,7 +148,7 @@ void read_face(App& app, Tex& cube, int face, size_t bytes_per_texel, std::vecto
     app.api.nvnTextureReadTexels(cube.obj.get(), &v, &full, out.data());
 }
 
-}  // namespace
+}
 
 NXTEST(cube_target_all_layers_are_drawn) {
     if (!real_data_available()) { nxtest::skip("work/shader_cache not found"); return; }

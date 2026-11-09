@@ -68,7 +68,7 @@ void make_control(uint8_t* ctrl, uint32_t code_size, uint32_t const_offset, uint
     put(0x750, 2);
 }
 
-}  // namespace
+}
 
 
 NXTEST(read_control_on_first_corpus_block) {

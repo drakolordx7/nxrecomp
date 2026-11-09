@@ -21,7 +21,6 @@ NXTEST_GROUP(timestep)
 namespace ts = nxrt::timestep;
 namespace mpr_site = nxrt::games::mpr::site;
 
-// Tolerance checks that print the expected and the actual value on failure.
 #define CHECK_NEAR(actual, expected, tol)                                                                                    \
     do {                                                                                                                     \
         const double nx_a = static_cast<double>(actual);                                                                     \
@@ -31,7 +30,6 @@ namespace mpr_site = nxrt::games::mpr::site;
                            "expected " + num(nx_e) + ", actual " + num(nx_a) + ", tolerance " + num(tol));                   \
     } while (0)
 
-// Exact checks (floats compared as values, which is bit-exact for the cases used here).
 #define CHECK_EXACT(actual, expected)                                                                                        \
     do {                                                                                                                     \
         const double nx_a = static_cast<double>(actual);                                                                     \
@@ -83,7 +81,6 @@ float load_f32(const uint8_t* p) {
 
 void store_u32(uint8_t* p, uint32_t v) { std::memcpy(p, &v, 4); }
 
-// Config of a test: the default fields with the given mode and the default game base.
 ts::Config base_cfg(ts::Mode m) {
     ts::Config c;
     c.mode = m;
@@ -109,7 +106,7 @@ struct Guard {
     }
 };
 
-}  // namespace
+}
 
 NXTEST(scale60_exact) {
     CHECK_EXACT(ts::scale60(ts::kGameStep), 1.0f);
@@ -223,12 +220,10 @@ NXTEST(update_hook_real_mode) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    // First frame: the game's own step.
     g_now = 100.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_EXACT(ts::current_dt(), ts::kGameStep);
 
-    // Second frame 1/120 s later: the measured step.
     g_now = 100.0 + 1.0 / 120.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 120.0, 1e-7);
@@ -256,7 +251,6 @@ NXTEST(update_hook_real_mode) {
         CHECK_NEAR(lo_float(ctx.x[8]), 0.014f * ts::scale60(dt), 1e-7);
     }
 
-    // A hitch of one second: the step is clamped to the slowest allowed frame, 1/30 s.
     g_now += 1.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 30.0, 1e-7);
@@ -274,7 +268,6 @@ NXTEST(update_hook_deterministic) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    // The clock does not move, yet every frame gets the deterministic step and nothing waits.
     for (int i = 0; i < 3; i++) {
         CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
         CHECK_NEAR(ts::current_dt(), 1.0 / 120.0, 1e-7);
@@ -341,7 +334,6 @@ NXTEST(friction_hook) {
     CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kFriction), 0);
     CHECK_NEAR(ctx.v[1].f32[0], 3.5f * ts::scale60(ts::current_dt()), 1e-6);
 
-    // With fix_friction = 0 the game's 3.5 stays.
     ts::remove();
     c.fix_scaled_float = false;
     ts::install(c);
@@ -384,7 +376,6 @@ NXTEST(streaming_hooks) {
     CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kStreamB1), 0);
     CHECK_EQ(lo32(ctx.x[9]), bits(2.0f * dt));
 
-    // With fix_streaming = 0 the registers are not touched.
     ts::remove();
     c.fix_stream_step = false;
     ts::install(c);
@@ -408,7 +399,6 @@ NXTEST(render_timings_hook) {
     g_now = 600.0;
     ::Ctx ctx{};
 
-    // Deterministic 1/60 s: three calls after one frame give counter 3 and 3/60 s.
     std::memset(buf, 0, sizeof buf);
     ts::set_deterministic_for_tests(1.0 / 60.0);
     ts::Config c = render_cfg(buf);
@@ -419,7 +409,6 @@ NXTEST(render_timings_hook) {
     CHECK_EXACT(load_f32(buf + 4), 3.0f / 60.0f);
     CHECK_EXACT(ctx.v[0].f32[0], 3.0f / 60.0f);
 
-    // Deterministic 1/240 s: four calls advance the counter by one frame of 1/60 s.
     ts::remove();
     std::memset(buf, 0, sizeof buf);
     ts::set_deterministic_for_tests(1.0 / 240.0);
@@ -430,7 +419,6 @@ NXTEST(render_timings_hook) {
     CHECK_EQ(load_u32(buf), 1u);
     CHECK_NEAR(load_f32(buf + 4), 1.0f / 60.0f, 1e-6);
 
-    // The counter wraps at 53000 frames.
     ts::remove();
     std::memset(buf, 0, sizeof buf);
     store_u32(buf, 52999);
@@ -442,7 +430,6 @@ NXTEST(render_timings_hook) {
     CHECK_EQ(load_u32(buf), 0u);
     CHECK_EXACT(load_f32(buf + 4), 0.0f);
 
-    // fix_render_timings = 0: the hook hands the call back and leaves the buffer alone.
     ts::remove();
     std::memset(buf, 0xAB, sizeof buf);
     uint8_t snap[16];
@@ -470,17 +457,14 @@ NXTEST(movie_hook) {
     g_now = 50.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
 
-    // First movie call: no previous call, so the incoming value stays.
     ctx.v[0].f32[0] = 0.0166f;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_EXACT(ctx.v[0].f32[0], 0.0166f);
 
-    // Real elapsed time since the last call: 8.3 ms.
     g_now = 50.0083;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_NEAR(ctx.v[0].f32[0], 0.0083f, 1e-6);
 
-    // Two seconds later: clamped to movie_max.
     g_now = 52.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kMovieUpdate), 0);
     CHECK_EXACT(ctx.v[0].f32[0], 0.5f);
@@ -489,7 +473,6 @@ NXTEST(movie_hook) {
     CHECK_EQ(st.movie_calls, 3ull);
     CHECK_NEAR(st.movie_total, 0.0166 + 0.0083 + 0.5, 1e-5);
 
-    // movie_real = 0: the incoming value is never touched and nothing is counted.
     ts::remove();
     c.movie_real = false;
     ts::install(c);
@@ -514,7 +497,6 @@ NXTEST(pacing_real_mode_waits) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    // The second frame comes 0.5 ms after the first, shorter than the 1/480 s minimum: the frame is held until the minimum has passed.
     g_now = 10.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now = 10.0005;
@@ -604,7 +586,6 @@ NXTEST(stuck_tracker_samples_once_per_tick_at_240hz) {
     const uint64_t b = c.game_base;
     ::Ctx ctx{};
 
-    // One frame publishes the step; the tracker is then called once per player tick (every call here).
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     CHECK_NEAR(ts::current_dt(), 1.0 / 240.0, 1e-7);
 
@@ -655,7 +636,6 @@ NXTEST(stuck_tracker_off_by_config) {
     nxrt::config_load_string("[time]\nfix_stuck_tracker = 0\n");
     ts::Config c = ts::load_config();
     CHECK(!c.fix_tick_sampler);
-    // 1/240 s would be handled by 3 of 4 calls with the fix on; with the fix off every call goes through.
     ts::set_deterministic_for_tests(1.0 / 240.0);
     ts::install(c);
     const uint64_t b = c.game_base;
