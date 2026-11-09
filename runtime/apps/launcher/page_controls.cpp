@@ -23,7 +23,7 @@ const wchar_t* vocab_label(const char* nxrt::play::GameVocabulary::* field, cons
     *keep = game_text(v ? v->*field : nullptr, generic);
     return keep->c_str();
 }
-std::wstring g_alt_camera_label, g_alt_camera_on_label, g_wheel_cycles_label;
+std::wstring g_alt_camera_label, g_alt_camera_on_label, g_wheel_cycles_label, g_view_sway_label;
 using nxrt::play::PromptStyle;
 using nxrt::play::rad_per_count;
 using nxrt::play::source_sens;
@@ -84,8 +84,8 @@ public:
             },
             margin_text);
         f.checkbox(
-            L"Steady camera (walking bob and gun sway don't shake the view)", [](const Settings& s) { return !s.camera.gun_drives_view; },
-            [](Settings& s, bool v) { s.camera.gun_drives_view = !v; });
+            vocab_label(&nxrt::play::GameVocabulary::label_view_sway, L"Steady camera (the game's sway and bob don't shake the view)", &g_view_sway_label),
+            [](const Settings& s) { return !s.camera.view_sway; }, [](Settings& s, bool v) { s.camera.view_sway = !v; });
 
         f.heading(L"Mouse");
         yaw_ = f.slider(
@@ -171,7 +171,7 @@ private:
 
     HWND yaw_ = nullptr, pitch_ = nullptr;
     int yaw0_ = 0, pitch0_ = 0, alt0_ = 0, margin0_ = 0;   // slider positions as loaded
-    HWND alt_slider_ = nullptr;                            // the ball camera speed, greyed out while the camera is off
+    HWND alt_slider_ = nullptr;                            // the alternate camera speed, greyed out while the camera is off
     bool alt_on_ = true;
     bool linked_ = false;                      // the "same for both" box (not saved)
     bool syncing_ = false;

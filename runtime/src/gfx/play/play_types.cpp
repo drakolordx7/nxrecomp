@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Play mode: names and parsers for contexts, triggers, actions, Switch outputs and inputs. The contract is play_types.h.
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
 
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_scancode.h>
@@ -223,6 +223,7 @@ const char* key_wheel_cycles() { return key_or(&GameVocabulary::key_wheel_cycles
 const char* key_alt_orbit() { return key_or(&GameVocabulary::key_alt_orbit, "alt_orbit"); }
 const char* key_alt_camera() { return key_or(&GameVocabulary::key_alt_camera, "alt_camera"); }
 const char* key_alt_sens() { return key_or(&GameVocabulary::key_alt_sens, "alt_sensitivity"); }
+const char* key_view_sway() { return key_or(&GameVocabulary::key_view_sway, "view_sway"); }
 
 const ActInfo& act_info(Act a) { return acts()[static_cast<int>(a)]; }
 

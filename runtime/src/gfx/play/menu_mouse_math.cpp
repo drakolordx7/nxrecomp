@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Mouse pointer in menus: the arithmetic and the pointer state (no game, no host state). See menu_mouse.h.
-#include "menu_mouse.h"
+#include "nxrt/game/menu_mouse.h"
 
 #include <algorithm>
 #include <cmath>

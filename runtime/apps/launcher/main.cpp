@@ -25,7 +25,7 @@
 
 #include "game_info.h"
 #include "pages.h"
-#include "ui.h"
+#include "nxrt/game/launcher_ui.h"
 
 namespace nxl {
 namespace {
@@ -258,7 +258,8 @@ void App::on_create() {
     pages_.push_back(make_controls_page());
     pages_.push_back(make_keys_page());
     pages_.push_back(make_pad_page());
-    pages_.push_back(make_tweaks_page());
+    if (const GameLauncher* gl = game_launcher())   // the game's own tabs
+        for (unsigned i = 0; i < gl->tab_count; ++i) pages_.push_back(gl->tabs[i]());
     for (size_t i = 0; i < pages_.size(); ++i) {
         TCITEMW it{};
         it.mask = TCIF_TEXT;

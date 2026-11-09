@@ -17,12 +17,14 @@
 //   smooth = 4                    real mode: the step is the mean of the last N frame times (1 = raw); a jump of more than 50 % restarts it
 //   pace = 1                      hold the frame until the minimum step has passed (stops an uncapped limiter from running the game faster)
 //   movie_real = 1                the movie list's clock is real elapsed time (audio plays in real time), not the step
-//   fix_friction = 1              per-tick float constants (Load::ScaledFloat; Metroid: the in-air walk friction, 3.5 per 1/60 s) scaled by the step
-//   fix_render_timings = 1        the render-timing clock (Sites::tick_render_timings) advances by the step (texture scroll, UV animation, water)
-//   fix_streaming = 1             texture streaming ages its entries by the step instead of 1/60
-//   fix_budget = 1                the background-work budget after the tick (Metroid: 14 ms) scales with the step
-//   fix_stuck_tracker = 1         a per-tick sampler (Sites::per_tick_sampler; Metroid: the player's "am I stuck" test, 20 samples, one per tick) takes one sample
-//                                 per 1/60 s of game time, so its window keeps its length at more than 60 ticks per second.
+//   fix_scaled_float = 1          per-tick float constants (Load::ScaledFloat) in a vector register are scaled by the step
+//   fix_frame_counter = 1         the per-frame counter (Sites::tick_render_timings) advances by the step: texture scroll, UV animation, water
+//   fix_stream_step = 1           aging by the step instead of 1/60 (Load::Stream1, Stream2)
+//   fix_scaled_reg = 1            per-tick float constants (Load::ScaledReg) in a general register are scaled by the step
+//   fix_tick_sampler = 1          a per-tick sampler (Sites::per_tick_sampler: a rolling window of one sample per tick) takes one sample per 1/60 s
+//                                 of game time, so its window keeps its length at more than 60 ticks per second.
+//   The first names of these keys, after the game bugs they fixed, still work: fix_friction, fix_render_timings, fix_streaming, fix_budget,
+//   fix_stuck_tracker (the new name wins when both are set).
 //   log_every = 0                 log one line of frame statistics every N frames (0 = off)
 //   csv = <file>                  write one line per frame: frame, host time (s), measured elapsed, step used, sum of steps, movie frames delivered, render-timing clock
 //   game_base = 0x7100000000      guest address of the main module
@@ -47,11 +49,11 @@ struct Config {
     int smooth = 4;
     bool pace = true;
     bool movie_real = true;
-    bool fix_friction = true;
-    bool fix_render_timings = true;
-    bool fix_streaming = true;
-    bool fix_budget = true;
-    bool fix_stuck_tracker = true;
+    bool fix_scaled_float = true;
+    bool fix_frame_counter = true;
+    bool fix_stream_step = true;
+    bool fix_scaled_reg = true;
+    bool fix_tick_sampler = true;
     double movie_max = 0.5;          // longest delta handed to the movie player in one call (seconds)
     int log_every = 0;
     std::string csv;
@@ -70,16 +72,16 @@ float scale60(float dt);                    // dt / (1/60): exactly 1.0f when dt
 enum class Load : uint8_t {
     Step = 1,       // w<reg> = step (float bits)
     NegStep,        // w<reg> = -step
-    Budget,         // w<reg> = value * step * 60 (float bits)                        [time] fix_budget
-    ScaledFloat,    // s<reg> = value * step * 60, the rest of v<reg> zeroed           [time] fix_friction
-    Stream1,        // w<reg> = step                                                  [time] fix_streaming
-    Stream2,        // w<reg> = 2 * step                                              [time] fix_streaming
+    ScaledReg,      // w<reg> = value * step * 60 (float bits)                        [time] fix_scaled_reg
+    ScaledFloat,    // s<reg> = value * step * 60, the rest of v<reg> zeroed           [time] fix_scaled_float
+    Stream1,        // w<reg> = step                                                  [time] fix_stream_step
+    Stream2,        // w<reg> = 2 * step                                              [time] fix_stream_step
 };
 struct MidSite {
     uint64_t offset;
     Load load;
     uint8_t reg;
-    float value = 0.f;              // Budget, ScaledFloat: the retail per-1/60 s value
+    float value = 0.f;              // ScaledReg, ScaledFloat: the retail per-1/60 s value
 };
 struct Sites {
     uint64_t frame_update = 0;          // entry: once per rendered frame, before the tick (measures the frame); 0 = no step hooks at all

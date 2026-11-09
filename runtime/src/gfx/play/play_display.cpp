@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Display options of play mode: see play_display.h.
-#include "play_display.h"
+#include "nxrt/game/play_display.h"
 
 #include <algorithm>
 #include <cmath>

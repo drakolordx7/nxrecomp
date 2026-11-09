@@ -3,7 +3,7 @@
 #pragma once
 #include "nxrt/input_source.h"
 #include "nxrt/platform.h"
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxrt::play {
 

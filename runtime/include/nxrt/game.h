@@ -13,6 +13,8 @@
 //   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/runtime/mpr_defaults.cpp
 //   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/runtime/mpr_play.cpp
 //   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      games/mpr/runtime/mpr_prompts.cpp
+//   settings         the game's own section of controls.ini and its F1 tab (nxrt/game/settings.h)             games/mpr/runtime/mpr_settings.cpp
+//   launcher         the game's launcher pages (nxrt/game/launcher_ui.h, GameLauncher; the launcher exe only)  games/mpr/runtime/mpr_launcher.cpp
 // The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
 #pragma once
 #include <cstdint>
@@ -22,8 +24,9 @@ namespace nxrt {
 namespace services { struct TitleProfile; namespace fs { class ModsIndexEdit; } }
 namespace timestep { struct Sites; }
 namespace tt { struct GameProbes; }
-namespace play { struct GamePlay; struct GameDefaults; struct PromptGame; }
+namespace play { struct GamePlay; struct GameDefaults; struct PromptGame; struct GameSection; }
 }  // namespace nxrt
+namespace nxl { struct GameLauncher; }
 
 namespace nxrt::game {
 
@@ -52,6 +55,8 @@ struct Info {
     const play::GameDefaults* play_defaults = nullptr;
     const play::GamePlay* play = nullptr;
     const play::PromptGame* prompts = nullptr;
+    const play::GameSection* settings = nullptr;     // the game's own controls.ini section, F1 tab and Extras rows
+    const nxl::GameLauncher* launcher = nullptr;     // the game's launcher tabs and rows (set by the game's launcher registration)
     // Called once the RomFS mods are merged, before they are served: fixes up game tables that depend on the served files
     // (src/services/fs_mods.h ModsIndexEdit). Not called when no mod provides anything.
     void (*mods_index_hook)(services::fs::ModsIndexEdit& edit) = nullptr;

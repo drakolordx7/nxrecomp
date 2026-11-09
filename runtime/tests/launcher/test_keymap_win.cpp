@@ -9,7 +9,7 @@
 #include <SDL3/SDL_scancode.h>
 
 #include "keymap_win.h"
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 
 NXTEST_GROUP(launcher_keymap)
 

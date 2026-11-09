@@ -20,7 +20,7 @@
 #include <mutex>
 #include <vector>
 
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxrt::play {
 

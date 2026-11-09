@@ -5,7 +5,7 @@
 
 #include <cmath>
 
-#include "play/menu_mouse.h"
+#include "nxrt/game/menu_mouse.h"
 
 NXTEST_GROUP(menu_mouse)
 

@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "nxrt/input_source.h"
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 #include "test_framework.h"
 NXTEST_GROUP(play_config)
 
@@ -91,7 +91,7 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
           ma.menu_cursor == mb.menu_cursor && ma.wheel_cycles == mb.wheel_cycles))
         return false;
-    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.gun_drives_view != b.camera.gun_drives_view)
+    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.view_sway != b.camera.view_sway)
         return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
@@ -450,18 +450,18 @@ NXTEST(lockfree_margin_rejects_out_of_range) {
     CHECK(err.find("free_lock_margin") != std::string::npos);
 }
 
-NXTEST(camera_gun_drives_view_parses_and_round_trips) {
+NXTEST(camera_view_sway_parses_and_round_trips) {
     Settings s;
     std::string err;
     std::vector<std::string> w;
-    REQUIRE(parse_settings("[camera]\ngun_drives_view = 0\n", &s, &err, &w));
+    REQUIRE(parse_settings("[camera]\nview_sway = 0\n", &s, &err, &w));
     CHECK(w.empty());
-    CHECK(!s.camera.gun_drives_view);
+    CHECK(!s.camera.view_sway);
     const std::string text = format_settings(s);
-    CHECK(text.find("gun_drives_view = 0") != std::string::npos);
+    CHECK(text.find("view_sway = 0") != std::string::npos);
     Settings r;
     REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(!r.camera.gun_drives_view);
+    CHECK(!r.camera.view_sway);
     CHECK(same_settings(s, r));
 }
 

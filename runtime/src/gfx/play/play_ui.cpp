@@ -16,7 +16,8 @@
 #include "nxrt/extras.h"
 #include "nxrt/input_source.h"
 #include "nxrt/lowlat.h"
-#include "play_game.h"
+#include "nxrt/game/play_game.h"
+#include "nxrt/game/settings.h"
 
 namespace nxrt::play {
 
@@ -691,7 +692,7 @@ void extras_tab(Page& p) {
     hdr_group(p);
     upscale_group(p);
     latency_group(p);
-    if (fastboot_ui(p.edit.fastboot)) mark(p);   // start-up and menu tweaks (play_ui_fastboot.cpp)
+    if (const GameSection* gs = game_section(); gs && gs->extras_rows && gs->extras_rows(p.edit)) mark(p);   // the game's own rows (settings.h)
 }
 
 // ---- Bindings -----------------------------------------------------------------------------------------------------------------------
@@ -933,8 +934,8 @@ void draw_settings_page(UiHost& host) {
             extras_tab(p);
             ImGui::EndTabItem();
         }
-        if (const GamePlay* gp = game_play(); gp && gp->tweaks_tab && ImGui::BeginTabItem("Tweaks")) {   // the game's optional looks (S44 glow)
-            if (gp->tweaks_tab(p.edit)) mark(p);
+        if (const GameSection* gs = game_section(); gs && gs->tab && gs->tab_title && ImGui::BeginTabItem(gs->tab_title)) {   // the game's own tab (settings.h)
+            if (gs->tab(p.edit)) mark(p);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Bindings")) {

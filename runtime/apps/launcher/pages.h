@@ -3,7 +3,7 @@
 #pragma once
 #include <memory>
 
-#include "ui.h"
+#include "nxrt/game/launcher_ui.h"
 
 namespace nxl {
 
@@ -12,7 +12,6 @@ std::unique_ptr<Page> make_extras_page();      // HDR, low latency, frame rate c
 std::unique_ptr<Page> make_controls_page();     // mouse and button prompts                           (page_controls.cpp)
 std::unique_ptr<Page> make_keys_page();         // keyboard and mouse bindings                        (page_keys.cpp)
 std::unique_ptr<Page> make_pad_page();          // controller options and button remapping           (page_pad.cpp)
-void add_fastboot_rows(Form& f);                // start-up and menu tweaks, rows of the Extras tab    (page_fastboot.cpp)
-std::unique_ptr<Page> make_tweaks_page();       // optional looks: the glow colour                   (page_tweaks.cpp)
+// The game's own tabs and Extras rows come from the registered game (launcher_ui.h GameLauncher).
 
 }  // namespace nxl

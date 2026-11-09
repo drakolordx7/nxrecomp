@@ -39,6 +39,11 @@ const char* mode_name(Mode m) {
     return "?";
 }
 
+// A [time] fix switch: `key`, else its old name `alias`, else on.
+static bool fix_flag(const char* key, const char* alias) {
+    return config_get_bool("time", key, config_get_bool("time", alias, true));
+}
+
 Config load_config() {
     Config c;
     std::string m = config_get_str("time", "mode", "real");
@@ -53,11 +58,12 @@ Config load_config() {
     c.smooth = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "smooth", 4), 1, 64));
     c.pace = config_get_bool("time", "pace", true);
     c.movie_real = config_get_bool("time", "movie_real", true);
-    c.fix_friction = config_get_bool("time", "fix_friction", true);
-    c.fix_render_timings = config_get_bool("time", "fix_render_timings", true);
-    c.fix_streaming = config_get_bool("time", "fix_streaming", true);
-    c.fix_budget = config_get_bool("time", "fix_budget", true);
-    c.fix_stuck_tracker = config_get_bool("time", "fix_stuck_tracker", true);
+    // Mechanism names; the first names of the keys (after the game bugs they fixed) still work.
+    c.fix_scaled_float = fix_flag("fix_scaled_float", "fix_friction");
+    c.fix_frame_counter = fix_flag("fix_frame_counter", "fix_render_timings");
+    c.fix_stream_step = fix_flag("fix_stream_step", "fix_streaming");
+    c.fix_scaled_reg = fix_flag("fix_scaled_reg", "fix_budget");
+    c.fix_tick_sampler = fix_flag("fix_tick_sampler", "fix_stuck_tracker");
     c.movie_max = std::clamp(config_get_double("time", "movie_max", 0.5), 0.01, 5.0);
     c.log_every = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "log_every", 0), 0, 1000000));
     c.csv = config_get_str("time", "csv", "");
@@ -159,7 +165,7 @@ struct G {
     // render timings
     bool render_init = false;
     double render_frames = 0;
-    double stuck_acc = 0.0;        // game time since the last stuck-tracker sample
+    double sampler_acc = 0.0;        // game time since the last sampler sample
     uint64_t render_addr = 0;
     double render_wrap = 0;            // the game's wrap of the render-timing counter (Sites::render_counter_wrap)
 
@@ -306,21 +312,21 @@ int hook_mid(::Ctx* c, uint64_t, void* user) {
         case Load::NegStep:
             c->x[reg] = f2u(-dt);
             break;
-        case Load::Budget:
-            if (s.cfg.fix_budget) c->x[reg] = f2u(site.value * scale60(dt));
+        case Load::ScaledReg:
+            if (s.cfg.fix_scaled_reg) c->x[reg] = f2u(site.value * scale60(dt));
             break;
         case Load::ScaledFloat:
-            if (s.cfg.fix_friction) {
+            if (s.cfg.fix_scaled_float) {
                 c->v[reg].u64[1] = 0;
                 c->v[reg].u64[0] = 0;
                 c->v[reg].f32[0] = site.value * scale60(dt);
             }
             break;
         case Load::Stream1:
-            if (s.cfg.fix_streaming) c->x[reg] = f2u(dt);
+            if (s.cfg.fix_stream_step) c->x[reg] = f2u(dt);
             break;
         case Load::Stream2:
-            if (s.cfg.fix_streaming) c->x[reg] = f2u(2.0f * dt);
+            if (s.cfg.fix_stream_step) c->x[reg] = f2u(2.0f * dt);
             break;
     }
     return 0;
@@ -329,7 +335,7 @@ int hook_mid(::Ctx* c, uint64_t, void* user) {
 // ---- NRenderUtilMPT::TickRenderTimings: retail counts one frame per call and stores counter / 60 seconds ---------------------------
 int hook_render_timings(::Ctx* c, uint64_t, void*) {
     G& s = g();
-    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_render_timings || !s.render_addr) return 0;
+    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_frame_counter || !s.render_addr) return 0;
     const float dt = read_dt();
     uint32_t* counter = reinterpret_cast<uint32_t*>(s.render_addr);
     float* secs = reinterpret_cast<float*>(s.render_addr + 4);
@@ -360,18 +366,18 @@ int hook_render_timings(::Ctx* c, uint64_t, void*) {
 // bounding box of those 20. Written for 60 ticks per second the window is 1/3 s; at 240 ticks per second it is 1/12 s, the top of a jump (speed
 // about 1.4 units/s) covers less than the 1/30 unit threshold, the test says "stuck" and ProcessInput calls CPhysicsActorMP1::Stop on the player:
 // vertical speed 0 for one frame, a jump 4 % longer. Taking a sample only when 1/60 s of game time has passed keeps the window as it was made.
-int hook_stuck_add_state(::Ctx*, uint64_t, void*) {
+int hook_tick_sampler(::Ctx*, uint64_t, void*) {
     G& s = g();
-    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_stuck_tracker) return 0;
+    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_tick_sampler) return 0;
     const double dt = read_dt();
     if (dt >= kGameStep * 0.999) {
-        s.stuck_acc = 0.0;
+        s.sampler_acc = 0.0;
         return 0;
     }
-    s.stuck_acc += dt;
-    if (s.stuck_acc < static_cast<double>(kGameStep) - 1e-5) return 1;        // too early for a sample: handled, x0 (this) is the result
-    s.stuck_acc -= kGameStep;
-    if (s.stuck_acc > kGameStep) s.stuck_acc = 0.0;
+    s.sampler_acc += dt;
+    if (s.sampler_acc < static_cast<double>(kGameStep) - 1e-5) return 1;        // too early for a sample: handled, x0 (this) is the result
+    s.sampler_acc -= kGameStep;
+    if (s.sampler_acc > kGameStep) s.sampler_acc = 0.0;
     return 0;
 }
 
@@ -405,7 +411,7 @@ void add_hooks(const Config& c) {
         s.hooks.push_back(hook_add_mid(b + sites->mids[i].offset, &hook_mid, const_cast<MidSite*>(&sites->mids[i])));
     E(sites->tick_render_timings, &hook_render_timings);
     E(sites->movie_update, &hook_movie);
-    E(sites->per_tick_sampler, &hook_stuck_add_state);
+    E(sites->per_tick_sampler, &hook_tick_sampler);
 }
 
 }  // namespace
@@ -444,9 +450,9 @@ void install(const Config& cfg) {
     }
     if (cfg.mode != Mode::Off || cfg.off_rate > 0.0) add_hooks(cfg);
     s.installed = true;
-    NXLOG_I(kTag, "mode %s (%s), rate %.0f, clamp %.0f..%.0f Hz, smooth %d, pace %d, fixes: friction %d render_timings %d streaming %d budget %d stuck_tracker %d movie %d, %zu hooks at base 0x%llx",
+    NXLOG_I(kTag, "mode %s (%s), rate %.0f, clamp %.0f..%.0f Hz, smooth %d, pace %d, fixes: scaled_float %d frame_counter %d stream_step %d scaled_reg %d tick_sampler %d movie %d, %zu hooks at base 0x%llx",
             mode_name(cfg.mode), s.det ? "deterministic" : "host clock", cfg.mode == Mode::Fixed ? cfg.rate : 0.0, cfg.min_rate, cfg.max_rate, cfg.smooth,
-            cfg.pace, cfg.fix_friction, cfg.fix_render_timings, cfg.fix_streaming, cfg.fix_budget, cfg.fix_stuck_tracker, cfg.movie_real, s.hooks.size(),
+            cfg.pace, cfg.fix_scaled_float, cfg.fix_frame_counter, cfg.fix_stream_step, cfg.fix_scaled_reg, cfg.fix_tick_sampler, cfg.movie_real, s.hooks.size(),
             static_cast<unsigned long long>(cfg.game_base));
 }
 

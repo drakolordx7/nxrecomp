@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxl {
 

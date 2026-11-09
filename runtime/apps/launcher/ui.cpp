@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "ui.h"
+#include "nxrt/game/launcher_ui.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <utility>
 
 #include "game_info.h"
+#include "nxrt/game.h"
 #include "keymap_win.h"
 #include "pad_capture.h"
 
 namespace nxl {
+
+const GameLauncher* game_launcher() { return nxrt::game::info().launcher; }
 
 namespace {
 

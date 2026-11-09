@@ -8,6 +8,7 @@
 
 #include "nxrt/config.h"
 #include "nxrt/game.h"
+#include "nxrt/game/settings.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
@@ -233,12 +234,15 @@ bool supported_or_sibling(Language want, uint32_t mask, Language& out) {
     return false;
 }
 
-// The player's pick in the play-mode settings file ([tweaks] language of controls.ini, set from the launcher), or "" when there is none. Read
+// The player's pick in the play-mode settings file (the game's own section of controls.ini, key language, set from the launcher), or "" when there is none. Read
 // with the config layer's ini parser (nxrt/config.h) so the language is known before the play-mode settings are loaded; the file is named
 // by [play] controls, as in play mode.
 std::string controls_language() {
     const std::string rel = config_get_str("play", "controls", "controls.ini");
-    return trim(config_file_get_str(rel.c_str(), "tweaks", "language", ""));
+    // The section is the game's own (nxrt/game/settings.h): a game without one has no language pick in the file.
+    const play::GameSection* gs = game::info().settings;
+    if (!gs || !gs->name || !*gs->name) return "";
+    return trim(config_file_get_str(rel.c_str(), gs->name, "language", ""));
 }
 
 uint32_t parse_language_mask(const std::string& s, uint32_t def) {
@@ -300,7 +304,7 @@ TitleProfile load_profile() {
     {
         std::string from = "[system] language";
         std::string want = trim(config_get_str("system", "language", ""));
-        if (want.empty() || lower(want) == "auto") want = controls_language(), from = "controls.ini [tweaks] language";
+        if (want.empty() || lower(want) == "auto") want = controls_language(), from = "controls.ini language";
         Language l = Language::AmericanEnglish, pick;
         bool named = !want.empty() && lower(want) != "auto" && parse_language(want, l);
         if (!named) from = windows_language(l) ? "Windows" : "default";

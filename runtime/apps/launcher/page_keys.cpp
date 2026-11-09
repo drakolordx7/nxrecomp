@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "bindings_edit.h"
+#include "game_info.h"
 #include "pages.h"
 
 #pragma comment(lib, "uxtheme.lib")
@@ -18,6 +19,12 @@
 namespace nxl {
 
 namespace {
+
+// The sentence that names the keys the Keyboard tab leaves alone: the game's (GameVocabulary::keys_note), or nothing.
+std::wstring untouched_note() {
+    const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
+    return v ? game_text(v->keys_note, L"") : std::wstring();
+}
 
 using nxrt::play::Act;
 using nxrt::play::InputId;
@@ -62,8 +69,7 @@ public:
     bool command(int id, int code, HWND) override {
         if (code != BN_CLICKED) return false;
         if (id == reset_id_) {
-            if (message(host()->window(), L"Reset the keys on this tab to the factory settings? Only the keys shown here are reset. "
-                                          L"The menu, map, gameplay, morph ball and scan keys are not touched.",
+            if (message(host()->window(), L"Reset the keys on this tab to the factory settings? Only the keys shown here are reset. " + untouched_note(),
                         MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
                 return true;
             reset_shown_bindings(edit_);

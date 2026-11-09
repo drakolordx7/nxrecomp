@@ -198,7 +198,7 @@ public:
         const RECT r = f.custom_row(nullptr, 26);
         prep_button_ = f.create(L"BUTTON", L"Prepare shaders", BS_PUSHBUTTON | WS_TABSTOP, r.left, r.top, host()->env().S(150),
                                 host()->env().S(26), &prep_id_);
-        add_fastboot_rows(f);
+        if (const GameLauncher* gl = game_launcher(); gl && gl->extras_rows) gl->extras_rows(f);   // the game's rows
     }
 
     void load(const Settings& s) override {

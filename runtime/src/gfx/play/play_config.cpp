@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Play mode: factory settings and the settings file (reader and writer). The file format is described in play_types.h.
-#include "play_types.h"
+#include "nxrt/game/play_types.h"
 
 #include <cctype>
 #include <cerrno>
@@ -149,7 +149,7 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Tweaks, Bindings };
+enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Game, Bindings };
 
 // The factory-defaults revision this build writes ([meta] defaults_rev) and the factory bindings an older controls.ini does not have: the
 // game's (play_types.h GameDefaults).
@@ -158,7 +158,7 @@ int defaults_rev() {
     return d ? d->defaults_rev : 0;
 }
 
-const char* sec_label(Sec s) {
+std::string sec_label(Sec s) {
     switch (s) {
         case Sec::Meta: return "[meta]";
         case Sec::Mouse: return "[mouse]";
@@ -174,7 +174,10 @@ const char* sec_label(Sec s) {
         case Sec::Switch: return "[switch]";
         case Sec::Aim: return "[aim]";
         case Sec::Camera: return "[camera]";
-        case Sec::Tweaks: return "[tweaks]";
+        case Sec::Game: {
+            const GameSection* gs = game_section();
+            return std::string("[") + (gs ? gs->name : "") + "]";
+        }
         default: return "";
     }
 }
@@ -310,13 +313,12 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "free_lock_margin") return set_real(0.0, 0.4, &s->aim.free_lock_margin);
             break;
         case Sec::Camera:
-            if (k == "gun_drives_view") return set_bool(&s->camera.gun_drives_view);
+            if (k == key_view_sway() || k == "view_sway") return set_bool(&s->camera.view_sway);
             break;
-        case Sec::Tweaks: {
-            bool mine = false;
-            if (!fastboot_apply(k, v, &s->fastboot, &mine, msg)) return false;
-            if (mine) return true;
-            return apply_tweaks_key(k, v, &s->tweaks, known, msg);
+        case Sec::Game: {
+            const GameSection* gs = game_section();
+            if (!gs || !gs->apply) break;
+            return gs->apply(s->game, k, v, known, msg);
         }
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
@@ -509,7 +511,7 @@ Sec fixed_sec(const std::string& key) {
     if (key == "fps") return Sec::Fps;
     if (key == "aim") return Sec::Aim;
     if (key == "camera") return Sec::Camera;
-    if (key == "tweaks") return Sec::Tweaks;
+    if (const GameSection* gs = game_section(); gs && gs->name && *gs->name && key == gs->name) return Sec::Game;
     if (key == "switch") return Sec::Switch;
     return Sec::Unknown;
 }
@@ -730,6 +732,7 @@ bool parse_lock_mode(const std::string& s, LockMode* out) {
 }
 
 const GameDefaults* game_defaults() { return game::info().play_defaults; }
+const GameSection* game_section() { return game::info().settings; }
 
 const char* default_settings_text() {
     const GameDefaults* d = game_defaults();
@@ -782,10 +785,11 @@ std::string format_settings(const Settings& s) {
     kv("lock_mode", lock_mode_name(s.aim.lock_mode));
     kv("free_lock_margin", num(s.aim.free_lock_margin));
     o += "\n[camera]\n";
-    kv("gun_drives_view", flag(s.camera.gun_drives_view));
-    o += "\n[tweaks]\n";
-    fastboot_format(s.fastboot, &o);
-    o += format_tweaks(s.tweaks);
+    kv(key_view_sway(), flag(s.camera.view_sway));
+    if (const GameSection* gs = game_section(); gs && gs->name && *gs->name && gs->format) {
+        o += std::string("\n[") + gs->name + "]\n";
+        gs->format(s.game, &o);
+    }
 
     o += "\n[pad]\n";
     kv("label_abxy", flag(s.pad.label_abxy));

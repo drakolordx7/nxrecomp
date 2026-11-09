@@ -8,10 +8,11 @@
 #include <commctrl.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "play/play_types.h"
+#include "nxrt/game/play_types.h"
 
 namespace nxl {
 
@@ -144,6 +145,16 @@ private:
     int col_ = 0;
     int row_h_ = 0;   // tallest control of the current row (pixels)
 };
+
+// What a game adds to the launcher (nxrt/game.h Info::launcher): tabs after the base's own and rows at the end of the Extras tab. A game
+// without one gets only the base's pages. The pages are compiled into the launcher exe by the game module (its launcher library).
+using PageFactory = std::unique_ptr<Page> (*)();
+struct GameLauncher {
+    const PageFactory* tabs = nullptr;
+    unsigned tab_count = 0;
+    void (*extras_rows)(Form& f) = nullptr;
+};
+const GameLauncher* game_launcher();    // the registered game's, or nullptr
 
 // Looks at the system for a pad (XInput); cheap, no state.
 bool xinput_pad_connected();

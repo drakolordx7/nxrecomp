@@ -8,15 +8,14 @@ set(NXRT_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/apps/launcher")
 add_library(nxrt_launcher_core STATIC
     "${NXRT_LAUNCHER_DIR}/keymap_win.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp"
     "${NXRT_LAUNCHER_DIR}/pad_capture.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_types.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_config.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_fastboot.cpp")
-target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx" "${NXRT_LAUNCHER_DIR}")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_types.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/play/play_config.cpp")
+# The public SDK (include/nxrt/game) is all a game module sees; the base's own tests reach the private headers through their own INCLUDES.
+target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx" "${NXRT_LAUNCHER_DIR}")
 target_compile_definitions(nxrt_launcher_core PUBLIC UNICODE _UNICODE)
 target_link_libraries(nxrt_launcher_core PUBLIC SDL3::SDL3-static shell32 shlwapi)
 set(NXRT_LAUNCHER_APP_SOURCES
     "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
-    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/page_fastboot.cpp"
-    "${NXRT_LAUNCHER_DIR}/page_tweaks.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
+    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
 
 # nxrt_add_launcher(<target> [VERSION <v>] [GAME_LIB <lib> REGISTER <function>] [RC <file>] [OUTPUT_NAME <name>] [OUTPUT_DIR <dir>])
 # The launcher exe. VERSION is the release version it shows ("dev" for local builds). GAME_LIB/REGISTER: the game module's data library and
@@ -49,5 +48,5 @@ nxrt_add_launcher(nxrt_launcher)
 if(NXRT_BUILD_TESTS)
     file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/*.cpp")
     nxrt_add_test_exe(nxrt_launcher_tests SOURCES ${NXRT_LAUNCHER_TEST_SOURCES} LINK nxrt_launcher_core nxrt_fixture_game
-                      REGISTER nxrt_register_fixture_game)
+                      REGISTER nxrt_register_fixture_game INCLUDES "${NXRT_LAUNCHER_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx")
 endif()

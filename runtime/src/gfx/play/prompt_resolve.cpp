@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "prompt_resolve.h"
+#include "nxrt/game/prompt_resolve.h"
 
 #include <cctype>
 #include <vector>

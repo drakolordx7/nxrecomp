@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Play mode camera look maths, see play_camlook.h.
-#include "play_camlook.h"
+#include "nxrt/game/play_camlook.h"
 
 #include <algorithm>
 #include <cmath>

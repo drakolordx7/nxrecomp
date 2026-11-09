@@ -146,7 +146,7 @@ The `[nvn]` keys are read in two places: the player and tuning settings by `src/
 | `title` | `main_thread_stack` | `1048576` (0x100000) | `NXRT_TITLE_MAIN_THREAD_STACK` | `src/services/common.cpp` | Main thread stack size, in bytes (main.npdm). |
 | `title` | `main_thread_priority` | `44` | `NXRT_TITLE_MAIN_THREAD_PRIORITY` | `src/services/common.cpp` | Main thread priority (main.npdm). |
 | `title` | `main_thread_core` | `0` | `NXRT_TITLE_MAIN_THREAD_CORE` | `src/services/common.cpp` | Main thread processor number (main.npdm). |
-| `system` | `language` | `auto` | `NXRT_SYSTEM_LANGUAGE` | `src/services/common.cpp` | Console language by name, e.g. `Japanese`. `auto` or empty: the player's pick in controls.ini (`[tweaks] language`, set in the launcher; the file named by `[play] controls`, read with the config layer's own ini parser by `config_file_get_str`), else the Windows display language. A language the title lacks falls to its nearest sibling (British for American English, and so on), else American English. The log says which language was used and where it came from. |
+| `system` | `language` | `auto` | `NXRT_SYSTEM_LANGUAGE` | `src/services/common.cpp` | Console language by name, e.g. `Japanese`. `auto` or empty: the player's pick in controls.ini (the game's own section of controls.ini, key `language`: Metroid's `[tweaks] language`, set in the launcher; the file named by `[play] controls`, read with the config layer's own ini parser by `config_file_get_str`), else the Windows display language. A language the title lacks falls to its nearest sibling (British for American English, and so on), else American English. The log says which language was used and where it came from. |
 | `system` | `region` | empty (USA, 1) | `NXRT_SYSTEM_REGION` | `src/services/common.cpp` | Region by name (`Japan`, `USA`, `Europe`, `Australia`, `HongKongTaiwanKorea`, `China`) or number (Japan 0 to China 5). Empty: USA. |
 | `system` | `firmware` | `12.1.0` | `NXRT_SYSTEM_FIRMWARE` | `src/services/common.cpp` | Firmware version that `set:sys` GetFirmwareVersion reports. |
 | `system` | `nickname` | `nxrt` | `NXRT_SYSTEM_NICKNAME` | `src/services/common.cpp` | Console nickname. |
@@ -207,11 +207,11 @@ The `[nvn]` keys are read in two places: the player and tuning settings by `src/
 | `time` | `off_rate` | `0` | `NXRT_TIME_OFF_RATE` | `src/timestep/timestep.cpp` | `off` mode only: hold the frame to this rate and keep the retail 1/60 step. A diagnostic: the game then runs `off_rate / 60` times faster. |
 | `time` | `movie_real` | `true` | `NXRT_TIME_MOVIE_REAL` | `src/timestep/timestep.cpp` | The movie list's clock is real elapsed time (up to `movie_max` per call) instead of the game's step. |
 | `time` | `movie_max` | `0.5` | `NXRT_TIME_MOVIE_MAX` | `src/timestep/timestep.cpp` | Longest delta handed to the movie list in one call, seconds. |
-| `time` | `fix_friction` | `true` | `NXRT_TIME_FIX_FRICTION` | `src/timestep/timestep.cpp` | Scale the in-air walk friction constant (3.5 per 1/60 s) of `CPlayerMP1::GetDampedClampedVelocityWR` by the step. |
-| `time` | `fix_render_timings` | `true` | `NXRT_TIME_FIX_RENDER_TIMINGS` | `src/timestep/timestep.cpp` | `NRenderUtilMPT::TickRenderTimings` (texture scroll, UV animation, water) advances by the step instead of one frame per call. |
-| `time` | `fix_streaming` | `true` | `NXRT_TIME_FIX_STREAMING` | `src/timestep/timestep.cpp` | Texture streaming ages its entries by the step instead of 1/60. |
-| `time` | `fix_budget` | `true` | `NXRT_TIME_FIX_BUDGET` | `src/timestep/timestep.cpp` | The 14 ms background-work budget after the tick scales with the step. |
-| `time` | `fix_stuck_tracker` | `true` | `NXRT_TIME_FIX_STUCK_TRACKER` | `src/timestep/timestep.cpp` | The player's stuck tracker samples once per 1/60 s of game time instead of once per tick. Above 60 ticks per second, its 20-sample window was too short, so the top of a jump counted as stuck and the vertical speed was zeroed for one frame. |
+| `time` | `fix_scaled_float` | `true` | `NXRT_TIME_FIX_SCALED_FLOAT` | `src/timestep/timestep.cpp` | Per-tick float constants loaded into a vector register (a game's per-tick damping, `Load::ScaledFloat`) are scaled by the step. Old name `fix_friction` still works. |
+| `time` | `fix_frame_counter` | `true` | `NXRT_TIME_FIX_FRAME_COUNTER` | `src/timestep/timestep.cpp` | The per-frame counter (texture scroll, UV animation, water; `Sites::tick_render_timings`) advances by the step instead of one frame per call. Old name `fix_render_timings` still works. |
+| `time` | `fix_stream_step` | `true` | `NXRT_TIME_FIX_STREAM_STEP` | `src/timestep/timestep.cpp` | Texture streaming ages its entries by the step instead of 1/60 (`Load::Stream1`, `Stream2`). Old name `fix_streaming` still works. |
+| `time` | `fix_scaled_reg` | `true` | `NXRT_TIME_FIX_SCALED_REG` | `src/timestep/timestep.cpp` | Per-tick float constants loaded into a general register (a background-work budget, `Load::ScaledReg`) scale with the step. Old name `fix_budget` still works. |
+| `time` | `fix_tick_sampler` | `true` | `NXRT_TIME_FIX_TICK_SAMPLER` | `src/timestep/timestep.cpp` | A per-tick sampler (`Sites::per_tick_sampler`, a rolling window of one sample per tick) takes one sample per 1/60 s of game time instead of one per tick; above 60 ticks per second its window was too short. Old name `fix_stuck_tracker` still works. |
 | `time` | `log_every` | `0` | `NXRT_TIME_LOG_EVERY` | `src/timestep/timestep.cpp` | One log line of frame statistics every N frames (0 = off). |
 | `time` | `csv` | empty | `NXRT_TIME_CSV` | `src/timestep/timestep.cpp` | Write one line per frame: frame, host time, measured elapsed, step, sum of steps, movie frames delivered, render-timing clock. |
 | `time` | `game_base` | `0x7100000000` | `NXRT_TIME_GAME_BASE` | `src/timestep/timestep.cpp` | Guest address of the main module (the hooks are keyed by it). |
@@ -270,11 +270,13 @@ To change a key, add a line `Key = action` to `[bindings.all]` (every context) o
 
 `[aim] free_lock_margin`, default `0.15`, range `0` to `0.4`: the share of the screen kept clear along every edge while `lock_mode = free` holds the view. `0` lets the target reach the edge; `0.15` keeps it in the middle 70 percent.
 
-`[camera] gun_drives_view`, default `1`. `1` is the game's own behaviour: the arm cannon is fixed to the view, so its idle drift, walking bob and landing dip move the whole view. `0` makes the view follow only the mouse and the stick. Those movements move the gun on screen instead, and the view stays still. Takes effect at once, no restart needed. Set it from the F1 page or the launcher, where it shows as "Steady camera" (ticked means `0`).
+`[camera] view_sway` (a game may name the key itself: Metroid Prime Remastered writes and reads `gun_drives_view`; the generic name is read too), default `1`. `1` is the game's own behaviour: the held item (Metroid: the arm cannon) is fixed to the view, so its idle drift, walking bob and landing dip move the whole view. `0` makes the view follow only the mouse and the stick. Those movements move the gun on screen instead, and the view stays still. Takes effect at once, no restart needed. Set it from the F1 page or the launcher, where it shows as "Steady camera" (ticked means `0`).
 
 Checked in a real game run with `tools/test/keys_check.py` (warp to `tallon_canyon_cavern`, grant the other beams and visors, press each key and read the game's own beam and visor numbers): `1` to `4` give power, wave, ice and plasma, the wheel steps wave, ice, wave, and `5` to `8` give combat, scan, thermal and x-ray.
 
-### Start-up and menus (`controls.ini`, `[tweaks]`)
+### Start-up and menus (`controls.ini`, `[tweaks]`: Metroid Prime Remastered's own section)
+
+The `[tweaks]` section is not the base's: the game registers it (`nxrt/game/settings.h`, `Info::settings`; Metroid: `games/mpr/runtime/mpr_settings.cpp`), with its F1 tab and launcher pages. A game without one has no such section, tab or page, and `[system] language` falls back to the Windows language. The keys below are Metroid's.
 
 All off by default; with them off the game starts and plays as it always did. They are on the F1 page (Extras tab, "Start-up and menus") and on the launcher's Extras tab. See `docs/S46.md`.
 

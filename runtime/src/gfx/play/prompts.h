@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-#include "prompt_resolve.h"
+#include "nxrt/game/prompt_resolve.h"
 
 namespace nxrt::play {
 

@@ -4,7 +4,8 @@
 #   <id>            the game exe (apps/game/game_main.cpp) linked with the lifted libraries (LIB_DIR/<id>_<module>.lib, as the recomp
 #                   build writes them; default <game dir>/work/build/<id>) and the game module nxrt_game_<id> (NXRT_GAME_DIRS must list
 #                   the game folder), with the resources from apps/game/game.rc.in + game.manifest.in
-#   <id>_launcher   the launcher (cmake/launcher.cmake) branded by nxrt_game_<id>_data, with the same resource templates
+#   <id>_launcher   the launcher (cmake/launcher.cmake) branded by nxrt_game_<id>_data (or nxrt_game_<id>_launcher, when the game has
+#                   launcher pages of its own), with the same resource templates
 # VERSION is the release version ("0.1.0"; default "dev") shown by both programs and in their file properties. NXRT_RELEASE (runtime
 # CMakeLists.txt) builds the package flavour: a Windows GUI program that looks for ./exefs, with no build paths in it.
 # Both land in the build folder's top level, next to the ASTC decoder DLLs and fonts\ (the shared-font fallback).
@@ -109,7 +110,16 @@ function(nxrt_add_game_exe id)
         "${NXRT_SOURCE_DIR}/assets/fonts/DejaVuSans.ttf" "$<TARGET_FILE_DIR:${id}>/fonts/DejaVuSans.ttf")
 
     # The launcher.
-    nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB nxrt_game_${id}_data REGISTER nxrt_register_game_${id}_data
+    # A game with launcher pages of its own (nxrt/game/launcher_ui.h GameLauncher) has a library nxrt_game_<id>_launcher with its
+    # register function nxrt_register_game_<id>_launcher; the others brand the launcher with the data library alone.
+    if(TARGET nxrt_game_${id}_launcher)
+        set(_launcher_lib nxrt_game_${id}_launcher)
+        set(_launcher_reg nxrt_register_game_${id}_launcher)
+    else()
+        set(_launcher_lib nxrt_game_${id}_data)
+        set(_launcher_reg nxrt_register_game_${id}_data)
+    endif()
+    nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB ${_launcher_lib} REGISTER ${_launcher_reg}
                       RC "${gen}/${launcher_stem}.rc" OUTPUT_NAME "${launcher_stem}" OUTPUT_DIR "${out}")
     set_source_files_properties("${gen}/${launcher_stem}.rc" PROPERTIES OBJECT_DEPENDS "${gen}/${launcher_stem}.manifest")
 endfunction()
