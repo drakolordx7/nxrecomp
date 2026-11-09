@@ -9,6 +9,7 @@
 #include "nxrt/lowlat.h"
 #include "extras/output_pass.h"
 #include "nxrt/frame_limiter.h"
+#include "nxrt/pacing.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nvn_debug.h"
@@ -40,7 +41,7 @@ void present_on_render_thread(Window* w, int index) {
     if (FrameLimiter* lim = limiter()) {
         // the pre-frame hook (present mode changes) always runs here; the wait runs here only when no frame boundary has paced this present (S18)
         lim->run_pre_frame_hook();
-        if (!(extras::pace_in_main() && extras::pace_boundary_consume())) { NXFT("limiter"); lim->begin_frame_nohook(); }
+        if (!(pacing::in_main() && pacing::boundary_consume())) { NXFT("limiter"); lim->begin_frame_nohook(); }
     }
     if (debug_on()) {   // [nvn] shot_frames (nvn_debug.h): lets a run be compared frame by frame against a reference capture
         const int64_t n = static_cast<int64_t>(counters().presents.load());

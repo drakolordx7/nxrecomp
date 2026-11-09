@@ -44,6 +44,7 @@
 #include "nxrt/log.h"
 #include "nxrt/nvn_backend.h"
 #include "nxrt/overlay.h"
+#include "nxrt/pacing.h"
 #include "nxrt/platform.h"
 #include "nxrt/runtime.h"
 #include "nxrt/timestep.h"
@@ -308,18 +309,8 @@ const char* window_mode_name(platform::FullscreenMode m) {
 }
 
 void apply_frame_cap(const Settings& s) {
-    G& st = g();
-    double cap = s.display.fps_cap;
-    if (s.display.vsync) {
-        // The display paces; a cap only matters when it is below the refresh rate. With no cap below the refresh rate, the frame limiter still keeps just
-        // under it (S21, [latency] vsync_cap): the game otherwise renders as fast as the swapchain takes frames, the queue behind the display
-        // fills (three images) and every picture is shown one to two frames after it was simulated; just under the refresh rate the queue stays empty.
-        const float hz = st.window ? platform::display_refresh_hz() : 0.f;
-        static const bool vsync_cap = config_get_bool("latency", "vsync_cap", true);
-        if (cap <= 0 || (hz > 0 && cap >= hz)) cap = (vsync_cap && hz > 0) ? static_cast<double>(hz) * 0.9995 : 0;
-    }
-    st.limiter.set_target_fps(cap);
-    extras::lowlat_note_cap(cap);     // Reflex / Anti-Lag pace to the same cap (remembered for a renderer that is created later)
+    const float hz = s.display.vsync && g().window ? platform::display_refresh_hz() : 0.f;
+    pacing::set_cap(pacing::frame_cap(s.display.fps_cap, s.display.vsync, hz));
 }
 
 void pre_frame(void*) {
@@ -635,12 +626,12 @@ void on_frame(double step_seconds) {
     ft::mark("main.update");
     // frame pacing (S18): the limiter waits here, before the input is sampled, so the picture shown is the one simulated one render time
     // earlier. The wait for frames still in flight comes first, then the limiter's schedule.
-    if (extras::pace_in_main()) {
+    if (pacing::in_main()) {
         extras::LowLatency* ll = extras::lowlat();
         if (ll) ll->wait_in_flight();
         // With Reflex on and a frame cap, the Reflex sleep that follows is the limiter (minimum interval between simulation starts)
         if (!(ll && ll->paces_frames())) { NXFT("limiter.main"); st.limiter.begin_frame_nohook(); }
-        extras::pace_boundary_done();
+        pacing::boundary_done();
     }
     if (extras::LowLatency* ll = extras::lowlat()) {
         ll->sim_begin();
@@ -940,6 +931,7 @@ bool load() {
     G& st = g();
     if (st.loaded) return st.load_ok;
     st.loaded = true;
+    pacing::add_cap_listener([](void* limiter, double fps) { static_cast<FrameLimiter*>(limiter)->set_target_fps(fps); }, &st.limiter);
     st.path = config_get_str("play", "controls", "controls.ini");
     std::string err;
     const bool existed = GetFileAttributesA(st.path.c_str()) != INVALID_FILE_ATTRIBUTES;

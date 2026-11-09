@@ -77,17 +77,6 @@ private:
     bool enabled_ = false;
 };
 
-// Frame pacing placement (S18, [latency] pace = main | present, env NXRT_LATENCY_PACE; default main). With "main" the frame limiter waits at the game's frame
-// boundary, before the input is sampled, and not inside the present call: the frame that is shown was simulated one render time before, not one
-// queue depth before. The presenting thread still runs the limiter for a present that no boundary paced (loading screens, movies).
-bool pace_in_main();
-void pace_boundary_done();        // main thread: the boundary hook ran the limiter wait for the frame it starts
-bool pace_boundary_consume();     // presenting thread: true (and clears one) if a boundary wait covers this present, so it must not wait again
-
-// The frame cap (0 = none), from the settings. Remembered even before the renderer exists, so an instance created later starts with it (before this, a Reflex
-// sleep mode set at swapchain creation had a minimum interval of 0 until the next settings change); forwarded to the running instance.
-void lowlat_note_cap(double fps);
-
 // The instance of the running renderer (set by the renderer when it creates one; null otherwise). Hooks and the replay code go through it.
 LowLatency* lowlat();
 void lowlat_set(LowLatency* l);

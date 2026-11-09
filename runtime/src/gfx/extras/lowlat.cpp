@@ -13,6 +13,7 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "nxrt/pacing.h"
 #include "ab_windows.h"
 #include "nvn/nvn_debug.h"
 
@@ -21,9 +22,8 @@ namespace {
 constexpr const char* kTag = "lowlat";
 std::atomic<LowLatency*> g_instance{nullptr};
 std::atomic<uint64_t (*)()> g_backlog_fn{nullptr};
-std::atomic<int> g_boundary_paced{0};
-std::atomic<double> g_cap_fps{0};
 
+void on_cap(void* user, double fps) { static_cast<LowLatency*>(user)->set_cap_fps(fps); }
 uint64_t now_us() { return FrameLimiter::now_ns() / 1000ull; }
 double ms_since(uint64_t t_ns) { return static_cast<double>(FrameLimiter::now_ns() - t_ns) * 1e-6; }
 }  // namespace
@@ -140,31 +140,15 @@ struct LowLatency::Impl {
     }
 };
 
-bool pace_in_main() {
-    static const bool v = config_get_str("latency", "pace", "main") != "present";
-    return v;
-}
-void pace_boundary_done() { g_boundary_paced.fetch_add(1); }
-bool pace_boundary_consume() {
-    int n = g_boundary_paced.load();
-    while (n > 0) {
-        if (g_boundary_paced.compare_exchange_weak(n, n - 1)) return true;
-    }
-    return false;
-}
-
 void lowlat_set_backlog_fn(uint64_t (*fn)()) { g_backlog_fn.store(fn); }
-void lowlat_note_cap(double fps) {
-    g_cap_fps.store(fps > 0 ? fps : 0);
-    if (LowLatency* l = g_instance.load(std::memory_order_acquire)) l->set_cap_fps(fps);
-}
 LowLatency* lowlat() { return g_instance.load(std::memory_order_acquire); }
 void lowlat_set(LowLatency* l) { g_instance.store(l, std::memory_order_release); }
 
 LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
     Impl& s = *impl_;
     s.dev = &dev;
-    s.cap_fps = g_cap_fps.load();
+    s.cap_fps = pacing::cap();
+    pacing::add_cap_listener(&on_cap, this);
     s.cfg = settings().latency;
     const gfx::DeviceFeatures& f = dev.features();
     if (s.cfg.mode != LatencyMode::Off) {
@@ -174,7 +158,7 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
     }
     // Boost is a Reflex setting; with Anti-Lag it behaves as On. Auto and On both use whichever backend exists.
     enabled_ = backend_ != Backend::None;
-    s.paced = s.cfg.mode != LatencyMode::Off || pace_in_main();
+    s.paced = s.cfg.mode != LatencyMode::Off || pacing::in_main();
     {   // test aid, not a user setting
         const double ab_s = nvn::be::nvn_debug().latency_ab_toggle_s;
         const uint64_t now = FrameLimiter::now_ns();
@@ -182,7 +166,7 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
         s.ab.entered(now);
     }
     s.active = enabled_ || s.paced || s.cfg.log_timings;
-    NXLOG_I(kTag, "frame pacing: %s (frames_ahead %d)", pace_in_main() ? "limiter at the frame boundary" : "limiter in the present call", s.cfg.frames_ahead);
+    NXLOG_I(kTag, "frame pacing: %s (frames_ahead %d)", pacing::in_main() ? "limiter at the frame boundary" : "limiter in the present call", s.cfg.frames_ahead);
     if (enabled_) {
         s.sci.latencyModeEnable = s.reflex ? VK_TRUE : VK_FALSE;
         if (s.reflex) {
@@ -202,6 +186,7 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
 }
 
 LowLatency::~LowLatency() {
+    pacing::remove_cap_listener(&on_cap, this);
     if (g_instance.load() == this) g_instance.store(nullptr);
     if (impl_) {
         if (impl_->sleep_sem) {
@@ -351,9 +336,8 @@ void LowLatency::input_sample() {
 }
 
 bool LowLatency::paces_frames() const {
-    static const bool keep_limiter = config_get_bool("latency", "reflex_limiter", false);
     const Impl& s = *impl_;
-    if (keep_limiter || !s.reflex || !enabled_) return false;
+    if (pacing::config().reflex_limiter || !s.reflex || !enabled_) return false;
     std::lock_guard<std::mutex> lk(const_cast<std::mutex&>(s.mu));
     return s.mode_set && s.live_on && s.cap_fps > 0;
 }

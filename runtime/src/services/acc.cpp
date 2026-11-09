@@ -119,8 +119,7 @@ std::shared_ptr<ipc::Service> make_profile(const Uid& u) {
 }
 
 // [acc] network_account (default false): the user has a Nintendo network service account. The id token request then succeeds and
-// LoadIdTokenCache hands out a stand-in token, for titles that need it before they use their own servers (one online title starts its socket
-// manager only after the token is loaded). The token is not a valid Nintendo token: only a local server will take it.
+// LoadIdTokenCache hands out a stand-in token, for titles that need it before they use their own servers. The token is not a valid Nintendo token: only a local server will take it.
 bool network_account() { return config_get_bool("acc", "network_account", false); }
 
 // IAsyncContext: an operation that needs the network. It is done at once and failed, as nifm fails with no network (ScarletNX); with
@@ -163,7 +162,7 @@ std::shared_ptr<ipc::Service> make_manager(const Uid& u) {
                                         static_cast<unsigned long long>(u.hi ^ u.lo));
             const ipc::Buffer out = req.out_buf(0);
             const uint32_t len = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(n), out.size));
-            // Copy the terminating NUL too when it fits: titles read the buffer as a C string (one title sent bytes past the token).
+            // Copy the terminating NUL too when it fits: titles read the buffer as a C string.
             const uint64_t copy = std::min<uint64_t>(static_cast<uint64_t>(n) + 1, out.size);
             if (out.addr && copy) std::memcpy(reinterpret_cast<void*>(static_cast<uintptr_t>(out.addr)), tok, copy);
             rsp.push<uint32_t>(len);
