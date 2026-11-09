@@ -207,7 +207,6 @@ void test_fileio(const std::string& root) {
     }
     CHECK(same_content(o, "new"));
 
-    // Disk space and path helpers.
     CHECK(free_disk_bytes(root) > 0);
     CHECK(free_disk_bytes(path_join(root, "no\\such\\deep\\folder")) > 0);
     CHECK_EQ(path_join("D:\\a", "b.txt"), std::string("D:\\a\\b.txt"));

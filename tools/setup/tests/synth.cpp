@@ -238,7 +238,6 @@ std::vector<uint8_t> synth_romfs(const SynthFiles& files) {
     std::fill(img.begin() + dir_hash_off, img.begin() + dir_hash_off + dir_hash_size, uint8_t(0xFF));
     std::fill(img.begin() + file_hash_off, img.begin() + file_hash_off + file_hash_size, uint8_t(0xFF));
 
-    // Folder entries: links first (sibling links are filled in below), then name.
     for (size_t i = 0; i < nd; ++i) {
         const DirNode& d = dirs[i];
         const size_t p = size_t(dir_meta_off + doff[i]);
@@ -254,7 +253,6 @@ std::vector<uint8_t> synth_romfs(const SynthFiles& files) {
         for (size_t j = 0; j + 1 < d.dirs.size(); ++j)
             put32(img, size_t(dir_meta_off + doff[d.dirs[j]]) + 0x04, uint32_t(doff[d.dirs[j + 1]]));
 
-    // File entries and their data.
     for (size_t i = 0; i < nf; ++i) {
         const FileNode& f = fnodes[i];
         const size_t p = size_t(file_meta_off + foff[i]);

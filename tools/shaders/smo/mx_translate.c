@@ -185,7 +185,6 @@ static const char *FLOW(Mx *e, unsigned t) {
 static void setcc_int(Mx *e, const char *res) { e->uses_cc = 1; emit(e, " cz = %s == 0u; cs = int(%s) < 0; ccf = false; cov = false;", res, res); }
 
 /* ---------------------------------------------------------------- results */
-/* float result with optional saturation and condition code */
 static void fres(Mx *e, uint64_t i, const char *expr, int sat, int cc) {
     emit(e, "float f = %s;", expr);
     if (sat) emit(e, " f = clamp(f, 0.0, 1.0);");
@@ -267,7 +266,6 @@ static int tex_unit(Mx *e, uint64_t i) {
     e->tex_units |= 1u << ((off - 8) / 2);
     return (int)(off - 8) / 2;
 }
-/* sampler of the given GLSL base type ("2D", "2DArray", "Cube", ...) for a bound unit */
 static const char *SMP(Mx *e, int unit, const char *base, int shadow) {
     const char *pre = "";
     if (!shadow && (unit_bit(e->in->int_tex, unit))) pre = (unit_bit(e->in->sint_tex, unit)) ? "i" : "u";
@@ -342,7 +340,6 @@ static const char *fetch_off_coords(unsigned t, Mx *e, const char *coords, const
     default: return S(e, "(%s + %s)", coords, off);
     }
 }
-/* stores the components selected by mask into consecutive registers from rd */
 static void tex_store_mask(Mx *e, unsigned mask, unsigned rd, int is_int) {
     unsigned r = rd;
     for (unsigned k = 0; k < 4; k++) {
@@ -1768,7 +1765,6 @@ int mx_translate(const MxIn *in, MxOut *out) {
     if (in->stage == MX_GEOMETRY && in->target != 1) fail(e, "geometry stage", "a geometry stage in the OpenGL text");      /* Vulkan only */
     else if (in->stage != MX_VERTEX && in->stage != MX_FRAGMENT && in->stage != MX_COMPUTE && in->stage != MX_GEOMETRY) fail(e, "tessellation stage", "stage %d is not supported", in->stage);
 
-    /* the code that ends the shader (EXIT): fragment outputs from the registers, alpha test, depth */
     if (in->stage == MX_FRAGMENT) {
         uint32_t omap, flags;
         unsigned reg = 0;
@@ -1824,7 +1820,6 @@ int mx_translate(const MxIn *in, MxOut *out) {
         goto done;
     }
 
-    /* assemble: header, declarations, helpers, main */
     {
         Mx h;
         memset(&h, 0, sizeof h);

@@ -11,7 +11,6 @@ $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxil
 if (-not (Test-Path $clang))   { throw "clang-cl not found at $clang" }
 if (-not (Test-Path $vcvars))  { throw "vcvars64.bat not found at $vcvars" }
 
-# import the VS developer environment (INCLUDE, LIB, PATH) into this session
 $envdump = cmd /c "`"$vcvars`" >nul && set"
 foreach ($line in $envdump) {
     $i = $line.IndexOf('=')

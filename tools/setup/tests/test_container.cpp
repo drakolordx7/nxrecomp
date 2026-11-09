@@ -73,7 +73,6 @@ SynthFiles romfs_files() {
     return {{"Worlds/MP1/Test.pak", pattern(3000, 9)}, {"readme.txt", std::vector<uint8_t>{'o', 'k'}}};
 }
 
-// Returns true when the container's main program is found and its main NSO has the expected build id.
 bool program_ok(const Container& c, const KeySet& keys, uint64_t title_id_value) {
     (void)title_id_value;
     const DumpTitle t = find_program(c, keys, kTitleId);
@@ -120,7 +119,7 @@ int main() {
 
     // ---- tickets inside the dump ----
     // The dump's ticket stores the title key under its rights id. The reader must index it under the same rights id the NCA
-    // carries (ticket offset 0x2A0, body 0x160). See the test report: src/container.cpp reads body 0x15C instead.
+    // carries (ticket offset 0x2A0, body 0x160).
     {
         const std::string want = hex16(nxs_test::synth_dump_rights_id());
         auto c = open_container(nsp_tik.path);
@@ -154,8 +153,6 @@ int main() {
     }
 
     // ---- find_program: program with a ticket (rights id path) ----
-    // Opening the dump's program NCA through the ticket must work. Expected to fail until container.cpp reads the rights id at
-    // body offset 0x160 (see the report).
     {
         auto c = open_container(nsp_tik.path);
         const DumpTitle t = find_program(*c, keys, kTitleId);

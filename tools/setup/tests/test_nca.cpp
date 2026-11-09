@@ -103,7 +103,6 @@ SynthNcaSpec program_spec(const SynthFiles& romfs) {
     return sp;
 }
 
-// Reads `len` bytes at `off` from the storage and compares them with `expect[off, off+len)`.
 bool same_range(const IStorage& s, const std::vector<uint8_t>& expect, uint64_t off, size_t len) {
     if (off + len > expect.size() || s.size() != expect.size()) return false;
     std::vector<uint8_t> got(len);
@@ -169,7 +168,6 @@ int main() {
         }
     }
     {
-        // A meta NCA (content type 1) with version-0 CNMT built by the builder.
         auto meta = Nca::open(mem(nxs_test::synth_cnmt_nca(kProgramId, 0)), keys, TicketKeys{});
         CHECK(meta->content_type() == NcaContentType::Meta);
         CHECK_EQ(meta->program_id(), kProgramId);

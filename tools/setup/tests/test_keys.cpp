@@ -43,7 +43,6 @@ std::string read_all(const std::string& utf8_path) {
 std::string lo(const Key128& k) { return hex_encode(k.data(), k.size()); }
 std::string up(const Key128& k) { return hex_encode(k.data(), k.size(), true); }
 
-// Deterministic, random-looking fixed bytes.
 Key128 pattern(u8 seed) {
     Key128 k{};
     for (size_t i = 0; i < k.size(); ++i) {
@@ -74,7 +73,6 @@ bool throws_error(F&& f, Fail kind, std::string& msg) {
     return false;
 }
 
-// Synthetic key material for the derivation tests.
 struct Synthetic {
     Key128 mk00 = pattern(1);
     Key128 mk0a = pattern(2);
@@ -95,14 +93,12 @@ struct Expected {
 // The formulas, written out straight-line with Aes128Ecb, independent of keys.cpp.
 Expected expected_values(const Synthetic& s) {
     Expected e{};
-    // generation 0x0a
     Key128 kek_0a{};
     Aes128Ecb(s.mk0a.data()).decrypt(s.aes_kek_src.data(), kek_0a.data(), 16);
     Key128 src_kek_0a{};
     Aes128Ecb(kek_0a.data()).decrypt(s.kaak_app_src.data(), src_kek_0a.data(), 16);
     Aes128Ecb(src_kek_0a.data()).decrypt(s.aes_key_src.data(), e.kaak_app_0a.data(), 16);
     Aes128Ecb(s.mk0a.data()).decrypt(s.titlekek_src.data(), e.titlekek_0a.data(), 16);
-    // header key, from master_key_00
     Key128 kek_00{};
     Aes128Ecb(s.mk00.data()).decrypt(s.aes_kek_src.data(), kek_00.data(), 16);
     Key128 header_kek{};
@@ -187,21 +183,18 @@ void test_parser() {
     CHECK(ks.title_key(rid, found));
     CHECK(found == tk_val);
 
-    // Missing file.
     std::string msg;
     const std::string missing = temp_path("does_not_exist.keys");
     std::filesystem::remove(widen(missing));
     CHECK(throws_error([&] { KeySet k; k.load_file(missing); }, Fail::Keys, msg));
     CHECK(msg.find("Cannot read the keys file") != std::string::npos);
 
-    // Garbage file.
     const std::string garbage = temp_path("garbage.keys");
     write_text(garbage, "hello world\nnot a key line\nname = nothex\n");
     msg.clear();
     CHECK(throws_error([&] { KeySet k; k.load_file(garbage); }, Fail::Keys, msg));
     CHECK(msg.find("does not look like a keys file") != std::string::npos);
 
-    // Empty file.
     const std::string empty = temp_path("empty.keys");
     write_text(empty, "");
     msg.clear();
@@ -234,7 +227,6 @@ void test_derivation() {
     const Synthetic s;
     const Expected e = expected_values(s);
 
-    // Sources and master keys only: everything is derived.
     const std::string src_file = temp_path("derive_sources.keys");
     write_text(src_file, synthetic_text(s));
     KeySet derived;
@@ -246,7 +238,6 @@ void test_derivation() {
     CHECK(derived.header_key() == e.header);
     CHECK_EQ(derived.describe(), std::string("8 keys, master keys 00..0a, 0 title keys"));
 
-    // Pre-derived values present: they are used as they are.
     const std::string pre_file = temp_path("derive_prederived.keys");
     write_text(pre_file, "key_area_key_application_0a = " + lo(e.kaak_app_0a) + "\ntitlekek_0a = " +
                              lo(e.titlekek_0a) + "\nheader_key = " + hex_encode(e.header.data(), 32) + "\n");
@@ -384,7 +375,6 @@ void test_real_data() {
     }
     CHECK(real_ok);
 
-    // Derive everything again from the sources and master keys only, and compare with the file's own values.
     const std::string derive_path = temp_path("real_derive_only.keys");
     write_text(derive_path, derive_only_text(read_all(kRealProd)));
     KeySet derived;
@@ -417,7 +407,6 @@ void test_real_data() {
         }
     }
 
-    // title.keys
     if (std::filesystem::exists(std::filesystem::path(widen(kRealTitle)))) {
         KeySet titles;
         titles.load_file(kRealTitle);

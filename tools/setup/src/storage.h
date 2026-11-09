@@ -26,7 +26,6 @@ StoragePtr open_file_storage(const std::string& utf8_path);
 StoragePtr make_sub_storage(StoragePtr base, u64 off, u64 len);
 StoragePtr make_memory_storage(std::vector<u8> bytes);
 
-// Convenience: read into a vector.
 std::vector<u8> read_all(const IStorage& s, u64 off, size_t len);
 
 }  // namespace nxs

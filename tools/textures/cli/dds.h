@@ -49,7 +49,7 @@ inline bool dds_read(const std::vector<uint8_t>& f, a2b_input& in, const uint8_t
     uint64_t need = a2b_output_size(&in);
     if (f.size() < off + need) { err = "DDS data truncated"; return false; }
     data = f.data() + off;
-    data_size = (size_t)need;  // mip 0 only
+    data_size = (size_t)need;
     return true;
 }
 

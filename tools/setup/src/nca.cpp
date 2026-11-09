@@ -245,7 +245,6 @@ u64 Nca::verify_section(int i, const ProgressFn& progress, const CancelFn& cance
         if (cancelled && cancelled()) fail(Fail::Cancelled, "Stopped by the user.");
     };
 
-    // Verifies `data_size` bytes of `data` (at data_off) in blocks of `bs` against 32-byte hashes in `hashes`.
     auto verify_level = [&](const char* what, u64 data_off, u64 data_size, u32 bs, const std::vector<u8>& hashes, u64 total_for_progress) {
         const u64 nblocks = (data_size + bs - 1) / bs;
         if (hashes.size() < nblocks * 32) fail(Fail::Input, "The %s of the dump is damaged: hash list too short.", what);
@@ -291,7 +290,6 @@ u64 Nca::verify_section(int i, const ProgressFn& progress, const CancelFn& cance
     }
     if (s->hash_type == 3) {
         Ivfc t = parse_ivfc(*s, sec->size());
-        // level 0 against the master hash (one block covering the whole level)
         {
             std::vector<u8> l0 = read_all(*sec, t.level[0].off, static_cast<size_t>(t.level[0].size));
             auto m = sha256(l0.data(), l0.size());

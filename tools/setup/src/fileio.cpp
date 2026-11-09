@@ -18,7 +18,6 @@ bool is_sep(char c) { return c == '\\' || c == '/'; }
 
 HANDLE as_handle(void* h) { return static_cast<HANDLE>(h); }
 
-// True if the path names an existing folder.
 bool is_dir(const std::string& utf8) {
     DWORD a = GetFileAttributesW(widen(utf8).c_str());
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;

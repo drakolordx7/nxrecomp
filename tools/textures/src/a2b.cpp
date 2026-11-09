@@ -182,8 +182,6 @@ a2b_status a2b_decode_astc_rgba8(const a2b_input* in, const void* data, size_t d
     const double t0 = now_s();
     const uint32_t w = in->width, h = in->height, bw = in->block_w, bh = in->block_h;
     const uint32_t blocks_x = (uint32_t)div_up(w, bw), blocks_y = (uint32_t)div_up(h, bh);
-    // A band is a run of whole block rows: their blocks are contiguous in the stream and their texels contiguous in
-    // the image, so each band decodes independently with its own single-threaded astcenc context.
     const uint32_t rows_per_band = std::max(1u, 64u / bh);
     const size_t bands = (size_t)div_up(blocks_y, rows_per_band);
 
@@ -293,7 +291,7 @@ a2b_status a2b_encode_bc7(uint32_t width, uint32_t height, const uint8_t* rgba, 
     const bool pin_alpha = m6 == 0 || (m6 == 2 && params.m_mode6_only);   // preset 0 ignores m_use_mode: pin afterwards
 
     const double t0 = now_s();
-    constexpr uint32_t kChunk = 64;  // blocks per bc7e call
+    constexpr uint32_t kChunk = 64;
     const uint32_t chunks_per_row = (bx + kChunk - 1) / kChunk;
     const size_t tasks = (size_t)by * chunks_per_row;
     const int threads = opt ? opt->threads : 0;
@@ -346,7 +344,7 @@ a2b_status a2b_transcode(const a2b_input* in, const void* data, size_t data_size
     if (!need) return a2b_is_astc(in->format) ? A2B_ERR_ARGS : A2B_ERR_UNSUPPORTED;
     if (out_capacity < need) return A2B_ERR_SIZE;
 
-    if (!a2b_is_astc(in->format)) {  // BCn: untouched
+    if (!a2b_is_astc(in->format)) {
         if (data_size != need) return A2B_ERR_SIZE;
         std::memcpy(out, data, (size_t)need);
         if (out_format) *out_format = in->format;

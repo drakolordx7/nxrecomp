@@ -51,19 +51,16 @@ bool all_hex(std::string_view s) {
     return true;
 }
 
-// "master_key_" + two lower-case hex digits.
 std::string two_hex(int g) {
     char buf[8];
     std::snprintf(buf, sizeof buf, "%02x", static_cast<unsigned>(g));
     return buf;
 }
 
-// One AES-128-ECB decryption (n is a multiple of 16).
 void ecb_decrypt(const u8 key[16], const void* in, void* out, size_t n) {
     Aes128Ecb(key).decrypt(in, out, n);
 }
 
-// Reads a whole file as bytes. False if it is missing, is a folder, or cannot be read.
 bool read_text_file(const std::string& utf8_path, std::string& out) {
     const std::wstring wpath = widen(utf8_path);
     const DWORD attr = GetFileAttributesW(wpath.c_str());
@@ -74,7 +71,6 @@ bool read_text_file(const std::string& utf8_path, std::string& out) {
     return !f.bad();
 }
 
-// Existence check only: a file (not a folder) is there. Nothing is read.
 bool file_exists(const std::string& utf8_path) {
     const DWORD attr = GetFileAttributesW(widen(utf8_path).c_str());
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
@@ -109,7 +105,6 @@ std::string env_var(const wchar_t* name) {
     return narrow(w);
 }
 
-// The folder of the running program, without a trailing separator.
 std::string exe_folder() {
     std::vector<wchar_t> buf(32768);
     const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
@@ -128,7 +123,7 @@ void KeySet::load_file(const std::string& utf8_path) {
         throw Error(Fail::Keys, "Cannot read the keys file " + utf8_path);
     }
 
-    size_t pos = data.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;   // skip a UTF-8 byte order mark
+    size_t pos = data.compare(0, 3, "\xEF\xBB\xBF") == 0 ? 3 : 0;
     int skipped = 0;
     while (pos < data.size()) {
         const size_t nl = data.find('\n', pos);
@@ -296,7 +291,7 @@ std::vector<KeyFileCandidate> find_key_files() {
         if (path.empty()) return;
         const std::string full = full_path(path);
         if (!file_exists(full)) return;
-        if (!seen.insert(lower(full)).second) return;   // same file already listed
+        if (!seen.insert(lower(full)).second) return;
         found.push_back({full, source});
     };
 

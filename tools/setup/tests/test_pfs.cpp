@@ -111,7 +111,6 @@ void round_trip_hfs0(const SynthFiles& files) {
 }  // namespace
 
 int main() {
-    // Round trips: 0, 1 and 5 files.
     round_trip_pfs0(make_files(0));
     round_trip_pfs0(make_files(1));
     round_trip_pfs0(make_files(5));

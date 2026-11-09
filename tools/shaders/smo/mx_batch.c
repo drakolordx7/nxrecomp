@@ -168,7 +168,7 @@ static void do_job(int idx) {
     uint8_t *code = NULL, *cdata = NULL;
     int good, stage, variants, var, bad = 0;
 
-    size_t bl = strlen(g_files[idx]) - 4;                 /* drop ".mxs" */
+    size_t bl = strlen(g_files[idx]) - 4;
     memcpy(base, g_files[idx], bl);
     base[bl] = 0;
     set_text(r->name, sizeof r->name, base);
@@ -318,7 +318,7 @@ static int status_index(const char *s) {
 
 static int stage_index(const char *s) {
     for (int i = 0; i < NSTAGE; i++) if (!strcmp(s, STAGE_NAMES[i])) return i;
-    return NSTAGE;                                      /* "?" */
+    return NSTAGE;
 }
 
 static int cmp_names(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
@@ -402,7 +402,6 @@ int main(int argc, char **argv) {
     WaitForMultipleObjects(nth, th, TRUE, INFINITE);
     for (i = 0; i < nth; i++) CloseHandle(th[i]);
 
-    /* results table */
     {
         char rp[MAX_PATH * 2];
         FILE *tf;
@@ -417,7 +416,6 @@ int main(int argc, char **argv) {
         fclose(tf);
     }
 
-    /* summary */
     memset(by_stage, 0, sizeof by_stage);
     memset(total_by_stage, 0, sizeof total_by_stage);
     memset(status_tot, 0, sizeof status_tot);

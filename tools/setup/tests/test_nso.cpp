@@ -33,7 +33,6 @@ std::vector<u8> make_nso(const std::string& module_id_hex40, u32 text_c, u32 ro_
     put32(v, 0x20 + 8, 0x800);   // ro decompressed size
     put32(v, 0x30 + 8, 0x400);   // data decompressed size
     put32(v, 0x3C, 0x2000);      // bss size
-    // module id: first 20 bytes from the hex string, the rest is a pattern
     std::vector<u8> id(32);
     if (!hex_decode(module_id_hex40, id.data(), 20)) std::printf("FAIL test data: bad module id hex\n"), ++nxs_test::failures();
     for (size_t i = 20; i < 32; ++i) id[i] = static_cast<u8>(0xA0 + i);
