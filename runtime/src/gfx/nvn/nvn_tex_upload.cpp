@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Texture pixel edit hook (nxrt/tex_edit.h): storage of the hooks, the edited data kept in memory, the background rebuild after a change.
-// prepare_texture (nvn_texdata.cpp) does the decode, the host edit and the encode; this file decides when.
+// Texture upload hook (nxrt/tex_upload.h): the list of subscribers, the edited data kept in memory, the background rebuild after a change, and the
+// small BC7 textures a subscriber replaces whole. prepare_texture (nvn_texdata.cpp) does the decode, the subscriber's edit and the encode; this
+// file decides when.
 #include <windows.h>
 
 #include <algorithm>
@@ -16,8 +17,9 @@
 
 #include <nxrt/config.h>
 #include <nxrt/log.h>
-#include <nxrt/tex_edit.h>
+#include <nxrt/tex_upload.h>
 
+#include "astc2bc7.h"
 #include "nvn_gpu.h"
 #include "nvn_settings.h"
 #include "nvn_gpu_internal.h"
@@ -27,6 +29,9 @@ namespace nxrt::nvn::be {
 namespace {
 
 constexpr const char* kTag = "nvn.texedit";
+
+constexpr int kSlotShift = 56;      // a subscriber's ids are kept apart by its handle in the top byte
+constexpr int kMaxHandle = 255;
 
 struct MemoKey {
     uint64_t id, gen;
@@ -41,11 +46,15 @@ struct Memo {
 struct State {
     std::mutex mu;
     std::condition_variable cv_memo;   // a memo entry became ready or was given up
-    gfx::TexEditHooks hooks;
-    bool have_hooks = false;
+    struct Sub {
+        int handle;
+        gfx::TexUploadHooks hooks;
+    };
+    std::vector<Sub> subs;             // in the order they subscribed
+    int next_handle = 1;
     std::map<MemoKey, Memo> memo;
     std::set<uint32_t> edited;         // Texture::id of the textures that were given edited data
-    gfx::TexEditStats st;
+    gfx::TexUploadStats st;
     // background rebuild
     std::condition_variable cv_work;
     bool want_rebuild = false;
@@ -63,21 +72,31 @@ double ms_since(std::chrono::steady_clock::time_point t0) {
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
-bool hooks_copy(gfx::TexEditHooks& h) {
+std::vector<State::Sub> subs_copy() {
     State& s = S();
     std::lock_guard<std::mutex> lk(s.mu);
-    if (!s.have_hooks) return false;
-    h = s.hooks;
-    return true;
+    return s.subs;
 }
 
-// The host's match on the game's storage, under SEH (a page the game unmapped must not take the process down).
-uint64_t match_guarded(const gfx::TexEditHooks& h, const gfx::TexEditReq& r) {
+// The first subscriber that wants the texture: its id with its handle in the top byte, 0 when none. Under SEH (a page the game unmapped must not
+// take the process down).
+uint64_t match_subs(const std::vector<State::Sub>& subs, const gfx::TexUploadReq& r) {
     __try {
-        return h.match(r, h.user);
+        for (const State::Sub& sub : subs) {
+            const uint64_t id = sub.hooks.match(r, sub.hooks.user);
+            if (id && id < (1ull << kSlotShift)) return id | (static_cast<uint64_t>(sub.handle) << kSlotShift);
+        }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return 0;
     }
+    return 0;
+}
+
+// The sum of the subscribers' generations: any subscriber's change is a new generation (each only grows).
+uint64_t generation_of(const std::vector<State::Sub>& subs) {
+    uint64_t g = 0;
+    for (const State::Sub& sub : subs)
+        if (sub.hooks.generation) g += sub.hooks.generation(sub.hooks.user);
+    return g;
 }
 
 bool prepare_guarded(const Texture& t, const TexCaps& caps, PreparedTexture& out) {
@@ -92,8 +111,9 @@ bool candidate(const Texture& t, void*) {
     return t.mem && !t.is_display && t.fmt && t.fmt->astc && t.layers == 1 && t.b.samples <= 1 && t.b.target == NVN_TEXTURE_TARGET_2D;
 }
 
-gfx::TexEditReq req_of(const Texture& t, const uint8_t* src) {
-    gfx::TexEditReq r;
+gfx::TexUploadReq req_of(const Texture& t, const uint8_t* src) {
+    gfx::TexUploadReq r;
+    r.astc = t.fmt && t.fmt->astc;
     r.width = static_cast<uint32_t>(t.b.width);
     r.height = static_cast<uint32_t>(t.b.height);
     r.levels = t.levels;
@@ -105,11 +125,11 @@ gfx::TexEditReq req_of(const Texture& t, const uint8_t* src) {
     return r;
 }
 
-// One pass after texture_edit_changed: new data for every live texture that matches, each uploaded again once its data is ready, and the ones
+// One pass after texture_upload_changed: new data for every live texture that matches, each uploaded again once its data is ready, and the ones
 // edited before that no longer match uploaded again as the game's (they ask prepare_texture again, which finds the new data kept here).
 void rebuild_once() {
-    gfx::TexEditHooks h;
-    const bool have = hooks_copy(h);
+    const std::vector<State::Sub> subs = subs_copy();
+    const bool have = !subs.empty();
     const auto t0 = std::chrono::steady_clock::now();
     std::vector<Ref<Texture>> all = texture_registry_collect(&candidate, nullptr);
     std::set<uint32_t> was_edited;
@@ -132,7 +152,7 @@ void rebuild_once() {
     for (const Ref<Texture>& r : all) {
         Texture* t = r.get();
         if (t->destroyed.load()) continue;
-        const uint64_t id = have ? match_guarded(h, req_of(*t, t->mem)) : 0;
+        const uint64_t id = have ? match_subs(subs, req_of(*t, t->mem)) : 0;
         if (id && caps_ok && !caps.astc) {
             PreparedTexture tmp;
             if (prepare_guarded(*t, caps, tmp)) ++made;   // keeps the edited data in the memo
@@ -177,10 +197,10 @@ bool tex_edit_active() { return g_active.load(std::memory_order_acquire); }
 
 TexEditKey tex_edit_match(const Texture& t, const uint8_t* src) {
     TexEditKey k;
-    gfx::TexEditHooks h;
-    if (!hooks_copy(h) || !h.match) return k;
-    k.id = h.match(req_of(t, src), h.user);   // prepare_texture already runs guarded where it runs off the render thread
-    if (k.id) k.gen = h.generation ? h.generation(h.user) : 0;
+    const std::vector<State::Sub> subs = subs_copy();
+    if (subs.empty()) return k;
+    k.id = match_subs(subs, req_of(t, src));
+    if (k.id) k.gen = generation_of(subs);
     return k;
 }
 
@@ -208,7 +228,7 @@ void tex_edit_store(const TexEditKey& k, VkFormat f, const std::vector<uint8_t>&
     State& s = S();
     {
         std::lock_guard<std::mutex> lk(s.mu);
-        const uint64_t cur = s.have_hooks && s.hooks.generation ? s.hooks.generation(s.hooks.user) : k.gen;
+        const uint64_t cur = s.subs.empty() ? k.gen : generation_of(s.subs);
         Memo& m = s.memo[MemoKey{k.id, k.gen, f}];
         m.ready = true;
         m.data = data;
@@ -233,9 +253,39 @@ void tex_edit_abandon(const TexEditKey& k, VkFormat f) {
     s.cv_memo.notify_all();
 }
 
-void tex_edit_level(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba) {
-    gfx::TexEditHooks hk;
-    if (hooks_copy(hk) && hk.edit) hk.edit(id, level, w, h, rgba, hk.user);
+bool tex_edit_level(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba) {
+    const int handle = static_cast<int>(id >> kSlotShift);
+    gfx::TexUploadHooks hk;
+    {
+        std::lock_guard<std::mutex> lk(S().mu);
+        bool found = false;
+        for (const State::Sub& sub : S().subs)
+            if (sub.handle == handle) {
+                hk = sub.hooks;
+                found = true;
+            }
+        if (!found) return false;
+    }
+    return hk.edit && hk.edit(id & ((1ull << kSlotShift) - 1), level, w, h, rgba, hk.user);
+}
+
+// A single-level BC7 sRGB texture of at most 128 x 128 (button icons and the like): the first subscriber that wants it supplies the whole image, which is
+// encoded to BC7 at the same size into `bc7` (the tight linear blocks of the w x h texture). false: the game's blocks stay.
+bool tex_upload_bc7(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& bc7) {
+    if (!tex_edit_active() || !t.mem) return false;
+    const std::vector<State::Sub> subs = subs_copy();
+    gfx::TexUploadReq req = req_of(t, t.mem);
+    req.width = w;
+    req.height = h;
+    const uint64_t id = match_subs(subs, req);
+    if (!id) return false;
+    std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4);
+    if (!tex_edit_level(id, 0, w, h, rgba.data())) return false;
+    a2b_options opt{};
+    opt.quality = A2B_DEFAULT_QUALITY;
+    opt.threads = 1;
+    opt.allow_opaque_mode6 = 0;
+    return a2b_encode_bc7(w, h, rgba.data(), &opt, bc7.data(), bc7.size(), nullptr) == A2B_OK;
 }
 
 void tex_edit_note(const Texture& t) {
@@ -251,35 +301,61 @@ int tex_edit_quality() {
 
 namespace nxrt::gfx {
 
-void set_texture_edit(const TexEditHooks* hooks) {
+int texture_upload_subscribe(const TexUploadHooks& hooks) {
     using namespace nxrt::nvn::be;
     State& s = S();
+    if (!hooks.match) return 0;
+    int handle = 0;
     {
         std::lock_guard<std::mutex> lk(s.mu);
-        s.have_hooks = hooks && hooks->match;
-        s.hooks = hooks ? *hooks : TexEditHooks{};
+        for (int tries = 0; tries < kMaxHandle && !handle; ++tries) {   // the next free handle, 1 .. 255
+            const int h = s.next_handle;
+            s.next_handle = h % kMaxHandle + 1;
+            bool used = false;
+            for (const State::Sub& sub : s.subs) used |= sub.handle == h;
+            if (!used) handle = h;
+        }
+        if (!handle) return 0;
+        s.subs.push_back(State::Sub{handle, hooks});
         s.memo.clear();
-        g_active.store(s.have_hooks, std::memory_order_release);
+        g_active.store(true, std::memory_order_release);
     }
-    texture_edit_changed();
+    texture_upload_changed();
+    return handle;
 }
 
-void texture_edit_changed() {
+void texture_upload_unsubscribe(int handle) {
     using namespace nxrt::nvn::be;
     State& s = S();
     {
         std::lock_guard<std::mutex> lk(s.mu);
-        if (!s.have_hooks && s.edited.empty()) return;
-        s.want_rebuild = true;
-        if (!s.worker_started) {
-            s.worker_started = true;
-            std::thread(&worker_main).detach();
+        const size_t n = s.subs.size();
+        s.subs.erase(std::remove_if(s.subs.begin(), s.subs.end(), [&](const State::Sub& sub) { return sub.handle == handle; }), s.subs.end());
+        if (s.subs.size() == n) return;
+        s.memo.clear();
+        g_active.store(!s.subs.empty(), std::memory_order_release);
+    }
+    texture_upload_changed();   // the changed textures go back to the game's
+}
+
+void texture_upload_changed() {
+    using namespace nxrt::nvn::be;
+    State& s = S();
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        if (!s.subs.empty() || !s.edited.empty()) {
+            s.want_rebuild = true;
+            if (!s.worker_started) {
+                s.worker_started = true;
+                std::thread(&worker_main).detach();
+            }
         }
     }
     s.cv_work.notify_one();
+    textures_mark_bc7_candidates_dirty();   // the small BC7 textures are uploaded again too
 }
 
-TexEditStats texture_edit_stats() {
+TexUploadStats texture_upload_stats() {
     using namespace nxrt::nvn::be;
     std::lock_guard<std::mutex> lk(S().mu);
     return S().st;

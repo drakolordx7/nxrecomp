@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The one SPIR-V module walker of the runtime: the header check, the instruction split and the enumerants that shader reflection
-// (nvn_shaders.cpp), the pipeline rewrites (nvn_spirv_patch.cpp) and the HDR tone-map patch (extras/hdr_tonemap_patch.cpp) read.
+// (nvn_shaders.cpp), the pipeline rewrites (nvn_spirv_patch.cpp) and a game's shader patches (the HDR tone-map patch of the game module) read.
 // Values are from the SPIR-V 1.x unified specification and the GLSL.std.450 extended instruction set; only the ones in use are listed.
 #pragma once
 #include <cstddef>

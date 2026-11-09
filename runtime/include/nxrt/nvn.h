@@ -26,6 +26,7 @@ enum SourceMask : uint8_t {
     kSrcPracticeMod = 1,   // nvn.h of the MP1R practice mod (reverse-engineered, used against this game)
     kSrcSmoSsbu = 2,       // names registered by smo-recomp / ssbu-recomp
     kSrcOther = 4,         // explicit extras (Wonder, LAS recomp)
+    kSrcGame = 8,          // a size the registered game fixes itself (GameRender::nvn_struct_sizes)
 };
 
 struct Entry {
@@ -45,7 +46,7 @@ struct StructSize {
 size_t entry_count();
 const Entry& entry_at(size_t index);
 int entry_index(const char* name);                 // -1 when the name is not an NVN entry point
-const StructSize* struct_sizes(size_t* count);     // NVN object sizes (NVNdevice 0x3000, NVNtexture 0xC0, ...)
+const StructSize* struct_sizes(size_t* count);     // NVN object sizes (NVNdevice 0x3000, NVNtexture 0xC0, ...); the registered game's own sizes replace the generated ones
 uint32_t struct_size(const char* name);            // 0 when unknown
 
 // ---- installation -----------------------------------------------------------------------------------------------------

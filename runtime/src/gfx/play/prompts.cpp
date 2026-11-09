@@ -20,7 +20,7 @@
 #include "nxrt/config.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
-#include "nxrt/tex_override.h"
+#include "nxrt/tex_upload.h"
 
 namespace nxrt::play {
 
@@ -108,6 +108,7 @@ namespace {
 struct State {
     std::mutex mu;
     bool hook_set = false;
+    int sub = 0;                     // the texture upload subscription (nxrt/tex_upload.h)
     // pack
     bool pack_tried = false;
     IconPack pack;
@@ -170,34 +171,48 @@ void scan_ids_locked(State& s) {
     NXLOG_I(kTag, "recognised %d icon textures (%d icons, in-game and front end copies) in %s", found, kIconCount, romfs.c_str());
 }
 
-bool hook(const gfx::TexOverrideReq& r, uint8_t* rgba, void*) {
+// The upload hook (nxrt/tex_upload.h): match recognises an icon texture by a hash of its storage and answers with the icon's number + 1; edit writes the
+// pack's picture for the icon's current name.
+uint64_t hook_match(const gfx::TexUploadReq& r, void*) {
     const PromptGame* g = prompt_game();
-    if (!g || g->icon_size == 0) return false;
+    if (!g || g->icon_size == 0) return 0;
     const uint32_t kIconSize = g->icon_size;
-    if (r.width != kIconSize || r.height != kIconSize || !r.tiled) return false;
+    if (r.astc || r.width != kIconSize || r.height != kIconSize || !r.tiled) return 0;
     State& s = st();
     std::lock_guard<std::mutex> lk(s.mu);
-    if (!s.any_name) return false;
+    if (!s.any_name) return 0;
     scan_ids_locked(s);
-    load_pack_locked(s);
     for (size_t n : s.id_sizes) {
         if (r.tiled_size < n) continue;
         auto it = s.ids.find({n, prompt_hash(r.tiled, n)});
         if (it == s.ids.end()) continue;
-        const std::string& name = s.names[static_cast<int>(it->second)];
-        if (name.empty()) return false;
-        const uint8_t* px = s.pack.find(name);
-        if (!px && name.compare(0, 4, "kbm/") == 0) px = s.pack.find("kbm/any");
-        if (!px || s.pack.width() != kIconSize || s.pack.height() != kIconSize) return false;
-        // A game that stores its UI textures upside down (row 0 of the storage is the bottom row of the picture; the UI flips v when it draws) gets
-        // the upright icon of the pack with its rows reversed.
-        for (uint32_t y = 0; y < kIconSize; ++y)
-            std::memcpy(rgba + static_cast<size_t>(y) * kIconSize * 4, px + static_cast<size_t>(g->upside_down ? kIconSize - 1 - y : y) * kIconSize * 4,
-                        static_cast<size_t>(kIconSize) * 4);
-        if (s.hits++ < 40) NXLOG_I(kTag, "%s -> %s", icon_asset_name(it->second), name.c_str());
-        return true;
+        if (s.names[static_cast<int>(it->second)].empty()) return 0;
+        return static_cast<uint64_t>(it->second) + 1;
     }
-    return false;
+    return 0;
+}
+
+bool hook_edit(uint64_t id, uint32_t, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
+    const PromptGame* g = prompt_game();
+    if (!g || g->icon_size == 0 || id == 0 || id > static_cast<uint64_t>(kIconCount)) return false;
+    const uint32_t kIconSize = g->icon_size;
+    if (w != kIconSize || h != kIconSize) return false;
+    State& s = st();
+    std::lock_guard<std::mutex> lk(s.mu);
+    const Icon ic = static_cast<Icon>(id - 1);
+    const std::string& name = s.names[static_cast<int>(ic)];
+    if (name.empty()) return false;
+    load_pack_locked(s);
+    const uint8_t* px = s.pack.find(name);
+    if (!px && name.compare(0, 4, "kbm/") == 0) px = s.pack.find("kbm/any");
+    if (!px || s.pack.width() != kIconSize || s.pack.height() != kIconSize) return false;
+    // A game that stores its UI textures upside down (row 0 of the storage is the bottom row of the picture; the UI flips v when it draws) gets
+    // the upright icon of the pack with its rows reversed.
+    for (uint32_t y = 0; y < kIconSize; ++y)
+        std::memcpy(rgba + static_cast<size_t>(y) * kIconSize * 4, px + static_cast<size_t>(g->upside_down ? kIconSize - 1 - y : y) * kIconSize * 4,
+                    static_cast<size_t>(kIconSize) * 4);
+    if (s.hits++ < 40) NXLOG_I(kTag, "%s -> %s", icon_asset_name(ic), name.c_str());
+    return true;
 }
 
 }  // namespace
@@ -237,8 +252,16 @@ void prompts_update(const Settings& settings, const PromptInputs& in) {
         }
     }
     // outside the lock: the hook takes it again on the render thread
-    if (install) gfx::set_texture_override(&hook, nullptr);   // also asks for the icon textures to be uploaded again
-    else if (changed) gfx::texture_override_changed();
+    if (install) {
+        gfx::TexUploadHooks h;
+        h.match = &hook_match;
+        h.edit = &hook_edit;
+        const int sub = gfx::texture_upload_subscribe(h);   // also asks for the icon textures to be uploaded again
+        std::lock_guard<std::mutex> lk(s.mu);
+        s.sub = sub;
+    } else if (changed) {
+        gfx::texture_upload_changed();
+    }
 }
 
 PromptStyle prompts_effective_style() {
@@ -256,8 +279,14 @@ std::string prompts_icon_name(Icon i) {
 }
 
 void prompts_reset() {
-    gfx::set_texture_override(nullptr, nullptr);
     State& s = st();
+    int sub = 0;
+    {
+        std::lock_guard<std::mutex> lk(s.mu);
+        sub = s.sub;
+        s.sub = 0;
+    }
+    gfx::texture_upload_unsubscribe(sub);
     std::lock_guard<std::mutex> lk(s.mu);
     s.hook_set = false;
     s.pack_tried = s.ids_tried = false;

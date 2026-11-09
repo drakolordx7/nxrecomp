@@ -12,9 +12,12 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/game.h"
+#include "nxrt/game_render.h"
 #include "nxrt/log.h"
 
 namespace nxrt::nvn {
@@ -127,15 +130,43 @@ int entry_index(const char* name) {
     return it == m.end() ? -1 : it->second;
 }
 
+// The generated sizes (the NVN header) with the registered game's own sizes laid over them (GameRender::nvn_struct_sizes: the room its classes leave
+// for the objects they embed). Rebuilt when the registered game's table changes.
 const StructSize* struct_sizes(size_t* count) {
-    if (count) *count = kStructCount;
-    return g_structs;
+    static std::mutex mu;
+    static const game::GameRender* built_for = nullptr;
+    static std::vector<StructSize> merged;
+    const game::GameRender* r = game::info().render;
+    if (!r || !r->nvn_struct_sizes || r->nvn_struct_size_count == 0) {
+        if (count) *count = kStructCount;
+        return g_structs;
+    }
+    std::lock_guard<std::mutex> lk(mu);
+    if (built_for != r || merged.empty()) {
+        merged.assign(g_structs, g_structs + kStructCount);
+        for (uint32_t i = 0; i < r->nvn_struct_size_count; ++i) {
+            const game::NvnStructSize& o = r->nvn_struct_sizes[i];
+            bool found = false;
+            for (StructSize& m : merged)
+                if (!std::strcmp(m.name, o.name)) {
+                    m.size = o.size;
+                    m.sources = static_cast<uint8_t>(m.sources | kSrcGame);
+                    found = true;
+                }
+            if (!found) merged.push_back(StructSize{o.name, o.size, kSrcGame});
+        }
+        built_for = r;
+    }
+    if (count) *count = merged.size();
+    return merged.data();
 }
 
 uint32_t struct_size(const char* name) {
     if (!name) return 0;
-    for (const StructSize& s : g_structs)
-        if (!std::strcmp(s.name, name)) return s.size;
+    size_t n = 0;
+    const StructSize* t = struct_sizes(&n);
+    for (size_t i = 0; i < n; ++i)
+        if (!std::strcmp(t[i].name, name)) return t[i].size;
     return 0;
 }
 

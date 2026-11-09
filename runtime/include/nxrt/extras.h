@@ -57,7 +57,7 @@ void set_settings(const Settings& s);
 // Lock-free reads of the live upscale fields (the render thread asks every frame).
 UpscaleMode upscale_mode();
 float upscale_sharpness();
-int upscale_scene_scale();          // percent, 100 = off
+int upscale_scene_scale();          // percent, 100 = off (the game is told through GameRender::scene_scale; without that hook the value has no effect)
 
 // ---- HDR runtime state ---------------------------------------------------------------------------------------------------------
 enum class OutputKind : uint8_t { Sdr8 = 0, Hdr10, ScRgb };

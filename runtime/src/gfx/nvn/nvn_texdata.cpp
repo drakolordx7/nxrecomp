@@ -464,7 +464,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         }
     }
 
-    // ---- host pixel edit (nxrt/tex_edit.h): the kept edited data, or this call makes it ------------------------------------
+    // ---- host pixel edit (nxrt/tex_upload.h): the kept edited data, or this call makes it ------------------------------------
     TexEditKey edit;
     bool edit_make = false;
     if (fmt.astc && (mode == Mode::Bc7 || mode == Mode::Rgba8) && L.layers == 1 && geo[0].d == 1 && t.b.target == NVN_TEXTURE_TARGET_2D &&
@@ -532,9 +532,9 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
     }
 
     if (mode == Mode::Passthrough) {
-        // button prompt icons and the like: a host hook may replace the pixels of a small single-level BC7 sRGB texture
+        // button prompt icons and the like: an upload subscriber may replace the pixels of a small single-level BC7 sRGB texture
         if (fmt.vk == VK_FORMAT_BC7_SRGB_BLOCK && L.levels == 1 && L.layers == 1 && geo[0].d == 1 && geo[0].w <= 128 &&
-            geo[0].h <= 128 && texture_override_active() && texture_override_apply(t, geo[0].w, geo[0].h, lin))
+            geo[0].h <= 128 && tex_edit_active() && tex_upload_bc7(t, geo[0].w, geo[0].h, lin))
             NXLOG_I(kTag, "texture %u: content replaced by the host (%ux%u BC7)", t.id, geo[0].w, geo[0].h);
         out.data = std::move(lin);
         return true;
@@ -571,7 +571,7 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
             }
             a2b_status st = a2b_decode_astc_rgba8(&in, lin.data() + g.lin_off, static_cast<size_t>(g.slice), 0, px, nullptr);
             if (st != A2B_OK) return fail(std::string("ASTC decode for the edit failed: ") + a2b_status_string(st));
-            tex_edit_level(edit.id, static_cast<uint32_t>(i), g.w, g.h, px);
+            (void)tex_edit_level(edit.id, static_cast<uint32_t>(i), g.w, g.h, px);   // false: the level stays as decoded
             if (bc7) {
                 st = a2b_encode_bc7(g.w, g.h, px, &eopt, dst, static_cast<size_t>(pl.size), nullptr);
                 if (st != A2B_OK) return fail(std::string("BC7 encode of the edit failed: ") + a2b_status_string(st));

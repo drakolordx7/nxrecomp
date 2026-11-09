@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // NVN front-end shell: the generated table, nvnBootstrapLoader / nvnDeviceGetProcAddress for every entry point, the logging
 // stubs (name, decoded arguments, caller), replacing a stub by an implementation, the object size table.
+#include "nxrt/game.h"
+#include "nxrt/game_render.h"
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -248,14 +250,35 @@ NXTEST(object_sizes) {
     CHECK(n >= 30);
     CHECK(s != nullptr);
     CHECK_EQ(nvn::struct_size("NVNdevice"), 0x3000u);
-    // the game's own layout (docs/S4e.md, "Struct sizes"): its classes keep their next member this far behind the object
-    CHECK_EQ(nvn::struct_size("NVNtexture"), 0x80u);
-    CHECK_EQ(nvn::struct_size("NVNprogram"), 0x80u);
-    CHECK_EQ(nvn::struct_size("NVNsampler"), 0x40u);
-    CHECK_EQ(nvn::struct_size("NVNsamplerBuilder"), 0x40u);
-    CHECK_EQ(nvn::struct_size("NVNtextureView"), 0x10u);
+    // with no game table the generated defaults (the NVN header) stand
+    CHECK_EQ(nvn::struct_size("NVNtexture"), 0xC0u);
+    CHECK_EQ(nvn::struct_size("NVNprogram"), 0xC0u);
+    CHECK_EQ(nvn::struct_size("NVNsampler"), 0x30u);
+    CHECK_EQ(nvn::struct_size("NVNsamplerBuilder"), 0x60u);
+    CHECK_EQ(nvn::struct_size("NVNtextureView"), 0x28u);
     CHECK_EQ(nvn::struct_size("NVNcommandBuffer"), 0xA0u);
     CHECK_EQ(nvn::struct_size("NVNqueue"), 0x2000u);
     CHECK_EQ(nvn::struct_size("NVNwindow"), 0x180u);
     CHECK_EQ(nvn::struct_size("NVNnotastruct"), 0u);
+}
+
+// A game that fixes some sizes itself (GameRender::nvn_struct_sizes) gets them; the others keep the defaults.
+NXTEST(game_sizes_replace_the_generated_ones) {
+    static const game::NvnStructSize mine[] = {{"NVNtexture", 0x80}, {"NVNtextureView", 0x10}};
+    static game::GameRender render;
+    render.nvn_struct_sizes = mine;
+    render.nvn_struct_size_count = 2;
+    const game::Info* before = game::current();
+    game::Info with = game::info();
+    with.render = &render;
+    game::set_current(&with);
+    size_t n = 0, base_n = 0;
+    nvn::struct_sizes(&n);
+    CHECK_EQ(nvn::struct_size("NVNtexture"), 0x80u);
+    CHECK_EQ(nvn::struct_size("NVNtextureView"), 0x10u);
+    CHECK_EQ(nvn::struct_size("NVNprogram"), 0xC0u);
+    game::set_current(before);
+    nvn::struct_sizes(&base_n);
+    CHECK_EQ(n, base_n);
+    CHECK_EQ(nvn::struct_size("NVNtexture"), 0xC0u);
 }
