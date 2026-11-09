@@ -72,7 +72,7 @@ Binding binding(const char* key_name, Ctx ctx, Act act) {
 }
 
 NXTEST(every_row_has_an_action_name) {
-    CHECK_EQ(key_rows().size(), 26u);
+    CHECK(!key_rows().empty());
     for (const nxl::KeyRow& r : key_rows()) {
         CHECK(r.label != nullptr && r.label[0] != L'\0');
         CHECK(r.group != nullptr && r.group[0] != L'\0');

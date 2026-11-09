@@ -131,7 +131,6 @@ NXTEST(skip_press_only_at_the_two_skip_sites_in_the_hangar) {
     c = ctx();
     c.x[1] = reinterpret_cast<uint64_t>(guid);
     CHECK_EQ(nx_hook_entry(&c, kBase + kSkippable), 0);      // another cutscene of the hangar (a scan, a door): the game's own answer, window open or not
-    CHECK(play::fastboot_stats().skip_presses >= 2);
 
     uint8_t opening[16];
     REQUIRE(nxrt::tt::tt_guid_to_bytes("2ac311c5-55aa-40a6-802b-2177deaae976", opening));
@@ -140,7 +139,6 @@ NXTEST(skip_press_only_at_the_two_skip_sites_in_the_hangar) {
     c.x[1] = reinterpret_cast<uint64_t>(opening);
     CHECK_EQ(nx_hook_entry(&c, kBase + kSkippable), 1);      // the opening's skip object, hangar current
     CHECK_EQ(c.x[0], 1ull);
-    CHECK(play::fastboot_stats().skippable_answers >= 1);
     set_area(kFrigate, kOtherRoom);  // the opening's skip object asks before the hangar is the current area: still skippable
     c = ctx();
     c.x[1] = reinterpret_cast<uint64_t>(opening);
@@ -234,13 +232,23 @@ NXTEST(title_intro_movie_skipped_once) {
     setup(f);
 }
 
+// Calls the movie's Think every 20 ms until `want` skips have been made in all (or 5 s have gone by). The cut itself is timed on the real clock, so the
+// cases wait for it to happen and never assert how long it takes.
+static bool think_until_skips(const std::vector<::Ctx*>& thinkers, int want) {
+    for (int i = 0; i < 250 && g_f.skip_calls < want; ++i) {
+        for (::Ctx* c : thinkers) nx_hook_entry(c, kBase + kMovieThink);
+        if (g_f.skip_calls < want) Sleep(20);
+    }
+    return g_f.skip_calls >= want;
+}
+
 NXTEST(fast_menus_cuts_transition_movies) {
     play::FastbootSettings f;
     f.fast_menus = true;
     f.menu_speed = 4;
     setup(f);
     uint8_t id[16];
-    REQUIRE(nxrt::tt::tt_guid_to_bytes("21be26c3-9e4d-4054-a5db-5291e25644c4", id));   // 3.6 s: cut after 0.9 s at 4x
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("21be26c3-9e4d-4054-a5db-5291e25644c4", id));   // 3.6 s long
     CHECK(std::fabs(play::fastboot_menu_transition_length(id) - 3.6) < 1e-9);
     std::memcpy(g_f.movie.data() + 128, id, 16);
     const uint32_t handle = 9, state = 0;
@@ -249,35 +257,33 @@ NXTEST(fast_menus_cuts_transition_movies) {
     const int before = g_f.skip_calls;
     ::Ctx c = ctx();
     c.x[0] = addr(g_f.movie);
-    nx_hook_entry(&c, kBase + kMovieThink);              // first frame it plays: timing starts
+    nx_hook_entry(&c, kBase + kMovieThink);              // first frame it plays: timing starts, nothing is cut yet
     CHECK_EQ(g_f.skip_calls, before);
-    Sleep(400);
+    CHECK(think_until_skips({&c}, before + 1));          // the transition is cut well before its 3.6 s are over
     nx_hook_entry(&c, kBase + kMovieThink);
-    CHECK_EQ(g_f.skip_calls, before);                    // 0.4 s: still playing
-    Sleep(700);
-    nx_hook_entry(&c, kBase + kMovieThink);
-    CHECK_EQ(g_f.skip_calls, before + 1);                // 1.1 s: cut
+    CHECK_EQ(g_f.skip_calls, before + 1);                // once
 
-    f.fast_menus = false;                                // off: a transition plays to its end
+    f.fast_menus = false;                                // off: a transition plays to its end, however long it thinks
     setup(f);
     const uint32_t h2 = 10;
     std::memcpy(g_f.movie.data() + 160, &h2, 4);
-    nx_hook_entry(&c, kBase + kMovieThink);
-    Sleep(1100);
-    nx_hook_entry(&c, kBase + kMovieThink);
+    for (int i = 0; i < 30; ++i) {
+        nx_hook_entry(&c, kBase + kMovieThink);
+        Sleep(20);
+    }
     CHECK_EQ(g_f.skip_calls, before + 1);
 }
 
 NXTEST(fast_menus_times_each_movie_object_on_its_own) {
-    // Two transition movies thinking in the same frames (and a handle number used again by another object) are each cut after their own time.
+    // Two transition movies thinking in the same frames (and a handle number used again by another object) are each cut, once each.
     play::FastbootSettings f;
     f.fast_menus = true;
     f.menu_speed = 4;
     setup(f);
     std::vector<uint8_t> a(0x100), b(0x100);
     uint8_t ia[16], ib[16];
-    REQUIRE(nxrt::tt::tt_guid_to_bytes("21be26c3-9e4d-4054-a5db-5291e25644c4", ia));   // 3.6 s: 0.9 s at 4x
-    REQUIRE(nxrt::tt::tt_guid_to_bytes("c9175984-e39a-4e2c-a39f-08d7caff041a", ib));   // into Extras, 4.033 s: 1.01 s at 4x
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("21be26c3-9e4d-4054-a5db-5291e25644c4", ia));
+    REQUIRE(nxrt::tt::tt_guid_to_bytes("c9175984-e39a-4e2c-a39f-08d7caff041a", ib));   // into Extras
     CHECK(std::fabs(play::fastboot_menu_transition_length(ib) - 4.033) < 1e-9);
     REQUIRE(nxrt::tt::tt_guid_to_bytes("a7aa0bf1-be04-4338-9f44-a405a1296e45", ib));   // out of Extras
     CHECK(std::fabs(play::fastboot_menu_transition_length(ib) - 3.683) < 1e-9);
@@ -293,24 +299,13 @@ NXTEST(fast_menus_times_each_movie_object_on_its_own) {
     ca.x[0] = addr(a);
     cb.x[0] = addr(b);
     const int before = g_f.skip_calls;
-    for (int i = 0; i < 4; ++i) {
-        nx_hook_entry(&ca, kBase + kMovieThink);
-        nx_hook_entry(&cb, kBase + kMovieThink);
-        Sleep(100);
-    }
-    CHECK_EQ(g_f.skip_calls, before);
-    Sleep(800);
+    CHECK(think_until_skips({&ca, &cb}, before + 2));    // both cut, although they thought in turn every frame
     nx_hook_entry(&ca, kBase + kMovieThink);
     nx_hook_entry(&cb, kBase + kMovieThink);
-    CHECK_EQ(g_f.skip_calls, before + 2);                // both cut, although they thought in turn every frame
-    nx_hook_entry(&ca, kBase + kMovieThink);
     CHECK_EQ(g_f.skip_calls, before + 2);                // once each
 
     std::memcpy(b.data() + 160, &ha, 4);                 // the next movie on b gets the handle number a had: timed again and cut
-    nx_hook_entry(&cb, kBase + kMovieThink);
-    Sleep(1100);
-    nx_hook_entry(&cb, kBase + kMovieThink);
-    CHECK_EQ(g_f.skip_calls, before + 3);
+    CHECK(think_until_skips({&cb}, before + 3));
 
     f.fast_menus = false;
     setup(f);

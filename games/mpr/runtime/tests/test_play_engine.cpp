@@ -388,8 +388,8 @@ NXTEST(set_settings_consumes_rebound_held_input) {
     e.key(SDL_SCANCODE_W, false, ms(1500));
 }
 
-// Probe: a binding added in front of the held key's binding moves that binding's index in Settings::bindings, but the held key's
-// own bindings did not change. play_engine.cpp compares the indices (effective() returns indices), so this is expected to fail.
+// A binding added in front of the held key's binding shifts its position in the list, but the held key's own bindings did not change:
+// it must not be consumed.
 NXTEST(set_settings_keeps_unrelated_held_key_when_bindings_shift) {
     Engine e(settings_from("[bindings.all]\nMouse1 = fire\nW = move_forward\n"));
     to_gameplay(e);

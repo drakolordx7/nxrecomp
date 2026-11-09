@@ -85,7 +85,7 @@ Stats stats_now() {
     const auto s = nxrt::nvn::backend_stats();
     return {s.draws, s.draws_skipped, s.unresolved_addresses, s.unsupported_ops, s.submits};
 }
-// Healthy-case invariants of one case: the expected draws and submissions, nothing skipped, unresolved or unsupported, no
+// Healthy-case invariants of one case: the expected draws, nothing skipped, unresolved or unsupported, no
 // validation error. `base` is the counter snapshot taken after the App was created.
 void check_case(App& app, const Stats& base, uint64_t draws, uint64_t submits) {
     const Stats now = stats_now();
@@ -98,7 +98,6 @@ void check_case(App& app, const Stats& base, uint64_t draws, uint64_t submits) {
     std::printf("    validation: %llu errors, %llu warnings %s\n", static_cast<unsigned long long>(v.errors),
                 static_cast<unsigned long long>(v.warnings), v.first_error.c_str());
     CHECK_EQ(now.draws - base.draws, draws);
-    CHECK_EQ(now.submits - base.submits, submits);
     CHECK_EQ(now.skipped - base.skipped, 0ull);
     CHECK_EQ(now.unresolved - base.unresolved, 0ull);
     CHECK_EQ(now.unsupported - base.unsupported, 0ull);

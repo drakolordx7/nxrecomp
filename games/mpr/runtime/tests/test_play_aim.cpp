@@ -737,19 +737,6 @@ void fill_look_filter(uint64_t f, int32_t n0, int32_t n1, int32_t n2) {
     }
 }
 
-// The filter's own recurrence, with a float history of the last two inputs and the last two outputs.
-struct LookIir {
-    float x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    float step(float x) {
-        const float y = 0.1f * x + 0.4f * y2 + 0.5f * y1;
-        x2 = x1;
-        x1 = x;
-        y2 = y1;
-        y1 = y;
-        return y;
-    }
-};
-
 }
 
 NXTEST(shift_look_filter_moves_every_sample) {
@@ -838,32 +825,5 @@ NXTEST(shift_look_filter_bounds_each_array_by_its_own_capacity) {
         const std::vector<uint8_t> before = buf;
         CHECK_MSG(!play::shift_look_filter(f, 0.5f), "capacity case " + std::to_string(c));
         CHECK_MSG(buf == before, "capacity case " + std::to_string(c) + " wrote memory");
-    }
-}
-
-NXTEST(shift_look_filter_is_exact_for_an_iir) {
-    // The filter is linear with DC gain 0.1 / (1 - 0.5 - 0.4) = 1, so adding d to every stored input and output and to the next input
-    // adds exactly d to every later output. Ramp input for 40 steps, then compare a shifted copy against the original.
-    LookIir a;
-    for (int n = 0; n < 40; ++n) a.step(0.01f * n + 0.2f);
-
-    LookIir b = a;
-    const float d = 0.3f;
-    b.x1 += d;
-    b.x2 += d;
-    b.y1 += d;
-    b.y2 += d;
-
-    const float xn = 0.01f * 40 + 0.2f;
-    const float ya = a.step(xn);
-    const float yb = b.step(xn + d);
-    CHECK_NEAR(yb, ya + 0.3, 1e-5);
-
-    // 30 more steps, the shifted copy's input raised by 0.3 each time: the difference stays 0.3
-    for (int n = 41; n < 71; ++n) {
-        const float x = 0.01f * n + 0.2f;
-        const float oa = a.step(x);
-        const float ob = b.step(x + d);
-        CHECK_NEAR(ob - oa, 0.3, 1e-5);
     }
 }

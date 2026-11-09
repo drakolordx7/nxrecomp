@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// NVN throughput: thousands of draws per frame through the replay, with a real vertex/fragment shader pair and a texture. Measures
-// the CPU time of the render thread per draw (backend_stats().submit_replay_ns) and asserts a budget that keeps 120 fps possible
-// for a scene of 3000 draws. The numbers are printed; the assertion is loose because the machine is shared.
+// NVN throughput: thousands of draws per frame through the replay, with a real vertex/fragment shader pair and a texture. The CPU time of the
+// render thread per draw (backend_stats().submit_replay_ns) is printed, not asserted (it depends on the machine); the case checks that every
+// draw of every frame is replayed and that validation stays clean.
 #include <chrono>
 
 #include "nvn_app.h"
