@@ -3,9 +3,10 @@
 # Output: <NX>\build\<this checkout's folder name> (e.g. NX\build\mpr; a worktree NX\wt\mpr-x builds into NX\build\mpr-x), with -Release
 # ...\relpkg (NXRT_RELEASE=ON: GUI program, ./exefs, no build paths in the files): the folder base tools\release\make_release.py packs.
 # -Base: the base checkout (default NX_BASE, else .\base when populated, else ..\..\base). -LibDir: the lifted libraries (default
-# work\build\mpr). Exact commands: base docs\BUILD.md.
+# work\build\mpr). -A2B: a built astc2bc7, base tools\textures (default NXRT_A2B_DIR, else NX\build\textures). Exact commands: base
+# docs\BUILD.md.
 param([string]$Config = "Release", [switch]$Clean, [switch]$Release, [string]$Base = $env:NX_BASE, [string]$LibDir = "", [string]$Out = "",
-      [string]$Version = "dev")
+      [string]$Version = "dev", [string]$A2B = $env:NXRT_A2B_DIR)
 $ErrorActionPreference = "Stop"
 $src = Split-Path -Parent $PSScriptRoot
 $game = Split-Path -Parent $src
@@ -19,6 +20,7 @@ $bd = if ($Release) { Join-Path $bd "relpkg" } else { Join-Path $bd $Config.ToLo
 if ($Clean -and (Test-Path $bd)) { Remove-Item -Recurse -Force $bd }
 $env_cmd = Join-Path $Base "runtime\scripts\env.cmd"
 $cfg = "cmake -S `"$src`" -B `"$bd`" -G Ninja -DCMAKE_BUILD_TYPE=$Config -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DNX_BASE=`"$Base`" -DGAME_VERSION=$Version"
+if ($A2B) { $cfg += " -DNXRT_A2B_DIR=`"$A2B`"" }
 if ($LibDir) { $cfg += " -DGAME_LIB_DIR=`"$([IO.Path]::GetFullPath($LibDir))`"" }
 $targets = "mpr"
 if ($Release) { $cfg += " -DNXRT_RELEASE=ON"; $targets = "mpr mpr_launcher" }
