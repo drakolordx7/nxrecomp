@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes the entry-point coverage table of docs/S4d.md.
+"""Writes the entry-point coverage table of games/mpr/docs/work/S4d.md.
 
     set NXRT_NVN_DUMP_COVERAGE=work\\nvn\\coverage.tsv ; build\\release\\nxrt_gfx_tests.exe gfx_nvn_impl      (the test dumps name, ret, args, sources, implemented)
     python scripts\\gen_nvn_coverage_doc.py work\\nvn\\coverage.tsv [work\\nvn\\mpr_used_nvn.txt] > docs\\S4d_coverage.md

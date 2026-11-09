@@ -70,8 +70,8 @@ struct Page {
     int rebind = -1;                       // index into edit.bindings of the row waiting for an input; -1 = none
     bool link_pitch = true;                // Mouse tab: moving the horizontal sensitivity moves the vertical one too (local, not saved)
     bool out_tab_open = false;             // the Switch layout tab was open last frame; its fields are refilled when it opens
-    char out_text[kActCount][128] = {};
-    std::string out_err[kActCount];
+    char out_text[kActMax][128] = {};
+    std::string out_err[kActMax];
     bool aspect_custom = false;            // Display tab: the Custom aspect entry is picked (local, not saved)
     bool fps_capture = false;              // Display tab: the frame rate counter's hotkey waits for a key (local, not saved)
 };
@@ -118,7 +118,7 @@ void poll_capture(UiHost& host, Page& p) {
 }
 
 void refresh_out_text(Page& p) {
-    for (int a = 1; a < kActCount; ++a) {
+    for (int a = 1; a < act_count(); ++a) {
         const std::string text = output_text(p.edit.out[a]);
         std::snprintf(p.out_text[a], sizeof p.out_text[a], "%s", text.c_str());
         p.out_err[a].clear();
@@ -205,10 +205,82 @@ void sensitivity_help(double rad) {
     ImGui::TextDisabled("= %.6f rad per count, %.3f degrees per count, 360 degrees in %.0f counts", rad, rad * 180.0 / kPi, 2.0 * kPi / rad);
 }
 
-// The game's own entries of the Mouse tab (play_game.h GamePlay::mouse_tab): where = 0 after the sensitivity, 1 after the invert boxes, 2 at the end.
-void game_mouse_section(int where, Page& p) {
-    const GamePlay* gp = game_play();
-    if (gp && gp->mouse_tab && gp->mouse_tab(where, p.edit)) mark(p);
+// A "%" in a unit must not read as a format.
+std::string format_for(int decimals, const char* unit) {
+    std::string f = decimals > 0 ? "%." + std::to_string(decimals) + "f" : "%d";
+    for (const char* c = unit; c && *c; ++c) {
+        if (*c == '%') f += '%';
+        f += *c;
+    }
+    return f;
+}
+
+// The rows of the options the game registered for one tab (settings.h GameOption).
+void game_option_rows(Page& p, OptTab tab) {
+    const GameSection* gs = game::info().settings;
+    if (!gs) return;
+    const char* group = nullptr;
+    for (unsigned i = 0; i < gs->option_count; ++i) {
+        const GameOption& o = gs->options[i];
+        if (!(o.ui & kOptF1) || o.tab != tab) continue;
+        if (o.group && o.group != group) {
+            group = o.group;
+            ImGui::SeparatorText(o.group);
+        }
+        bool off = false;
+        if (o.depends)
+            for (unsigned j = 0; j < gs->option_count; ++j)
+                if (std::string(gs->options[j].key) == o.depends) off = gs->options[j].get(p.edit.game) == 0;
+        ImGui::BeginDisabled(off);
+        const std::string id = std::string(o.label) + "##opt_" + o.key;
+        const double cur = o.get(p.edit.game);
+        switch (o.kind) {
+            case OptKind::Bool: {
+                bool v = (cur != 0) != o.inverted;
+                if (ImGui::Checkbox(id.c_str(), &v)) {
+                    o.set(p.edit.game, (v != o.inverted) ? 1.0 : 0.0);
+                    mark(p);
+                }
+                break;
+            }
+            case OptKind::Choice: {
+                const int sel = std::clamp(static_cast<int>(cur), 0, static_cast<int>(o.word_count) - 1);
+                if (ImGui::BeginCombo(id.c_str(), o.labels ? o.labels[sel] : o.words[sel])) {
+                    for (int w = 0; w < static_cast<int>(o.word_count); ++w) {
+                        if (ImGui::Selectable(o.labels ? o.labels[w] : o.words[w], w == sel) && w != sel) {
+                            o.set(p.edit.game, w);
+                            mark(p);
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                break;
+            }
+            case OptKind::Real: {
+                const std::string fmt = format_for(o.ui_decimals, o.ui_unit);
+                double shown = cur * o.ui_scale;
+                if (o.ui_decimals > 0 || o.ui_log) {
+                    if (slider(id.c_str(), &shown, o.ui_lo, o.ui_hi, fmt.c_str(), o.ui_log ? ImGuiSliderFlags_Logarithmic : 0)) {
+                        o.set(p.edit.game, shown / o.ui_scale);
+                        mark(p);
+                    }
+                } else {
+                    int v = static_cast<int>(std::lround(shown));
+                    if (ImGui::SliderInt(id.c_str(), &v, static_cast<int>(o.ui_lo), static_cast<int>(o.ui_hi), fmt.c_str())) {
+                        o.set(p.edit.game, v / o.ui_scale);
+                        mark(p);
+                    }
+                }
+                break;
+            }
+        }
+        ImGui::EndDisabled();
+        if (o.hint) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", o.hint);
+            ImGui::PopTextWrapPos();
+        }
+    }
 }
 
 void mouse_tab(Page& p) {
@@ -228,14 +300,20 @@ void mouse_tab(Page& p) {
     }
     sensitivity_help(m.pitch_rad);
     ImGui::Checkbox("Link vertical to horizontal", &p.link_pitch);
-    game_mouse_section(0, p);
 
     ImGui::Spacing();
     if (ImGui::Checkbox("Invert vertical", &m.invert_y)) mark(p);
     if (ImGui::Checkbox("Invert horizontal", &m.invert_x)) mark(p);
-    game_mouse_section(1, p);
+    if (const GameVocabulary* v = game_vocabulary(); v && v->cycle) {
+        const std::string label = std::string(v->label_wheel_cycles ? v->label_wheel_cycles : "Mouse wheel cycles") + "##wheel_cycles";
+        if (ImGui::Checkbox(label.c_str(), &m.wheel_cycles)) mark(p);
+    }
     if (ImGui::Checkbox("Mouse pointer in menus (cursor, hover, click)", &m.menu_cursor)) mark(p);
-    game_mouse_section(2, p);
+    game_option_rows(p, OptTab::Mouse);
+    if (const GameSection* gs = game::info().settings; gs && gs->mouse_note) {
+        ImGui::Spacing();
+        ImGui::TextWrapped("%s", gs->mouse_note);
+    }
 }
 
 constexpr const char* kPadSrcLabels[kPadSrcCount] = {
@@ -343,6 +421,7 @@ void pad_tab(const LiveStatus& live, Page& p) {
 
     if (slider("Left stick dead zone", &pad.stick_deadzone, 0.0, 0.5, "%.2f")) mark(p);
     if (slider("Right stick dead zone", &pad.right_deadzone, 0.0, 0.5, "%.2f")) mark(p);
+    game_option_rows(p, OptTab::Pad);
     if (ImGui::Checkbox("Invert look (right stick up looks down)", &pad.invert_y)) mark(p);
     if (ImGui::IsItemHovered()) ImGui::SetItemTooltip("%s", "Applies in play only; adds to the game's own invert option.");
     if (slider("Look sensitivity", &pad.look_sens, 0.25, 3.0, "%.2f", ImGuiSliderFlags_Logarithmic)) mark(p);
@@ -523,7 +602,6 @@ void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
     ImGui::TextDisabled("Resolution options apply the next time the game starts.");
 
     if (slider("FOV offset (degrees, vertical)", &d.fov_offset, -30.0, 40.0, "%.1f")) mark(p);
-    if (ImGui::Checkbox("Dynamic resolution (lowers the render size when the GPU is late)", &d.dynamic_resolution)) mark(p);
     int aniso_sel = 0;
     for (int i = 0; i < kAnisoCount; ++i)
         if (kAnisoValues[i] == d.anisotropy) aniso_sel = i;
@@ -537,8 +615,7 @@ void display_tab(UiHost& host, const LiveStatus& live, Page& p) {
         ImGui::EndCombo();
     }
     if (slider("Texture LOD bias", &d.lod_bias, -2.0, 2.0, "%.2f")) mark(p);
-    if (ImGui::Checkbox("Bloom", &d.bloom)) mark(p);
-    if (ImGui::Checkbox("Chromatic aberration", &d.chromatic_aberration)) mark(p);
+    game_option_rows(p, OptTab::Display);
     if (ImGui::Checkbox("Faster GPU memory (uses more video memory) (restart)", &d.fast_gpu_memory)) mark(p);
     if (ImGui::Checkbox("Fewer GPU pipeline waits (restart)", &d.fewer_gpu_waits)) mark(p);
 
@@ -681,7 +758,7 @@ void extras_tab(Page& p) {
     hdr_group(p);
     upscale_group(p);
     latency_group(p);
-    if (const GameSection* gs = game_section(); gs && gs->extras_rows && gs->extras_rows(p.edit)) mark(p);
+    if (const GameSection* gs = game::info().settings; gs && gs->extras_rows && gs->extras_rows(p.edit)) mark(p);
 }
 
 std::string input_button_text(const Binding& b, bool waiting) {
@@ -693,7 +770,7 @@ std::string input_button_text(const Binding& b, bool waiting) {
 
 void bindings_tab(UiHost& host, Page& p) {
     if (ImGui::BeginCombo("Context", ctx_name(p.ctx))) {
-        for (int c = 0; c < kCtxCount; ++c) {
+        for (int c = 0; c < ctx_count(); ++c) {
             const Ctx ctx = static_cast<Ctx>(c);
             if (ImGui::Selectable(ctx_name(ctx), ctx == p.ctx) && ctx != p.ctx) {
                 stop_rebind(host, p);
@@ -733,7 +810,7 @@ void bindings_tab(UiHost& host, Page& p) {
             ImGui::TableSetColumnIndex(1);
             ImGui::SetNextItemWidth(-FLT_MIN);
             if (ImGui::BeginCombo("##act", act_label(b.act))) {
-                for (int a = 0; a < kActCount; ++a) {
+                for (int a = 0; a < act_count(); ++a) {
                     const Act act = static_cast<Act>(a);
                     if (ImGui::Selectable(act_label(act), act == b.act) && act != b.act) {
                         b.act = act;
@@ -793,17 +870,19 @@ void bindings_tab(UiHost& host, Page& p) {
 }
 
 void switch_tab(Page& p) {
-    // The cycling actions by the game's names (mpr: beam_next and beam_prev ... beam_1 to beam_4).
-    const std::string help = std::string("What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
-                                         "and stick directions LS_UP LS_DOWN LS_LEFT LS_RIGHT RS_UP RS_DOWN RS_LEFT RS_RIGHT, joined by +. ") +
-                             act_info(Act::SetANext).name + " and " + act_info(Act::SetAPrev).name + " have no fixed output (they pick " +
-                             act_info(Act::SetA1).name + " to " + act_info(Act::SetA4).name + ").";
+    std::string help = "What each action presses on the Switch pad: buttons A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK "
+                       "and stick directions LS_UP LS_DOWN LS_LEFT LS_RIGHT RS_UP RS_DOWN RS_LEFT RS_RIGHT, joined by +.";
+    if (const GameVocabulary* v = game_vocabulary(); v && v->cycle) {
+        const GameCycle& cy = *v->cycle;
+        help += std::string(" ") + act_info(cy.next).name + " and " + act_info(cy.prev).name + " have no fixed output (they pick " + act_info(cy.first).name +
+                " to " + act_info(game_act(static_cast<int>(cy.first) - static_cast<int>(Act::kBase) + static_cast<int>(cy.count) - 1)).name + ").";
+    }
     ImGui::TextWrapped("%s", help.c_str());
     if (ImGui::BeginTable("switch_out", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 150.0f);
         ImGui::TableSetupColumn("Output");
         ImGui::TableHeadersRow();
-        for (int a = 1; a < kActCount; ++a) {
+        for (int a = 1; a < act_count(); ++a) {
             const bool bad = !p.out_err[a].empty();
             ImGui::PushID(a);
             ImGui::TableNextRow();
@@ -837,7 +916,7 @@ void switch_tab(Page& p) {
         ImGui::EndTable();
     }
     if (ImGui::Button("Reset this table to the defaults")) {
-        for (int a = 1; a < kActCount; ++a) {
+        for (int a = 1; a < act_count(); ++a) {
             Output o;
             if (parse_output(act_info(static_cast<Act>(a)).default_out, &o)) p.edit.out[a] = o;
         }
@@ -917,7 +996,7 @@ void draw_settings_page(UiHost& host) {
             extras_tab(p);
             ImGui::EndTabItem();
         }
-        if (const GameSection* gs = game_section(); gs && gs->tab && gs->tab_title && ImGui::BeginTabItem(gs->tab_title)) {
+        if (const GameSection* gs = game::info().settings; gs && gs->tab && gs->tab_title && ImGui::BeginTabItem(gs->tab_title)) {
             if (gs->tab(p.edit)) mark(p);
             ImGui::EndTabItem();
         }

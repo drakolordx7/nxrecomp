@@ -2,22 +2,20 @@
 // Play mode (S8): the PC front end of the recompiled game. One window, the SDL event pump on the game's main thread, the frame
 // limiter on the presenting thread, real controller / keyboard / mouse input into the hid service, raw mouse aim, and the F1 settings page.
 //
-// Start-up order in a launcher (game-build/src/mpr_main.cpp):
+// Start-up order (the generic game exe, apps/game/game_main.cpp):
 //   nxrt::init();  play::load();                     // reads controls.ini (or [play] controls) and the [play] keys of nxrt.ini
 //   window + gfx::Device + gfx::Renderer             // window size and present mode come from play::display()
 //   nvn::install_backend({... limiter = play::limiter(), keep_aspect = play::display().keep_aspect})
 //   play::start({...});                              // input source, hooks, overlay page; the game may run from here
-// What is about one game (the frame-boundary site, raw mouse aim, camera look, lock-on, display hooks, menu widgets, context detection, F1
-// entries) comes from the registered game module's play table (nxrt/game.h, src/gfx/play/play_game.h; docs/GAME_BOUNDARY.md). The game must
-// have been lifted with entry hooks at those sites (Metroid Prime Remastered: games/mpr/recomp/main.sites). Without them the window still
-// opens but nothing is pumped (a warning says so after a few seconds).
+// What is about one game (raw mouse aim, camera look, display hooks, menu widgets, context detection, its options and F1 entries) comes from the
+// registered game module (nxrt/game.h Info::play, Info::settings; docs/GAME_BOUNDARY.md); the frame-boundary site is Info::frame_update. The game
+// must have been lifted with entry hooks at those sites. Without them the window still opens but nothing is pumped.
 //
 // Configuration (nxrt.ini section [play], environment NXRT_PLAY_<KEY>):
 //   controls = controls.ini     the settings file (play_types.h documents the format); written with the factory settings when missing
 //   capture_mouse = 1           capture the pointer (relative mode) while the game is being played
 //   pitch_limit_deg = 0         > 0: pitch limit of the mouse aim in degrees instead of the game's tweak value
 //   quit_on_close = 1           closing the window ends the process (exit code 0)
-//   game_base = 0x7100000000    base of the game's main module
 //   log_status = 0              1: one status line per second in the log (context, aim state, input counts)
 #pragma once
 #include <cstdint>

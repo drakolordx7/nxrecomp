@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // All NVN implementations registered together: every signature agrees with the generated table, the implemented count, and the
-// coverage dump that docs/S4d.md is generated from (NXRT_NVN_DUMP_COVERAGE=<file>).
+// coverage dump that games/mpr/docs/work/S4d.md is generated from (NXRT_NVN_DUMP_COVERAGE=<file>).
 #include <cstdio>
 #include <cstdlib>
 #include <set>

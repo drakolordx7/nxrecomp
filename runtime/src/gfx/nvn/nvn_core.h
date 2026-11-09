@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Host objects of the NVN back end (S4d). Design (see docs/S4d.md):
+// Host objects of the NVN back end (S4d). Design (see games/mpr/docs/work/S4d.md):
 //   * The game allocates every NVN object. "Heavy" objects (device, queue, command buffer, memory pool, texture, program, sync,
 //     event, window, texture pool, sampler pool) keep a pointer to a host object in their first 16 bytes (GuestHeader); the
 //     plain-data objects (builders, state objects, samplers, views, buffers) live entirely in guest memory (api_*.cpp).

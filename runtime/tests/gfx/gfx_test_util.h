@@ -25,7 +25,7 @@ using namespace nxrt::gfx;
 inline const std::string kRefPath = std::string(NXRT_GFX_TEST_DATA_DIR) + "/test_scene_640x360_f60.png";
 
 // Tolerance of the screenshot oracle: the same GPU gives the same image to the bit, other GPUs and drivers differ by rounding in
-// the texture filter. These bounds were set from measurements on the RTX 3080 and the UHD 770 (see docs/S4b.md).
+// the texture filter. These bounds were set from measurements on the RTX 3080 and the UHD 770 (see games/mpr/docs/work/S4b.md).
 inline constexpr double kMeanAbsTolerance = 0.05;     // mean absolute difference per channel, 0..255
 inline constexpr int kMaxAbsTolerance = 4;           // largest single channel difference
 inline constexpr double kFractionOver8 = 0.0005;       // pixels with any channel off by more than 8

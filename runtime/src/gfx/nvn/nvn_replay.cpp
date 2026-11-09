@@ -3,7 +3,7 @@
 // console keeps (it persists across lists and submissions), and turns it into Vulkan: dynamic-rendering passes opened lazily on the
 // first draw or clear of a render target set, graphics pipelines keyed by the baked state, descriptor sets built from the
 // translated shaders' binding tables (nvn_shaders.h), vertex and index data straight from the imported pool memory.
-// Lessons applied from SuperMarioWonderRecomp docs/nvn/DEBUG.md and DEBUG-2.md (see work notes in docs/S4d.md): viewport flip by a
+// Lessons applied from SuperMarioWonderRecomp docs/nvn/DEBUG.md and DEBUG-2.md (see work notes in games/mpr/docs/work/S4d.md): viewport flip by a
 // negative-height viewport, a memory barrier after every pass, textures sampled by a draw are made current before the pass,
 // handles never dropped by count, deferred bind arrays read at record time.
 #include <atomic>

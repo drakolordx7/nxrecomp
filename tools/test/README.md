@@ -1,6 +1,6 @@
 # tools/test: test tooling and Eden reference captures (work area S5)
 
-Host-side half of the test tooling. The runtime half (scripted runs, traces, deterministic mode, record/replay) is `runtime/docs/S5.md`. Python is `tools\.venv\Scripts\python` (numpy and Pillow only); tests are stdlib `unittest`:
+Host-side half of the test tooling. The runtime half (scripted runs, traces, deterministic mode, record/replay) is `games/mpr/docs/work/S5.md`. Python is `tools\.venv\Scripts\python` (numpy and Pillow only); tests are stdlib `unittest`:
 
     cd tools\test
     ..\.venv\Scripts\python -I -m unittest discover -s tests -v        everything below (no game needed)

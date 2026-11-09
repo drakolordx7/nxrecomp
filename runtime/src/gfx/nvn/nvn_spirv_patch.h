@@ -12,7 +12,7 @@
 //   spirv_add_xfb      a vertex shader that runs with transform feedback: the Location outputs are captured into buffer 0 in Location
 //                       order, each narrowed to the components the shader stores (a vec4 whose xyz are written is captured as 12
 //                       bytes), tightly packed. The console's layout lives in the driver's compile data; this is the layout the
-//                       game's stream-out shaders use (docs/S4e.md).
+//                       game's stream-out shaders use (games/mpr/docs/work/S4e.md).
 //
 // The idea (pattern-matching on the module's declarations, new ids from the bound) follows SuperMarioWonderRecomp's
 // nvn_spirv_patch.cpp (MIT); the code is new.

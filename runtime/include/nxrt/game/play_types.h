@@ -5,10 +5,11 @@
 //   input    a physical thing on the keyboard or mouse: a key (SDL scancode), a mouse button or a wheel notch.
 //   action   what the player wants the game to do ("primary", "jump", "set_a_2"). The game only knows the Switch pad, so every action is tied
 //            to a Switch output (buttons and stick directions) by the [switch] table of the settings file.
-//   context  where the player is: in play, in the alternate body (a second control scheme and camera), on the map, in a menu, inspecting.
-//            `all` is a layer under every context.
-// The action and context slots are generic; the registered game names them and gives their factory outputs and the launcher's labels
-// (GameVocabulary below). Without a game the slots keep generic names.
+//   context  where the player is: in play, on the map, in a menu. `all` is a layer under every context.
+// The base knows the movement, look, primary, secondary, jump, map, pause, confirm, back, d-pad and raw button actions and the four contexts
+// above. Everything else is the registered game's data (GameVocabulary below): its further actions (from Act::kBase on), its further
+// contexts (from Ctx::kBase on), the names of all of them, their factory outputs and the launcher's labels. Without a game only the base's
+// own exist.
 //   trigger  how an input turns into an action: press (while held), tap (a short pulse after a quick release), hold (after a delay,
 //            while held), toggle (each press flips it), doubletap (a second quick press, while held).
 // A binding says "in this context, this input drives this action with this trigger".
@@ -22,12 +23,14 @@
 
 namespace nxrt::play {
 
-// Play: the game in play. Alt: in play in the alternate body (a second control scheme). Inspect: in play with an inspect mode on.
-enum class Ctx : uint8_t { All = 0, Play, Alt, Map, Menu, Inspect, kCount };
-constexpr int kCtxCount = static_cast<int>(Ctx::kCount);
-const char* ctx_name(Ctx c);                           // the game's names (GameVocabulary::ctx_names); generic: "all" "play" "alt" "map" "menu" "inspect"
+// Play: the game in play. The game's own contexts are game_ctx(0), game_ctx(1) ... (GameVocabulary::ctx_names).
+enum class Ctx : uint8_t { All = 0, Play, Map, Menu, kBase };
+constexpr int kCtxMax = 12;                            // capacity: the base's four plus the game's
+constexpr Ctx game_ctx(int i) { return static_cast<Ctx>(static_cast<int>(Ctx::kBase) + i); }
+int ctx_count();                                       // the contexts that exist: the base's plus the registered game's
+const char* ctx_name(Ctx c);                           // the game's names (GameVocabulary::ctx_names); generic: "all" "play" "map" "menu"
 bool parse_ctx(const std::string& s, Ctx* out);        // case-insensitive
-inline bool ctx_in_play(Ctx c) { return c == Ctx::Play || c == Ctx::Alt || c == Ctx::Inspect; }
+bool ctx_in_play(Ctx c);                               // Play, or a game context the vocabulary marks as a variant of play (GameVocabulary::play_ctx_mask)
 
 enum class Trig : uint8_t { Press = 0, Tap, Hold, Toggle, DoubleTap };
 const char* trig_name(Trig t);                         // "press" "tap" "hold" "toggle" "doubletap"
@@ -38,27 +41,28 @@ enum class Act : uint8_t {
     MoveForward, MoveBack, MoveLeft, MoveRight,
     // right stick (keyboard look; the mouse does not use these)
     LookUp, LookDown, LookLeft, LookRight,
-    Primary, Target, Secondary, Jump, AltForm, LookHold, Map, Pause, Confirm, Back,
+    Primary, Secondary, Jump, Map, Pause, Confirm, Back,
     DpadUp, DpadDown, DpadLeft, DpadRight,
-    SetA1, SetA2, SetA3, SetA4,            // select one of four in the cycled set
-    SetB1, SetB2, SetB3, SetB4,            // select one of four in a second set
-    SetANext, SetAPrev,                    // cycle set A (the mouse wheel)
     // raw Switch buttons, for anything the table above does not cover
     BtnA, BtnB, BtnX, BtnY, BtnL, BtnR, BtnZL, BtnZR, BtnPlus, BtnMinus, BtnLStick, BtnRStick,
-    kCount
+    kBase,                      // the game's own actions follow: game_act(0), game_act(1) ...
+    kCount = 64                 // capacity (and the "no action" result of a lookup)
 };
-constexpr int kActCount = static_cast<int>(Act::kCount);
+constexpr int kActMax = static_cast<int>(Act::kCount);
+constexpr Act game_act(int i) { return static_cast<Act>(static_cast<int>(Act::kBase) + i); }
+int act_count();                                        // the actions that exist: the base's plus the registered game's
 
 struct ActInfo {
     Act act;
-    const char* name;           // the name used in the settings file: "move_forward" "btn_zl"; the game's for its slots
+    const char* name;           // the name used in the settings file: "move_forward" "btn_zl"
     const char* default_out;    // the default [switch] entry in output syntax (see parse_output): "ZR", "X+UP", "LS_UP" ... "" = none
+    bool pulse = false;         // an edge action: when its binding becomes active the output is pressed for [timing] pulse_ms, however long the input stays down
 };
 const ActInfo& act_info(Act a);                         // the registered game's row (GameVocabulary::acts), else the generic one
 bool parse_act(const std::string& name, Act* out);     // case-insensitive, '-' and '_' equal
 
 // What an action does on the Switch pad: buttons pressed together plus stick deflection (each axis -1..1, summed over all active
-// actions and clamped). SetANext / SetAPrev have no fixed output: the engine turns them into one of SetA1..4 (see engine).
+// actions and clamped). The cycle actions (GameVocabulary::cycle) have no fixed output: the engine turns them into one member of the cycled set (see engine).
 struct Output {
     uint64_t buttons = 0;       // nn::hid::NpadButton bits (nxrt/input_source.h: btn(kBtnA) ...)
     float lx = 0, ly = 0;       // left stick, y up = +
@@ -101,13 +105,10 @@ inline double rad_per_count(double source) { return source * kSourceRadPerCount;
 struct MouseSettings {
     double yaw_rad = 0.000767945;   // radians per count, horizontal
     double pitch_rad = 0.000767945;   // radians per count, vertical (separate)
-    double alt_yaw_rad = 0.000767945;     // the alternate body's camera: its own sensitivity, radians per count
-    double alt_pitch_rad = 0.000767945;
-    bool alt_camera = true;                        // the mouse and the right stick turn the alternate body's camera
     bool invert_y = false;                         // false: mouse up looks up
     bool invert_x = false;
     bool menu_cursor = true;                       // in menus the mouse is a pointer: cursor, hover, click, right click, wheel
-    bool wheel_cycles = true;                       // the wheel cycles set A (the SetANext / SetAPrev bindings stay either way)
+    bool wheel_cycles = true;                       // the wheel cycles the game's cycled set (the bindings of the cycle actions stay either way)
 };
 // The physical buttons of an SDL gamepad, named by position (the face buttons by where they sit, so the names do not depend on the printed
 // letters). Each one presses a Switch button; `default` (kPadDefault) keeps the built-in mapping of pad_map.h.
@@ -136,7 +137,6 @@ struct PadSettings {
     double gyro_scale = 1.0;
     bool rumble = true;
     double rumble_scale = 1.0;
-    double alt_orbit = 2.0;       // rad/s at full right-stick deflection, 0 = off (0..6). The alternate body's camera only.
 };
 struct TimingSettings {
     int tap_ms = 200;              // a press shorter than this is a tap
@@ -156,11 +156,8 @@ struct DisplaySettings {
     double aspect = 0;             // 0 = the ratio of the internal resolution; otherwise the forced ratio of the 3D view and the HUD (1.0 .. 5.0)
     // live:
     double fov_offset = 0;         // degrees added to the vertical field of view of every game camera (-30 .. 40), 0 = the game's own
-    bool dynamic_resolution = false;   // the game's own dynamic resolution (it lowers the render size when the GPU is late)
     int anisotropy = 0;            // 0 = what the game's samplers ask for; 2, 4, 8 or 16 = at least that on every filtering sampler
     double lod_bias = 0;           // texture LOD bias added to every sampler (-2.0 .. 2.0; negative is sharper)
-    bool bloom = true;
-    bool chromatic_aberration = true;
     // ---- S38 GPU paths, at the next start; [nvn] pool_mirror and pass_barriers in the game's ini or the environment win over these.
     bool fast_gpu_memory = true;   // device-local copies of the pools draws read ([nvn] pool_mirror = on); costs up to 2 GiB of video memory
     bool fewer_gpu_waits = true;   // no full barrier after passes that only wrote their attachments ([nvn] pass_barriers = tracked)
@@ -189,33 +186,16 @@ struct FpsSettings {
     bool in_screenshots = false;                         // [fps] in_screenshots: the counter is drawn into screenshots too (test tooling asks for this)
 };
 
-// [aim] lock_mode: classic is the game's own lock-on (the view turns to the target); free starts the same way (the game centres the target)
-// and then lets the mouse and the right stick move the view, as long as the target stays on the screen (free_lock_margin).
-// [camera] view_sway: 1 is the game's own behaviour (the held item's idle drift, walking bob and landing dip move the view); 0 keeps the view still.
-enum class LockMode : uint8_t { Classic = 0, Free };
-const char* lock_mode_name(LockMode m);                       // "classic" "free"
-bool parse_lock_mode(const std::string& s, LockMode* out);    // case-insensitive
-struct AimSettings {
-    LockMode lock_mode = LockMode::Classic;
-    double free_lock_margin = 0.15;   // [aim] free_lock_margin (0..0.4): with the free lock the view may move, but the locked target stays inside the screen with this
-                                      // fraction of the screen size kept free along every edge (0 = right at the edge, 0.15 = the middle 70 percent)
-};
-struct CameraSettings {
-    bool view_sway = true;   // [camera] view_sway: the game's own sway: the held item is fixed to the view, so its idle drift, walking bob and landing dip move the view
-};
-
 struct Settings {
     MouseSettings mouse;
-    AimSettings aim;
-    CameraSettings camera;
     PadSettings pad;
     TimingSettings timing;
     DisplaySettings display;
     extras::Settings extras;       // the [hdr] [upscale] [latency] sections (nxrt/extras.h): HDR output, upscaling, low latency
     PromptSettings prompts;
     FpsSettings fps;
-    GameState game;                // the registered game's own section (settings.h)
-    Output out[kActCount];         // the [switch] table; defaulted from ActInfo::default_out
+    GameState game;                // the registered game's own settings (settings.h): its own section and the options it adds to the base's
+    Output out[kActMax];           // the [switch] table; defaulted from ActInfo::default_out
     std::vector<Binding> bindings;
     // [meta] defaults_rev: the factory-defaults revision the file was written with (0 when the file has no [meta]). When a file with
     // bindings sections is read at an older revision, the newer factory bindings are added to it (play_config.cpp defaults_rev(): the game's GameDefaults::rev and additions).
@@ -258,69 +238,58 @@ struct GameDefaults {
     const struct GameDefaultChange* changes = nullptr;
     unsigned change_count = 0;
 };
-const GameDefaults* game_defaults();                 // the registered game's, or nullptr
 
-// The game's words for the generic slots (Info::play_defaults->vocabulary). Every part is optional: a null table keeps the generic names.
+// The game's play-mode vocabulary (Info::play_defaults->vocabulary). Every part is optional: a null table keeps the base's own names.
 struct GameActLabel {
     Act act;
     const char* label;          // the launcher's row label (UTF-8)
     const char* group;          // the launcher's group (UTF-8)
 };
+// A set of actions the player cycles through (a weapon or tool set). The engine tracks the selected member; `next` and `prev` walk
+// the members the game says can be selected (GameFrame::cycle_mask) and press the member's output.
+struct GameCycle {
+    Act first;                  // the first member; the members are consecutive actions
+    unsigned count;             // 1 .. 8
+    Act next, prev;             // the actions that step through the set (the mouse wheel by default)
+};
 struct GameVocabulary {
-    const ActInfo* acts = nullptr;                   // kActCount rows in enum order: the file names and factory outputs of every action
-    const char* const* ctx_names = nullptr;          // kCtxCount names in enum order
+    const ActInfo* acts = nullptr;                   // act_rows rows in Act order: the file names and factory outputs of every action
+    unsigned act_rows = 0;                           // Act::kBase + the number of the game's own actions
+    const char* const* ctx_names = nullptr;          // ctx_rows names in Ctx order
+    unsigned ctx_rows = 0;                           // Ctx::kBase + the number of the game's own contexts
+    unsigned play_ctx_mask = 0;                      // bit n: Ctx n is a variant of play (the right stick looks in it, the game is running)
+    const GameCycle* cycle = nullptr;                // the cycled set, or none
     const GameActLabel* labels = nullptr;            // the launcher's Keyboard rows, in display order
     unsigned label_count = 0;
-    // settings-file keys and launcher labels of the alternate-body and cycle settings (nullptr: the generic key)
-    const char* key_alt_yaw = nullptr;               // [mouse] (generic "alt_yaw")
-    const char* key_alt_pitch = nullptr;             // [mouse] (generic "alt_pitch")
-    const char* key_wheel_cycles = nullptr;          // [mouse] (generic "wheel_cycles")
-    const char* key_alt_orbit = nullptr;             // [pad]   (generic "alt_orbit")
-    const char* key_alt_camera = nullptr;            // [mouse] on/off (generic "alt_camera")
-    const char* key_alt_sens = nullptr;              // [mouse] one sensitivity for both directions, Source scale (generic "alt_sensitivity")
-    const char* key_view_sway = nullptr;             // [camera] (generic "view_sway")
-    const char* label_alt_camera = nullptr;          // launcher slider
-    const char* label_wheel_cycles = nullptr;        // launcher check box
-    const char* label_alt_camera_on = nullptr;       // launcher check box
-    const char* label_view_sway = nullptr;           // launcher check box, shown inverted: on = the view does not sway (null: a generic text)
+    const char* key_wheel_cycles = nullptr;          // [mouse] key of the wheel option (null: "wheel_cycles")
+    const char* label_wheel_cycles = nullptr;        // its launcher and F1 text
     const char* keys_note = nullptr;                 // launcher Keyboard tab: the contexts whose keys it does not touch, as a sentence (null: none named)
 };
 const GameVocabulary* game_vocabulary();             // the registered game's, or nullptr
-// The settings-file keys of the alternate-body and cycle settings: the game's, else the generic ones.
-const char* key_alt_yaw();
-const char* key_alt_pitch();
-const char* key_wheel_cycles();
-const char* key_alt_orbit();
-const char* key_alt_camera();
-const char* key_alt_sens();
-const char* key_view_sway();
+const char* key_wheel_cycles();                      // the game's key of the wheel option, else the generic one
 
 // Plain ini, '#' or ';' starts a comment. Sections and keys are case-insensitive, whitespace around names and values is ignored.
 //   [meta]     defaults_rev = <n>   (written by the game; the factory-defaults revision of the file, a file without it counts as 0)
 //   [mouse]    yaw = 0.000768   pitch = 0.000768   invert_y = 0   invert_x = 0   menu_cursor = 1   wheel_cycles = 1     (radians per count)
 //              yaw_source / pitch_source = 2.0 are accepted as well (Source scale); when both forms appear the last one wins
-//              alt_camera = 1 (the alternate body's camera follows the mouse and the right stick), alt_sensitivity = 2.0 (its sensitivity, Source
-//              scale, both directions; alt_yaw / alt_pitch in radians per count set one direction each)
-//   [pad]      label_abxy deadzone trigger_threshold gyro gyro_scale rumble rumble_scale alt_orbit
+//   [pad]      label_abxy deadzone right_deadzone invert_y look_sens trigger_threshold gyro gyro_scale rumble rumble_scale
 //   [timing]   tap_ms hold_ms double_ms pulse_ms
 //   [display]  window_mode vsync fps_cap width height keep_aspect render_scale render_width render_height aspect fov_offset
-//              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration fast_gpu_memory fewer_gpu_waits
+//              anisotropy lod_bias fast_gpu_memory fewer_gpu_waits
 //   [hdr]      mode (off auto on) format (auto hdr10 scrgb) peak_nits (0 = auto, else 200..10000) paper_white_nits (0 = auto, else
 //              80..500) highlight_boost (0..2)
 //   [upscale]  mode (off fsr1; spatial = fsr1; the retired fsr3 dlss xess read as off) sharpness (0..1) scene_scale (25..100); the retired
 //              keys fsr_dll dlss_dll xess_dll frame_generation are accepted and ignored
 //   [latency]  mode (off auto on boost) log_timings (1/0)
 //   [prompts]  style = switch|xbox|playstation|keyboard|auto   (which button icons the game's prompts show; auto, the default, follows the last used input device)
-//   [camera]   view_sway = 1
-//   [<game>]   the game's own section, if it registered one (settings.h; Metroid Prime Remastered: [tweaks])
+//   [<game>]   the game's own section and the keys it adds to the sections above, if it registered them (settings.h)
 //   [fps]      show (1/0) key (a keyboard key, F2) corner (top_left top_right bottom_left bottom_right) detail (0..2) in_screenshots (1/0)
 //   [padmap]   <south east west north left_shoulder right_shoulder left_trigger right_trigger start back left_stick right_stick dpad_up dpad_down
 //              dpad_left dpad_right> = default | none | <Switch buttons joined by '+', e.g. A or ZL+L>   (the pad button presses those Switch buttons)
-//   [switch]   <action> = <output>      e.g.  primary = ZR    set_a_1 = X+UP    (missing actions keep the default)
-//   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = primary    Left Ctrl = alt_form hold 250    Space = jump toggle
+//   [switch]   <action> = <output>      e.g.  primary = ZR    (missing actions keep the default)
+//   [bindings.<ctx>]   <input> = <action> [trigger [ms]]     e.g.   Mouse1 = primary    Space = jump toggle
 //                      ctx is a context name (the game's: GameVocabulary::ctx_names). The same input may appear several times in a section.
-//   The action and context names and the alternate-body keys of [mouse] and [pad] in this description are the generic ones; a game renames
-//   them (GameVocabulary).
+//   The action and context names in this description are the generic ones; a game renames them and adds its own (GameVocabulary).
 // Unknown sections/keys are ignored with a warning in *warnings (not an error); a malformed value of a known key is an error.
 // parse_settings starts from default_settings() and applies the text on top. If the text has any [bindings.*] section, the default
 // bindings are dropped first (the file is then the whole truth); a file without bindings sections keeps the default bindings.

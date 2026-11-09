@@ -58,7 +58,7 @@ typedef struct {
 } NVNdeviceBuilder;
 
 typedef struct {
-    // 16 bytes (four words), as the game passes it (docs/S4e.md): word 0 is not read by the game, words 1 to 3 are the width, height
+    // 16 bytes (four words), as the game passes it (games/mpr/docs/work/S4e.md): word 0 is not read by the game, words 1 to 3 are the width, height
     // and depth of a 64 KiB sparse tile in texels.
     int unknown0;
     int tileWidth;

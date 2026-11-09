@@ -74,7 +74,7 @@ struct BackendStats {
     uint64_t submit_replay_ns = 0;
 };
 BackendStats backend_stats();
-// Operations that were skipped because they are not implemented, with how often (for the log and docs/S4d.md).
+// Operations that were skipped because they are not implemented, with how often (for the log and games/mpr/docs/work/S4d.md).
 std::string backend_unsupported_report();
 
 }  // namespace nxrt::nvn

@@ -1,6 +1,6 @@
 # NVN struct sizes: what the game says
 
-The practice mod's `nvn.h` (the header the first table was built from) is for an older NVN than the game's (API 55). A size from that header is only a starting guess: the game's own code is the authority, because an object it embeds next to its own fields cannot be larger than the room it leaves. Debug note 121 found the first mismatch (NVNtextureView). `docs/S4e.md` ("Struct sizes") has the audit; this file keeps the evidence.
+The practice mod's `nvn.h` (the header the first table was built from) is for an older NVN than the game's (API 55). A size from that header is only a starting guess: the game's own code is the authority, because an object it embeds next to its own fields cannot be larger than the room it leaves. Debug note 121 found the first mismatch (NVNtextureView). `games/mpr/docs/work/S4e.md` ("Struct sizes") has the audit; this file keeps the evidence.
 
 Sizes below were read from `main.elf` with IDA (functions named as in the binary). "Header" is the practice mod's `nvn.h`. Where the game fixes the size, `scripts/gen_nvn_table.py` (`GAME_SIZES`) overrides the header and `nvn_sizes.inc` carries source mask 8.
 

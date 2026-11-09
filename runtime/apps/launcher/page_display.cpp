@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/game.h"
 #include "pages.h"
 
 namespace nxl {
@@ -195,12 +196,14 @@ public:
         const RECT r = f.custom_row(nullptr, 26);
         prep_button_ = f.create(L"BUTTON", L"Prepare shaders", BS_PUSHBUTTON | WS_TABSTOP, r.left, r.top, host()->env().S(150),
                                 host()->env().S(26), &prep_id_);
-        if (const GameLauncher* gl = game_launcher(); gl && gl->extras_rows) gl->extras_rows(f);
+        rows_.build(f, nxrt::play::OptTab::Display);
+        if (const GameLauncher* gl = nxrt::game::info().launcher; gl && gl->extras_rows) gl->extras_rows(f);
     }
 
     void load(const Settings& s) override {
         fps_key_ = s.fps.key;
         Page::load(s);
+        rows_.load(s);
         SetWindowTextW(key_text_, input_label(fps_key_).c_str());
     }
 
@@ -239,6 +242,7 @@ private:
     HWND key_text_ = nullptr;
     int key_button_ = -1;
     InputId fps_key_;
+    GameOptionRows rows_;
     HWND prep_hint_ = nullptr;
     HWND prep_button_ = nullptr;
     int prep_id_ = -1;

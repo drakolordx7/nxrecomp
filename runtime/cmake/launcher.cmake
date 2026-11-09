@@ -14,7 +14,7 @@ target_compile_definitions(nxrt_launcher_core PUBLIC UNICODE _UNICODE)
 target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings shell32 shlwapi)
 set(NXRT_LAUNCHER_APP_SOURCES
     "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
-    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
+    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
 
 # nxrt_add_launcher(<target> [VERSION <v>] [GAME_LIB <lib> REGISTER <function>] [RC <file>] [OUTPUT_NAME <name>] [OUTPUT_DIR <dir>])
 # The launcher exe. VERSION is the release version it shows ("dev" for local builds). GAME_LIB/REGISTER: the game module's data library and

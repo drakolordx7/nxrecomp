@@ -62,5 +62,5 @@ lifts as a build step and builds the result as a static library (flags: C++20, /
 | Corpus | `python oracle/difftest/gen_corpus.py` | regenerates `corpus.json` (deterministic) |
 
 Each game's own lift and build notes live in that game's repository. Gaps that remain are listed with numbers in
-`docs/GAPS.md`. The S1 log is `docs/S1.md`, numbered bug notes are in `docs/debug/`, and the lifter notes is the developer
+`docs/GAPS.md`. The S1 log is `games/mpr/docs/work/S1.md`, numbered bug notes are in `docs/debug/`, and the lifter notes is the developer
 guide for adding an instruction family.

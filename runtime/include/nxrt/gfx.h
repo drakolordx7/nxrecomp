@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Call order per frame: FrameLimiter::begin_frame() (frame_limiter.h), platform::pump_events(), Renderer::begin_frame().
 // Configuration (config.h; env wins): [gfx] gpu (NXRT_GFX_GPU), validation (NXRT_GFX_VALIDATION), headless (NXRT_GFX_HEADLESS),
-// present_mode (NXRT_GFX_PRESENT_MODE), frames_in_flight (NXRT_GFX_FRAMES_IN_FLIGHT); see docs/S4b.md.
+// present_mode (NXRT_GFX_PRESENT_MODE), frames_in_flight (NXRT_GFX_FRAMES_IN_FLIGHT); see games/mpr/docs/work/S4b.md.
 #pragma once
 #include <volk.h>
 

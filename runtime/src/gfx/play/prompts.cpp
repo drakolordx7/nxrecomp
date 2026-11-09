@@ -17,6 +17,7 @@
 #include <mutex>
 
 #include "nxrt/config.h"
+#include "nxrt/game.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
 #include "nxrt/tex_upload.h"
@@ -154,7 +155,7 @@ void load_pack_locked(State& s) {
 void scan_ids_locked(State& s) {
     if (s.ids_tried) return;
     s.ids_tried = true;
-    const PromptGame* g = prompt_game();
+    const PromptGame* g = game::info().prompts;
     if (!g || !g->scan) return;
     const std::string romfs = services::romfs_dir();
     const int found = g->scan(romfs, [](void* user, Icon ic, const uint8_t* buf, size_t size) {
@@ -168,7 +169,7 @@ void scan_ids_locked(State& s) {
 // The upload hook (nxrt/tex_upload.h): match recognises an icon texture by a hash of its storage and answers with the icon's number + 1; edit writes the
 // pack's picture for the icon's current name.
 uint64_t hook_match(const gfx::TexUploadReq& r, void*) {
-    const PromptGame* g = prompt_game();
+    const PromptGame* g = game::info().prompts;
     if (!g || g->icon_size == 0) return 0;
     const uint32_t kIconSize = g->icon_size;
     if (r.astc || r.width != kIconSize || r.height != kIconSize || !r.tiled) return 0;
@@ -187,7 +188,7 @@ uint64_t hook_match(const gfx::TexUploadReq& r, void*) {
 }
 
 bool hook_edit(uint64_t id, uint32_t, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
-    const PromptGame* g = prompt_game();
+    const PromptGame* g = game::info().prompts;
     if (!g || g->icon_size == 0 || id == 0 || id > static_cast<uint64_t>(kIconCount)) return false;
     const uint32_t kIconSize = g->icon_size;
     if (w != kIconSize || h != kIconSize) return false;

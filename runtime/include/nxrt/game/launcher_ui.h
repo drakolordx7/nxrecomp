@@ -153,7 +153,6 @@ struct GameLauncher {
     unsigned tab_count = 0;
     void (*extras_rows)(Form& f) = nullptr;
 };
-const GameLauncher* game_launcher();    // the registered game's, or nullptr
 
 // Looks at the system for a pad (XInput); cheap, no state.
 bool xinput_pad_connected();

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Frame-time policy and the guest hooks that feed it to the game. See include/nxrt/timestep.h and docs/S11.md.
+// Frame-time policy and the guest hooks that feed it to the game. See include/nxrt/timestep.h.
 //
-// Threads: the Update hook, the mid hooks of Update, the friction hook, the render-timing hook and the movie hook all run on the guest main
-// thread; the two streaming mid hooks run on the render thread and only read the published step (an atomic). Statistics are guarded by a lock.
+// Threads: the frame-update hook, its listener and the movie hook run on the guest main thread; mid hooks may run on any guest thread and only
+// read the published step (an atomic). Statistics are guarded by a lock.
 #include "nxrt/timestep.h"
 
 #include <windows.h>
@@ -19,6 +19,7 @@
 #include "nxrt/config.h"
 #include "nxrt/memory.h"
 #include "nxrt/game.h"
+#include "nxrt/hires_wait.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/movie.h"
@@ -39,10 +40,6 @@ const char* mode_name(Mode m) {
     return "?";
 }
 
-static bool fix_flag(const char* key, const char* alias) {
-    return config_get_bool("time", key, config_get_bool("time", alias, true));
-}
-
 Config load_config() {
     Config c;
     std::string m = config_get_str("time", "mode", "real");
@@ -57,24 +54,17 @@ Config load_config() {
     c.smooth = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "smooth", 4), 1, 64));
     c.pace = config_get_bool("time", "pace", true);
     c.movie_real = config_get_bool("time", "movie_real", true);
-    // Mechanism names; the first names of the keys (after the game bugs they fixed) still work.
-    c.fix_scaled_float = fix_flag("fix_scaled_float", "fix_friction");
-    c.fix_frame_counter = fix_flag("fix_frame_counter", "fix_render_timings");
-    c.fix_stream_step = fix_flag("fix_stream_step", "fix_streaming");
-    c.fix_scaled_reg = fix_flag("fix_scaled_reg", "fix_budget");
-    c.fix_tick_sampler = fix_flag("fix_tick_sampler", "fix_stuck_tracker");
     c.movie_max = std::clamp(config_get_double("time", "movie_max", 0.5), 0.01, 5.0);
     c.log_every = static_cast<int>(std::clamp<int64_t>(config_get_int("time", "log_every", 0), 0, 1000000));
     c.csv = config_get_str("time", "csv", "");
-    c.game_base = static_cast<uint64_t>(config_get_int("time", "game_base", static_cast<int64_t>(mem::kMainBase)));
+    const Sites* sites = game::info().timestep;
+    c.retail_step = sites ? sites->retail_step : 0.f;
     return c;
 }
 
-float scale60(float dt) { return dt / kGameStep; }
-
 Stepper::Stepper(const Config& c) : c_(c) {
     c_.smooth = std::clamp(c_.smooth, 1, 64);
-    dt_ = c_.mode == Mode::Fixed ? 1.0 / c_.rate : static_cast<double>(kGameStep);
+    dt_ = c_.mode == Mode::Fixed ? 1.0 / c_.rate : static_cast<double>(c_.retail_step);
 }
 
 double Stepper::min_period() const {
@@ -88,7 +78,7 @@ double Stepper::min_period() const {
 
 double Stepper::step(double elapsed) {
     frames_++;
-    if (c_.mode == Mode::Off) return dt_ = static_cast<double>(kGameStep);
+    if (c_.mode == Mode::Off) return dt_ = static_cast<double>(c_.retail_step);
     if (c_.mode == Mode::Fixed) return dt_ = 1.0 / c_.rate;
     if (elapsed < 0.0) return dt_;
     const double lo = 1.0 / c_.max_rate, hi = 1.0 / c_.min_rate;
@@ -141,6 +131,8 @@ struct G {
     Stepper stepper;
     bool installed = false;
     std::vector<uint32_t> hooks;
+    uint32_t frame_hook = 0;
+    FrameListener listener = nullptr;
 
     ClockFn test_clock = nullptr;
     double det_step_test = 0;
@@ -150,7 +142,7 @@ struct G {
 
     std::atomic<uint32_t> dt_bits{0};
     std::atomic<bool> active{false};
-    float dt = kGameStep;
+    float dt = 0.f;
 
     bool have_last = false;
     double last_start = 0, next_target = 0;
@@ -158,12 +150,6 @@ struct G {
 
     bool have_movie = false;
     double movie_last = 0;
-
-    bool render_init = false;
-    double render_frames = 0;
-    double sampler_acc = 0.0;
-    uint64_t render_addr = 0;
-    double render_wrap = 0;            // the game's wrap of the render-timing counter (Sites::render_counter_wrap)
 
     Stats st;
     double sum_elapsed = 0;
@@ -188,23 +174,12 @@ double clock_now() {
 }
 
 void wait_until(double target) {
-    static HANDLE timer = [] {
-        HANDLE h = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-        return h;
-    }();
     for (;;) {
         const double r = target - clock_now();
         if (r <= 0) return;
         if (r > 0.0012) {
             const double sleep_s = r - 0.0008;
-            if (timer) {
-                LARGE_INTEGER due;
-                due.QuadPart = -static_cast<LONGLONG>(sleep_s * 1e7);
-                if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-                    WaitForSingleObject(timer, 100);
-                    continue;
-                }
-            }
+            if (hires_wait_ns(static_cast<int64_t>(sleep_s * 1e9))) continue;
             Sleep(static_cast<DWORD>(std::max(1.0, sleep_s * 1000.0)));
         } else {
             YieldProcessor();
@@ -220,7 +195,7 @@ void publish_dt(float dt) {
 
 float read_dt() { return g().dt; }
 
-// ---- the frame boundary: entry hook on CGameArchitectureSupport::Update -------------------------------------------------------------
+// ---- the frame boundary: entry hook on the game's frame update -------------------------------------------------------------------------
 void begin_frame() {
     G& s = g();
     const Config& c = s.cfg;
@@ -274,8 +249,8 @@ void begin_frame() {
         s.st.mean_elapsed = s.sum_elapsed / static_cast<double>(s.n_elapsed);
     }
     if (s.csv)
-        std::fprintf(s.csv, "%llu,%.6f,%.6f,%.6f,%.6f,%llu,%.4f\n", static_cast<unsigned long long>(s.frame), now, elapsed, static_cast<double>(s.dt), s.st.sim_seconds,
-                     static_cast<unsigned long long>(media::movie_stats().video_frames_delivered), s.st.render_seconds);
+        std::fprintf(s.csv, "%llu,%.6f,%.6f,%.6f,%.6f,%llu\n", static_cast<unsigned long long>(s.frame), now, elapsed, static_cast<double>(s.dt), s.st.sim_seconds,
+                     static_cast<unsigned long long>(media::movie_stats().video_frames_delivered));
     if (c.log_every > 0 && s.frame % static_cast<uint64_t>(c.log_every) == 0)
         NXLOG_I(kTag, "frame %llu: step %.3f ms (%.1f Hz), elapsed min/mean/max %.3f/%.3f/%.3f ms, waits %llu, sim %.3f s, movie frames %llu",
                 static_cast<unsigned long long>(s.frame), s.dt * 1e3, 1.0 / std::max(1e-9, static_cast<double>(s.dt)), s.st.min_elapsed * 1e3,
@@ -283,12 +258,19 @@ void begin_frame() {
                 static_cast<unsigned long long>(media::movie_stats().video_frames_delivered));
 }
 
-int hook_update(::Ctx*, uint64_t, void*) {
-    begin_frame();
+float step_now() {
+    G& s = g();
+    return s.active.load(std::memory_order_acquire) ? read_dt() : s.cfg.retail_step;
+}
+
+int hook_frame_update(::Ctx*, uint64_t, void*) {
+    G& s = g();
+    if (s.installed) begin_frame();
+    if (s.listener) s.listener(static_cast<double>(step_now()));
     return 0;
 }
 
-// ---- mid hooks: the registers that held an immediate (user = the game's MidSite) -------------------------------------------------------
+// ---- mid hooks: the registers that held the step (user = the game's MidSite) ----------------------------------------------------------------
 int hook_mid(::Ctx* c, uint64_t, void* user) {
     G& s = g();
     if (!s.active.load(std::memory_order_acquire)) return 0;
@@ -306,76 +288,11 @@ int hook_mid(::Ctx* c, uint64_t, void* user) {
         case Load::NegStep:
             c->x[reg] = f2u(-dt);
             break;
-        case Load::ScaledReg:
-            if (s.cfg.fix_scaled_reg) c->x[reg] = f2u(site.value * scale60(dt));
-            break;
-        case Load::ScaledFloat:
-            if (s.cfg.fix_scaled_float) {
-                c->v[reg].u64[1] = 0;
-                c->v[reg].u64[0] = 0;
-                c->v[reg].f32[0] = site.value * scale60(dt);
-            }
-            break;
-        case Load::Stream1:
-            if (s.cfg.fix_stream_step) c->x[reg] = f2u(dt);
-            break;
-        case Load::Stream2:
-            if (s.cfg.fix_stream_step) c->x[reg] = f2u(2.0f * dt);
-            break;
     }
     return 0;
 }
 
-// ---- NRenderUtilMPT::TickRenderTimings: retail counts one frame per call and stores counter / 60 seconds ---------------------------
-int hook_render_timings(::Ctx* c, uint64_t, void*) {
-    G& s = g();
-    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_frame_counter || !s.render_addr) return 0;
-    const float dt = read_dt();
-    uint32_t* counter = reinterpret_cast<uint32_t*>(s.render_addr);
-    float* secs = reinterpret_cast<float*>(s.render_addr + 4);
-    if (!s.render_init) {
-        s.render_frames = *counter;
-        s.render_init = true;
-    }
-    s.render_frames += static_cast<double>(scale60(dt));
-    if (s.render_wrap > 0)
-        while (s.render_frames >= s.render_wrap) s.render_frames -= s.render_wrap;
-    const uint32_t whole = static_cast<uint32_t>(s.render_frames);
-    const float seconds = static_cast<float>(s.render_frames) / 60.0f;
-    *counter = whole;
-    *secs = seconds;
-    c->v[0].u64[0] = 0;
-    c->v[0].u64[1] = 0;
-    c->v[0].f32[0] = seconds;
-    {
-        std::lock_guard<std::mutex> lk(s.mu);
-        s.st.render_timing_calls++;
-        s.st.render_seconds = seconds;
-    }
-    return 1;
-}
-
-// ---- CPlayerStuckTrackerMP1::AddState: one sample per 1/60 s of game time ----------------------------------------------------------
-// The tracker keeps the last 20 samples (positions, velocities, states, one added per player tick) and IsPlayerStuck judges the path length and the
-// bounding box of those 20. Written for 60 ticks per second the window is 1/3 s; at 240 ticks per second it is 1/12 s, the top of a jump (speed
-// about 1.4 units/s) covers less than the 1/30 unit threshold, the test says "stuck" and ProcessInput calls CPhysicsActorMP1::Stop on the player:
-// vertical speed 0 for one frame, a jump 4 % longer. Taking a sample only when 1/60 s of game time has passed keeps the window as it was made.
-int hook_tick_sampler(::Ctx*, uint64_t, void*) {
-    G& s = g();
-    if (!s.active.load(std::memory_order_acquire) || !s.cfg.fix_tick_sampler) return 0;
-    const double dt = read_dt();
-    if (dt >= kGameStep * 0.999) {
-        s.sampler_acc = 0.0;
-        return 0;
-    }
-    s.sampler_acc += dt;
-    if (s.sampler_acc < static_cast<double>(kGameStep) - 1e-5) return 1;
-    s.sampler_acc -= kGameStep;
-    if (s.sampler_acc > kGameStep) s.sampler_acc = 0.0;
-    return 0;
-}
-
-// ---- CMovieList::Update(float): the movie clock is real time ---------------------------------------------------------------------------
+// ---- the movie list's update: the movie clock is real time ------------------------------------------------------------------------------
 int hook_movie(::Ctx* c, uint64_t, void*) {
     G& s = g();
     if (!s.active.load(std::memory_order_acquire) || !s.cfg.movie_real) return 0;
@@ -391,21 +308,35 @@ int hook_movie(::Ctx* c, uint64_t, void*) {
     return 0;
 }
 
-void add_hooks(const Config& c) {
+bool step_hooks_wanted() {
+    const G& s = g();
+    return s.installed && (s.cfg.mode != Mode::Off || s.cfg.off_rate > 0.0);
+}
+
+// The one hook on the frame update: wanted while the step is in use or a listener is set.
+void refresh_frame_hook() {
     G& s = g();
-    const uint64_t b = c.game_base;
+    const uint64_t site = game::info().frame_update;
+    const bool want = site && (step_hooks_wanted() || s.listener);
+    if (want && !s.frame_hook) s.frame_hook = hook_add_entry(mem::kMainBase + site, &hook_frame_update, nullptr);
+    else if (!want && s.frame_hook) {
+        hook_remove(s.frame_hook);
+        s.frame_hook = 0;
+    }
+}
+
+void add_hooks() {
+    G& s = g();
+    const uint64_t b = mem::kMainBase;
     const Sites* sites = game::info().timestep;
-    if (!sites || !sites->frame_update) {
+    if (!sites || !game::info().frame_update) {
         NXLOG_I(kTag, "the game lists no frame-step sites: the retail step stays");
         return;
     }
-    auto E = [&](uint64_t off, SiteHookFn fn) { if (off) s.hooks.push_back(hook_add_entry(b + off, fn, nullptr)); };
-    E(sites->frame_update, &hook_update);
     for (uint32_t i = 0; i < sites->mid_count; ++i)
         s.hooks.push_back(hook_add_mid(b + sites->mids[i].offset, &hook_mid, const_cast<MidSite*>(&sites->mids[i])));
-    E(sites->tick_render_timings, &hook_render_timings);
-    E(sites->movie_update, &hook_movie);
-    E(sites->per_tick_sampler, &hook_tick_sampler);
+    if (sites->movie_update) s.hooks.push_back(hook_add_entry(b + sites->movie_update, &hook_movie, nullptr));
+    if (sites->install) sites->install(b);
 }
 
 }
@@ -420,11 +351,7 @@ void install(const Config& cfg) {
     s.cfg = cfg;
     s.stepper = Stepper(cfg);
     s.frame = 0;
-    s.have_last = s.have_movie = s.render_init = false;
-    s.render_frames = 0;
-    const Sites* sites = game::info().timestep;
-    s.render_addr = sites && sites->render_timing_counter ? cfg.game_base + sites->render_timing_counter : 0;
-    s.render_wrap = sites ? sites->render_counter_wrap : 0.0;
+    s.have_last = s.have_movie = false;
     s.st = Stats{};
     s.sum_elapsed = 0;
     s.n_elapsed = 0;
@@ -435,24 +362,24 @@ void install(const Config& cfg) {
         s.det_step = ticks / 19200000.0;
         s.det_now = 0;
     }
-    publish_dt(kGameStep);
+    publish_dt(cfg.retail_step);
     s.active.store(false);
     if (!cfg.csv.empty()) {
         s.csv = std::fopen(cfg.csv.c_str(), "w");
-        if (s.csv) std::fprintf(s.csv, "frame,host_s,elapsed_s,step_s,sim_s,movie_frames,render_s\n");
+        if (s.csv) std::fprintf(s.csv, "frame,host_s,elapsed_s,step_s,sim_s,movie_frames\n");
         else NXLOG_W(kTag, "cannot write %s", cfg.csv.c_str());
     }
-    if (cfg.mode != Mode::Off || cfg.off_rate > 0.0) add_hooks(cfg);
     s.installed = true;
-    NXLOG_I(kTag, "mode %s (%s), rate %.0f, clamp %.0f..%.0f Hz, smooth %d, pace %d, fixes: scaled_float %d frame_counter %d stream_step %d scaled_reg %d tick_sampler %d movie %d, %zu hooks at base 0x%llx",
-            mode_name(cfg.mode), s.det ? "deterministic" : "host clock", cfg.mode == Mode::Fixed ? cfg.rate : 0.0, cfg.min_rate, cfg.max_rate, cfg.smooth,
-            cfg.pace, cfg.fix_scaled_float, cfg.fix_frame_counter, cfg.fix_stream_step, cfg.fix_scaled_reg, cfg.fix_tick_sampler, cfg.movie_real, s.hooks.size(),
-            static_cast<unsigned long long>(cfg.game_base));
+    if (step_hooks_wanted()) add_hooks();
+    refresh_frame_hook();
+    NXLOG_I(kTag, "mode %s (%s), rate %.0f, clamp %.0f..%.0f Hz, smooth %d, pace %d, movie %d, %zu hooks", mode_name(cfg.mode), s.det ? "deterministic" : "host clock",
+            cfg.mode == Mode::Fixed ? cfg.rate : 0.0, cfg.min_rate, cfg.max_rate, cfg.smooth, cfg.pace, cfg.movie_real, s.hooks.size());
 }
 
 void remove() {
     G& s = g();
     if (!s.installed) return;
+    if (const Sites* sites = game::info().timestep; sites && sites->remove && !s.hooks.empty()) sites->remove();
     for (uint32_t id : s.hooks) hook_remove(id);
     s.hooks.clear();
     if (s.csv) {
@@ -461,6 +388,7 @@ void remove() {
     }
     s.active.store(false);
     s.installed = false;
+    refresh_frame_hook();
 }
 
 bool installed() { return g().installed; }
@@ -481,6 +409,23 @@ void shutdown() {
 }
 
 float current_dt() { return read_dt(); }
+
+float retail_step() {
+    const G& s = g();
+    if (s.installed) return s.cfg.retail_step;
+    const Sites* sites = game::info().timestep;
+    return sites ? sites->retail_step : 0.f;
+}
+
+float step_scale(float dt) {
+    const float r = retail_step();
+    return r > 0.f ? dt / r : 1.f;
+}
+
+void set_frame_listener(FrameListener fn) {
+    g().listener = fn;
+    refresh_frame_hook();
+}
 bool active() { return g().active.load(); }
 
 Stats stats() {

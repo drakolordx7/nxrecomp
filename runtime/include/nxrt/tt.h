@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Test tooling of the runtime (S5): deterministic mode, frame boundary, per-frame state trace and hash, game-state probes,
-// input record / replay, the scripted-run runner. Docs: docs/S5.md. Everything is off unless a [test] key (or its NXRT_TEST_* variable)
+// input record / replay, the scripted-run runner. Docs: games/mpr/docs/work/S5.md. Everything is off unless a [test] key (or its NXRT_TEST_* variable)
 // asks for it, so a normal run pays nothing.
 //
 // The central idea is ONE frame boundary, tt::frame_boundary(), called once per game frame by whichever source is configured
@@ -156,7 +156,7 @@ void on_svc(::Ctx* c);
 // ---- the game's probes (nxrt/game.h Info::probes) -----------------------------------------------------------------------------------
 // What the test tooling knows of one game: its frame boundary hooks, how to read the state, and the script steps it adds (a name and a handler
 // each; the line is parsed when the script loads and runs in the frame hook). Without a table the frame source "hook" registers nothing, read_state
-// reads nothing and a script naming a game step is a parse error. Metroid Prime Remastered: games/mpr/runtime/mpr_tt_probe.cpp and mpr_tt_steps.cpp.
+// reads nothing and a script naming a game step is a parse error.
 
 // What a game step sees each frame it runs (until it returns Done or Fail).
 struct StepRun {

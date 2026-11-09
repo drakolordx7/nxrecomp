@@ -10,7 +10,7 @@
 //   * ASTC is kept when caps.astc, otherwise transcoded to BC7 once (caps.bc7_transcode; the result is cached on disk, keyed
 //     by a hash of the source bytes), otherwise decoded to RGBA8.
 //   * The disk cache entry decides the output format: BC7 as the runtime writes it, or RGBA8 / BC5 entries made by the setup tool
-//     (cache_entry_format; docs/S4f.md "Texture cache entries").
+//     (cache_entry_format; games/mpr/docs/work/S4f.md "Texture cache entries").
 //   * Output sizes: BC7 levels are rounded up to whole 4x4 blocks, i.e. (w+3)/4 * (h+3)/4 * 16 bytes per layer and slice.
 #pragma once
 #include <cstddef>
@@ -55,7 +55,7 @@ struct PreparedTexture {
 bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out);
 
 // The format the disk cache entry of an ASTC texture holds when that is not BC7: R8G8B8A8 (UNORM or SRGB as the texture) or BC5_UNORM (a
-// two-channel normal map). VK_FORMAT_UNDEFINED: no entry, or a BC7 entry. The GPU layer makes the image in this format (docs/S4f.md).
+// two-channel normal map). VK_FORMAT_UNDEFINED: no entry, or a BC7 entry. The GPU layer makes the image in this format (games/mpr/docs/work/S4f.md).
 VkFormat cache_entry_format(const Texture& t);
 // Texture upload hook (nxrt/tex_upload.h; nvn_tex_upload.cpp). A single-level BC7 sRGB texture of at most 128 x 128: when a subscriber answers for it,
 // replaces bc7 (the tight linear BC7 blocks of the w x h texture) with the encoded answer and returns true.

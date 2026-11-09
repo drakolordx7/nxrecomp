@@ -28,7 +28,7 @@ a log line). It is header-only, so the launcher can use it without linking the r
 | Field | Kind | What the base does with it |
 | --- | --- | --- |
 | `id`, `title`, `product`, `short_title`, `program_id`, `version`, `languages` | identity, filled from the manifest by `game::fill_identity` (`nxrt/game/identity.h`; `languages` lists `services::Language` names in `game.json`) | logs, window titles, the controls.ini header, the launcher's branding and ini comment, the title profile |
-| `main_base` | (a) | the default guest base of play mode, timestep and test tooling (`[play]`, `[time]`, `[test] game_base` still override) |
+| `main_base` | (a) | the default guest base of play mode, timestep and test tooling (`[test] game_base` is read by a game's probes only; the keys `[play] game_base` and `[time] game_base` are gone) |
 | `exe_name`, `setup_exe_name`, `launcher_ini`, `game_ini`, `shader_pack`, `save_folder` | file names | the launcher finds and starts the programs; the game exe reads `game_ini`; services put saves under `%APPDATA%\<save_folder>` |
 | `title_defaults(TitleProfile&)` | (a) | the services' title profile (program id, name, version, languages, save sizes, main thread, nickname, user id) |
 | `timestep` (`timestep::Sites`) | (b) | the frame-step patch: frame update entry, mid-function sites with their load kind, render timing counter and its wrap, movie update, per-tick sampler |
@@ -206,7 +206,7 @@ The fix (`src/testtools/tt_core.cpp`, `virtual_sleep`): only the thread that run
 thread waits until the frames move the clock past its wake time, for at most its sleep's length of host time, and does not move it. The clock
 now runs at 60 frames per virtual second (frame 600 at 110.0 s, frame 9,000 at 250.0 s), and a deterministic boot reaches the hangar at about
 frame 11,400. Deterministic mode is still not bit-exact across runs: movies and loader threads run on host time, so the same frame number can
-show different moments in two runs (docs/S5.md, known limits). Compare runs at a game-time point (`@run` after `@area`), not at a frame number.
+show different moments in two runs (games/mpr/docs/work/S5.md, known limits). Compare runs at a game-time point (`@run` after `@area`), not at a frame number.
 
 ## Adding a game
 

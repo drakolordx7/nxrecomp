@@ -139,7 +139,7 @@ std::string strip_inline_comment(const std::string& line) {
 
 Settings builtin_settings() {
     Settings s;
-    for (int i = 0; i < kActCount; ++i) {
+    for (int i = 0; i < act_count(); ++i) {
         Output o;
         parse_output(act_info(static_cast<Act>(i)).default_out, &o, nullptr);   // our own table, always valid
         s.out[i] = o;
@@ -147,42 +147,102 @@ Settings builtin_settings() {
     return s;
 }
 
-enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Aim, Camera, Game, Bindings };
+// ---- the options a game adds (settings.h GameOption) ----------------------------------------------------------------------------------------
+const GameOption* find_option(const std::string& section, const std::string& key) {
+    const GameSection* gs = game::info().settings;
+    for (unsigned i = 0; gs && i < gs->option_count; ++i) {
+        const GameOption& o = gs->options[i];
+        if (lower(o.section) == section && (lower(o.key) == key || (o.alias && lower(o.alias) == key))) return &o;
+    }
+    return nullptr;
+}
+
+bool apply_option(const GameOption& o, const std::string& k, const std::string& v, Settings* s, std::string* msg) {
+    switch (o.kind) {
+        case OptKind::Bool: {
+            bool b = false;
+            if (!to_bool(v, &b)) {
+                *msg = k + " must be 1/0 (or true/false, yes/no, on/off), got '" + v + "'";
+                return false;
+            }
+            o.set(s->game, b ? 1.0 : 0.0);
+            return true;
+        }
+        case OptKind::Choice: {
+            std::vector<const char*> words(o.words, o.words + o.word_count);
+            int i = 0;
+            if (!pick_word(k, v, words, &i, msg)) return false;
+            o.set(s->game, i);
+            return true;
+        }
+        case OptKind::Real: {
+            double x = 0;
+            if (!to_double(v, &x)) {
+                *msg = k + " must be a number, got '" + v + "'";
+                return false;
+            }
+            if (x < o.lo || x > o.hi) {
+                *msg = k + " must be " + num(o.lo) + ".." + num(o.hi) + ", got " + v;
+                return false;
+            }
+            o.set(s->game, x);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string option_text(const GameOption& o, const Settings& s) {
+    const double x = o.get(s.game);
+    switch (o.kind) {
+        case OptKind::Bool: return x != 0 ? "1" : "0";
+        case OptKind::Choice: {
+            const unsigned i = static_cast<unsigned>(x);
+            return i < o.word_count ? o.words[i] : o.words[0];
+        }
+        case OptKind::Real: return num(x);
+    }
+    return "";
+}
+
+void append_options(std::string* out, const char* section, const Settings& s) {
+    const GameSection* gs = game::info().settings;
+    for (unsigned i = 0; gs && i < gs->option_count; ++i) {
+        const GameOption& o = gs->options[i];
+        if (lower(o.section) != section || !o.write || (o.emit && !o.emit(s.game))) continue;
+        *out += std::string(o.key) + " = " + option_text(o, s) + "\n";
+    }
+}
+
+// The sections that hold options and are neither the base's nor the game's own named section ([aim], [camera]): written after [mouse].
+void append_option_sections(std::string* out, const Settings& s) {
+    static const char* const kBase[] = {"meta", "mouse", "pad", "padmap", "timing", "display", "hdr", "upscale", "latency", "prompts", "fps", "switch"};
+    const GameSection* gs = game::info().settings;
+    std::vector<std::string> done;
+    for (unsigned i = 0; gs && i < gs->option_count; ++i) {
+        const std::string sec = lower(gs->options[i].section);
+        bool skip = gs->name && sec == lower(gs->name);
+        for (const char* b : kBase) skip = skip || sec == b;
+        for (const std::string& d : done) skip = skip || sec == d;
+        if (skip) continue;
+        done.push_back(sec);
+        *out += "\n[" + std::string(gs->options[i].section) + "]\n";
+        append_options(out, sec.c_str(), s);
+    }
+}
+
+enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, Upscale, Latency, Prompts, Fps, Switch, Game, Bindings };
 
 // The factory-defaults revision this build writes ([meta] defaults_rev) and the factory bindings an older controls.ini does not have: the
 // game's (play_types.h GameDefaults).
 int defaults_rev() {
-    const GameDefaults* d = game_defaults();
+    const GameDefaults* d = game::info().play_defaults;
     return d ? d->defaults_rev : 0;
-}
-
-std::string sec_label(Sec s) {
-    switch (s) {
-        case Sec::Meta: return "[meta]";
-        case Sec::Mouse: return "[mouse]";
-        case Sec::Pad: return "[pad]";
-        case Sec::PadMap: return "[padmap]";
-        case Sec::Timing: return "[timing]";
-        case Sec::Display: return "[display]";
-        case Sec::Hdr: return "[hdr]";
-        case Sec::Upscale: return "[upscale]";
-        case Sec::Latency: return "[latency]";
-        case Sec::Prompts: return "[prompts]";
-        case Sec::Fps: return "[fps]";
-        case Sec::Switch: return "[switch]";
-        case Sec::Aim: return "[aim]";
-        case Sec::Camera: return "[camera]";
-        case Sec::Game: {
-            const GameSection* gs = game_section();
-            return std::string("[") + (gs ? gs->name : "") + "]";
-        }
-        default: return "";
-    }
 }
 
 // Applies one `key = value` of a fixed section. On a bad value returns false with *msg set (no line prefix).
 // *known is false for a key the section does not have.
-bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* s, bool* known, std::string* msg) {
+bool apply_fixed(Sec sec, const std::string& secname, const std::string& k, const std::string& v, Settings* s, bool* known, std::string* msg) {
     *known = true;
     auto set_num = [&](double* dst) {
         double x = 0;
@@ -276,16 +336,6 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         case Sec::Mouse:
             if (k == "yaw") return set_num(&s->mouse.yaw_rad);
             if (k == "pitch") return set_num(&s->mouse.pitch_rad);
-            // the ball camera's speed: 0.1 to 20 on the Source scale (the F1 slider's range), in radians per count for the older keys
-            if (k == key_alt_yaw()) return set_real(rad_per_count(0.1), rad_per_count(20.0), &s->mouse.alt_yaw_rad);
-            if (k == key_alt_pitch()) return set_real(rad_per_count(0.1), rad_per_count(20.0), &s->mouse.alt_pitch_rad);
-            if (k == key_alt_camera()) return set_bool(&s->mouse.alt_camera);
-            if (k == key_alt_sens()) {   // Source scale, both directions
-                double x = 0;
-                if (!set_real(0.1, 20.0, &x)) return false;
-                s->mouse.alt_yaw_rad = s->mouse.alt_pitch_rad = rad_per_count(x);
-                return true;
-            }
             if (k == "yaw_source" || k == "pitch_source") {   // Source scale, converted to radians per count
                 double x = 0;
                 if (!set_num(&x)) return false;
@@ -295,28 +345,16 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "invert_y") return set_bool(&s->mouse.invert_y);
             if (k == "invert_x") return set_bool(&s->mouse.invert_x);
             if (k == "menu_cursor") return set_bool(&s->mouse.menu_cursor);
-            if (k == "menu_touch") return true;   // legacy key, dead since it never did anything: accepted and ignored
             if (k == key_wheel_cycles()) return set_bool(&s->mouse.wheel_cycles);
             break;
-        case Sec::Aim:
-            if (k == "lock_mode") {
-                LockMode m = LockMode::Classic;
-                if (!parse_lock_mode(v, &m)) {
-                    *msg = "lock_mode must be classic or free, got '" + v + "'";
-                    return false;
-                }
-                s->aim.lock_mode = m;
-                return true;
-            }
-            if (k == "free_lock_margin") return set_real(0.0, 0.4, &s->aim.free_lock_margin);
-            break;
-        case Sec::Camera:
-            if (k == key_view_sway() || k == "view_sway") return set_bool(&s->camera.view_sway);
-            break;
         case Sec::Game: {
-            const GameSection* gs = game_section();
-            if (!gs || !gs->apply) break;
-            return gs->apply(s->game, k, v, known, msg);
+            const GameSection* gs = game::info().settings;
+            if (gs && gs->apply && secname == lower(gs->name)) {
+                *known = true;
+                if (!gs->apply(s->game, k, v, known, msg)) return false;
+                if (*known) return true;
+            }
+            break;
         }
         case Sec::Pad:
             if (k == "label_abxy") return set_bool(&s->pad.label_abxy);
@@ -329,7 +367,6 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "gyro_scale") return set_num(&s->pad.gyro_scale);
             if (k == "rumble") return set_bool(&s->pad.rumble);
             if (k == "rumble_scale") return set_num(&s->pad.rumble_scale);
-            if (k == key_alt_orbit()) return set_real(0.0, 6.0, &s->pad.alt_orbit);
             break;
         case Sec::Timing:
             if (k == "tap_ms") return set_int(1, 5000, &s->timing.tap_ms);
@@ -408,7 +445,6 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
             if (k == "render_height") return set_size(&s->display.render_height);
             if (k == "aspect") return set_aspect(&s->display.aspect);
             if (k == "fov_offset") return set_real(-30.0, 40.0, &s->display.fov_offset);
-            if (k == "dynamic_resolution") return set_bool(&s->display.dynamic_resolution);
             if (k == "anisotropy") {
                 long long x = 0;
                 if (!to_int(v, &x)) {
@@ -423,8 +459,6 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
                 return true;
             }
             if (k == "lod_bias") return set_real(-2.0, 2.0, &s->display.lod_bias);
-            if (k == "bloom") return set_bool(&s->display.bloom);
-            if (k == "chromatic_aberration") return set_bool(&s->display.chromatic_aberration);
             if (k == "fast_gpu_memory") return set_bool(&s->display.fast_gpu_memory);
             if (k == "fewer_gpu_waits") return set_bool(&s->display.fewer_gpu_waits);
             break;
@@ -488,6 +522,10 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
         default:
             break;
     }
+    if (const GameOption* o = find_option(secname, k)) {
+        *known = true;
+        return apply_option(*o, k, v, s, msg);
+    }
     *known = false;
     return true;
 }
@@ -507,17 +545,19 @@ Sec fixed_sec(const std::string& key) {
     if (key == "latency") return Sec::Latency;
     if (key == "prompts") return Sec::Prompts;
     if (key == "fps") return Sec::Fps;
-    if (key == "aim") return Sec::Aim;
-    if (key == "camera") return Sec::Camera;
-    if (const GameSection* gs = game_section(); gs && gs->name && *gs->name && key == gs->name) return Sec::Game;
     if (key == "switch") return Sec::Switch;
+    if (const GameSection* gs = game::info().settings) {
+        if (gs->name && *gs->name && key == lower(gs->name)) return Sec::Game;
+        for (unsigned i = 0; i < gs->option_count; ++i)
+            if (key == lower(gs->options[i].section)) return Sec::Game;
+    }
     return Sec::Unknown;
 }
 
 // Factory values a later revision changed (GameDefaults::changes): where the file still has the old factory value, it takes the new one.
 // "Still has" = setting the old value changes nothing in the written file, so any value the player picked stays.
 void apply_default_changes(Settings* s, int file_rev, std::string* added) {
-    const GameDefaults* gd = game_defaults();
+    const GameDefaults* gd = game::info().play_defaults;
     for (unsigned i = 0; gd && i < gd->change_count; ++i) {
         const GameDefaultChange& c = gd->changes[i];
         const Sec sec = fixed_sec(lower(c.section));
@@ -525,9 +565,9 @@ void apply_default_changes(Settings* s, int file_rev, std::string* added) {
         Settings old = *s, now = *s;
         bool known = false;
         std::string msg;
-        if (!apply_fixed(sec, lower(c.key), c.from, &old, &known, &msg) || !known) continue;
+        if (!apply_fixed(sec, lower(c.section), lower(c.key), c.from, &old, &known, &msg) || !known) continue;
         if (format_settings(old) != format_settings(*s)) continue;
-        if (!apply_fixed(sec, lower(c.key), c.to, &now, &known, &msg) || !known) continue;
+        if (!apply_fixed(sec, lower(c.section), lower(c.key), c.to, &now, &known, &msg) || !known) continue;
         *s = now;
         if (!added->empty()) *added += ", ";
         *added += std::string(c.key) + " = " + c.to + " in [" + c.section + "]";
@@ -535,7 +575,7 @@ void apply_default_changes(Settings* s, int file_rev, std::string* added) {
 }
 
 void apply_default_additions(Settings* s, int file_rev, std::string* added) {
-    const GameDefaults* gd = game_defaults();
+    const GameDefaults* gd = game::info().play_defaults;
     for (unsigned i = 0; gd && i < gd->addition_count; ++i) {
         const GameDefaultAddition& d = gd->additions[i];
         if (d.rev <= file_rev) continue;
@@ -593,6 +633,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
     };
 
     Sec sec = Sec::None;
+    std::string secname;
     Ctx ctx = Ctx::All;
     bool pad_has_deadzone = false, pad_has_right_deadzone = false;
     for (size_t i = 0; i < lines.size(); ++i) {
@@ -622,6 +663,7 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
             const std::string key = lower(name);
             if (key.compare(0, 9, "bindings.") == 0 && parse_ctx(name.substr(9), &ctx)) sec = Sec::Bindings;
             else if ((sec = fixed_sec(key)) == Sec::Unknown) warn(i, "unknown section '[" + name + "]'");
+            secname = key;
             continue;
         }
 
@@ -679,11 +721,11 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
 
         bool known = false;
         std::string msg;
-        if (!apply_fixed(sec, lower(key), val, s, &known, &msg)) {
+        if (!apply_fixed(sec, secname, lower(key), val, s, &known, &msg)) {
             bail(i, msg);
             return false;
         }
-        if (!known) warn(i, "unknown key '" + key + "' in " + sec_label(sec));
+        if (!known) warn(i, "unknown key '" + key + "' in [" + secname + "]");
         if (sec == Sec::Pad) {
             if (lower(key) == "deadzone") pad_has_deadzone = true;
             if (lower(key) == "right_deadzone") pad_has_right_deadzone = true;
@@ -711,27 +753,9 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
 
 }  // namespace
 
-// [aim] lock_mode names. Case-insensitive, no trimming (the file parser has already trimmed the value).
-const char* lock_mode_name(LockMode m) { return m == LockMode::Free ? "free" : "classic"; }
-
-bool parse_lock_mode(const std::string& s, LockMode* out) {
-    const std::string key = lower(s);
-    if (key == "classic") {
-        if (out) *out = LockMode::Classic;
-        return true;
-    }
-    if (key == "free") {
-        if (out) *out = LockMode::Free;
-        return true;
-    }
-    return false;
-}
-
-const GameDefaults* game_defaults() { return game::info().play_defaults; }
-const GameSection* game_section() { return game::info().settings; }
 
 const char* default_settings_text() {
-    const GameDefaults* d = game_defaults();
+    const GameDefaults* d = game::info().play_defaults;
     return d && d->settings_text ? d->settings_text : "";
 }
 
@@ -769,20 +793,13 @@ std::string format_settings(const Settings& s) {
     o += "\n[mouse]\n";
     kv("yaw", num(s.mouse.yaw_rad));
     kv("pitch", num(s.mouse.pitch_rad));
-    kv(key_alt_camera(), flag(s.mouse.alt_camera));
-    kv(key_alt_sens(), num(source_sens(s.mouse.alt_yaw_rad)));
-    if (s.mouse.alt_pitch_rad != s.mouse.alt_yaw_rad) kv(key_alt_pitch(), num(s.mouse.alt_pitch_rad));
     kv("invert_y", flag(s.mouse.invert_y));
     kv("invert_x", flag(s.mouse.invert_x));
     kv("menu_cursor", flag(s.mouse.menu_cursor));
     kv(key_wheel_cycles(), flag(s.mouse.wheel_cycles));
-
-    o += "\n[aim]\n";
-    kv("lock_mode", lock_mode_name(s.aim.lock_mode));
-    kv("free_lock_margin", num(s.aim.free_lock_margin));
-    o += "\n[camera]\n";
-    kv(key_view_sway(), flag(s.camera.view_sway));
-    if (const GameSection* gs = game_section(); gs && gs->name && *gs->name && gs->format) {
+    append_options(&o, "mouse", s);
+    append_option_sections(&o, s);
+    if (const GameSection* gs = game::info().settings; gs && gs->name && *gs->name && gs->format) {
         o += std::string("\n[") + gs->name + "]\n";
         gs->format(s.game, &o);
     }
@@ -798,7 +815,7 @@ std::string format_settings(const Settings& s) {
     kv("gyro_scale", num(s.pad.gyro_scale));
     kv("rumble", flag(s.pad.rumble));
     kv("rumble_scale", num(s.pad.rumble_scale));
-    kv(key_alt_orbit(), num(s.pad.alt_orbit));
+    append_options(&o, "pad", s);
 
     o += "\n[padmap]\n";
     for (int i = 0; i < kPadSrcCount; ++i) {
@@ -825,13 +842,11 @@ std::string format_settings(const Settings& s) {
     kv("render_height", std::to_string(s.display.render_height));
     kv("aspect", num_exact(s.display.aspect));
     kv("fov_offset", num_exact(s.display.fov_offset));
-    kv("dynamic_resolution", flag(s.display.dynamic_resolution));
     kv("anisotropy", std::to_string(s.display.anisotropy));
     kv("lod_bias", num_exact(s.display.lod_bias));
-    kv("bloom", flag(s.display.bloom));
-    kv("chromatic_aberration", flag(s.display.chromatic_aberration));
     kv("fast_gpu_memory", flag(s.display.fast_gpu_memory));
     kv("fewer_gpu_waits", flag(s.display.fewer_gpu_waits));
+    append_options(&o, "display", s);
 
     o += "\n[hdr]\n";
     kv("mode", kHdrModeWords[static_cast<int>(s.extras.hdr.mode)]);
@@ -860,12 +875,12 @@ std::string format_settings(const Settings& s) {
     kv("in_screenshots", flag(s.fps.in_screenshots));
 
     o += "\n[switch]\n";
-    for (int a = 1; a < kActCount; ++a) {
+    for (int a = 1; a < act_count(); ++a) {
         kv(act_info(static_cast<Act>(a)).name, output_text(s.out[a]));
     }
 
     // Always written, even when empty, so that a file with every binding removed does not fall back to the defaults.
-    for (int c = 0; c < kCtxCount; ++c) {
+    for (int c = 0; c < ctx_count(); ++c) {
         o += std::string("\n[bindings.") + ctx_name(static_cast<Ctx>(c)) + "]\n";
         for (const Binding& b : s.bindings) {
             if (static_cast<int>(b.ctx) != c) continue;

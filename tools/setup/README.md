@@ -76,7 +76,7 @@ A game with a texture hook has its textures converted once, here, so the game do
 `--quality`. If a `bc7_cache` was made by an older converter (it carries `bc7_cache\encoder.txt` with the converter revision,
 `kTextureEncoderRev` in `src/texcache.h`), setup throws it away and converts again; the cache file format is unchanged. The converter
 keeps the alpha of opaque textures exactly at 255 (see `tools/textures/README.md`); the formats the cache entries use and the block
-height rule are in `runtime/docs/S4f.md`. `scripts\check_texcache.py` checks the entries as written against reference decodes.
+height rule are in the runtime's texture notes (`runtime/docs`) and the game's docs. `scripts\check_texcache.py` checks the entries as written against reference decodes.
 
 ## If something goes wrong
 

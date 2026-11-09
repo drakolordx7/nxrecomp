@@ -8,12 +8,12 @@
 //
 // What each table is for, and the file of a game module that fills it (games/<id>/runtime/):
 //   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    <id>_core.cpp
-//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           <id>_core.cpp, <id>_sites.h
+//   timestep         the sites of the real-time frame step and the game's own step hooks (nxrt/timestep.h)     <id>_core.cpp, <id>_timestep.cpp
 //   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  <id>_tt_probe.cpp
 //   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       <id>_defaults.cpp
-//   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     <id>_play.cpp
+//   play             play-mode hooks: aim, camera, display, menu pointer (play_game.h)                         <id>_play.cpp
 //   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      <id>_prompts.cpp
-//   settings         the game's own section of controls.ini and its F1 tab (nxrt/game/settings.h)             <id>_settings.cpp
+//   settings         the game's options and own section of controls.ini and its F1 tab (nxrt/game/settings.h)  <id>_settings.cpp
 //   launcher         the game's launcher pages (nxrt/game/launcher_ui.h, GameLauncher; the launcher exe only)  <id>_launcher.cpp
 //   render           the tone-map shader and its HDR patch, the render-target rule, NVN sizes (nxrt/game_render.h)  <id>_render.cpp
 // The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
@@ -50,6 +50,11 @@ struct Info {
     const char* game_ini = "";              // the settings file the setup tool writes and the game exe reads: "<id>.ini"
     const char* shader_pack = "";           // the shader pack file next to the setup tool: "shader_cache.<id>shc"
     const char* save_folder = "";           // save data folder under %APPDATA%: "MPRRecomp" (empty: "nxrt")
+
+    // ---- the frame boundary ----
+    // Entry hook site (offset in the main module) of the game's frame update: once per rendered frame, on the main thread. The runtime hooks it once
+    // (nxrt/timestep.h): the step is computed, then play mode is pumped. 0 = the game has no such site: no step hooks, play mode is not pumped.
+    uint64_t frame_update = 0;
 
     // ---- tables (null = the feature is off) ----
     void (*title_defaults)(services::TitleProfile& p) = nullptr;

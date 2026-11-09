@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Pipeline layouts and pipelines of the NVN back end (render thread only). A program (one translated shader per stage) has
 // one pipeline layout of four descriptor sets with the Ryujinx binding scheme (set 0 uniform buffers, 1 storage buffers,
-// 2 textures, 3 images; see docs/S4d.md). Graphics pipelines use dynamic rendering and as much dynamic state as Vulkan 1.3
+// 2 textures, 3 images; see games/mpr/docs/work/S4d.md). Graphics pipelines use dynamic rendering and as much dynamic state as Vulkan 1.3
 // offers (viewports, scissors, cull mode, front face, topology, depth/stencil tests and ops, depth bias, stencil references
 // and masks, blend constants, line width, vertex strides); everything else is part of the key.
 #pragma once
