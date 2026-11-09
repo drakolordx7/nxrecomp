@@ -116,7 +116,7 @@ void set_probe_layout(const ProbeLayout& l);
 PadFrame current_pad();                    // the pad of the frame that just began (script / replay / last live pad)
 void set_live_pad(const PadFrame& p);      // the live pad for recording when no hid source is installed (tests; also used by the hid adapter)
 // ---- the virtual clock and the RNG (deterministic mode) ----------------------------------------------------------------------
-// Used by kernel::system_tick / sleep_ns. Return false when deterministic mode is off (the caller uses the host clock).
+// Installed into the kernel (kernel::set_clock_provider / set_rng_provider) while deterministic mode is on. Return false when deterministic mode is off (the caller uses the host clock).
 // The script step `@rate <hz>`: the game's step becomes exactly 1/hz for every frame from here on (nothing waits and no host time enters it), 0 = the
 // configured mode again. Areas are loaded at the real rate and measured at a fixed one, in one process.
 void set_clock_rate(double hz);
@@ -147,9 +147,8 @@ int exit_code();
 void end_run(int code, const char* verdict, const std::string& message);
 const std::vector<Checkpoint>& checkpoints();
 
-// Hot-path switch for frame_source=svc:N, read by the SVC dispatcher (kernel/svc.cpp): 0 = off.
+// frame_source=svc:N: tt installs on_svc as the kernel's SVC observer (kernel::set_svc_observer) for the length of the run.
 namespace detail {
-extern std::atomic<uint32_t> svc_every;
 void on_svc(::Ctx* c);
 }  // namespace detail
 

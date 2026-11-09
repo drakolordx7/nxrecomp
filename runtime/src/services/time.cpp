@@ -43,7 +43,6 @@
 
 #include "nxrt/config.h"
 #include "nxrt/kernel.h"
-#include "nxrt/tt.h"
 #include "services_internal.h"
 #include "timezone.h"
 
@@ -143,7 +142,7 @@ uint64_t raw_ticks_ns() { return kernel::system_tick() * 625ull / 12ull; }
 
 int64_t host_unix_now() {
 #if defined(_WIN32)
-    const uint64_t t = tt::wall_filetime();   // 100 ns ticks since 1601-01-01 (the host clock; a fixed epoch + virtual time in deterministic test mode)
+    const uint64_t t = kernel::wall_filetime();   // 100 ns ticks since 1601-01-01 (the host clock; a fixed epoch + virtual time in deterministic test mode)
     return static_cast<int64_t>((t - 116444736000000000ull) / 10000000ull);
 #else
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();

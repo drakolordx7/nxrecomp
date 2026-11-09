@@ -27,6 +27,10 @@ double config_get_double(const char* section, const char* key, double def = 0.0)
 bool config_get_bool(const char* section, const char* key, bool def = false);       // 1/0 true/false yes/no on/off, case-insensitive
 bool config_has(const char* section, const char* key);                              // set by env or ini
 
+// One value of ANOTHER ini file (the play-mode settings file, controls.ini), read with the same parser as the main ini: sections, quoting
+// and comments behave identically. No environment lookup and no effect on the loaded ini. `def` when the file or the key is missing.
+std::string config_file_get_str(const char* path, const char* section, const char* key, const char* def = "");
+
 // Where a value came from: "env", "ini" or "default". For the startup dump.
 const char* config_source(const char* section, const char* key);
 // Logs (Info, tag "config") every key read so far with its effective value and source.
