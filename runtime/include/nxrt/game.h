@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The game boundary (docs/GAME_BOUNDARY.md): everything one title supplies to the game-independent base.
 //
-// The runtime, the launcher and the test tooling know no game. A game module (runtime/games/<id>/, a static library the game exe links)
+// The runtime, the launcher and the test tooling know no game. A game module (games/<id>/runtime/, a static library the game exe links)
 // fills one Info and registers it with set_current() before anything reads it: before nxrt::init() in the game exe, at the top of the
 // launcher's WinMain and of the test mains. Every part is optional. A null table or an empty string turns off what needs it (no hooks, no
 // probes, neutral title facts), so a new title can start with the identity alone and add tables as its hooks are found.
 //
 // What each table is for, and where the Metroid Prime Remastered one lives:
-//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/mpr_core.cpp
-//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           games/mpr/mpr_core.cpp, mpr_sites.h
-//   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  games/mpr/mpr_tt_probe.cpp
-//   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/mpr_defaults.cpp
-//   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/mpr_play.cpp
-//   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      games/mpr/mpr_prompts.cpp
+//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/runtime/mpr_core.cpp
+//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           games/mpr/runtime/mpr_core.cpp, mpr_sites.h
+//   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  games/mpr/runtime/mpr_tt_probe.cpp
+//   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/runtime/mpr_defaults.cpp
+//   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/runtime/mpr_play.cpp
+//   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      games/mpr/runtime/mpr_prompts.cpp
 // The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
 #pragma once
 #include <cstdint>

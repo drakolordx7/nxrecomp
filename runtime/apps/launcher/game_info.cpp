@@ -338,7 +338,7 @@ bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* er
     if (!extra_args.empty()) args += L" " + extra_args;
     // The shader pack sits next to the launcher in a release. Say so explicitly, so setup finds it even when it is started from a
     // different working folder. Scripted runs that name their own shaders (or none) in --setup-args keep their choice.
-    const bool has_choice = extra_args.find(L"--shader-pack") != std::wstring::npos || extra_args.find(L"--shader-cache") != std::wstring::npos ||
+    const bool has_choice = extra_args.find(L"--shader-pack") != std::wstring::npos ||
                             extra_args.find(L"--no-shaders") != std::wstring::npos;
     if (!has_choice) {
         std::error_code ec;

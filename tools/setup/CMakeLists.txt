@@ -48,6 +48,9 @@ nx_game_header(MPRS_G "${CMAKE_BINARY_DIR}/generated/nx_game.h")
 get_filename_component(MPRS_EXE "${MPRS_G_SETUP}" NAME_WE)
 get_filename_component(MPRS_EXE_CLI "${MPRS_G_SETUP_CLI}" NAME_WE)
 set(MPRS_PRODUCT "${MPRS_G_PRODUCT}")
+# The GUI's manifest (gui/setup.manifest.in), named after the game; gui/setup.rc finds it on the resource include path.
+string(REGEX REPLACE "[^A-Za-z0-9]" "" MPRS_ASSEMBLY "${MPRS_G_TITLE}")
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/gui/setup.manifest.in ${CMAKE_BINARY_DIR}/generated/setup.manifest @ONLY)
 add_compile_definitions(MPRS_EXE_NAME="${MPRS_EXE}")
 mprs_lib(mprs_base util.cpp storage.cpp log.cpp game_profile.cpp)
 target_include_directories(mprs_base PRIVATE "${CMAKE_BINARY_DIR}/generated")
@@ -135,7 +138,8 @@ target_compile_options(nx_setup PRIVATE ${MPRS_WARN})
 target_include_directories(nx_setup PRIVATE ${S})
 target_link_options(nx_setup PRIVATE /MANIFEST:NO)   # gui/setup.rc carries the manifest
 set_target_properties(nx_setup PROPERTIES OUTPUT_NAME "${MPRS_EXE}")
-set_source_files_properties(gui/setup.rc PROPERTIES COMPILE_DEFINITIONS "MPRS_RC_EXE=\"${MPRS_EXE}\";MPRS_RC_PRODUCT=\"${MPRS_PRODUCT}\"")
+set_source_files_properties(gui/setup.rc PROPERTIES COMPILE_DEFINITIONS "MPRS_RC_EXE=\"${MPRS_EXE}\";MPRS_RC_PRODUCT=\"${MPRS_PRODUCT}\""
+    INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/generated" OBJECT_DEPENDS "${CMAKE_BINARY_DIR}/generated/setup.manifest")
 if(NOT MPRS_GUI_SIM)
     foreach(isa avx2 sse4.1 sse2)
         add_custom_command(TARGET nx_setup POST_BUILD
