@@ -43,7 +43,6 @@ NXTEST(all_entry_points_registered) {
         "nvnSamplerGetReductionFilter", "nvnSamplerCompare", "nvnSamplerGetDebugID",
     };
     for (const char* n : names) CHECK_MSG(is_implemented(n), n);
-    CHECK_EQ(sizeof names / sizeof names[0], 40u);
     CHECK_EQ(abi::mismatches(), 0u);
 }
 

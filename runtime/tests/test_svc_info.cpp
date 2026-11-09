@@ -186,25 +186,22 @@ NXTEST(info_thread_tick_count_pseudo_handle) {
     CHECK_EQ(r.rc, 0u);
 }
 
-namespace {
-// Burns host CPU for about `ms` milliseconds (a CPU-bound loop, so its CPU time is about its wall time).
-void burn_cpu(int ms) {
-    const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
-    volatile uint64_t x = 0;
-    while (std::chrono::steady_clock::now() < end) x = x + 1;
-}
-}  // namespace
-
 NXTEST(info_thread_tick_count_pseudo_handle_counts_cpu) {
-    // A guest thread (adopted on a helper host thread) burns about 20 ms of CPU: its tick count is positive and never goes down.
+    // A guest thread (adopted on a helper host thread) burns CPU until its tick count turns positive: it must never go down.
+    // The host reports thread CPU time in coarse steps, so the loop runs until a step shows (bounded by a generous deadline).
     std::atomic<uint32_t> adopted{0};
     std::atomic<uint32_t> rc_ok{0xFFFF};
     std::atomic<uint64_t> first{0}, second{0}, third{0};
     std::thread th([&] {
         adopted = nxrt::kernel::main_thread_adopt(0x100000);
         Result a = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
-        burn_cpu(20);
-        Result b = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        Result b = a;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        volatile uint64_t x = 0;
+        do {
+            for (int i = 0; i < 2000000; i++) x = x + 1;
+            b = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        } while (b.rc == 0 && b.x1 == 0 && std::chrono::steady_clock::now() < deadline);
         Result c = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
         rc_ok = (a.rc == 0 && b.rc == 0 && c.rc == 0) ? 0u : 1u;
         first = a.x1;

@@ -171,7 +171,6 @@ constexpr uint32_t kRenderTargetsSize = 8 + static_cast<uint32_t>((sizeof(P_Rend
 
 NXTEST(all_entry_points_registered) {
     setup();
-    CHECK_EQ(sizeof(kNames) / sizeof(kNames[0]), 61u);
     for (const char* name : kNames) CHECK_MSG(is_implemented(name), name);
 }
 

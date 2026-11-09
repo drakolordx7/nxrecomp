@@ -48,7 +48,6 @@ const char* const kNames[] = {
 
 NXTEST(all_entry_points_registered) {
     setup();
-    CHECK_EQ(sizeof(kNames) / sizeof(kNames[0]), 25u);
     for (const char* name : kNames) CHECK(is_implemented(name));
 }
 

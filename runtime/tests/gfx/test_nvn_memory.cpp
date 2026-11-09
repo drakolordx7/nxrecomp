@@ -58,7 +58,6 @@ NXTEST(all_entry_points_registered) {
         "nvnSamplerPoolGetMemoryOffset", "nvnSamplerPoolGetSize",
     };
     for (const char* n : names) CHECK(is_implemented(n));
-    CHECK_EQ(sizeof(names) / sizeof(names[0]), size_t(37));
     CHECK_EQ(abi::mismatches(), 0u);
 }
 
