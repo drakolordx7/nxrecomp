@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -169,13 +168,10 @@ void test_ctr() {
         if (one_call[65536 + i] != static_cast<u8>(big[65536 + i] ^ ks4096[i])) boundary_ok = false;
     CHECK(boundary_ok);
 
-    // speed (printed, not asserted): 256 MiB
+    // a 256 MiB buffer: the cipher changes it, and applying it twice restores it
     std::vector<u8> huge(size_t(256) << 20, 0x5a);
-    const auto t0 = std::chrono::steady_clock::now();
     aes_ctr_crypt(key.data(), ctr.data(), huge.data(), huge.size());
-    const auto t1 = std::chrono::steady_clock::now();
-    const double secs = std::chrono::duration<double>(t1 - t0).count();
-    std::printf("AES-CTR speed: %.0f MB/s (%zu MiB in %.3f s)\n", (huge.size() / 1e6) / secs, huge.size() >> 20, secs);
+    CHECK(std::count(huge.begin(), huge.end(), static_cast<u8>(0x5a)) < static_cast<std::ptrdiff_t>(huge.size() / 2));
     aes_ctr_crypt(key.data(), ctr.data(), huge.data(), huge.size());
     CHECK(std::count(huge.begin(), huge.end(), static_cast<u8>(0x5a)) == static_cast<std::ptrdiff_t>(huge.size()));
 }

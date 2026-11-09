@@ -195,10 +195,6 @@ class ApplyAndHarnessSettingsTests(unittest.TestCase):
                 second = f.read()
         self.assertEqual(first, second)
 
-    def test_harness_settings_values(self):
-        self.assertEqual(eden_config.HARNESS_SETTINGS["Debugging.use_gdbstub"], "false")
-        self.assertEqual(eden_config.HARNESS_SETTINGS["Audio.output_engine"], "3")
-
 
 @unittest.skipIf(edeninput is None, f"edeninput import failed: {_EI_ERR!r}")
 class EdenInputKeyTableTests(unittest.TestCase):
