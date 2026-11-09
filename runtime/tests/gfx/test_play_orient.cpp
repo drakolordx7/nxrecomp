@@ -26,7 +26,6 @@ void check_row(const float d[9], int row, double x, double y, double z, const ch
                   std::string(what) + " component " + std::to_string(w) + " is " + std::to_string(d[3 * row + w]));
 }
 
-// Runs `steps` calls of step() with the same gyro and accel.
 void run_steps(play::PadOrient& o, const float gyro[3], const float accel[3], int steps, double dt, double tilt_gain) {
     for (int i = 0; i < steps; ++i) o.step(gyro, accel, dt, tilt_gain);
 }

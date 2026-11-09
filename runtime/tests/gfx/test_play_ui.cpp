@@ -76,7 +76,6 @@ struct Headless {
     ~Headless() { ImGui::DestroyContext(); }
 };
 
-// Draws n frames of the Controls window with the settings page inside it.
 void run_frames(play::UiHost& host, int n) {
     for (int i = 0; i < n; ++i) {
         ImGui::NewFrame();
@@ -87,7 +86,6 @@ void run_frames(play::UiHost& host, int n) {
     }
 }
 
-// The tab bar of the settings page inside the Controls window, or nullptr before the first frame.
 ImGuiTabBar* settings_tab_bar() {
     ImGuiWindow* win = ImGui::FindWindowByName("Controls");
     return win ? ImGui::TabBarFindByID(win->GetID("settings_tabs")) : nullptr;
@@ -101,7 +99,6 @@ void open_tab(const char* name) {
     if (win && bar) bar->NextSelectedTabId = ImHashStr(name, 0, win->GetID("settings_tabs"));
 }
 
-// Returns true when the open tab has this name. Checked through the tab bar's selected id.
 bool tab_open(const char* name) {
     ImGuiTabBar* bar = settings_tab_bar();
     if (!bar) return false;

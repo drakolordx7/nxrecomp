@@ -40,7 +40,6 @@ int main(int argc, char** argv) {
     lo.path = "nxrt_gfx_demo.log";
     nxrt::log_init(lo);
     if (want_vrr_cap) {
-        // the refresh rate of the primary display, read through the platform layer
         nxrt::platform::init();
         nxrt::platform::WindowDesc wd;
         wd.hidden = true;

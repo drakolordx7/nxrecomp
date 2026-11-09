@@ -21,7 +21,6 @@ namespace {
 namespace hdr = nxrt::extras;
 using hdr::CaptureFormat;
 
-// 10-bit PQ code of an absolute luminance (BT.2020 channel value).
 uint32_t pq_code(float nits) { return static_cast<uint32_t>(std::lround(hdr::pq_oetf(nits) * 1023.0f)); }
 
 void put_u32(std::vector<uint8_t>& buf, size_t pixel, uint32_t word) {
@@ -33,7 +32,6 @@ void put_u16(std::vector<uint8_t>& buf, size_t offset, uint16_t v) {
     buf[offset + 1] = static_cast<uint8_t>(v >> 8);
 }
 
-// Result of decoding a single 1x1 pixel.
 struct One {
     bool ok = false;
     float lin[3] = {0, 0, 0};

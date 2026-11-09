@@ -29,7 +29,6 @@ void setup() {
     CHECK_EQ(abi::mismatches(), 0u);
 }
 
-// 4096-aligned host storage for a pool, freed when the test ends.
 struct Region {
     uint8_t* p;
     explicit Region(size_t n) : p(static_cast<uint8_t*>(_aligned_malloc(n, 4096))) { std::memset(p, 0, n); }
@@ -45,19 +44,15 @@ uint64_t addr_of(const void* p) { return reinterpret_cast<uint64_t>(p); }
 NXTEST(all_entry_points_registered) {
     setup();
     const char* names[] = {
-        // memory pool: 10
         "nvnMemoryPoolInitialize", "nvnMemoryPoolSetDebugLabel", "nvnMemoryPoolFinalize", "nvnMemoryPoolMap",
         "nvnMemoryPoolFlushMappedRange", "nvnMemoryPoolInvalidateMappedRange", "nvnMemoryPoolGetBufferAddress",
         "nvnMemoryPoolMapVirtual", "nvnMemoryPoolGetSize", "nvnMemoryPoolGetFlags",
-        // buffer: 11
         "nvnBufferInitialize", "nvnBufferSetDebugLabel", "nvnBufferFinalize", "nvnBufferMap", "nvnBufferGetAddress",
         "nvnBufferFlushMappedRange", "nvnBufferInvalidateMappedRange", "nvnBufferGetMemoryPool",
         "nvnBufferGetMemoryOffset", "nvnBufferGetSize", "nvnBufferGetDebugID",
-        // texture pool: 8
         "nvnTexturePoolInitialize", "nvnTexturePoolSetDebugLabel", "nvnTexturePoolFinalize",
         "nvnTexturePoolRegisterTexture", "nvnTexturePoolRegisterImage", "nvnTexturePoolGetMemoryPool",
         "nvnTexturePoolGetMemoryOffset", "nvnTexturePoolGetSize",
-        // sampler pool: 8
         "nvnSamplerPoolInitialize", "nvnSamplerPoolSetDebugLabel", "nvnSamplerPoolFinalize",
         "nvnSamplerPoolRegisterSampler", "nvnSamplerPoolRegisterSamplerBuilder", "nvnSamplerPoolGetMemoryPool",
         "nvnSamplerPoolGetMemoryOffset", "nvnSamplerPoolGetSize",

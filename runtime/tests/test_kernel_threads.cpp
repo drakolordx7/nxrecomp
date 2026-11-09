@@ -65,7 +65,6 @@ void begin() {
 
 void end_case() { k::kernel_reset(); }
 
-// Runs one SVC on a register set and returns its result code (w0).
 uint32_t svc_rc(::Ctx* c, uint32_t n) {
     nxrt::svc_dispatch(c, n);
     return static_cast<uint32_t>(c->x[0]);
@@ -166,14 +165,12 @@ size_t count_lines(const std::vector<LogLine>& v, const std::string& needle) {
     return n;
 }
 
-// True when a line contains `needle`; with `level` >= 0 that line must also have that level.
 bool has_line(const std::vector<LogLine>& v, const std::string& needle, int level = -1) {
     for (const auto& l : v)
         if (l.text.find(needle) != std::string::npos && (level < 0 || static_cast<int>(l.level) == level)) return true;
     return false;
 }
 
-// Console-model helpers.
 int bit_of(uint64_t m) { return m ? __builtin_ctzll(m) : -1; }
 
 // Expected band table, written from the scheduling model (six bands).
@@ -194,8 +191,6 @@ int band_inactive(int nn) {
     if (nn <= 27) return THREAD_PRIORITY_BELOW_NORMAL;
     return THREAD_PRIORITY_LOWEST;
 }
-
-// Guest function bodies.
 
 void fn_idle(::Ctx*) {}
 

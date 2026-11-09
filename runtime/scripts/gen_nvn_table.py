@@ -19,8 +19,7 @@ import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
-# Relative to the script's own folder: scripts -> repo -> runtime-wt -> Metroid-Prime, then refs.
-# (a checkout at <root>/runtime finds <root>/refs one level up from the repo; a worktree under runtime-wt/<name> two levels up).
+# The reference clones: <base>/refs, else <NX>/refs.
 DEFAULT_REFS = next((c for c in (os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "refs")),
                                  os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", "refs"))) if os.path.isdir(c)),
                     os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "refs")))
@@ -235,7 +234,6 @@ def param_class(env, p):
     if "*" in p or "[" in p or "(" in p:
         return "p"
     toks = [x for x in re.findall(r"[A-Za-z_]\w*", p) if x not in QUAL]
-    # Drop the parameter name when the last word is not a type word.
     if len(toks) >= 2 and not known_type_token(env, toks[-1]):
         p = " ".join(toks[:-1])
     return tclass(env, p)
@@ -421,7 +419,6 @@ def main():
     if not os.path.isdir(os.path.join(refs, SRC_A)):
         sys.exit("refs folder not found or missing source A: " + refs)
 
-    # Source A.
     a_dir = os.path.join(refs, SRC_A)
     raw_h = read_text(os.path.join(a_dir, "nvn.h"))
     raw_fp = read_text(os.path.join(a_dir, "nvn_FuncPtrBase.h"))
@@ -433,13 +430,11 @@ def main():
     a_set = set(a_order) | set(protos)
     assert not (set(protos) & set(a_order)), "prototype also has extern line"
 
-    # Sources B and C.
     b_map = collect_b(refs)
     b_set = set(b_map)
     c_extra, c_rejected, c_explicit_hits = collect_c(refs, a_set, b_set)
     c_set = set(C_EXPLICIT) | set(c_extra)
 
-    # Full name universe: header order first, then the rest sorted.
     all_names = a_set | b_set | c_set
     order = a_order + sorted(all_names - set(a_order))
     assert len(order) == len(set(order))
@@ -469,7 +464,6 @@ def main():
         mask = (1 if name in a_set else 0) | (2 if name in b_set else 0) | (4 if name in c_set else 0)
         entries.append((name, ret, arg_cls, mask))
 
-    # Structs.
     layouts, skipped = [], []
     for name in struct_order:
         size, kind = struct_layout(env, env.struct_bodies[name])
@@ -479,7 +473,6 @@ def main():
             layouts.append((name, size, kind))
     sizes = {n: s for n, s, _ in layouts}
 
-    # Write the two .inc files (deterministic).
     table_lines = [
         HEADER,
         "// Columns: NVN_ENTRY(name, ret_class, arg_classes, source_mask)."
@@ -500,7 +493,6 @@ def main():
     with open(os.path.join(OUT_DIR, "nvn_sizes.inc"), "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(size_lines) + "\n")
 
-    # Self-checks on the written table.
     written = [ln for ln in table_lines if ln.startswith("NVN_ENTRY(")]
     names_written = [re.match(r'NVN_ENTRY\("([^"]+)"', ln).group(1) for ln in written]
     assert len(names_written) == len(set(names_written)), "duplicate names in nvn_table.inc"
@@ -509,7 +501,6 @@ def main():
         assert names_written.count(n) == 1, "extern name not exactly once in table: " + n
     assert names_written.count("nvnBootstrapLoader") == 1
 
-    # Report.
     print("NVN table generator")
     print("refs: " + refs)
     print("Source A: %d extern PFN lines (all unique, type/name pairs verified), +%d prototype(s): %s"

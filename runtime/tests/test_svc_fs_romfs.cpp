@@ -32,7 +32,6 @@ namespace {
 using nxrt::services::fs::RomfsImage;
 constexpr uint32_t kNone = 0xFFFFFFFFu;
 
-// One entry of a host test tree. `path` is an image path ("/dir/name").
 struct Item {
     std::string path;
     bool is_dir = false;

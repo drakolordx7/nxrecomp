@@ -84,7 +84,6 @@ bool masked(int i) {
     return g_opt.ignore_last && i == kNres - 1;
 }
 
-// Compares results[0..count) with the expected words; prints every mismatch (first 20).
 bool compare_results(int count, const char* what) {
     const uint64_t* got = reinterpret_cast<const uint64_t*>(g_results);
     int bad = 0;

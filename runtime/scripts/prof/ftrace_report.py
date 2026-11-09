@@ -67,14 +67,12 @@ def analyse(path, skip=8.0, seconds=60.0, stall_ms=50.0, top=8):
     out.update(frames=len(iv), seconds=round(span, 2), fps=round(len(iv) / span, 2) if span else 0,
                p50=round(pct(iv, .5), 3), p90=round(pct(iv, .9), 3), p99=round(pct(iv, .99), 3), p999=round(pct(iv, .999), 3), max=round(max(iv), 2),
                stalls50=sum(1 for d in iv if d > 50), stalls100=sum(1 for d in iv if d > 100), stalls_user=sum(1 for d in iv if d > stall_ms))
-    # zone totals per thread inside the window
     tot = collections.defaultdict(lambda: [0, 0, 0])
     for t, d, th, z, a in ev:
         if t < t0 or t > t1 or name(z) == 'frame' or name(z) == 'main.update': continue
         k = (threads.get(th, (0, '?'))[1], zn(z, a))
         r = tot[k]; r[0] += 1; r[1] += d; r[2] = max(r[2], d)
     out['zones'] = sorted(([k[0], k[1], v[0], round(v[1] / 1e6, 1), round(v[2] / 1e6, 2)] for k, v in tot.items()), key=lambda r: -r[3])
-    # worst stalls
     idx = sorted(range(len(iv)), key=lambda i: -iv[i])[:top]
     st = []
     for i in sorted(idx):

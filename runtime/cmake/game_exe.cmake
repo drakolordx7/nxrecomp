@@ -31,7 +31,6 @@ function(nxrt_add_game_exe id)
     set(gen "${CMAKE_BINARY_DIR}/games/${id}/exe")
     set(out "${CMAKE_BINARY_DIR}")
 
-    # The lifted libraries, and the module table in load order (the entry module first).
     set(mods "${G_ENTRY_MODULE}")
     foreach(m ${G_MODULES})
         if(NOT m STREQUAL G_ENTRY_MODULE)
@@ -50,7 +49,6 @@ function(nxrt_add_game_exe id)
     endforeach()
     file(CONFIGURE OUTPUT "${gen}/nxgame_modules.inc" CONTENT "${inc}")
 
-    # Version numbers for the file properties.
     set(NXG_VERSION "${A_VERSION}")
     set(NXG_VER_MAJOR 0)
     set(NXG_VER_MINOR 0)
@@ -63,7 +61,6 @@ function(nxrt_add_game_exe id)
     set(NXG_PRODUCT "${G_PRODUCT}")
     string(REGEX REPLACE "[^A-Za-z0-9]" "" NXG_ASSEMBLY "${G_TITLE}")
 
-    # Resources: one template for both programs.
     get_filename_component(exe_stem "${G_EXE}" NAME_WE)
     get_filename_component(launcher_stem "${G_LAUNCHER}" NAME_WE)
     configure_file("${NXRT_GAME_APP_DIR}/game.manifest.in" "${gen}/${exe_stem}.manifest" @ONLY)
@@ -79,7 +76,6 @@ function(nxrt_add_game_exe id)
     set(NXG_MANIFEST "${launcher_stem}.manifest")
     configure_file("${NXRT_GAME_APP_DIR}/game.rc.in" "${gen}/${launcher_stem}.rc" @ONLY)
 
-    # The game exe.
     if(NXRT_RELEASE)
         set(exefs_default "exefs")
         set(romfs_default "romfs")
@@ -109,7 +105,6 @@ function(nxrt_add_game_exe id)
     add_custom_command(TARGET ${id} POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${NXRT_SOURCE_DIR}/assets/fonts/DejaVuSans.ttf" "$<TARGET_FILE_DIR:${id}>/fonts/DejaVuSans.ttf")
 
-    # The launcher.
     # A game with launcher pages of its own (nxrt/game/launcher_ui.h GameLauncher) has a library nxrt_game_<id>_launcher with its
     # register function nxrt_register_game_<id>_launcher; the others brand the launcher with the data library alone.
     if(TARGET nxrt_game_${id}_launcher)

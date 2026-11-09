@@ -47,7 +47,6 @@ struct Rig {
         return true;
     }
 
-    // One frame: the overlay draws inside end_frame when visible.
     void frame() {
         FrameInfo fi;
         if (!rend->begin_frame(&fi)) return;

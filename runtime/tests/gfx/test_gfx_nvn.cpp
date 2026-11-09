@@ -35,7 +35,6 @@ struct LogCapture {
     }
 };
 
-// Calls the HLE thunk at addr with the guest registers in c, as the generated code's call_indirect would.
 void call_thunk(::Ctx* c, uint64_t addr) { dispatch_call(c, addr); }
 
 uint64_t bootstrap(const char* name) {

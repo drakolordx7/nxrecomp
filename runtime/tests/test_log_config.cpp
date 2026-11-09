@@ -31,7 +31,6 @@ void capture_sink(LogLevel l, const char* line, void* user) {
     c->levels.push_back(l);
 }
 
-// Removes the sink when the test leaves scope, even on an early return.
 struct SinkGuard {
     explicit SinkGuard(Capture* c) { log_set_sink(capture_sink, c); }
     ~SinkGuard() { log_set_sink(nullptr, nullptr); }

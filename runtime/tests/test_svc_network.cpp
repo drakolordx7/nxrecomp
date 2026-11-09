@@ -14,7 +14,6 @@ constexpr uint32_t kLdn65 = 0x82CB;             // ldn 65 ConnectNotFound: 203 |
 constexpr uint32_t kNtc1000 = 0x7D074;          // time 1000 NetworkTimeNotAvailable: 116 | (1000 << 9)
 constexpr uint32_t kSslInvalidSocket = 0xD47B;  // ssl 106 InvalidSocket: 123 | (106 << 9)
 
-// Waits (no timeout) on a copied event handle: true when it is signalled.
 bool signalled(uint32_t h) {
     int32_t idx = -1;
     return kernel::wait_synchronization(&h, 1, 0, &idx) == 0;

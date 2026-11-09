@@ -54,7 +54,6 @@ struct Rig {
         nxrt::game::set_current(prev);
         cur = nullptr;
     }
-    // one frame of the toy game, using the pad of the frame that just began
     void step(const PadFrame& p) {
         if (p.buttons & (1ull << 13)) pos[1] += 0.5f;
         pos[0] += static_cast<float>(p.lx) / 32767.0f * 0.25f;

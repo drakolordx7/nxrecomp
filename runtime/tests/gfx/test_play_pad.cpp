@@ -18,7 +18,6 @@ namespace hid = nxrt::hid;
 namespace platform = nxrt::platform;
 namespace play = nxrt::play;
 
-// SDL_GamepadButton bit numbers.
 enum : uint32_t {
     kSouth = 0, kEast, kWest, kNorth, kBack, kGuide, kStart, kLeftStick, kRightStick,
     kLeftShoulder, kRightShoulder, kDpadUp, kDpadDown, kDpadLeft, kDpadRight, kMisc1,
@@ -28,14 +27,12 @@ enum : uint32_t {
 const uint8_t kXboxLabels[4] = {0, 1, 2, 3};     // A B X Y; PlayStation cross circle square triangle are the same
 const uint8_t kNintendoLabels[4] = {1, 0, 3, 2}; // B A Y X
 
-// Maps one raw state with the given settings.
 hid::NpadInput run(const platform::GamepadRaw& raw, const play::PadSettings& cfg) {
     hid::NpadInput out;
     play::map_pad(raw, cfg, &out);
     return out;
 }
 
-// A pad with only the given SDL button bits down, default labels and axes.
 platform::GamepadRaw pad_buttons(uint32_t buttons) {
     platform::GamepadRaw raw;
     raw.buttons = buttons;
@@ -68,14 +65,12 @@ hid::StickValue right_stick(int16_t x, int16_t y) {
 
 bool approx(double a, double b, double eps = 1e-5) { return std::fabs(a - b) <= eps; }
 
-// A pad with the given SDL button bits down and the Xbox face labels.
 platform::GamepadRaw xbox_buttons(uint32_t buttons) {
     platform::GamepadRaw raw = pad_buttons(buttons);
     for (int i = 0; i < 4; ++i) raw.face_label[i] = kXboxLabels[i];
     return raw;
 }
 
-// Default settings with one physical source remapped to `bits`.
 play::PadSettings remapped(play::PadSrc src, uint64_t bits) {
     play::PadSettings cfg;
     cfg.remap[static_cast<int>(src)] = bits;

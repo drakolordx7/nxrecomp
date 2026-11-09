@@ -109,7 +109,6 @@ NXTEST(info_random_entropy_subtypes_distinct_and_stable) {
         Result r = call(kSvcGetInfo, 11, 0, s);
         CHECK_EQ(r.rc, 0u);
         v[s] = r.x1;
-        // Stable between calls.
         CHECK_EQ(call(kSvcGetInfo, 11, 0, s).x1, v[s]);
     }
     for (int i = 0; i < 4; i++)
@@ -237,8 +236,6 @@ NXTEST(info_unknown_type) {
     CHECK_EQ(r.rc, kInvalidCombination);
 }
 
-// GetSystemInfo
-
 NXTEST(system_info_total_physical_memory_per_pool) {
     Result r = call(kSvcGetSystemInfo, 0, 0, 0);
     CHECK_EQ(r.rc, 0u);
@@ -271,8 +268,6 @@ NXTEST(system_info_unknown_type) {
     CHECK_EQ(r.rc, kInvalidCombination);
     CHECK_EQ(r.x1, 0u);
 }
-
-// Resource limits
 
 NXTEST(resource_limit_values) {
     Result r = call(kSvcLimitValue, 0x1234, 0);   // limit of PhysicalMemoryMax
@@ -310,8 +305,6 @@ NXTEST(resource_peak_values) {
     CHECK_EQ(call(kSvcPeakValue, 0x1234, 1).x1, 1u);
     CHECK_EQ(call(kSvcPeakValue, 0x1234, 6).rc, kInvalidCombination);
 }
-
-// Process and thread ids and process info
 
 NXTEST(process_id_pseudo_handle) {
     Result r = call(kSvcGetProcessId, kPseudoProcess);

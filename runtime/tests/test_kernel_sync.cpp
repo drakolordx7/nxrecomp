@@ -64,7 +64,6 @@ void join_guest(const char* test, uint32_t handle) {
     if (!ks::thread_join(handle, 20000)) watchdog_abort(test);
 }
 
-// Polls pred on the test thread for up to ms milliseconds. Returns the final pred() value.
 template <class F>
 bool wait_until(F pred, int ms = 5000) {
     const auto limit = Clock::now() + std::chrono::milliseconds(ms);
@@ -192,7 +191,6 @@ void restore_priority() {
     g_saved_class = 0;
 }
 
-// Every test starts and ends here: no thread, waiter or handle survives from the previous test.
 void begin() {
     raise_priority();
     ks::kernel_reset();
@@ -250,7 +248,6 @@ uint64_t run_mutex_exclusion(const char* test, int threads, int iters) {
     return counter;
 }
 
-// Two guest threads on different cores hand a turn back and forth through a condition variable; returns the rounds each completed.
 struct PingPong {
     int a_rounds = 0, b_rounds = 0, turn = 0;
 };
@@ -301,7 +298,6 @@ void type2_scenario(int waiters, int32_t value, int32_t count, int32_t want_word
     CHECK_EQ(bad.load(), 0);
 }
 
-// Address semaphore on a guest word: acquire takes one unit (waiting while the count is 0), release adds one and signals one waiter.
 void sem_acquire(uint32_t* w) {
     const uint64_t a = addr_of(w);
     for (;;) {

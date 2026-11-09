@@ -26,7 +26,6 @@ namespace {
 constexpr uint64_t B = 0x7230000000ull;
 constexpr uint64_t kPadMain = B + 0x1a0, kPadMid = B + 0x380;
 
-// typeinfos: kind Unknown (no vtables configured), identity by name
 struct Ti { const void* vptr; const char* name; };
 Ti g_ti_a = {nullptr, "1A"}, g_ti_b = {nullptr, "1B"}, g_ti_c = {nullptr, "1C"};
 const uint64_t kA = reinterpret_cast<uint64_t>(&g_ti_a), kB = reinterpret_cast<uint64_t>(&g_ti_b), kC = reinterpret_cast<uint64_t>(&g_ti_c);
@@ -66,12 +65,10 @@ const NxResume kResume[] = {{kPadMid, cleanup_resume}};
 const FnEntry kFns[] = {{B + 0x100, fn_noop}, {B + 0x200, fn_noop}, {B + 0x300, fn_noop}};
 NxModule g_mod = {"ehtest", 20u, B, B + 0x1000, kFns, 3, nullptr, 0, kResume, 1, &g_eh};
 
-// a guest stack in host memory
 alignas(16) uint64_t g_stack[512];
 uint64_t stack_top() { return reinterpret_cast<uint64_t>(g_stack + 512); }
 void put(uint64_t addr, uint64_t v) { std::memcpy(reinterpret_cast<void*>(addr), &v, 8); }
 
-// observations made by the host "guest code"
 struct Seen {
     int body_calls = 0, handler_runs = 0, cleanup_runs = 0;
     uint64_t pad = 0, x0 = 0, x1 = 0, x19 = 0, x20 = 0, d8 = 0, sp = 0;
@@ -106,7 +103,6 @@ uint64_t guest_throw(::Ctx* c, uint64_t ret_in_caller, uint64_t exc, uint64_t ty
     return nxrt::eh::raise(c, make_thrown(exc, type));
 }
 
-// Fmain body: pad 0 = normal entry, else the landing pad.
 void fmain_body(::Ctx* c, uint64_t pad) {
     g_seen.body_calls++;
     if (pad) {
@@ -131,7 +127,6 @@ void fmain_body(::Ctx* c, uint64_t pad) {
     c->x[30] = B + 0x144;                          // Fmain calls Fthrow at B+0x140
     uint64_t type = g_seen.thrown_kind == 0 ? kA : g_seen.thrown_kind == 1 ? kB : 0;
     uint64_t r = guest_throw(c, B + 0x144, 0x7777, type);
-    // returns only when nothing caught it
     g_seen.x0 = r;
 }
 
@@ -249,12 +244,10 @@ NXTEST(cleanup_pad_runs_before_the_handler) {
             }
             const uint64_t entry_sp = c->x[31];
             put(entry_sp - 8, 0);
-            c->x[31] = entry_sp - 32;                // Fmain frame
-            // Fmid frame: CFA = sp + 16, x30 at CFA-8, called from Fmain at B+0x144
+            c->x[31] = entry_sp - 32;
             const uint64_t mid_cfa = c->x[31];
             put(mid_cfa - 8, B + 0x144);
             c->x[31] = mid_cfa - 16;
-            // Fthrow frame under Fmid, called from Fmid at B+0x344
             const uint64_t thr_cfa = c->x[31];
             put(thr_cfa - 8, B + 0x344);
             put(thr_cfa - 16, 0);

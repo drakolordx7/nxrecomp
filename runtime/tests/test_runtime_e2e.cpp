@@ -108,7 +108,6 @@ NXTEST(bring_up_load_run_ipc_shutdown) {
     CHECK(init(io));
     CHECK(initialised());
 
-    // module: map + link the fixture, register stand-ins as lifted code, provide the imports
     module_provide_data("hle_data_import", reinterpret_cast<uint64_t>(&g_data_import));
     hle_register("hle_add", host_hle_add);
     Module* m = module_load_file(NXRT_TEST_DATA_DIR "/fixture_aarch64.elf");
@@ -120,12 +119,10 @@ NXTEST(bring_up_load_run_ipc_shutdown) {
     NxModule nx = {"fixture", 0u, m->base(), m->base() + 0x3000, fns, 2, syms, 1, nullptr, 0, nullptr};
     CHECK_EQ(module_register_nxmodule(m, &nx), 2u);
 
-    // 1. lifted code calling an import and an indirect call
     ::Ctx c{};
     call_indirect(&c, m->base() + kFnA);
     CHECK_EQ(g_import_result.load(), 42u * 1000 + 11u);     // hle_add(40, 2) = 42; fn_b(5) = 11
 
-    // 2. a guest thread created and started through SVCs
     kernel::main_thread_adopt(0x10000);
     fn_register(0x7100500000, thread_entry);
     const uint64_t stack = mem::alloc_kernel(0x10000);

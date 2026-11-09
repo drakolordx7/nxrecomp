@@ -37,7 +37,6 @@ FetchContent_Declare(imgui
     URL_HASH SHA256=e1c46d676c2bcb7ced847ba27f50553e33a19db97b3cadaec7f8be64449139f8
     SOURCE_SUBDIR none)
 
-# SDL: static, only what a game needs.
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)

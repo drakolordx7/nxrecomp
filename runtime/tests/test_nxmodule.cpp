@@ -23,7 +23,6 @@ void fa(::Ctx* c) { c->x[0] = 0xA1; }
 void fb(::Ctx* c) { c->x[0] = 0xB1; }
 void fc(::Ctx* c) { c->x[0] = 0xC1; }
 
-// HLE handlers.
 void h_alpha(::Ctx* c) { c->x[0] = 0x11; }
 void h_beta(::Ctx* c) { c->x[0] = 0x22; }
 void h_beta_b(::Ctx* c) { c->x[0] = 0x33; }
@@ -40,7 +39,6 @@ void h_probe(::Ctx* c) {
     c->x[0] = 1;
 }
 
-// Every test starts and ends with a clean registry and HLE table.
 void reset() {
     nxrt::modules_unload_all();
     nxrt::hle_clear();
@@ -84,7 +82,6 @@ NXTEST(register_ok_and_call) {
     CHECK_EQ(r.status, RegStatus::Ok);
     CHECK_EQ(r.functions, 3u);
 
-    // the functions are callable through the call table and visible to fn_lookup
     CHECK(nxrt::fn_lookup(kA + 0x100) == fa);
     CHECK(nxrt::fn_lookup(kA + 0x300) == fc);
     ::Ctx c{};
@@ -94,7 +91,6 @@ NXTEST(register_ok_and_call) {
     call_indirect(&c2, kA + 0x100);
     CHECK_EQ(c2.x[0], 0xA1u);
 
-    // lookups
     CHECK(nxrt::nxmodule_by_index(0) == &nx);
     CHECK(nxrt::nxmodule_by_name("alpha_mod") == &nx);
     CHECK(nxrt::nxmodule_at(kA + 0x100) == &nx);

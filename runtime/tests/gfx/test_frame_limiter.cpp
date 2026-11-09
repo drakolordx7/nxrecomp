@@ -27,13 +27,11 @@ constexpr double kMaxIntervalCapMs[] = {20.5, 10.5, 6.5};  // largest interval, 
 
 constexpr double kRateTolerance = 0.005;  // 0.5 % on the mean rate
 
-// Busy-waits for ns nanoseconds: the simulated frame work.
 void spin_ns(uint64_t ns) {
     const uint64_t end = FrameLimiter::now_ns() + ns;
     while (FrameLimiter::now_ns() < end) _mm_pause();
 }
 
-// Runs n frames at fps. Each frame does 25 % of the period of simulated work after begin_frame(). Returns frame starts.
 std::vector<uint64_t> run_frames(FrameLimiter& l, int n, double fps) {
     const uint64_t work = static_cast<uint64_t>(1e9 / fps * 0.25);
     std::vector<uint64_t> starts;

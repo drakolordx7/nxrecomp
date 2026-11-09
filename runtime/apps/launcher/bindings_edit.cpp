@@ -20,7 +20,7 @@ using nxrt::play::Trig;
 // The registered game's rows (nxrt::play::GameVocabulary::labels; Metroid Prime Remastered: games/mpr/mpr_vocabulary.cpp). Without a game: the
 // movement, menu and d-pad rows under generic names.
 const std::vector<KeyRow>& key_rows() {
-    static std::vector<std::wstring> text;      // the rows point into it; reserved once, so the pointers stay valid
+    static std::vector<std::wstring> text;
     static const std::vector<KeyRow> rows = [] {
         std::vector<KeyRow> r;
         const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
@@ -48,7 +48,6 @@ namespace {
 
 constexpr std::size_t kNone = static_cast<std::size_t>(-1);
 
-// Indexes of the factory bindings of `a`, in file order. The first one is slot 0, the second slot 1.
 std::vector<std::size_t> own_indexes(const Settings& s, Act a) {
     std::vector<std::size_t> out;
     for (std::size_t i = 0; i < s.bindings.size(); ++i)
@@ -56,7 +55,6 @@ std::vector<std::size_t> own_indexes(const Settings& s, Act a) {
     return out;
 }
 
-// Removes the bindings marked in `drop` (same length as `v`), keeping the order of the rest.
 void erase_marked(std::vector<Binding>& v, const std::vector<bool>& drop) {
     std::size_t w = 0;
     for (std::size_t r = 0; r < v.size(); ++r) {
@@ -77,25 +75,22 @@ std::vector<InputId> inputs_for(const Settings& s, Act a) {
 }
 
 void bind_slot(Settings& s, Act a, int slot, const InputId& in_arg, Act* displaced) {
-    // Copy the input first: the caller may pass a reference into s.bindings, which this function changes.
     const InputId in = in_arg;
     if (displaced) *displaced = Act::None;
 
     std::vector<Binding>& v = s.bindings;
     const std::vector<std::size_t> own = own_indexes(s, a);
     if (slot != 1) slot = 0;
-    if (slot == 1 && own.empty()) slot = 0;   // no first key yet: this one becomes the first
+    if (slot == 1 && own.empty()) slot = 0;
 
     std::vector<bool> drop(v.size(), false);
 
-    // Another action that uses this input in the factory layer loses it.
     for (std::size_t i = 0; i < v.size(); ++i) {
         if (v[i].ctx != Ctx::All || v[i].act == a || !(v[i].in == in)) continue;
         drop[i] = true;
         if (displaced && *displaced == Act::None) *displaced = v[i].act;
     }
 
-    // The slot's binding takes the input. The other key of this action is removed when it has the same input.
     const std::size_t target = slot < static_cast<int>(own.size()) ? own[static_cast<std::size_t>(slot)] : kNone;
     for (std::size_t j : own) {
         if (j != target && v[j].in == in) drop[j] = true;
@@ -122,14 +117,12 @@ void reset_shown_bindings(Settings& s) {
             out.push_back(b);
             continue;
         }
-        // The first All binding marks the spot: the factory All bindings go there, and the other All bindings are dropped.
         if (placed) continue;
         for (const Binding& f : factory.bindings)
             if (f.ctx == Ctx::All) out.push_back(f);
         placed = true;
     }
     if (!placed) {
-        // No All binding was left: the factory ones go first, as they are in the factory file.
         std::vector<Binding> all;
         for (const Binding& f : factory.bindings)
             if (f.ctx == Ctx::All) all.push_back(f);

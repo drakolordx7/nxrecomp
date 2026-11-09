@@ -20,7 +20,6 @@ namespace nxl {
 
 namespace {
 
-// The sentence that names the keys the Keyboard tab leaves alone: the game's (GameVocabulary::keys_note), or nothing.
 std::wstring untouched_note() {
     const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
     return v ? game_text(v->keys_note, L"") : std::wstring();
@@ -89,7 +88,6 @@ public:
         if (!list_ || hdr->hwndFrom != list_) return 0;
         switch (hdr->code) {
             case NM_CLICK: {
-                // Remembers the column, so Delete knows which key of the row to clear.
                 const NMITEMACTIVATE* ia = reinterpret_cast<const NMITEMACTIVATE*>(hdr);
                 int col = 0;
                 if (hit(ia->ptAction, &col) >= 0) last_col_ = col;
@@ -145,7 +143,6 @@ private:
         SendMessageW(list_, LVM_SETITEMTEXTW, static_cast<WPARAM>(row), reinterpret_cast<LPARAM>(&item));
     }
 
-    // Rebuilds the rows from edit_. The selected row stays selected.
     void refresh(int select_row = -1) {
         if (!list_) return;
         if (select_row < 0) select_row = selected_row();
@@ -180,7 +177,6 @@ private:
         return static_cast<int>(SendMessageW(list_, LVM_GETNEXTITEM, static_cast<WPARAM>(-1), LVNI_SELECTED));
     }
 
-    // The row under a point (client coordinates) and its column. Returns -1 when no row is there.
     int hit(POINT pt, int* col) {
         LVHITTESTINFO hti{};
         hti.pt = pt;
@@ -196,7 +192,6 @@ private:
         return true;
     }
 
-    // Double-click: ask for the new key, then put it in the slot of the column that was clicked.
     void change_key(int row, int slot) {
         Act act = Act::None;
         if (!row_action(row, &act)) return;
@@ -211,7 +206,6 @@ private:
             message(host()->window(), input_label(in) + L" was used for " + act_label(displaced) + L"; that action now has one key less.");
     }
 
-    // Delete / clear button: removes the key of the last clicked column (the first key when no click came first).
     void clear_key(int row) {
         Act act = Act::None;
         if (!row_action(row, &act)) return;

@@ -187,7 +187,6 @@ bool formats_supported(gfx::Device& dev, VkFormat src_fmt, VkFormat dst_fmt) {
     return true;
 }
 
-// Sync2 layout transition of one colour image.
 void barrier(VkCommandBuffer cmd, VkImage img, VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 ss, VkAccessFlags2 sa, VkPipelineStageFlags2 ds,
              VkAccessFlags2 da) {
     VkImageMemoryBarrier2 b = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
@@ -268,7 +267,6 @@ bool make_dst(Rig& r, VkFormat fmt, uint32_t w, uint32_t h, uint32_t bpp) {
     return true;
 }
 
-// Parameters with the source already set; the case adjusts the rest.
 hdr::OutputParams base_params(const Rig& r, uint32_t sw, uint32_t sh) {
     hdr::OutputParams p;
     p.src = r.src.view;

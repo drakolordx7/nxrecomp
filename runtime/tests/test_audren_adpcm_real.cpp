@@ -90,7 +90,6 @@ uint32_t Le32(const uint8_t* p) {
 
 uint16_t Le16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
 
-// Loads and cross-checks one id. Returns an empty string when everything agrees, otherwise the reason.
 std::string LoadId(const std::string& dir, const std::string& id, Info& info, std::vector<uint8_t>& csmp,
                    std::vector<int16_t>& ref) {
     if (!ReadInfo(dir + "/" + id + ".info", info)) return "cannot read or parse .info";
@@ -141,7 +140,6 @@ std::vector<int16_t> DecodePort(const Info& info, const uint8_t* adpcm, size_t a
     return all;
 }
 
-// Describes the first mismatch for a failing id: the sample, both values, the frame and its neighbours.
 std::string Describe(const std::string& id, const Info& info, const std::vector<uint8_t>& csmp, size_t at, int16_t got,
                      int16_t want) {
     char buf[512];

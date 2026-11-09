@@ -31,7 +31,6 @@ DWORD prot_of(uint64_t addr) {
     return mbi.Protect & 0xff;
 }
 
-// A fresh heap with kPages committed pages at offset 0 and a region over them.
 ww::Region* setup() {
     mem::shutdown();
     if (!mem::init() || !mem::heap_create(kHeap) || !mem::heap_commit(0, kPages * kPg)) return nullptr;

@@ -7,11 +7,11 @@
 
 namespace nxl {
 
-std::unique_ptr<Page> make_display_page();      // window, frame rate, picture                       (page_display.cpp)
-std::unique_ptr<Page> make_extras_page();      // HDR, low latency, frame rate counter                               (page_display.cpp)
-std::unique_ptr<Page> make_controls_page();     // mouse and button prompts                           (page_controls.cpp)
-std::unique_ptr<Page> make_keys_page();         // keyboard and mouse bindings                        (page_keys.cpp)
-std::unique_ptr<Page> make_pad_page();          // controller options and button remapping           (page_pad.cpp)
+std::unique_ptr<Page> make_display_page();
+std::unique_ptr<Page> make_extras_page();
+std::unique_ptr<Page> make_controls_page();
+std::unique_ptr<Page> make_keys_page();
+std::unique_ptr<Page> make_pad_page();
 // The game's own tabs and Extras rows come from the registered game (launcher_ui.h GameLauncher).
 
 }  // namespace nxl

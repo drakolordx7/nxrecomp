@@ -23,7 +23,6 @@ namespace fs = std::filesystem;
 using nxl::GameStatus;
 using nxl::LauncherConfig;
 
-// Writes data to a file, creating the folders above it.
 void write_file(const fs::path& p, const std::string& data) {
     std::error_code ec;
     fs::create_directories(p.parent_path(), ec);
@@ -31,7 +30,6 @@ void write_file(const fs::path& p, const std::string& data) {
     f.write(data.data(), static_cast<std::streamsize>(data.size()));
 }
 
-// A fresh folder under the temp directory, removed again when the test ends.
 struct TempDir {
     fs::path path;
     TempDir() {

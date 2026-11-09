@@ -33,11 +33,9 @@ inline const std::filesystem::path& project_root() {
     return root;
 }
 
-// `rel` below the game data folder, with '/' separators (a trailing '/' is kept).
 inline std::string project_path(const std::string& rel) {
     return (project_root() / rel).generic_string();
 }
-// `rel` below the NX folder.
 inline std::string nx_path(const std::string& rel) {
     return (nx_root() / rel).generic_string();
 }

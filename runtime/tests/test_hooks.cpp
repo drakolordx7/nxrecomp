@@ -24,7 +24,6 @@ constexpr uint64_t kAddrA = 0x7100001000ull;
 constexpr uint64_t kAddrB = 0x7100001100ull;
 constexpr uint64_t kAddrC = 0x7100001200ull;
 
-// Records the order in which tagged hooks ran.
 struct Log {
     std::vector<int> order;
 };
@@ -58,7 +57,6 @@ int count_entry(::Ctx*, uint64_t, void* user) {
     return 1;
 }
 
-// Entry hook that records its address and user pointer.
 struct Probe {
     int calls = 0;
     uint64_t addr = 0;

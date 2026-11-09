@@ -144,7 +144,6 @@ private:
         return std::clamp(_wtoi(t), lo, hi);
     }
 
-    // The preset list was used: copy the size into the boxes (Custom leaves them alone).
     void size_chosen() {
         const int i = static_cast<int>(SendMessageW(size_combo_, CB_GETCURSEL, 0, 0));
         if (i < 0 || i >= kSizeCount) return;
@@ -153,7 +152,6 @@ private:
         SetWindowTextW(height_edit_, std::to_wstring(kSizes[i].h).c_str());
         loading_boxes_ = false;
     }
-    // The boxes were typed in: show the preset that matches, or Custom.
     void size_typed() {
         wchar_t w[16] = {}, h[16] = {};
         GetWindowTextW(width_edit_, w, 15);
@@ -167,7 +165,6 @@ private:
     int custom_cap_ = 60;
 };
 
-// Extras tab: HDR, low latency and the frame rate counter.
 class ExtrasPage : public Page {
 public:
     const wchar_t* title() const override { return L"Extras"; }
@@ -198,7 +195,7 @@ public:
         const RECT r = f.custom_row(nullptr, 26);
         prep_button_ = f.create(L"BUTTON", L"Prepare shaders", BS_PUSHBUTTON | WS_TABSTOP, r.left, r.top, host()->env().S(150),
                                 host()->env().S(26), &prep_id_);
-        if (const GameLauncher* gl = game_launcher(); gl && gl->extras_rows) gl->extras_rows(f);   // the game's rows
+        if (const GameLauncher* gl = game_launcher(); gl && gl->extras_rows) gl->extras_rows(f);
     }
 
     void load(const Settings& s) override {

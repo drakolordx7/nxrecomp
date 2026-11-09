@@ -16,7 +16,6 @@ using namespace nxrt::nvn;
 
 namespace {
 
-// Every name that register_api_device registers.
 const char* const kNames[] = {
     // device
     "nvnDeviceInitialize", "nvnDeviceFinalize", "nvnDeviceSetDebugLabel", "nvnDeviceGetInteger",
@@ -76,7 +75,6 @@ void init_queue(NVNqueue* q, NVNdevice* dev) {
     CHECK(ok == 1);
 }
 
-// Records an empty command list through the command buffer procs and returns its handle.
 NVNcommandHandle record_empty_list(NVNcommandBuffer* cb, NVNdevice* dev) {
     P<NVNboolean(NVNcommandBuffer*, NVNdevice*)>("nvnCommandBufferInitialize")(cb, dev);
     P<void(NVNcommandBuffer*)>("nvnCommandBufferBeginRecording")(cb);

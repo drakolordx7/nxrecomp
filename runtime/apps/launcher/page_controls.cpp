@@ -36,12 +36,10 @@ long steps_raw(double rad) {
     return std::lround(std::clamp(source_sens(rad) * 10.0, -1000.0, 1000.0));
 }
 
-// Slider position of a stored value, kept in 1..100.
 int slider_pos(double rad) {
     return static_cast<int>(std::clamp(steps_raw(rad), static_cast<long>(kMin), static_cast<long>(kMax)));
 }
 
-// Slider position as text: 1 -> "0.1", 20 -> "2.0", 100 -> "10.0".
 std::wstring sens_text(int pos) {
     return std::to_wstring(pos / 10) + L"." + std::to_wstring(pos % 10);
 }
@@ -55,12 +53,10 @@ int margin_pos(double m) {
     return static_cast<int>(std::clamp(std::lround(m * 100.0), 0L, 40L));
 }
 
-// Margin slider position as text: 15 -> "15 %".
 std::wstring margin_text(int pos) {
     return std::to_wstring(pos) + L" %";
 }
 
-// The two sensitivities have the same rounded value, so the "same for both" box starts ticked.
 bool same_steps(const Settings& s) {
     return steps_raw(s.mouse.yaw_rad) == steps_raw(s.mouse.pitch_rad);
 }
@@ -110,7 +106,7 @@ public:
             [](Settings& s, bool v) { s.mouse.alt_camera = v; },
             [this]() {
                 alt_on_ = !alt_on_;
-                EnableWindow(alt_slider_, alt_on_);   // greyed out while the camera is off, as on the F1 page
+                EnableWindow(alt_slider_, alt_on_);
             });
         alt_slider_ = f.slider(
             vocab_label(&nxrt::play::GameVocabulary::label_alt_camera, L"Alternate camera", &g_alt_camera_label), kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.alt_yaw_rad); },
@@ -159,7 +155,6 @@ public:
     }
 
 private:
-    // Linked sensitivity: the other slider takes the position of the one the player moved.
     void follow(HWND from, HWND to) {
         if (!linked_ || syncing_) return;
         syncing_ = true;
@@ -170,8 +165,8 @@ private:
     }
 
     HWND yaw_ = nullptr, pitch_ = nullptr;
-    int yaw0_ = 0, pitch0_ = 0, alt0_ = 0, margin0_ = 0;   // slider positions as loaded
-    HWND alt_slider_ = nullptr;                            // the alternate camera speed, greyed out while the camera is off
+    int yaw0_ = 0, pitch0_ = 0, alt0_ = 0, margin0_ = 0;
+    HWND alt_slider_ = nullptr;
     bool alt_on_ = true;
     bool linked_ = false;                      // the "same for both" box (not saved)
     bool syncing_ = false;

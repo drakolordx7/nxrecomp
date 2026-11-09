@@ -20,7 +20,6 @@ namespace {
 
 constexpr uint32_t kRate = 48000;
 
-// Interleaved ramp of `frames` frames, `channels` values per frame, kept inside int16 range.
 std::vector<int16_t> make_ramp(uint32_t frames, uint32_t channels) {
     std::vector<int16_t> out(static_cast<size_t>(frames) * channels);
     for (size_t i = 0; i < out.size(); i++) {
@@ -66,7 +65,6 @@ struct WavFields {
     size_t data_offset = 0;
 };
 
-// Walks the RIFF chunks and records what the tests check.
 WavFields parse_wav(const std::vector<uint8_t>& b) {
     WavFields f;
     if (b.size() < 12) return f;
@@ -103,7 +101,6 @@ WavFields parse_wav(const std::vector<uint8_t>& b) {
     return f;
 }
 
-// True when the file holds `expect` as little-endian int16 samples starting at `offset`.
 bool samples_equal(const std::vector<uint8_t>& b, size_t offset, const std::vector<int16_t>& expect) {
     if (offset + expect.size() * 2 > b.size()) return false;
     for (size_t i = 0; i < expect.size(); i++) {

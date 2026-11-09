@@ -13,7 +13,6 @@ constexpr int kEnumeratorCount = 98;
 static_assert(static_cast<int>(NVN_DEVICE_INFO_EVENTS_SUPPORT_REDUCTION_OPERATIONS) == kEnumeratorCount - 1,
               "the last enumerator must be 0x61 (kEnumeratorCount is out of date)");
 
-// Pass 1: count the lines of the table.
 int count_lines() {
     int n = 0;
 #define NVN_DEVICE_INFO_VALUE(name, value) ++n;
@@ -22,7 +21,6 @@ int count_lines() {
     return n;
 }
 
-// Pass 2: name -> value, counting any name that appears twice.
 std::map<int, int> fill_table(int& duplicates) {
     std::map<int, int> t;
     duplicates = 0;

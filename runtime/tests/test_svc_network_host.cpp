@@ -90,7 +90,6 @@ NXTEST(bsd_loopback_tcp_exchange) {
     nxsvc::Env env;
     WSADATA wd{};
     REQUIRE(WSAStartup(MAKEWORD(2, 2), &wd) == 0);
-    // The host-side listener on 127.0.0.1, any free port
     SOCKET ls = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     REQUIRE(ls != INVALID_SOCKET);
     sockaddr_in la{};

@@ -294,7 +294,6 @@ std::vector<uint8_t> BuildInput(bool voiceIsNew, bool sentToServer) {
     return input;
 }
 
-// Read a struct at a byte offset of an output buffer.
 template <class T>
 const T* At(const std::vector<uint8_t>& buffer, size_t offset) {
     return reinterpret_cast<const T*>(buffer.data() + offset);
@@ -422,14 +421,12 @@ NXTEST(session_plays_pcm16_voice_to_device_sink) {
     // Voice 0's status is at 0x40 + 0x80 = 0xC0.
     CHECK_EQ(At<VoiceOutStatus>(output, 0xC0)->played_sample_count, 0ull);
 
-    // Start the renderer: frames are generated and processed every 5 ms.
     renderer->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // The system event is signalled once per generated frame.
     CHECK(events[0].signals.load() >= 10);
 
-    // Stop sending new frames.
     renderer->Stop();
     CHECK(!renderer->IsActive());
 
@@ -467,6 +464,5 @@ NXTEST(session_plays_pcm16_voice_to_device_sink) {
     bool closed = RunWithWatchdog([&renderer] { renderer.reset(); }, std::chrono::seconds(5));
     CHECK_MSG(closed, "closing the renderer did not finish within 5 s (worker thread join hang)");
 
-    // Restore the default sink for later tests in the same process.
     nxrt::audio::set_sink(std::make_shared<nxrt::audio::NullSink>());
 }

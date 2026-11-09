@@ -288,7 +288,7 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 if (first) igt_base_ = -1;
                 bool met = false;
                 if (valid && s.have_igt) {
-                    if (igt_base_ < 0 || s.igt < igt_base_) igt_base_ = s.igt;     // (re)baseline: a new game state restarts the clock
+                    if (igt_base_ < 0 || s.igt < igt_base_) igt_base_ = s.igt;
                     met = s.igt - igt_base_ >= st.x;
                 }
                 char b[64];
@@ -407,7 +407,7 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 continue;
         }
         if (r == 1) continue;
-        return;       // 0 blocked, -1 failed
+        return;
     }
     NXLOG_E("tt", "script runner: more than 100000 steps without consuming a frame (a loop of non-blocking steps?)");
     done_ = true;
