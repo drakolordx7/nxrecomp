@@ -238,7 +238,6 @@ struct GameDefaults {
     const struct GameDefaultChange* changes = nullptr;
     unsigned change_count = 0;
 };
-const GameDefaults* game_defaults();                 // the registered game's, or nullptr
 
 // The game's play-mode vocabulary (Info::play_defaults->vocabulary). Every part is optional: a null table keeps the base's own names.
 struct GameActLabel {
@@ -246,7 +245,7 @@ struct GameActLabel {
     const char* label;          // the launcher's row label (UTF-8)
     const char* group;          // the launcher's group (UTF-8)
 };
-// A set of actions the player cycles through (Metroid Prime Remastered: the beams). The engine tracks the selected member; `next` and `prev` walk
+// A set of actions the player cycles through (a weapon or tool set). The engine tracks the selected member; `next` and `prev` walk
 // the members the game says can be selected (GameFrame::cycle_mask) and press the member's output.
 struct GameCycle {
     Act first;                  // the first member; the members are consecutive actions

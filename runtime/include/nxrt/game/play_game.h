@@ -86,6 +86,5 @@ struct GamePlay {
     void (*status_text)(char* buf, size_t n) = nullptr;
 };
 
-const GamePlay* game_play();         // the registered game's table, or nullptr
 
 }  // namespace nxrt::play

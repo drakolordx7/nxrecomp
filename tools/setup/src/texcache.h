@@ -15,7 +15,7 @@
 // case (3D: gob_blocks_y 1 and gob_blocks_z 16; 2D: console_block_height).
 // File path: <cache_dir>/<first two hex digits of the key>/<16 hex digits, lower case>.bc7 .
 //
-// WHAT AN ENTRY HOLDS. The header names the Vulkan format of the data and the runtime builds its image in that format (docs/S4f.md,
+// WHAT AN ENTRY HOLDS. The header names the Vulkan format of the data and the runtime builds its image in that format (games/mpr/docs/work/S4f.md,
 // "Texture cache entries"). The key does not depend on it. Three kinds, picked per texture from its pixels:
 //   BC7 (VK_FORMAT_BC7_UNORM/SRGB_BLOCK)   the default, same sRGB-ness as the ASTC format.
 //   BC5 (VK_FORMAT_BC5_UNORM_BLOCK)        a linear texture whose level 0 is fully opaque with a blue channel of at most 2 (two-channel

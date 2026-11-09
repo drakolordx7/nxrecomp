@@ -553,7 +553,7 @@ class AudioRenderSystem {
 
     // What the guest actually asks of the renderer (not in the C#): the most voices playing at once, the sample formats, rates and
     // channel counts of the voices, the effect types in use. One log line per ~30 s of updates and one when the renderer is destroyed;
-    // it tells which parts of the port the game really exercises (docs/S9.md).
+    // it tells which parts of the port the game really exercises (games/mpr/docs/work/S9.md).
     struct UsageStats {
         uint64_t updates = 0;
         uint32_t max_active_voices = 0, max_active_effects = 0;

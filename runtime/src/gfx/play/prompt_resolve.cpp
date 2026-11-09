@@ -92,11 +92,10 @@ bool binding_applies(const Settings& s, const Binding& b, Ctx c) {
 
 }  // namespace
 
-const PromptGame* prompt_game() { return game::info().prompts; }
 
 namespace {
 const PromptIcon* icon_of(Icon i) {
-    const PromptGame* g = prompt_game();
+    const PromptGame* g = game::info().prompts;
     return g && g->icons ? &g->icons[static_cast<int>(i)] : nullptr;
 }
 }  // namespace
@@ -119,14 +118,17 @@ bool input_for_button(const Settings& s, Ctx ctx, Btn b, InputId* out) {
     // actions that do exactly this button: the named game actions first, the raw btn_ ones last
     std::vector<Act> cands;
     for (int pass = 0; pass < 2; ++pass)
-        for (int a = 1; a < kActCount; ++a) {
+        for (int a = 1; a < act_count(); ++a) {
             const bool raw = a >= static_cast<int>(Act::BtnA);
             if ((pass == 0) == raw) continue;
             const Output& o = s.out[a];
             if (o.buttons == bit && o.lx == 0 && o.ly == 0 && o.rx == 0 && o.ry == 0) cands.push_back(static_cast<Act>(a));
         }
     // the current context first, then the others (a menu button is still worth showing while playing)
-    const Ctx order[] = {ctx, Ctx::Menu, Ctx::Play, Ctx::Alt, Ctx::Map, Ctx::Inspect, Ctx::All};
+    std::vector<Ctx> order = {ctx, Ctx::Menu, Ctx::Play};
+    for (int c = static_cast<int>(Ctx::kBase); c < ctx_count(); ++c) order.push_back(static_cast<Ctx>(c));
+    order.push_back(Ctx::Map);
+    order.push_back(Ctx::All);
     for (Ctx c : order)
         for (Act a : cands)
             for (const Binding& bd : s.bindings)
@@ -138,10 +140,12 @@ bool input_for_button(const Settings& s, Ctx ctx, Btn b, InputId* out) {
 }
 
 std::string resolve_icon(const ResolveIn& in, Icon icon) {
-    // The map's stick icons: the mouse buttons that drive the map (left drag rotates, middle drag moves). Only keyboard style on the map.
+    // The stick icons stand for what the game lets the pointer do in place of a stick (PromptGame::pointer_icon). Only keyboard style.
     if (icon == Icon::LStick || icon == Icon::RStick) {
-        if (in.style != PromptStyle::Keyboard || in.ctx != Ctx::Map) return {};
-        return icon == Icon::LStick ? "kbm/mouse1" : "kbm/mouse2";
+        const PromptGame* pg = game::info().prompts;
+        if (in.style != PromptStyle::Keyboard || !pg || !pg->pointer_icon) return {};
+        const char* name = pg->pointer_icon(in.ctx, icon);
+        return name ? name : "";
     }
     const Btn b = icon_button(icon);
     const PadSettings no_pad{};

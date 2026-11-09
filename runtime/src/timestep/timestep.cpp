@@ -19,6 +19,7 @@
 #include "nxrt/config.h"
 #include "nxrt/memory.h"
 #include "nxrt/game.h"
+#include "nxrt/hires_wait.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/movie.h"
@@ -173,23 +174,12 @@ double clock_now() {
 }
 
 void wait_until(double target) {
-    static HANDLE timer = [] {
-        HANDLE h = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-        return h;
-    }();
     for (;;) {
         const double r = target - clock_now();
         if (r <= 0) return;
         if (r > 0.0012) {
             const double sleep_s = r - 0.0008;
-            if (timer) {
-                LARGE_INTEGER due;
-                due.QuadPart = -static_cast<LONGLONG>(sleep_s * 1e7);
-                if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE)) {
-                    WaitForSingleObject(timer, 100);
-                    continue;
-                }
-            }
+            if (hires_wait_ns(static_cast<int64_t>(sleep_s * 1e9))) continue;
             Sleep(static_cast<DWORD>(std::max(1.0, sleep_s * 1000.0)));
         } else {
             YieldProcessor();

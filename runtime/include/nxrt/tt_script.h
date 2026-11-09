@@ -48,7 +48,6 @@
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
 //   @<name> ...                       a step the game registers (tt.h GameProbes::steps): its own syntax and meaning, documented by the game
-//                                     (Metroid Prime Remastered: games/mpr/runtime/mpr_tt_steps.cpp has @warp @give @grant @call @objs @probe @rays @watch)
 //
 // <keys>: button names joined with '+': A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK (LSTICK/RSTICK = the stick clicks),
 //         also START = PLUS, SELECT = MINUS. Names are case-insensitive. Same bit numbers as nn::hid::NpadButton.
@@ -133,7 +132,7 @@ struct RegionTable {
 };
 
 // GUID text "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" -> the 16 bytes as the game's CObjectId holds them in memory.
-// VERIFIED against the real game under Eden (docs/S5.md): a Windows-style GUID struct, the first three groups little-endian.
+// VERIFIED against the real game under Eden (games/mpr/docs/work/S5.md): a Windows-style GUID struct, the first three groups little-endian.
 // The layout lives only in these two functions.
 bool tt_guid_to_bytes(const std::string& text, uint8_t out[16]);
 std::string tt_guid_to_text(const uint8_t in[16]);

@@ -64,7 +64,7 @@ private:
 // writer and the rows of the F1 page and the launcher: the game lists what the option is and the base shows it. The value is a double
 // whatever the kind (Bool 0/1, Choice the index into `words`), kept by the game's get and set in its own state (Settings::game).
 enum class OptKind : uint8_t { Bool, Choice, Real };
-enum class OptTab : uint8_t { Mouse, Pad, Display };      // the F1 tab and the launcher page the row sits on (Mouse and Pad: Controls)
+enum class OptTab : uint8_t { Mouse, Pad, Display };      // the F1 tab and the launcher page the row sits on (Mouse and Pad: Controls, Display: Display)
 constexpr uint8_t kOptF1 = 1, kOptLauncher = 2;           // GameOption::ui: where the row is shown (0: the file only)
 
 struct GameOption {
@@ -106,12 +106,12 @@ struct GameSection {
     const GameOption* options = nullptr;
     unsigned option_count = 0;
     const char* mouse_note = nullptr;               // text under the F1 Mouse tab (UTF-8)
+    const char* language_key = nullptr;             // the key of this section that holds the player's language pick ("auto" or a language name), or null
     // F1 overlay (Dear ImGui, play mode only; null in a section the launcher links). Each returns true when the user changed `edit`.
     const char* tab_title = nullptr;                // a tab of its own after the base's tabs (null: none)
     bool (*tab)(Settings& edit) = nullptr;
     bool (*extras_rows)(Settings& edit) = nullptr;  // rows at the end of the Extras tab
 };
 
-const GameSection* game_section();    // the registered game's (nxrt/game.h Info::settings), or nullptr
 
 }  // namespace nxrt::play

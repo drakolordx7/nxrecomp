@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Ideas taken from SuperMarioWonderRecomp (MIT) docs/nvn/DEBUG-2.md #69 (ASTC on NVIDIA desktop) and #70 (iGPU listed first):
-// the checks and the GPU rule are written from scratch, see docs/S4b.md.
+// the checks and the GPU rule are written from scratch, see games/mpr/docs/work/S4b.md.
 #include <algorithm>
 #include <atomic>
 #include <cctype>

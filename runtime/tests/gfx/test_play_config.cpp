@@ -12,7 +12,9 @@
 #include <vector>
 
 #include "nxrt/input_source.h"
+#include "nxrt/game.h"
 #include "nxrt/game/play_types.h"
+#include "nxrt/game/settings.h"
 #include "test_framework.h"
 NXTEST_GROUP(play_config)
 
@@ -90,12 +92,10 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
           ma.menu_cursor == mb.menu_cursor && ma.wheel_cycles == mb.wheel_cycles))
         return false;
-    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.view_sway != b.camera.view_sway)
-        return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
           pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale &&
-          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens && pa.alt_orbit == pb.alt_orbit))
+          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens))
         return false;
     const TimingSettings &ta = a.timing, &tb = b.timing;
     if (!(ta.tap_ms == tb.tap_ms && ta.hold_ms == tb.hold_ms && ta.double_ms == tb.double_ms && ta.pulse_ms == tb.pulse_ms)) return false;
@@ -104,9 +104,8 @@ bool same_settings(const Settings& a, const Settings& b) {
           da.height == db.height && da.keep_aspect == db.keep_aspect))
         return false;
     if (!(da.render_scale == db.render_scale && da.render_width == db.render_width && da.render_height == db.render_height &&
-          da.aspect == db.aspect && da.fov_offset == db.fov_offset && da.dynamic_resolution == db.dynamic_resolution &&
-          da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.bloom == db.bloom &&
-          da.chromatic_aberration == db.chromatic_aberration && da.fast_gpu_memory == db.fast_gpu_memory &&
+          da.aspect == db.aspect && da.fov_offset == db.fov_offset &&
+          da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.fast_gpu_memory == db.fast_gpu_memory &&
           da.fewer_gpu_waits == db.fewer_gpu_waits))
         return false;
     const nxrt::extras::Settings &ea = a.extras, &eb = b.extras;
@@ -123,10 +122,10 @@ bool same_settings(const Settings& a, const Settings& b) {
     for (int i = 0; i < kPadSrcCount; ++i) {
         if (a.pad.remap[i] != b.pad.remap[i]) return false;
     }
-    for (int i = 0; i < kActCount; ++i) {
+    for (int i = 0; i < act_count(); ++i) {
         if (!(a.out[i] == b.out[i])) return false;
     }
-    for (int c = 0; c < kCtxCount; ++c) {
+    for (int c = 0; c < ctx_count(); ++c) {
         const std::vector<Binding> va = bindings_in(a, c), vb = bindings_in(b, c);
         if (va.size() != vb.size()) return false;
         for (size_t i = 0; i < va.size(); ++i) {
@@ -155,7 +154,7 @@ void write_file(const std::filesystem::path& p, const std::string& text) {
 
 NXTEST(act_table_is_complete) {
     std::set<std::string> names;
-    for (int i = 0; i < kActCount; ++i) {
+    for (int i = 0; i < act_count(); ++i) {
         const ActInfo& info = act_info(static_cast<Act>(i));
         CHECK_EQ((int)info.act, i);
         CHECK(names.insert(info.name).second);   // unique
@@ -169,7 +168,7 @@ NXTEST(act_table_is_complete) {
 }
 
 NXTEST(ctx_and_trig_names) {
-    for (int c = 0; c < kCtxCount; ++c) {
+    for (int c = 0; c < ctx_count(); ++c) {
         Ctx back = Ctx::All;
         CHECK(parse_ctx(ctx_name(static_cast<Ctx>(c)), &back));
         CHECK_EQ((int)back, c);
@@ -191,7 +190,7 @@ NXTEST(ctx_and_trig_names) {
 }
 
 NXTEST(default_outputs_all_parse) {
-    for (int i = 0; i < kActCount; ++i) {
+    for (int i = 0; i < act_count(); ++i) {
         Output o;
         std::string err;
         CHECK_MSG(parse_output(act_info(static_cast<Act>(i)).default_out, &o, &err), err);
@@ -242,7 +241,7 @@ NXTEST(output_text_canonical_and_round_trip) {
     REQUIRE(parse_output("UP+X", &o));
     CHECK_EQ(output_text(o), std::string("X+UP"));
 
-    for (int i = 0; i < kActCount; ++i) {   // every default survives parse -> text -> parse
+    for (int i = 0; i < act_count(); ++i) {   // every default survives parse -> text -> parse
         Output a, b;
         const char* text = act_info(static_cast<Act>(i)).default_out;
         REQUIRE(parse_output(text, &a));
@@ -371,13 +370,13 @@ NXTEST(binding_keys_equals_and_semicolon) {
     CHECK(act_at(s, semi_name, Ctx::Menu) == Act::Back);
 }
 
-NXTEST(menu_touch_legacy_key_is_ignored) {
-    // The old key is accepted silently and does nothing: menu_cursor keeps its default, and the writer never writes menu_touch.
+NXTEST(menu_touch_old_key_loads_and_is_not_written) {
+    // The old key is unknown now: the file still loads (with a warning), menu_cursor keeps its default, and the writer never writes menu_touch.
     Settings s;
     std::string err;
     std::vector<std::string> w;
     REQUIRE(parse_settings("[mouse]\nmenu_touch = 0\n", &s, &err, &w));
-    CHECK(w.empty());
+    CHECK_EQ(w.size(), 1u);
     CHECK(s.mouse.menu_cursor);
     CHECK(format_settings(s).find("menu_touch") == std::string::npos);
 }
@@ -394,73 +393,6 @@ NXTEST(menu_cursor_parses_and_round_trips) {
     Settings r;
     REQUIRE_MSG(parse_settings(text, &r, &err), err);
     CHECK(!r.mouse.menu_cursor);
-    CHECK(same_settings(s, r));
-}
-
-NXTEST(lockfree_parses_and_round_trips) {
-    Settings s;
-    std::string err;
-    std::vector<std::string> w;
-    REQUIRE(parse_settings("[aim]\nlock_mode = free\n", &s, &err, &w));
-    CHECK(w.empty());
-    CHECK(s.aim.lock_mode == LockMode::Free);
-    Settings u;
-    REQUIRE(parse_settings("[aim]\nlock_mode = FREE\n", &u, &err));
-    CHECK(u.aim.lock_mode == LockMode::Free);
-    Settings c;
-    REQUIRE(parse_settings("[aim]\nlock_mode = classic\n", &c, &err));
-    CHECK(c.aim.lock_mode == LockMode::Classic);
-    const std::string text = format_settings(s);
-    CHECK(text.find("lock_mode = free") != std::string::npos);
-    Settings r;
-    REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(r.aim.lock_mode == LockMode::Free);
-    CHECK(same_settings(s, r));
-}
-
-NXTEST(lockfree_rejects_unknown_value) {
-    Settings s;
-    std::string err;
-    CHECK(!parse_settings("[aim]\nlock_mode = sideways\n", &s, &err));
-    CHECK(err.find("lock_mode") != std::string::npos);
-}
-
-NXTEST(lockfree_margin_parses_and_round_trips) {
-    Settings s;
-    std::string err;
-    std::vector<std::string> w;
-    REQUIRE(parse_settings("[aim]\nfree_lock_margin = 0.3\n", &s, &err, &w));
-    CHECK(w.empty());
-    CHECK(s.aim.free_lock_margin == 0.3);
-    const std::string text = format_settings(s);
-    CHECK(text.find("free_lock_margin = 0.3") != std::string::npos);
-    Settings r;
-    REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(r.aim.free_lock_margin == 0.3);
-    CHECK(same_settings(s, r));
-}
-
-NXTEST(lockfree_margin_rejects_out_of_range) {
-    Settings s;
-    std::string err;
-    CHECK(!parse_settings("[aim]\nfree_lock_margin = 0.5\n", &s, &err));
-    CHECK(err.find("free_lock_margin") != std::string::npos);
-    CHECK(!parse_settings("[aim]\nfree_lock_margin = -0.1\n", &s, &err));
-    CHECK(err.find("free_lock_margin") != std::string::npos);
-}
-
-NXTEST(camera_view_sway_parses_and_round_trips) {
-    Settings s;
-    std::string err;
-    std::vector<std::string> w;
-    REQUIRE(parse_settings("[camera]\nview_sway = 0\n", &s, &err, &w));
-    CHECK(w.empty());
-    CHECK(!s.camera.view_sway);
-    const std::string text = format_settings(s);
-    CHECK(text.find("view_sway = 0") != std::string::npos);
-    Settings r;
-    REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(!r.camera.view_sway);
     CHECK(same_settings(s, r));
 }
 
@@ -504,13 +436,13 @@ NXTEST(format_parse_round_trip_modified) {
     s.display.keep_aspect = false;
     REQUIRE(parse_output("A+RS_UP", &s.out[(int)Act::Primary]));
     REQUIRE(parse_output("none", &s.out[(int)Act::Jump]));
-    REQUIRE(parse_output("LS_LEFT+LS_RIGHT+X", &s.out[(int)Act::Target]));
+    REQUIRE(parse_output("LS_LEFT+LS_RIGHT+X", &s.out[(int)Act::Pause]));
 
     s.bindings.clear();
     Binding b;
     b.in = key_id(SDL_SCANCODE_LCTRL);
     b.ctx = Ctx::Play;
-    b.act = Act::AltForm;
+    b.act = Act::Pause;
     b.trig = Trig::Hold;
     b.ms = 250;
     s.bindings.push_back(b);
@@ -535,7 +467,7 @@ NXTEST(format_parse_round_trip_modified) {
     b.in.kind = InKind::Wheel;
     b.in.code = 1;
     b.ctx = Ctx::All;
-    b.act = Act::SetAPrev;
+    b.act = Act::DpadUp;
     s.bindings.push_back(b);
     b = Binding{};
     b.in = key_id(SDL_SCANCODE_SPACE);
@@ -545,7 +477,7 @@ NXTEST(format_parse_round_trip_modified) {
     s.bindings.push_back(b);
     b = Binding{};
     b.in = key_id(SDL_SCANCODE_Q);
-    b.ctx = Ctx::Alt;
+    b.ctx = Ctx::Play;
     b.act = Act::Jump;
     b.trig = Trig::DoubleTap;
     b.ms = 300;
@@ -637,11 +569,8 @@ NXTEST(display_render_keys_defaults) {
     CHECK_EQ(d.render_height, 0);
     CHECK(d.aspect == 0.0);
     CHECK(d.fov_offset == 0.0);
-    CHECK(!d.dynamic_resolution);
     CHECK_EQ(d.anisotropy, 0);
     CHECK(d.lod_bias == 0.0);
-    CHECK(d.bloom);
-    CHECK(d.chromatic_aberration);
     CHECK(d.fast_gpu_memory);
     CHECK(d.fewer_gpu_waits);
 }
@@ -651,7 +580,7 @@ NXTEST(display_render_keys_parse) {
     std::string err;
     const char* text =
         "[display]\nrender_scale = 150\nrender_width = 1600\nrender_height = 900\naspect = 1.6\nfov_offset = -12.5\n"
-        "dynamic_resolution = yes\nanisotropy = 8\nlod_bias = -0.75\nbloom = 0\nchromatic_aberration = off\n"
+        "anisotropy = 8\nlod_bias = -0.75\n"
         "fast_gpu_memory = 0\nfewer_gpu_waits = off\n";
     REQUIRE_MSG(parse_settings(text, &s, &err), err);
     CHECK_EQ(s.display.render_scale, 150);
@@ -659,11 +588,8 @@ NXTEST(display_render_keys_parse) {
     CHECK_EQ(s.display.render_height, 900);
     CHECK(s.display.aspect == 1.6);
     CHECK(s.display.fov_offset == -12.5);
-    CHECK(s.display.dynamic_resolution);
     CHECK_EQ(s.display.anisotropy, 8);
     CHECK(s.display.lod_bias == -0.75);
-    CHECK(!s.display.bloom);
-    CHECK(!s.display.chromatic_aberration);
     CHECK(!s.display.fast_gpu_memory);
     CHECK(!s.display.fewer_gpu_waits);
 }
@@ -684,12 +610,9 @@ NXTEST(display_render_keys_range_errors) {
         {"[display]\nfov_offset = 41\n", "line 2: fov_offset must be -30..40, got 41"},
         {"[display]\nfov_offset = -31\n", "line 2: fov_offset must be -30..40, got -31"},
         {"[display]\nfov_offset = abc\n", "line 2: fov_offset must be a number"},
-        {"[display]\ndynamic_resolution = maybe\n", "line 2: dynamic_resolution must be 1/0"},
         {"[display]\nanisotropy = 3\n", "line 2: anisotropy must be 0, 2, 4, 8 or 16, got 3"},
         {"[display]\nanisotropy = 32\n", "line 2: anisotropy must be 0, 2, 4, 8 or 16, got 32"},
         {"[display]\nlod_bias = 2.5\n", "line 2: lod_bias must be -2..2, got 2.5"},
-        {"[display]\nbloom = 2\n", "line 2: bloom must be 1/0"},
-        {"[display]\nchromatic_aberration = sometimes\n", "line 2: chromatic_aberration must be 1/0"},
     };
     for (const auto& c : cases) {
         Settings s;
@@ -738,11 +661,8 @@ NXTEST(display_render_keys_round_trip) {
     s.display.render_height = 900;
     s.display.aspect = 16.0 / 9.0;            // 1.7777... needs 17 digits to read back exactly
     s.display.fov_offset = -12.3456789;
-    s.display.dynamic_resolution = true;
     s.display.anisotropy = 16;
     s.display.lod_bias = -0.7;
-    s.display.bloom = false;
-    s.display.chromatic_aberration = false;
     s.display.fast_gpu_memory = false;
     s.display.fewer_gpu_waits = false;
 
@@ -1231,7 +1151,6 @@ NXTEST(pad_stick_keys_defaults) {
     CHECK(near(d.right_deadzone, 0.10));
     CHECK(!d.invert_y);
     CHECK(d.look_sens == 1.0);
-    CHECK(d.alt_orbit == 2.0);
 }
 
 NXTEST(pad_stick_keys_round_trip) {
@@ -1240,7 +1159,6 @@ NXTEST(pad_stick_keys_round_trip) {
     s.pad.right_deadzone = 0.25;
     s.pad.invert_y = true;
     s.pad.look_sens = 1.5;
-    s.pad.alt_orbit = 3.5;
     const std::string text = format_settings(s);
     CHECK(text.find("\ndeadzone = 0.2\nright_deadzone = 0.25\ninvert_y = 1\nlook_sens = 1.5\ntrigger_threshold = ") != std::string::npos);
     Settings r;
@@ -1250,7 +1168,6 @@ NXTEST(pad_stick_keys_round_trip) {
     CHECK(near(r.pad.right_deadzone, 0.25));
     CHECK(r.pad.invert_y);
     CHECK(r.pad.look_sens == 1.5);
-    CHECK(r.pad.alt_orbit == 3.5);
     CHECK(same_settings(s, r));
     CHECK_EQ(format_settings(r), text);
 }
@@ -1318,64 +1235,89 @@ NXTEST(pad_right_deadzone_default_kept_without_pad_deadzone) {
     CHECK(near(s.pad.right_deadzone, 0.10));
 }
 
-// ---- the alternate body's camera (mpr: the morph ball camera, S48): [mouse] alt_camera, alt_sensitivity ------------------------------------
+// ---- the options a game adds (settings.h GameOption): read, written and range-checked by the base --------------------------------------------
+namespace {
 
-NXTEST(alt_camera_defaults_on) {
-    const MouseSettings d = default_settings().mouse;
-    CHECK(d.alt_camera);
-    CHECK(d.alt_yaw_rad == d.alt_pitch_rad);
+struct OptState {
+    bool flag = true;
+    int pick = 0;
+    double x = 1.0;
+};
+OptState& os(nxrt::play::GameState& g) { return g.get<OptState>(); }
+const OptState& cos(const nxrt::play::GameState& g) { return g.get<OptState>(); }
+
+const char* const kPickWords[] = {"low", "high"};
+const GameOption kTestOptions[] = {
+    {.section = "extra", .key = "flag", .alias = "old_flag", .get = [](const GameState& g) { return cos(g).flag ? 1.0 : 0.0; },
+     .set = [](GameState& g, double v) { os(g).flag = v != 0; }},
+    {.section = "extra", .key = "pick", .kind = OptKind::Choice, .words = kPickWords, .word_count = 2, .get = [](const GameState& g) { return double(cos(g).pick); },
+     .set = [](GameState& g, double v) { os(g).pick = int(v); }},
+    {.section = "display", .key = "x", .kind = OptKind::Real, .lo = 0.5, .hi = 2.0, .get = [](const GameState& g) { return cos(g).x; },
+     .set = [](GameState& g, double v) { os(g).x = v; }},
+    {.section = "display", .key = "hidden", .write = false, .get = [](const GameState&) { return 0.0; }, .set = [](GameState&, double) {}},
+};
+
+struct WithOptions {
+    nxrt::game::Info info;
+    GameSection section;
+    const nxrt::game::Info* old;
+    WithOptions() {
+        old = nxrt::game::current();
+        section.options = kTestOptions;
+        section.option_count = 4;
+        info = nxrt::game::info();
+        info.settings = &section;
+        nxrt::game::set_current(&info);
+    }
+    ~WithOptions() { nxrt::game::set_current(old); }
+};
+
+}  // namespace
+
+NXTEST(game_options_read_write_and_round_trip) {
+    WithOptions game;
     Settings s;
     std::string err;
-    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);   // a file without the keys keeps the camera on
-    CHECK(s.mouse.alt_camera);
-}
-
-NXTEST(alt_camera_off_parses_and_round_trips) {
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings(std::string("[mouse]\n") + key_alt_camera() + " = 0\n", &s, &err), err);
-    CHECK(!s.mouse.alt_camera);
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[extra]\nold_flag = 0\npick = HIGH\n[display]\nx = 1.5\nhidden = 1\n", &s, &err, &w), err);
+    CHECK(!cos(s.game).flag);
+    CHECK_EQ(cos(s.game).pick, 1);
+    CHECK(cos(s.game).x == 1.5);
+    CHECK(w.empty());
     const std::string text = format_settings(s);
-    CHECK(text.find(std::string("\n") + key_alt_camera() + " = 0\n") != std::string::npos);
+    CHECK(text.find("\n[extra]\nflag = 0\npick = high\n") != std::string::npos);
+    CHECK(text.find("\nx = 1.5\n") != std::string::npos);
+    CHECK(text.find("hidden") == std::string::npos);
     Settings r;
     REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(!r.mouse.alt_camera);
     CHECK_EQ(format_settings(r), text);
-    REQUIRE(!parse_settings(std::string("[mouse]\n") + key_alt_camera() + " = maybe\n", &r, &err));
 }
 
-NXTEST(alt_sensitivity_is_source_scale_for_both) {
+NXTEST(game_options_reject_bad_values) {
+    WithOptions game;
+    const struct {
+        const char* text;
+        const char* expect;
+    } cases[] = {
+        {"[extra]\nflag = maybe\n", "line 2: flag must be 1/0"},
+        {"[extra]\npick = sideways\n", "line 2: pick must be low or high, got 'sideways'"},
+        {"[display]\nx = 3\n", "line 2: x must be 0.5..2, got 3"},
+    };
+    for (const auto& c : cases) {
+        Settings s;
+        std::string err;
+        CHECK(!parse_settings(c.text, &s, &err));
+        CHECK_MSG(starts_with(err, c.expect), err);
+    }
+}
+
+NXTEST(game_without_options_has_only_the_base_sections) {
+    const std::string text = format_settings(default_settings());
+    CHECK(text.find("[extra]") == std::string::npos);
+    CHECK(text.find("[aim]") == std::string::npos);
     Settings s;
     std::string err;
-    REQUIRE_MSG(parse_settings(std::string("[mouse]\n") + key_alt_sens() + " = 3.5\n", &s, &err), err);
-    CHECK(near(s.mouse.alt_yaw_rad, 3.5 * 0.022 * kPi / 180.0));
-    CHECK(s.mouse.alt_pitch_rad == s.mouse.alt_yaw_rad);
-    CHECK(near(s.mouse.yaw_rad, default_settings().mouse.yaw_rad));    // the aim keeps its own
-    const std::string text = format_settings(s);
-    CHECK(text.find(std::string("\n") + key_alt_sens() + " = 3.5\n") != std::string::npos);
-    CHECK(text.find(std::string("\n") + key_alt_pitch() + " = ") == std::string::npos);   // the same for both: one key
-    Settings r;
-    REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(std::fabs(r.mouse.alt_yaw_rad - s.mouse.alt_yaw_rad) < 1e-11);
-    CHECK_EQ(format_settings(r), text);
-    REQUIRE(!parse_settings(std::string("[mouse]\n") + key_alt_sens() + " = fast\n", &r, &err));
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[aim]\nlock_mode = free\n", &s, &err, &w), err);
+    CHECK_EQ(w.size(), 1u);   // the unknown section; its keys are skipped
 }
-
-NXTEST(alt_sensitivity_keeps_a_separate_vertical) {
-    // the older radians-per-count keys still read; a vertical of its own is written after the pair and survives the round trip
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings(std::string("[mouse]\n") + key_alt_yaw() + " = 0.001\n" + key_alt_pitch() + " = 0.0005\n", &s, &err), err);
-    CHECK(s.mouse.alt_yaw_rad == 0.001);
-    CHECK(s.mouse.alt_pitch_rad == 0.0005);
-    const std::string text = format_settings(s);
-    const size_t sens_at = text.find(std::string("\n") + key_alt_sens() + " = ");
-    const size_t pitch_at = text.find(std::string("\n") + key_alt_pitch() + " = 0.0005\n");
-    REQUIRE(sens_at != std::string::npos && pitch_at != std::string::npos);
-    CHECK(sens_at < pitch_at);
-    Settings r;
-    REQUIRE_MSG(parse_settings(text, &r, &err), err);
-    CHECK(std::fabs(r.mouse.alt_yaw_rad - 0.001) < 1e-11);   // written on the Source scale with 9 digits
-    CHECK(r.mouse.alt_pitch_rad == 0.0005);
-}
-

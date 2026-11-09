@@ -83,7 +83,7 @@ For more detail, turn on the trace switches. Each is a key in the ini file (`nxr
 |---|---|
 | `[log] level = trace` (`NXRT_LOG_LEVEL=trace`) | Every log line down to trace level. Valid values are `error`, `warn`, `info`, `debug` and `trace`. |
 | `[hle] trace = nvn` (`NXRT_HLE_TRACE=nvn`) | An ordered log of every host-side call whose name starts with the prefix, with arguments. `nvn` shows the graphics API calls. `trace_limit` caps the lines (default 20000). |
-| `[nvn] trace_frame = N` (`NXRT_NVN_TRACE_FRAME=N`) | Every draw, clear and copy of presented frame N, with shaders, render targets and state. The other `[nvn] trace_*` keys are in [`runtime/docs/S4e.md`](runtime/docs/S4e.md). |
+| `[nvn] trace_frame = N` (`NXRT_NVN_TRACE_FRAME=N`) | Every draw, clear and copy of presented frame N, with shaders, render targets and state. The other `[nvn] trace_*` keys are in [`games/mpr/docs/work/S4e.md`](games/mpr/docs/work/S4e.md). |
 | `[gfx] validation = true` (`NXRT_GFX_VALIDATION=1`) | Vulkan validation layer messages. Needs the Vulkan SDK. |
 
 Trace output can be large. Trim it to the part around the bug, or attach it as a file.

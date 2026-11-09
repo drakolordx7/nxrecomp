@@ -3,7 +3,7 @@
 // (buttons and stick deflection) comes out for any moment in time. No SDL, no game memory, no threads of its own: the caller supplies the
 // clock, so the tests drive it with made-up times.
 //
-// Rules (docs/S8.md has the player-facing version):
+// Rules (games/mpr/docs/work/S8.md has the player-facing version):
 //  * Bindings of the current context win over bindings of the `all` layer for the same input. `none` as the action switches the input off.
 //  * Triggers: press = active while held. tap = a pulse of [timing] pulse_ms right after a release that came within the tap window.
 //    hold = active while held, from the hold delay on. toggle = each press flips it. doubletap = active while held when the press came

@@ -227,15 +227,15 @@ bool supported_or_sibling(Language want, uint32_t mask, Language& out) {
     return false;
 }
 
-// The player's pick in the play-mode settings file (the game's own section of controls.ini, key language, set from the launcher), or "" when there is none. Read
+// The player's pick in the play-mode settings file (the game's own section of controls.ini, GameSection::language_key, set from the launcher), or "" when there is none. Read
 // with the config layer's ini parser (nxrt/config.h) so the language is known before the play-mode settings are loaded; the file is named
 // by [play] controls, as in play mode.
 std::string controls_language() {
     const std::string rel = config_get_str("play", "controls", "controls.ini");
-    // The section is the game's own (nxrt/game/settings.h): a game without one has no language pick in the file.
+    // Section and key are the game's (nxrt/game/settings.h GameSection::language_key): a game without one has no language pick in the file.
     const play::GameSection* gs = game::info().settings;
-    if (!gs || !gs->name || !*gs->name) return "";
-    return trim(config_file_get_str(rel.c_str(), gs->name, "language", ""));
+    if (!gs || !gs->name || !*gs->name || !gs->language_key) return "";
+    return trim(config_file_get_str(rel.c_str(), gs->name, gs->language_key, ""));
 }
 
 uint32_t parse_language_mask(const std::string& s, uint32_t def) {

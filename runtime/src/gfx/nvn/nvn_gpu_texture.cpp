@@ -281,7 +281,7 @@ TexGpu* create_texture_gpu(Texture* t) {
     if (to_bc7 && !ft.bc) return fail("ASTC is stored as BC7 and the GPU has no BC compression");
     const VkFormat bc7_format = g->fmt->srgb ? VK_FORMAT_BC7_SRGB_BLOCK : VK_FORMAT_BC7_UNORM_BLOCK;
     // A disk cache entry that is not BC7 (RGBA8 for a texture BC7 cannot reproduce, BC5 for a two-channel normal map) makes the image in the
-    // entry's format; prepare_texture is then told the image's format and delivers the entry's data (docs/S4f.md).
+    // entry's format; prepare_texture is then told the image's format and delivers the entry's data (games/mpr/docs/work/S4f.md).
     VkFormat entry = VK_FORMAT_UNDEFINED;
     if (to_bc7 && !texprep::peek_entry_format(t, entry)) entry = cache_entry_format(*t);
     const VkFormat want = to_bc7 ? (entry != VK_FORMAT_UNDEFINED ? entry : bc7_format) : g->fmt->vk;

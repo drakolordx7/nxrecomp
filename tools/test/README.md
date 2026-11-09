@@ -1,6 +1,6 @@
 # tools/test: test tooling and Eden reference captures (work area S5)
 
-Host-side half of the test tooling. The runtime half (scripted runs, traces, deterministic mode, record/replay) is `runtime/docs/S5.md`. Python is `tools\.venv\Scripts\python` (numpy and Pillow only); tests are stdlib `unittest`:
+Host-side half of the test tooling. The runtime half (scripted runs, traces, deterministic mode, record/replay) is `games/mpr/docs/work/S5.md`. Python is `tools\.venv\Scripts\python` (numpy and Pillow only); tests are stdlib `unittest`:
 
     cd tools\test
     ..\.venv\Scripts\python -I -m unittest discover -s tests -v        everything below (no game needed)
@@ -34,6 +34,7 @@ Eden v0.2.1 (`toolchain/eden`) runs in portable mode from `work\eden` (a `user\`
 
 Facts the harness is built on (research notes in `runtime/docs/debug/10x.md`): a GDB client connecting pauses the game and it stays paused until a continue; `monitor get info` prints the module list (main is the module `GameFramework.nss`); `monitor` replies are hex-encoded text; the screenshot layer is driven by `VK_SCREENSHOT_FRAMES` (a comma list of present numbers) and `VK_SCREENSHOT_DIR`; with the GDB stub switched on Eden WAITS at start for a client (eden_run.py switches it on only for runs that sample state); the main module base changes from run to run (ASLR), `edengdb` asks for it.
 
-Reference captures: `collect_refs.py timelines/refs_session1.json` copies named frames from the exploration sessions into `work\eden_refef` (boot logo, title, main menu, file select, difficulty, loading, the Frigate intro cinematic, an attract-mode gameplay clip, plus a GDB state read `eden_state_frigate_hangar.json` and a per-frame GDB trace). `contact_sheet.py` makes one overview image of a session. Timeline files: `timelines/*.json`. A new game takes 12 to 35 minutes of wall time to reach the Frigate in Eden on this machine (level loading, shader building), so a session is long; first gameplay frames were not reached (see the S5 report).
+Reference captures: `collect_refs.py timelines/refs_session1.json` copies named frames from the exploration sessions into `work\eden_ref
+ef` (boot logo, title, main menu, file select, difficulty, loading, the Frigate intro cinematic, an attract-mode gameplay clip, plus a GDB state read `eden_state_frigate_hangar.json` and a per-frame GDB trace). `contact_sheet.py` makes one overview image of a session. Timeline files: `timelines/*.json`. A new game takes 12 to 35 minutes of wall time to reach the Frigate in Eden on this machine (level loading, shader building), so a session is long; first gameplay frames were not reached (see the S5 report).
 
 Game-specific test content (suites, scripts, timelines, region tables, `gameplay.py`, `edengdb.py`, `phys_table.py`, `sweep.py`, the S11/S13 probes) lives in each game: `games/<id>/tools/test`. `eden_run.py`, `eden_config.py` and `collect_refs.py` take the game folder from `NX_GAME_DIR` (default: the current folder) and load `edengdb` from `<game>/tools/test`.

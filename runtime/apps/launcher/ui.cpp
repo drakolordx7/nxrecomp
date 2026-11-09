@@ -12,7 +12,6 @@
 
 namespace nxl {
 
-const GameLauncher* game_launcher() { return nxrt::game::info().launcher; }
 
 namespace {
 

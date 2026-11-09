@@ -15,7 +15,7 @@
 //   <id> [--game DIR] [--exefs DIR] [--ini FILE] [--log FILE] [--max-seconds N] [--link host|none] [--no-nvn] [--headless|--window]
 //        [--prepare-shaders [--if-needed] [--threads N] [--programs FILE]] [--version]
 // Environment: NX_EXEFS, NX_GAME (also <ID>_EXEFS, <ID>_GAME with the game id in upper case). Keys (section [boot]) are read through the
-// runtime's config, see docs/S6.md.
+// runtime's config, see games/mpr/docs/work/S6.md.
 //
 // Installed layout (a release folder after the setup tool has run): when exefs\main sits next to the exe, or --game DIR / NX_GAME names a
 // folder, that folder becomes the working directory, so everything the runtime reads relative to it (bc7_cache, shader_cache, romfs,
@@ -351,7 +351,7 @@ int main(int argc, char** argv) {
     bool play_started = false;
     if (nxrt::config_get_bool("boot", "nvn", true)) {
         nxrt::nvn::install();   // nvnBootstrapLoader and the NVN entry points (logging stubs for what no back end implements)
-        // The NVN back end (Vulkan). [boot] gfx = window (the default for a normal launch: play mode, see docs/S8.md) | headless (an offscreen
+        // The NVN back end (Vulkan). [boot] gfx = window (the default for a normal launch: play mode, see games/mpr/docs/work/S8.md) | headless (an offscreen
         // image ring: tests and scripted runs; also the default when [gfx] headless / NXRT_GFX_HEADLESS is set) | none (keep the logging stubs).
         const std::string gfxmode = nxrt::config_get_str("boot", "gfx", nxrt::config_get_bool("gfx", "headless", false) ? "headless" : "window");
         if (gfxmode != "none") {

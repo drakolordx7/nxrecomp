@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // C++ exception support for lifted code: the unwinder (the runtime IS _Unwind_RaiseException / _Unwind_Resume), Itanium-ABI typeinfo
-// matching (__do_catch semantics) and the catch frames behind nx_catch_call. docs/S3b.md describes the whole boundary.
+// matching (__do_catch semantics) and the catch frames behind nx_catch_call. games/mpr/docs/work/S3b.md describes the whole boundary.
 //
 // What is guest code and what is runtime
 //   guest (recompiled libc++abi): __cxa_allocate_exception, __cxa_throw, __cxa_begin_catch, __cxa_end_catch, __cxa_rethrow,

@@ -149,7 +149,7 @@ Settings builtin_settings() {
 
 // ---- the options a game adds (settings.h GameOption) ----------------------------------------------------------------------------------------
 const GameOption* find_option(const std::string& section, const std::string& key) {
-    const GameSection* gs = game_section();
+    const GameSection* gs = game::info().settings;
     for (unsigned i = 0; gs && i < gs->option_count; ++i) {
         const GameOption& o = gs->options[i];
         if (lower(o.section) == section && (lower(o.key) == key || (o.alias && lower(o.alias) == key))) return &o;
@@ -206,7 +206,7 @@ std::string option_text(const GameOption& o, const Settings& s) {
 }
 
 void append_options(std::string* out, const char* section, const Settings& s) {
-    const GameSection* gs = game_section();
+    const GameSection* gs = game::info().settings;
     for (unsigned i = 0; gs && i < gs->option_count; ++i) {
         const GameOption& o = gs->options[i];
         if (lower(o.section) != section || !o.write || (o.emit && !o.emit(s.game))) continue;
@@ -217,7 +217,7 @@ void append_options(std::string* out, const char* section, const Settings& s) {
 // The sections that hold options and are neither the base's nor the game's own named section ([aim], [camera]): written after [mouse].
 void append_option_sections(std::string* out, const Settings& s) {
     static const char* const kBase[] = {"meta", "mouse", "pad", "padmap", "timing", "display", "hdr", "upscale", "latency", "prompts", "fps", "switch"};
-    const GameSection* gs = game_section();
+    const GameSection* gs = game::info().settings;
     std::vector<std::string> done;
     for (unsigned i = 0; gs && i < gs->option_count; ++i) {
         const std::string sec = lower(gs->options[i].section);
@@ -236,7 +236,7 @@ enum class Sec { None, Unknown, Meta, Mouse, Pad, PadMap, Timing, Display, Hdr, 
 // The factory-defaults revision this build writes ([meta] defaults_rev) and the factory bindings an older controls.ini does not have: the
 // game's (play_types.h GameDefaults).
 int defaults_rev() {
-    const GameDefaults* d = game_defaults();
+    const GameDefaults* d = game::info().play_defaults;
     return d ? d->defaults_rev : 0;
 }
 
@@ -345,11 +345,10 @@ bool apply_fixed(Sec sec, const std::string& secname, const std::string& k, cons
             if (k == "invert_y") return set_bool(&s->mouse.invert_y);
             if (k == "invert_x") return set_bool(&s->mouse.invert_x);
             if (k == "menu_cursor") return set_bool(&s->mouse.menu_cursor);
-            if (k == "menu_touch") return true;   // legacy key, dead since it never did anything: accepted and ignored
             if (k == key_wheel_cycles()) return set_bool(&s->mouse.wheel_cycles);
             break;
         case Sec::Game: {
-            const GameSection* gs = game_section();
+            const GameSection* gs = game::info().settings;
             if (gs && gs->apply && secname == lower(gs->name)) {
                 *known = true;
                 if (!gs->apply(s->game, k, v, known, msg)) return false;
@@ -547,7 +546,7 @@ Sec fixed_sec(const std::string& key) {
     if (key == "prompts") return Sec::Prompts;
     if (key == "fps") return Sec::Fps;
     if (key == "switch") return Sec::Switch;
-    if (const GameSection* gs = game_section()) {
+    if (const GameSection* gs = game::info().settings) {
         if (gs->name && *gs->name && key == lower(gs->name)) return Sec::Game;
         for (unsigned i = 0; i < gs->option_count; ++i)
             if (key == lower(gs->options[i].section)) return Sec::Game;
@@ -558,7 +557,7 @@ Sec fixed_sec(const std::string& key) {
 // Factory values a later revision changed (GameDefaults::changes): where the file still has the old factory value, it takes the new one.
 // "Still has" = setting the old value changes nothing in the written file, so any value the player picked stays.
 void apply_default_changes(Settings* s, int file_rev, std::string* added) {
-    const GameDefaults* gd = game_defaults();
+    const GameDefaults* gd = game::info().play_defaults;
     for (unsigned i = 0; gd && i < gd->change_count; ++i) {
         const GameDefaultChange& c = gd->changes[i];
         const Sec sec = fixed_sec(lower(c.section));
@@ -576,7 +575,7 @@ void apply_default_changes(Settings* s, int file_rev, std::string* added) {
 }
 
 void apply_default_additions(Settings* s, int file_rev, std::string* added) {
-    const GameDefaults* gd = game_defaults();
+    const GameDefaults* gd = game::info().play_defaults;
     for (unsigned i = 0; gd && i < gd->addition_count; ++i) {
         const GameDefaultAddition& d = gd->additions[i];
         if (d.rev <= file_rev) continue;
@@ -754,11 +753,9 @@ bool parse_onto(const std::string& text, Settings* s, std::string* err, std::vec
 
 }  // namespace
 
-const GameDefaults* game_defaults() { return game::info().play_defaults; }
-const GameSection* game_section() { return game::info().settings; }
 
 const char* default_settings_text() {
-    const GameDefaults* d = game_defaults();
+    const GameDefaults* d = game::info().play_defaults;
     return d && d->settings_text ? d->settings_text : "";
 }
 
@@ -802,7 +799,7 @@ std::string format_settings(const Settings& s) {
     kv(key_wheel_cycles(), flag(s.mouse.wheel_cycles));
     append_options(&o, "mouse", s);
     append_option_sections(&o, s);
-    if (const GameSection* gs = game_section(); gs && gs->name && *gs->name && gs->format) {
+    if (const GameSection* gs = game::info().settings; gs && gs->name && *gs->name && gs->format) {
         o += std::string("\n[") + gs->name + "]\n";
         gs->format(s.game, &o);
     }

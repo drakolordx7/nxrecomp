@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Play mode: the glue. See include/nxrt/play.h for the start-up order and docs/S8.md for the design.
+// Play mode: the glue. See include/nxrt/play.h for the start-up order and games/mpr/docs/work/S8.md for the design.
 //
 // Threads:
 //   main (the guest main thread, which created the window)  the Update hook (frame boundary: event pump, input, settings changes) and the
@@ -130,7 +130,7 @@ public:
     bool pad_look(bool gyro_enabled) const {
         return std::abs(right_y_.load(std::memory_order_relaxed)) > 650 || (gyro_enabled && gyro_pitch_.load(std::memory_order_relaxed) > 0.02f);
     }
-    // The right stick as the game gets it (dead zone, invert and sensitivity applied), -1..1, + = right and up: the alternate body's camera (mpr: the morph ball camera) orbits with it.
+    // The right stick as the game gets it (dead zone, invert and sensitivity applied), -1..1, + = right and up: the alternate body's camera orbits with it.
     void right_stick(float* x, float* y) const {
         *x = right_x_f_.load(std::memory_order_relaxed);
         *y = right_y_f_.load(std::memory_order_relaxed);
@@ -464,7 +464,7 @@ void apply_fps_counter(const FpsSettings& f) {
 
 // The pointer is over a slider's track in the game's menu (its menu hooks are active this frame): the wheel steps the value.
 bool game_menu_over_value() {
-    const GamePlay* gp = game_play();
+    const GamePlay* gp = game::info().play;
     return gp && gp->menu_active && gp->menu_over_value && gp->menu_active() && gp->menu_over_value();
 }
 
@@ -531,7 +531,7 @@ void handle_event(const input::Event& e, uint64_t now) {
         case EventType::MouseWheel: {
             if (menu_blocked) break;
             const float dy = e.u.wheel.dy;
-            if (const GamePlay* gp = game_play(); dy != 0 && st.settings.mouse.menu_cursor && gp && gp->menu_wheel && !(st.overlay && st.overlay->visible())) {
+            if (const GamePlay* gp = game::info().play; dy != 0 && st.settings.mouse.menu_cursor && gp && gp->menu_wheel && !(st.overlay && st.overlay->visible())) {
                 Act act = Act::None;
                 int ms = 0;
                 if (gp->menu_wheel(st.engine->context(), dy, &act, &ms)) {
@@ -670,7 +670,7 @@ void on_frame(double step_seconds) {
             st.engine->set_settings(s, now);
             apply_frame_cap(s);
             display_tuning(s.display);
-            if (const GamePlay* gp = game_play(); gp && gp->settings_changed) gp->settings_changed(s);     // the game's display options, lock-on
+            if (const GamePlay* gp = game::info().play; gp && gp->settings_changed) gp->settings_changed(s);     // the game's display options, lock-on
             extras::set_settings(s.extras);
             extras::hdr_refresh_levels();
             apply_fps_counter(s.fps);
@@ -692,7 +692,7 @@ void on_frame(double step_seconds) {
         for (size_t i = 0; i < got; ++i) handle_event(buf[i], now);
     }
     poll_pads(now);
-    const GamePlay* gp = game_play();
+    const GamePlay* gp = game::info().play;
     if (gp && gp->frame_begin) gp->frame_begin();
     if (st.engine) st.engine->frame_tick();
 
@@ -830,7 +830,7 @@ public:
         LiveStatus s;
         s.ctx = st.engine ? st.engine->context() : Ctx::Menu;
         GameStatus gs;
-        if (const GamePlay* gp = game_play(); gp && gp->status) gp->status(&gs);
+        if (const GamePlay* gp = game::info().play; gp && gp->status) gp->status(&gs);
         s.aim = gs.aim;
         s.prompt_now = prompts_effective_name();
         if (st.pi_calls.load() == 0) s.aim = "not in game";
@@ -1063,7 +1063,7 @@ bool start(const StartOptions& opt) {
     }
     if (st.window && st.settings.display.window_mode != "windowed") set_window_mode(st.settings.display.window_mode);
 
-    const GamePlay* gp = game_play();
+    const GamePlay* gp = game::info().play;
     {
         int ww = 1600, wh = 900;
         if (st.window) platform::pixel_size(&ww, &wh);
@@ -1084,7 +1084,7 @@ void stop() {
     G& st = g();
     if (!st.started) return;
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
-    if (const GamePlay* gp = game_play(); gp && gp->remove) gp->remove();
+    if (const GamePlay* gp = game::info().play; gp && gp->remove) gp->remove();
     timestep::set_frame_listener(nullptr);
     hid::set_vibration_sink(nullptr, nullptr);
     if (hid::input_source() == st.source) hid::set_input_source(nullptr);

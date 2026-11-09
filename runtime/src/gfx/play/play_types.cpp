@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "nxrt/game/play_types.h"
 
+#include "nxrt/game.h"
+
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_scancode.h>
 
@@ -210,7 +212,7 @@ int act_count() {
 }
 
 const GameVocabulary* game_vocabulary() {
-    const GameDefaults* d = game_defaults();
+    const GameDefaults* d = game::info().play_defaults;
     return d ? d->vocabulary : nullptr;
 }
 const char* key_wheel_cycles() {

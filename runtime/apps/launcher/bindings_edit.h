@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Keyboard tab, logic part: the rows of the list and the edits that keep every action at two keys. No Windows code here, so the
-// tests can run it alone. Only the factory layer ([bindings.all]) is edited. The menu, map, gameplay, morph and scan sections are
+// tests can run it alone. Only the factory layer ([bindings.all]) is edited. The game's other context sections are
 // left alone.
 #pragma once
 #include <string>
@@ -31,7 +31,7 @@ void bind_slot(nxrt::play::Settings& s, nxrt::play::Act a, int slot, const nxrt:
 void clear_slot(nxrt::play::Settings& s, nxrt::play::Act a, int slot);
 
 // Puts the factory bindings back for the contexts this tab shows (Ctx::All only). Every All binding is replaced by the factory All
-// bindings, placed where the first All binding was. The bindings of the other contexts (menu, map, gameplay, morph, scan) stay
+// bindings, placed where the first All binding was. The bindings of the other contexts (menu, map, gameplay and the game's own) stay
 // exactly as they were, in the same order.
 void reset_shown_bindings(nxrt::play::Settings& s);
 

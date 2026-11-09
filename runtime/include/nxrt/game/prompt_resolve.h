@@ -4,8 +4,6 @@
 //
 // A game draws its prompts ("PRESS (A) TO START", the footer of the menus, tutorial texts) with small textures, one per Switch button glyph
 // (Icon below). Which textures those are, and how to find them in the game's files, is the game's (PromptGame, nxrt/game.h Info::prompts).
-// Metroid Prime Remastered: 19 small BC7 textures TXTR_ButtonA ... TXTR_DPadIdle and the two stick icons in GuiSysMP1.pak and
-// PreloadFrontEndMPT.pak (games/mpr/mpr_prompts.cpp).
 #pragma once
 #include <cstddef>
 #include <cstdint>
@@ -31,7 +29,7 @@ struct PromptIcon {
     const char* asset;          // the texture's name in the game's files (logs): "TXTR_ButtonA"
     const char* uuid;           // its asset id there, canonical lower-case text
     const char* pak;            // the archive under the RomFS folder: "Preload/MPR1/GuiSysMP1.pak"
-    const char* front_uuid;     // a second copy of the icon (Metroid: the front end's own, in front_pak), or nullptr
+    const char* front_uuid;     // a second copy of the icon (a game with a second set of UI textures: the one in front_pak), or nullptr
 };
 struct PromptGame {
     const PromptIcon* icons = nullptr;   // kIconCount entries in Icon order
@@ -41,8 +39,9 @@ struct PromptGame {
     // Reads every icon texture (both copies) from the game files under `romfs` and calls found() with each one's tiled bytes, as the game uploads
     // them. Returns how many were found.
     int (*scan)(const std::string& romfs, void (*found)(void* user, Icon icon, const uint8_t* tiled, size_t size), void* user) = nullptr;
+    // The pack entry shown for a stick icon in keyboard style, when the pointer stands in for that stick in context `ctx` ("kbm/mouse1"); null: none.
+    const char* (*pointer_icon)(Ctx ctx, Icon icon) = nullptr;
 };
-const PromptGame* prompt_game();        // the registered game's, or nullptr (then the game's own icons stay)
 
 Btn icon_button(Icon i);                // Btn::None without a game
 bool icon_pressed(Icon i);
@@ -62,8 +61,8 @@ struct ResolveIn {
 // pressed icon. Pad styles show the physical button that presses the Switch button, following settings->pad.remap. Empty: keep the
 // game's own icon (Switch style, a keyboard style button no input is bound to, or a pad style where nothing presses the button or the
 // pad source is a stick click or the d-pad).
-// The stick icons (LStick, RStick) are the map's controls: keyboard style on the map shows the mouse buttons that drive it (left button
-// rotates, middle button moves; kbm/mouse1 and kbm/mouse2). Every other style and context keeps the game's own stick icon.
+// The stick icons (LStick, RStick) show what the game says drives them from the keyboard and mouse (PromptGame::pointer_icon). Every other
+// style and context keeps the game's own stick icon.
 std::string resolve_icon(const ResolveIn& in, Icon icon);
 
 // Keyboard and mouse: the input that presses this Switch button in the given context, following the bindings of the settings.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Controls tab: mouse sensitivity (horizontal, vertical, the alternate body's camera; mpr: morph ball), mouse inversion and the wheel, and the button icon style.
+// Controls tab: mouse sensitivity (horizontal, vertical), mouse inversion and the wheel, the button icon style, and the rows of the options the
+// registered game adds (nxrt/game/settings.h GameOption).
 // The sensitivity sliders count tenths of the Source scale (1 = 0.1, 100 = 10.0). A slider only writes its value when the player
 // moved it, so a value in the settings file with more digits than the slider can show stays as it is.
 #include <algorithm>
@@ -9,21 +10,13 @@
 #include <vector>
 
 #include "game_info.h"
+#include "nxrt/game.h"
 #include "pages.h"
 
 namespace nxl {
 
 namespace {
 
-using nxrt::play::LockMode;
-
-// The game's labels for the alternate-body camera and the wheel cycling (nxrt::play::GameVocabulary), kept for the page's lifetime.
-const wchar_t* vocab_label(const char* nxrt::play::GameVocabulary::* field, const wchar_t* generic, std::wstring* keep) {
-    const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
-    *keep = game_text(v ? v->*field : nullptr, generic);
-    return keep->c_str();
-}
-std::wstring g_alt_camera_label, g_alt_camera_on_label, g_wheel_cycles_label, g_view_sway_label;
 using nxrt::play::PromptStyle;
 using nxrt::play::rad_per_count;
 using nxrt::play::source_sens;
@@ -48,15 +41,6 @@ std::wstring sens_text(int pos) {
 const PromptStyle kStyles[] = {PromptStyle::Auto, PromptStyle::Keyboard, PromptStyle::Xbox, PromptStyle::PlayStation, PromptStyle::Switch};
 constexpr int kStyleCount = static_cast<int>(sizeof kStyles / sizeof kStyles[0]);
 
-// The free-lock edge margin as a percent slider: 0.15 -> 15, 0..40 only.
-int margin_pos(double m) {
-    return static_cast<int>(std::clamp(std::lround(m * 100.0), 0L, 40L));
-}
-
-std::wstring margin_text(int pos) {
-    return std::to_wstring(pos) + L" %";
-}
-
 bool same_steps(const Settings& s) {
     return steps_raw(s.mouse.yaw_rad) == steps_raw(s.mouse.pitch_rad);
 }
@@ -66,23 +50,6 @@ public:
     const wchar_t* title() const override { return L"Controls"; }
 
     void build(Form& f) override {
-        f.heading(L"Lock-on and camera");
-        f.combo(
-            L"Lock-on camera", {L"Classic (the view turns to the target)", L"Free (you keep control of the view, the default)"},
-            [](const Settings& s) { return s.aim.lock_mode == LockMode::Free ? 1 : 0; },
-            [](Settings& s, int i) { s.aim.lock_mode = i == 1 ? LockMode::Free : LockMode::Classic; });
-        f.hint(L"Free: the lock starts like the game's. Afterwards the view stays under your control (mouse and right stick) as long as the target stays on screen; the gun and the reticle stay on the target. Scanning always uses classic.", 3);
-        f.slider(
-            L"Free lock edge margin", 0, 40, [](const Settings& s) { return margin_pos(s.aim.free_lock_margin); },
-            [this](Settings& s, int pct) {
-                if (pct == margin0_) return;   // only a value the player moved is written
-                s.aim.free_lock_margin = pct / 100.0;
-            },
-            margin_text);
-        f.checkbox(
-            vocab_label(&nxrt::play::GameVocabulary::label_view_sway, L"Steady camera (the game's sway and bob don't shake the view)", &g_view_sway_label),
-            [](const Settings& s) { return !s.camera.view_sway; }, [](Settings& s, bool v) { s.camera.view_sway = !v; });
-
         f.heading(L"Mouse");
         yaw_ = f.slider(
             L"Horizontal sensitivity", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.yaw_rad); },
@@ -101,34 +68,22 @@ public:
             [](Settings&, bool) {},   // not saved: only the two sliders are
             [this]() { linked_ = !linked_; });
         f.checkbox(
-            vocab_label(&nxrt::play::GameVocabulary::label_alt_camera_on, L"Mouse and right stick turn the alternate camera", &g_alt_camera_on_label),
-            [](const Settings& s) { return s.mouse.alt_camera; },
-            [](Settings& s, bool v) { s.mouse.alt_camera = v; },
-            [this]() {
-                alt_on_ = !alt_on_;
-                EnableWindow(alt_slider_, alt_on_);
-            });
-        alt_slider_ = f.slider(
-            vocab_label(&nxrt::play::GameVocabulary::label_alt_camera, L"Alternate camera", &g_alt_camera_label), kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.alt_yaw_rad); },
-            [this](Settings& s, int pos) {
-                if (pos == alt0_) return;
-                s.mouse.alt_yaw_rad = rad_per_count(pos / 10.0);
-                s.mouse.alt_pitch_rad = s.mouse.alt_yaw_rad;
-            },
-            sens_text);
-        f.checkbox(
             L"Invert vertical aim", [](const Settings& s) { return s.mouse.invert_y; },
             [](Settings& s, bool v) { s.mouse.invert_y = v; });
         f.checkbox(
             L"Invert horizontal aim", [](const Settings& s) { return s.mouse.invert_x; },
             [](Settings& s, bool v) { s.mouse.invert_x = v; });
-        f.checkbox(
-            vocab_label(&nxrt::play::GameVocabulary::label_wheel_cycles, L"Mouse wheel cycles", &g_wheel_cycles_label),
-            [](const Settings& s) { return s.mouse.wheel_cycles; },
-            [](Settings& s, bool v) { s.mouse.wheel_cycles = v; });
+        if (const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary(); v && v->cycle) {
+            wheel_label_ = game_text(v->label_wheel_cycles, L"Mouse wheel cycles");
+            f.checkbox(
+                wheel_label_.c_str(), [](const Settings& s) { return s.mouse.wheel_cycles; },
+                [](Settings& s, bool v) { s.mouse.wheel_cycles = v; });
+        }
         f.checkbox(
             L"Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
             [](Settings& s, bool v) { s.mouse.menu_cursor = v; });
+        rows_.build(f, nxrt::play::OptTab::Mouse);
+        rows_.build(f, nxrt::play::OptTab::Pad);
 
         f.heading(L"Button prompts");
         f.combo(
@@ -146,12 +101,9 @@ public:
     void load(const Settings& s) override {
         yaw0_ = slider_pos(s.mouse.yaw_rad);
         pitch0_ = slider_pos(s.mouse.pitch_rad);
-        alt0_ = slider_pos(s.mouse.alt_yaw_rad);
-        alt_on_ = s.mouse.alt_camera;
-        margin0_ = margin_pos(s.aim.free_lock_margin);
         linked_ = same_steps(s);
         Page::load(s);
-        if (alt_slider_) EnableWindow(alt_slider_, alt_on_);
+        rows_.load(s);
     }
 
 private:
@@ -165,9 +117,9 @@ private:
     }
 
     HWND yaw_ = nullptr, pitch_ = nullptr;
-    int yaw0_ = 0, pitch0_ = 0, alt0_ = 0, margin0_ = 0;
-    HWND alt_slider_ = nullptr;
-    bool alt_on_ = true;
+    int yaw0_ = 0, pitch0_ = 0;
+    std::wstring wheel_label_;
+    GameOptionRows rows_;
     bool linked_ = false;                      // the "same for both" box (not saved)
     bool syncing_ = false;
 };

@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "game_info.h"
+#include "nxrt/game.h"
 #include "pages.h"
 #include "nxrt/strutil.h"
 #include "nxrt/game/launcher_ui.h"
@@ -247,7 +248,7 @@ void App::on_create() {
     pages_.push_back(make_controls_page());
     pages_.push_back(make_keys_page());
     pages_.push_back(make_pad_page());
-    if (const GameLauncher* gl = game_launcher())
+    if (const GameLauncher* gl = nxrt::game::info().launcher)
         for (unsigned i = 0; i < gl->tab_count; ++i) pages_.push_back(gl->tabs[i]());
     for (size_t i = 0; i < pages_.size(); ++i) {
         TCITEMW it{};
