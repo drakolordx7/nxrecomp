@@ -29,8 +29,17 @@ Engine::Engine(const Settings& s) : st_(s) {
     rebuild();
 }
 
-bool Engine::is_select(Act a) {
-    return (a >= Act::SetA1 && a <= Act::SetB4) || a == Act::SetANext || a == Act::SetAPrev;
+bool Engine::is_select(Act a) { return act_info(a).pulse; }
+
+// The cycled set of the registered game: the members, how many, and the actions that step through it.
+const GameCycle* Engine::cycle_set() {
+    const GameVocabulary* v = game_vocabulary();
+    return v ? v->cycle : nullptr;
+}
+
+unsigned Engine::cycle_all_mask() {
+    const GameCycle* c = cycle_set();
+    return c ? (1u << std::min(c->count, 8u)) - 1u : 0u;
 }
 
 // The bindings that apply to one input in context c: the context's own, else those of the `all` layer. In the menu contexts the left
@@ -202,8 +211,9 @@ void Engine::release_all(uint64_t now) {
 void Engine::set_cycle_hint(int current, unsigned mask, uint64_t now) {
     std::lock_guard<std::mutex> lk(mu_);
     const bool recent = !sels_.empty() || (last_select_ns_ && now >= last_select_ns_ && now - last_select_ns_ < 300 * kMs);
-    if (current >= 0 && current < 4 && !recent) cycle_ = current;
-    cycle_mask_ = mask & 0x0f ? mask & 0x0f : 0x0f;
+    const unsigned all = cycle_all_mask();
+    if (current >= 0 && static_cast<unsigned>(current) < std::min(cycle_set() ? cycle_set()->count : 0u, 8u) && !recent) cycle_ = current;
+    cycle_mask_ = mask & all ? mask & all : all;
 }
 
 int Engine::tracked_cycle() const {
@@ -245,17 +255,20 @@ void Engine::pulse(Act a, uint64_t now, int ms) {
 }
 
 void Engine::select(Act a, uint64_t now) {
-    if (a == Act::SetANext || a == Act::SetAPrev) {
-        const int dir = a == Act::SetANext ? 1 : 3;
-        int i = cycle_;
-        for (int n = 0; n < 4; ++n) {
-            i = (i + dir) % 4;
-            if (cycle_mask_ & (1u << i)) break;
+    if (const GameCycle* cy = cycle_set()) {
+        const int n_members = static_cast<int>(std::min(cy->count, 8u));
+        if (a == cy->next || a == cy->prev) {
+            const int dir = a == cy->next ? 1 : n_members - 1;
+            int i = cycle_;
+            for (int n = 0; n < n_members; ++n) {
+                i = (i + dir) % n_members;
+                if (cycle_mask_ & (1u << i)) break;
+            }
+            cycle_ = i;
+            a = static_cast<Act>(static_cast<int>(cy->first) + i);
+        } else if (static_cast<int>(a) >= static_cast<int>(cy->first) && static_cast<int>(a) < static_cast<int>(cy->first) + n_members) {
+            cycle_ = static_cast<int>(a) - static_cast<int>(cy->first);
         }
-        cycle_ = i;
-        a = static_cast<Act>(static_cast<int>(Act::SetA1) + i);
-    } else if (a >= Act::SetA1 && a <= Act::SetA4) {
-        cycle_ = static_cast<int>(a) - static_cast<int>(Act::SetA1);
     }
     // One pulse per select, queued behind the previous one with a release gap of one pulse, so the game never sees two combinations at once.
     const uint64_t pulse = static_cast<uint64_t>(st_.timing.pulse_ms) * kMs;
@@ -270,7 +283,7 @@ void Engine::on_activate(int b, uint64_t now) {
     acts_[static_cast<int>(bind.act)]++;
     last_ = bind.act;
     if (!is_select(bind.act)) return;
-    if (bind.in.kind == InKind::Wheel && (bind.act == Act::SetANext || bind.act == Act::SetAPrev) && !st_.mouse.wheel_cycles) return;
+    if (const GameCycle* cy = cycle_set(); bind.in.kind == InKind::Wheel && cy && (bind.act == cy->next || bind.act == cy->prev) && !st_.mouse.wheel_cycles) return;
     select(bind.act, now);
 }
 
@@ -288,10 +301,10 @@ EngineOut Engine::output(uint64_t now) {
     EngineOut o;
     float lx = 0, ly = 0, rx = 0, ry = 0;
     auto add = [&](const Output& x) { o.buttons |= x.buttons; lx += x.lx; ly += x.ly; rx += x.rx; ry += x.ry; };
-    bool on[kActCount] = {};
+    bool on[kActMax] = {};
     for (int b : cur_)
         if (!is_select(st_.bindings[b].act) && binding_active(b, now)) on[static_cast<int>(st_.bindings[b].act)] = true;
-    for (int a = 1; a < kActCount; ++a) {
+    for (int a = 1; a < act_count(); ++a) {
         if (!is_select(static_cast<Act>(a)) && on[a]) add(st_.out[a]);
     }
     bool retired = false;

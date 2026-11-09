@@ -4,6 +4,7 @@
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_scancode.h>
 
+#include <algorithm>
 #include <cctype>
 #include <string>
 
@@ -38,9 +39,10 @@ std::string name_key(const std::string& s) {
     return r;
 }
 
-// The generic names; the registered game names the contexts itself (GameVocabulary::ctx_names).
-const char* const kCtxNames[] = {"all", "play", "alt", "map", "menu", "inspect"};
-static_assert(sizeof(kCtxNames) / sizeof(kCtxNames[0]) == kCtxCount, "one name per Ctx");
+// The base's own names; the registered game names all of the contexts (GameVocabulary::ctx_names) and adds its own.
+const char* const kCtxNames[] = {"all", "play", "map", "menu"};
+constexpr int kBaseCtx = static_cast<int>(Ctx::kBase);
+static_assert(sizeof(kCtxNames) / sizeof(kCtxNames[0]) == kBaseCtx, "one name per base Ctx");
 const char* const* ctx_names() {
     const GameVocabulary* v = game_vocabulary();
     return v && v->ctx_names ? v->ctx_names : kCtxNames;
@@ -50,11 +52,26 @@ const char* const kTrigNames[] = {"press", "tap", "hold", "toggle", "doubletap"}
 
 }  // namespace
 
-const char* ctx_name(Ctx c) { return ctx_names()[static_cast<int>(c)]; }
+int ctx_count() {
+    const GameVocabulary* v = game_vocabulary();
+    return v && v->ctx_names ? std::min<int>(static_cast<int>(v->ctx_rows), kCtxMax) : kBaseCtx;
+}
+
+const char* ctx_name(Ctx c) {
+    const int i = static_cast<int>(c);
+    return i >= 0 && i < ctx_count() ? ctx_names()[i] : "";
+}
+
+bool ctx_in_play(Ctx c) {
+    if (c == Ctx::Play) return true;
+    const GameVocabulary* v = game_vocabulary();
+    const int i = static_cast<int>(c);
+    return v && i >= 0 && i < 32 && (v->play_ctx_mask >> i & 1u) != 0;
+}
 
 bool parse_ctx(const std::string& s, Ctx* out) {
     const std::string key = name_key(s);
-    for (int i = 0; i < kCtxCount; ++i) {
+    for (int i = 0; i < ctx_count(); ++i) {
         if (key == ctx_names()[i]) {
             if (out) *out = static_cast<Ctx>(i);
             return true;
@@ -143,8 +160,8 @@ bool parse_corner(const std::string& name, Corner* out) {
     return false;
 }
 
-// One row per Act, in enum order (checked by the static_assert below and by the unit tests). The generic names and outputs: the game's
-// action slots have no factory output here; the registered game gives its own table (GameVocabulary::acts).
+// One row per Act, in enum order (checked by the static_assert below and by the unit tests). The base's own names and outputs; the registered
+// game gives a table of its own (GameVocabulary::acts) that renames these and adds its actions.
 namespace {
 const ActInfo kActs[] = {
     {Act::None, "none", ""},
@@ -157,11 +174,8 @@ const ActInfo kActs[] = {
     {Act::LookLeft, "look_left", "RS_LEFT"},
     {Act::LookRight, "look_right", "RS_RIGHT"},
     {Act::Primary, "primary", ""},
-    {Act::Target, "target", ""},
     {Act::Secondary, "secondary", ""},
     {Act::Jump, "jump", ""},
-    {Act::AltForm, "alt_form", ""},
-    {Act::LookHold, "look_hold", ""},
     {Act::Map, "map", ""},
     {Act::Pause, "pause", ""},
     {Act::Confirm, "confirm", "A"},
@@ -170,16 +184,6 @@ const ActInfo kActs[] = {
     {Act::DpadDown, "dpad_down", "DOWN"},
     {Act::DpadLeft, "dpad_left", "LEFT"},
     {Act::DpadRight, "dpad_right", "RIGHT"},
-    {Act::SetA1, "set_a_1", ""},
-    {Act::SetA2, "set_a_2", ""},
-    {Act::SetA3, "set_a_3", ""},
-    {Act::SetA4, "set_a_4", ""},
-    {Act::SetB1, "set_b_1", ""},
-    {Act::SetB2, "set_b_2", ""},
-    {Act::SetB3, "set_b_3", ""},
-    {Act::SetB4, "set_b_4", ""},
-    {Act::SetANext, "set_a_next", ""},
-    {Act::SetAPrev, "set_a_prev", ""},
     {Act::BtnA, "btn_a", "A"},
     {Act::BtnB, "btn_b", "B"},
     {Act::BtnX, "btn_x", "X"},
@@ -193,35 +197,37 @@ const ActInfo kActs[] = {
     {Act::BtnLStick, "btn_lstick", "LSTICK"},
     {Act::BtnRStick, "btn_rstick", "RSTICK"},
 };
-static_assert(sizeof(kActs) / sizeof(kActs[0]) == kActCount, "one row per Act");
+static_assert(sizeof(kActs) / sizeof(kActs[0]) == static_cast<int>(Act::kBase), "one row per base Act");
 const ActInfo* acts() {
     const GameVocabulary* v = game_vocabulary();
     return v && v->acts ? v->acts : kActs;
 }
-const char* key_or(const char* GameVocabulary::* field, const char* generic) {
-    const GameVocabulary* v = game_vocabulary();
-    return v && v->*field ? v->*field : generic;
-}
 }  // namespace
+
+int act_count() {
+    const GameVocabulary* v = game_vocabulary();
+    return v && v->acts ? std::min<int>(static_cast<int>(v->act_rows), kActMax) : static_cast<int>(Act::kBase);
+}
 
 const GameVocabulary* game_vocabulary() {
     const GameDefaults* d = game_defaults();
     return d ? d->vocabulary : nullptr;
 }
-const char* key_alt_yaw() { return key_or(&GameVocabulary::key_alt_yaw, "alt_yaw"); }
-const char* key_alt_pitch() { return key_or(&GameVocabulary::key_alt_pitch, "alt_pitch"); }
-const char* key_wheel_cycles() { return key_or(&GameVocabulary::key_wheel_cycles, "wheel_cycles"); }
-const char* key_alt_orbit() { return key_or(&GameVocabulary::key_alt_orbit, "alt_orbit"); }
-const char* key_alt_camera() { return key_or(&GameVocabulary::key_alt_camera, "alt_camera"); }
-const char* key_alt_sens() { return key_or(&GameVocabulary::key_alt_sens, "alt_sensitivity"); }
-const char* key_view_sway() { return key_or(&GameVocabulary::key_view_sway, "view_sway"); }
+const char* key_wheel_cycles() {
+    const GameVocabulary* v = game_vocabulary();
+    return v && v->key_wheel_cycles ? v->key_wheel_cycles : "wheel_cycles";
+}
 
-const ActInfo& act_info(Act a) { return acts()[static_cast<int>(a)]; }
+const ActInfo& act_info(Act a) {
+    static const ActInfo none{Act::None, "", ""};
+    const int i = static_cast<int>(a);
+    return i >= 0 && i < act_count() ? acts()[i] : none;
+}
 
 bool parse_act(const std::string& name, Act* out) {
     const std::string key = name_key(name);
     const ActInfo* table = acts();
-    for (int i = 0; i < kActCount; ++i) {
+    for (int i = 0; i < act_count(); ++i) {
         const ActInfo& info = table[i];
         if (key == info.name) {
             if (out) *out = info.act;

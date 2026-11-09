@@ -8,7 +8,7 @@
 //
 // What each table is for, and where the Metroid Prime Remastered one lives:
 //   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/runtime/mpr_core.cpp
-//   timestep         the sites of the real-time frame step (nxrt/timestep.h, Sites)                           games/mpr/runtime/mpr_core.cpp, mpr_sites.h
+//   timestep         the sites of the real-time frame step and the game's own step hooks (nxrt/timestep.h)   games/mpr/runtime/mpr_core.cpp, mpr_timestep.cpp
 //   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  games/mpr/runtime/mpr_tt_probe.cpp
 //   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/runtime/mpr_defaults.cpp
 //   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/runtime/mpr_play.cpp
@@ -50,6 +50,11 @@ struct Info {
     const char* game_ini = "";              // the settings file the setup tool writes and the game exe reads: "mpr.ini"
     const char* shader_pack = "";           // the shader pack file next to the setup tool: "shader_cache.mprshc"
     const char* save_folder = "";           // save data folder under %APPDATA%: "MPRRecomp" (empty: "nxrt")
+
+    // ---- the frame boundary ----
+    // Entry hook site (offset in the main module) of the game's frame update: once per rendered frame, on the main thread. The runtime hooks it once
+    // (nxrt/timestep.h): the step is computed, then play mode is pumped. 0 = the game has no such site: no step hooks, play mode is not pumped.
+    uint64_t frame_update = 0;
 
     // ---- tables (null = the feature is off) ----
     void (*title_defaults)(services::TitleProfile& p) = nullptr;

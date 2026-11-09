@@ -182,8 +182,6 @@ struct G {
     bool window = false;
 
     std::thread::id pump_thread;
-    uint64_t base = 0;                   // set by load: [play] game_base, default mem::kMainBase
-    uint32_t hook_update = 0;
     bool capture_mouse = true, quit_on_close = true, log_status = false;
     bool pointer_draw = false;         // [play] pointer_draw: the menu pointer is also drawn into the frame (screenshots show it); a test aid
     bool late_sample = true;           // pump the window's events again right before the mouse counts are taken (S11: the counts are as new as ProcessInput)
@@ -192,10 +190,7 @@ struct G {
     uint64_t update_seq = 0, aim_seq = 0;
     std::atomic<uint64_t> last_pi_ns{0};
     std::atomic<uint64_t> last_pi_frame{0};       // value of `frames` at the last ProcessInput (the game is playing while it keeps being called)
-    uint64_t map_acts_seen = 0;
-    bool map_hint = false;
     bool overlay_was_visible = false;
-    bool was_in_game = false;
     float mouse_x = 0, mouse_y = 0;
     bool mouse1 = false;
     uint64_t last_status_ns = 0;
@@ -292,6 +287,7 @@ void SdlMouseFeeder::run(const G* st) {
 }
 
 SelfTestHost* selftest_host();
+GameHost& game_host_ref();
 
 G& g() {
     static G inst;
@@ -535,10 +531,13 @@ void handle_event(const input::Event& e, uint64_t now) {
         case EventType::MouseWheel: {
             if (menu_blocked) break;
             const float dy = e.u.wheel.dy;
-            // the map: the wheel zooms (the L and R buttons), a longer pulse than a button tap so one notch is a visible step
-            if (dy != 0 && st.settings.mouse.menu_cursor && st.engine->context() == Ctx::Map && !(st.overlay && st.overlay->visible())) {
-                st.engine->pulse(dy > 0 ? Act::BtnR : Act::BtnL, now, 160);
-                break;
+            if (const GamePlay* gp = game_play(); dy != 0 && st.settings.mouse.menu_cursor && gp && gp->menu_wheel && !(st.overlay && st.overlay->visible())) {
+                Act act = Act::None;
+                int ms = 0;
+                if (gp->menu_wheel(st.engine->context(), dy, &act, &ms)) {
+                    st.engine->pulse(act, now, ms);
+                    break;
+                }
             }
             if (dy != 0 && st.settings.mouse.menu_cursor && mm::pointer().enabled() && game_menu_over_value()) {
                 st.engine->pulse(dy > 0 ? Act::DpadRight : Act::DpadLeft, now);
@@ -591,7 +590,7 @@ void poll_pads(uint64_t now) {
         map_rumble(l, h, st.settings.pad, &lo, &hi);
     }
     const Ctx cx = st.engine ? st.engine->context() : Ctx::Menu;
-    const bool look_ctx = cx == Ctx::Play || cx == Ctx::Alt || cx == Ctx::Inspect;      // the right stick is a look only in play
+    const bool look_ctx = ctx_in_play(cx);      // the right stick is a look only in play
     const bool rumble_changed = lo != st.rumble_lo || hi != st.rumble_hi;
     const bool rumble_refresh = (lo || hi) && now - st.last_rumble_ns > 100 * kMs;
     for (size_t i = 0; i < n; ++i) {
@@ -631,7 +630,7 @@ void poll_pads(uint64_t now) {
     st.source_owner->set_pad(pf);
 }
 
-int update_hook(::Ctx*, uint64_t, void*) {
+void on_frame(double step_seconds) {
     G& st = g();
     ft::mark("main.update");
     // frame pacing (S18): the limiter waits here, before the input is sampled, so the picture shown is the one simulated one render time
@@ -701,24 +700,23 @@ int update_hook(::Ctx*, uint64_t, void*) {
     // "In game" = the game called ProcessInput during one of the last few frame boundaries. Counted in frames, not host time: a slow frame (the game
     // can take 100 ms or more per frame under load) must not read as a menu.
     const bool in_game = pi != 0 && st.frames.load() - st.last_pi_frame.load() <= 4;
-    // The game's part (play_game.h GamePlay::frame): the gyro's pitch-rate scale for this step, the cycle hint, the context while in game. This
-    // step's length is known here, before the game reads the sample (the timestep hook on the same frame update runs first: hooks of one address run
-    // in registration order).
+    // The game's part (play_game.h GamePlay::frame): the gyro's pitch-rate scale for this step, the cycle hint, the context, the pointer's sticks.
+    // This step's length is known here, before the game reads the sample (the frame listener runs after the step is computed).
+    const bool overlay_now = st.overlay && st.overlay->visible();
     GameFrame gf;
+    gf.ctx = in_game ? Ctx::Play : Ctx::Menu;
     if (gp && gp->frame) {
-        const double step = timestep::active() ? static_cast<double>(timestep::current_dt()) : static_cast<double>(timestep::kGameStep);
-        gp->frame(in_game, step, &gf);
+        GameFrameIn fin;
+        fin.in_game = in_game;
+        fin.step_seconds = step_seconds;
+        fin.now_ns = now;
+        fin.pointer_live = st.window && st.settings.mouse.menu_cursor && mm::pointer().enabled() && (platform::focused() || tt::enabled()) && !overlay_now;
+        platform::pixel_size(&fin.win_w, &fin.win_h);
+        gp->frame(fin, game_host_ref(), &gf);
     }
     if (st.source_owner) st.source_owner->set_look_scale(gf.look_scale);
     if (gf.hints_valid) st.engine->set_cycle_hint(gf.cycle_index, gf.cycle_mask, now);
-    const uint64_t map_acts = st.engine->activations(Act::Map);
-    if (in_game && map_acts != st.map_acts_seen) st.map_hint = true;
-    st.map_acts_seen = map_acts;
-    if (in_game && !st.was_in_game) st.map_hint = false;
-    st.was_in_game = in_game;
-    Ctx ctx;
-    if (!in_game) ctx = st.map_hint ? Ctx::Map : Ctx::Menu;
-    else ctx = gf.play_ctx;
+    const Ctx ctx = gf.ctx;
     st.engine->set_context(ctx, now);
 
     {
@@ -746,28 +744,7 @@ int update_hook(::Ctx*, uint64_t, void*) {
             if (want) input::mouse_delta_take();
         }
     }
-    {
-        static float px = 0, py = 0;
-        static uint64_t last_ns = 0;
-        static bool have = false;
-        float lx = 0, ly = 0, rx = 0, ry = 0;
-        mm::Pointer& pp = mm::pointer();
-        const bool on_map = st.window && ctx == Ctx::Map && st.settings.mouse.menu_cursor && pp.enabled() && (platform::focused() || tt::enabled()) && !overlay_visible;
-        if (on_map && have && (pp.held() || pp.mid_held())) {
-            int ww = 1, wh = 1;
-            platform::pixel_size(&ww, &wh);
-            const float dt = std::max(1e-3f, static_cast<float>(now - last_ns) / 1e9f);
-            const float k = 1.f / (0.8f * static_cast<float>(std::max(1, wh)) * dt);
-            const float dx = std::max(-1.f, std::min(1.f, (pp.x() - px) * k)), dy = std::max(-1.f, std::min(1.f, (pp.y() - py) * k));
-            if (pp.held()) { lx = dx; ly = -dy; }
-            else { rx = dx; ry = -dy; }
-        }
-        px = pp.x();
-        py = pp.y();
-        last_ns = now;
-        have = true;
-        st.engine->set_aux_sticks(lx, ly, rx, ry);
-    }
+    st.engine->set_aux_sticks(gf.aux[0], gf.aux[1], gf.aux[2], gf.aux[3]);
     {
         mm::Pointer& ptr = mm::pointer();
         ptr.set_enabled(st.settings.mouse.menu_cursor);
@@ -798,13 +775,13 @@ int update_hook(::Ctx*, uint64_t, void*) {
                 static_cast<unsigned long long>(st.events.load()), input::gamepad_count(), platform::relative_mouse() ? 1 : 0, game_part);
     }
     if (st.selftest.active()) st.selftest.tick(st.renderer, &st.limiter, selftest_host());
-    return 0;
 }
 
 class GameHostImpl : public GameHost {
 public:
     const Settings& settings() const override { return g().settings; }
     bool action_active(Act a, uint64_t now_ns) const override { return g().engine && g().engine->act_active(a, now_ns); }
+    uint64_t activations(Act a) const override { return g().engine ? g().engine->activations(a) : 0; }
     void right_stick(float* x, float* y) const override {
         *x = *y = 0;
         if (g().source_owner) g().source_owner->right_stick(x, y);
@@ -841,6 +818,7 @@ public:
     bool log_status() const override { return g().log_status; }
 };
 GameHostImpl g_game_host;
+GameHost& game_host_ref() { return g_game_host; }
 
 class Host : public UiHost {
 public:
@@ -998,7 +976,6 @@ bool load() {
     st.log_status = config_get_bool("play", "log_status", false);
     st.pointer_draw = config_get_bool("play", "pointer_draw", false);
     st.pitch_limit_deg = config_get_double("play", "pitch_limit_deg", 0.0);
-    st.base = static_cast<uint64_t>(config_get_int("play", "game_base", static_cast<int64_t>(mem::kMainBase)));
     apply_frame_cap(st.settings);
     return st.load_ok;
 }
@@ -1092,15 +1069,14 @@ bool start(const StartOptions& opt) {
         if (st.window) platform::pixel_size(&ww, &wh);
         if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
         display_tuning(st.settings.display);
-        if (gp && gp->install_render) gp->install_render(st.base, st.settings.display, ww, wh);
+        if (gp && gp->install_render) gp->install_render(mem::kMainBase, st.settings, ww, wh);
     }
-    // the frame boundary, then the game's input, camera, lock-on and menu hooks (hooks of one address run in registration order)
-    if (gp && gp->frame_update) st.hook_update = hook_add_entry(st.base + gp->frame_update, &update_hook);
+    // the frame boundary (after the step is computed), then the game's input, camera and menu hooks
+    if (game::info().frame_update) timestep::set_frame_listener(&on_frame);
     else NXLOG_W(kTag, "the game (%s) names no frame update: play mode is not pumped", game::info().id);
-    if (gp && gp->install) gp->install(st.base, &g_game_host, st.settings);
+    if (gp && gp->install) gp->install(mem::kMainBase, &g_game_host, st.settings);
     st.started = true;
-    NXLOG_I(kTag, "play mode started (%s, overlay %s, base 0x%llx, game %s, frame hook %u)", st.window ? "window" : "no window", st.overlay ? "on" : "off",
-            static_cast<unsigned long long>(st.base), game::info().id, st.hook_update);
+    NXLOG_I(kTag, "play mode started (%s, overlay %s, game %s)", st.window ? "window" : "no window", st.overlay ? "on" : "off", game::info().id);
     return true;
 }
 
@@ -1109,8 +1085,7 @@ void stop() {
     if (!st.started) return;
     vpad_shutdown();      // a virtual pad from a test script does not outlive play mode
     if (const GamePlay* gp = game_play(); gp && gp->remove) gp->remove();
-    if (st.hook_update) hook_remove(st.hook_update);
-    st.hook_update = 0;
+    timestep::set_frame_listener(nullptr);
     hid::set_vibration_sink(nullptr, nullptr);
     if (hid::input_source() == st.source) hid::set_input_source(nullptr);
     if (st.dirty) {
