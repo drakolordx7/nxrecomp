@@ -1,6 +1,7 @@
 {
   "_": "Run presets for base tools/boot/boot.py --game mpr. Paths are relative to the data folder (games/mpr) or use {data} {game} {run} {nx}. boot.py adds RomFS, save folder, shader and BC7 caches itself; the regions key is the guest-address table of scripted runs. Env the game needs on every run is in its config_defaults, not here.",
   "romfs": "game/romfs",
+  "exefs": "game/exefs",
   "regions": "{game}/tools/test/regions.tsv",
   "presets": {}
 }
