@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Scripted-run DSL: parser, region table and GUID helpers. The grammar is documented in include/nxrt/tt_script.h.
-// Standard C++ only (no windows.h, no nxrt headers besides tt_script.h). Errors are returned, never thrown.
+// Standard C++ only (no windows.h, no nxrt headers besides tt_script.h, tt.h and game.h, which are header-only here). Errors are returned,
+// never thrown. The steps of the game come from its tt::GameProbes (game::info().probes->steps).
 
 #include "nxrt/tt_script.h"
+
+#include "nxrt/game.h"
+#include "nxrt/tt.h"
 
 #include <cctype>
 #include <cmath>
@@ -180,8 +184,25 @@ constexpr FieldName kFields[] = {
     {"igt", AssertField::Igt},     {"health", AssertField::Health}, {"px", AssertField::PosX},
     {"py", AssertField::PosY},     {"pz", AssertField::PosZ},      {"vx", AssertField::VelX},
     {"vy", AssertField::VelY},     {"vz", AssertField::VelZ},      {"speed", AssertField::Speed},
-    {"state", AssertField::State},
 };
+
+// The keys the game declares for its own state fields (GameProbes::state_keys), matched without case.
+const char* game_state_key(const std::string& name) {
+    const game::Info& g = game::info();
+    if (!g.probes || !g.probes->state_keys) return nullptr;
+    for (const char* const* k = g.probes->state_keys; *k; k++)
+        if (lower(*k) == name) return *k;
+    return nullptr;
+}
+
+// The registered game's script step for a keyword written with its '@' (lower case), or null.
+const GameStepDef* find_game_step(const std::string& kw) {
+    const game::Info& g = game::info();
+    if (!g.probes || !g.probes->steps) return nullptr;
+    for (size_t i = 0; i < g.probes->step_count; i++)
+        if (g.probes->steps[i].name && kw == lower(g.probes->steps[i].name)) return &g.probes->steps[i];
+    return nullptr;
+}
 
 struct OpName {
     const char* text;
@@ -193,7 +214,7 @@ constexpr OpName kOps[] = {
     {"<=", AssertOp::Le}, {">", AssertOp::Gt},  {">=", AssertOp::Ge},
 };
 
-// An id token is a GUID text, or a region name (for @area: the entry's area; for @world and @warp's world token: its world).
+// An id token is a GUID text, or a region name (for @area: the entry's area; for @world and a game step's world token: its world).
 bool resolve_id(const std::string& tok, const RegionTable* regions, bool want_area, uint8_t out[16], std::string& msg) {
     if (tt_guid_to_bytes(tok, out)) return true;
     const RegionTable::Entry* e = regions ? regions->find(tok) : nullptr;
@@ -223,26 +244,6 @@ bool take_timeout(const std::vector<std::string>& t, std::size_t from, std::vect
     return true;
 }
 
-// EItemType (CPlayerStateMP1::EItemType, docs/mpr/enums.json): name (case and underscores ignored) or number -> id; -1 when unknown.
-int64_t item_id(const std::string& tok) {
-    static const char* const names[] = {"powerbeam", "icebeam", "wavebeam", "plasmabeam", "missiles", "scanvisor", "morphballbombs", "powerbombs",
-                                        "flamethrower", "thermalvisor", "chargebeam", "supermissile", "grapplebeam", "xrayvisor", "icespreader",
-                                        "spacejumpboots", "morphball", "combatvisor", "boostball", "spiderball", "powersuit", "gravitysuit",
-                                        "variasuit", "phazonsuit", "energytanks"};
-    std::string k;
-    for (char c : tok) if (c != '_') k.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-    for (size_t i = 0; i < sizeof names / sizeof *names; i++) if (k == names[i]) return static_cast<int64_t>(i);
-    if (k == "wavebuster") return 0x1c;
-    if (k == "bombs") return 6;
-    if (k == "spacejump") return 0xf;
-    if (!k.empty() && std::isdigit(static_cast<unsigned char>(k[0]))) {
-        char* end = nullptr;
-        const long v = std::strtol(k.c_str(), &end, 0);
-        if (end && *end == 0 && v >= 0 && v < 0x29) return v;
-    }
-    return -1;
-}
-
 // Parses "<field> <op> <value>" at t[i..i+2] into s.field / s.op / s.x / s.id / s.text (shared by @assert and @mash).
 bool parse_condition(const std::vector<std::string>& t, std::size_t i, const RegionTable* rt, Step* sp, std::string& msg) {
     Step& s = *sp;
@@ -254,7 +255,8 @@ bool parse_condition(const std::vector<std::string>& t, std::size_t i, const Reg
             break;
         }
     }
-    if (!field) return fail_with(msg, "unknown assert field '" + t[i] + "'");
+    const char* game_key = field ? nullptr : game_state_key(field_name);
+    if (!field && !game_key) return fail_with(msg, "unknown assert field '" + t[i] + "'");
     const OpName* op = nullptr;
     for (const OpName& o : kOps) {
         if (t[i + 1] == o.text) {
@@ -263,10 +265,13 @@ bool parse_condition(const std::vector<std::string>& t, std::size_t i, const Reg
         }
     }
     if (!op) return fail_with(msg, "unknown operator '" + t[i + 1] + "'");
-    s.field = field->field;
+    s.field = field ? field->field : AssertField::Game;
     s.op = op->op;
     s.text = t[i + 2];
-    if (s.field == AssertField::Area || s.field == AssertField::World) {
+    if (game_key) {
+        s.name2 = game_key;
+        if (!real_arg(t[i + 2], &s.x, msg)) return false;
+    } else if (s.field == AssertField::Area || s.field == AssertField::World) {
         if (s.op != AssertOp::Eq && s.op != AssertOp::Ne)
             return fail_with(msg, "@assert " + t[i] + " allows only == and !=");
         if (!resolve_id(t[i + 2], rt, s.field == AssertField::Area, s.id, msg)) return false;
@@ -470,48 +475,6 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
-    if (kw == "@grant") {
-        if (n < 2 || n > 4) return usage(msg, "@grant <item|all> [<amount> [<capacity>]]");
-        Step s = make(StepKind::Grant);
-        s.text = t[1];
-        s.count = -1;
-        if (lower(t[1]) != "all") {
-            s.count = item_id(t[1]);
-            if (s.count < 0) return fail_with(msg, "unknown item '" + t[1] + "' (an EItemType name or a number)");
-        }
-        s.x = 1;
-        if (n >= 3 && !real_arg(t[2], &s.x, msg)) return false;
-        s.y = s.x;
-        if (n == 4 && !real_arg(t[3], &s.y, msg)) return false;
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@call") {
-        if (n < 2 || n > 8) return usage(msg, "@call <offset> [<arg>...] (up to 6 arguments)");
-        Step s = make(StepKind::Call);
-        if (!count_arg(t[1], &s.count, msg)) return false;
-        s.text = rest_after_first_word(rest_after_first_word(body));
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@objs") {
-        if (n < 2) return usage(msg, "@objs <class>... (door dock pickup special actor platform trigger player or a vtable offset)");
-        Step s = make(StepKind::Objs);
-        s.text = rest_after_first_word(body);
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@probe") {
-        if (n != 3) return usage(msg, "@probe <in-file> <out-file>");
-        Step s = make(StepKind::Probe);
-        s.text = rest_after_first_word(body);
-        out.push_back(s);
-        return true;
-    }
-
     if (kw == "@poke") {
         if (n != 2) return usage(msg, "@poke <in-file>");
         Step s = make(StepKind::Poke);
@@ -524,29 +487,6 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         if (n != 3) return usage(msg, "@peek <in-file> <out-file>");
         Step s = make(StepKind::Peek);
         s.text = rest_after_first_word(body);
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@rays") {
-        if (n != 3) return usage(msg, "@rays <in-file> <out-file>");
-        Step s = make(StepKind::Rays);
-        s.text = rest_after_first_word(body);
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@watch") {
-        if (n < 2 || n > 3) return usage(msg, "@watch on [vely|posy|both] | @watch off");
-        Step s = make(StepKind::Watch);
-        s.text = lower(t[1]);
-        if (s.text != "on" && s.text != "off") return fail_with(msg, "@watch: expected on or off, got '" + t[1] + "'");
-        s.y = 3;
-        if (n == 3) {
-            const std::string w = lower(t[2]);
-            if (w == "vely") s.y = 1; else if (w == "posy") s.y = 2; else if (w == "both") s.y = 3;
-            else return fail_with(msg, "@watch on: expected vely, posy or both, got '" + t[2] + "'");
-        }
         out.push_back(s);
         return true;
     }
@@ -594,39 +534,11 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
-    if (kw == "@give") {
-        if (n != 3) return usage(msg, "@give <item> <amount>");
-        static const char* const names[] = {"powerbeam", "icebeam", "wavebeam", "plasmabeam", "missiles", "scanvisor", "morphballbombs", "powerbombs", "flamethrower",
-            "thermalvisor", "chargebeam", "supermissile", "grapplebeam", "xrayvisor", "icespreader", "spacejumpboots", "morphball", "combatvisor", "boostball", "spiderball",
-            "powersuit", "gravitysuit", "variasuit", "phazonsuit", "energytanks"};
-        std::string nm;
-        for (char ch : t[1]) if (ch != '_' && ch != ' ') nm += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-        Step s = make(StepKind::Give);
-        s.x = -1;
-        for (int i = 0; i < 25; i++) if (nm == names[i]) s.x = i;
-        if (s.x < 0 && std::isdigit(static_cast<unsigned char>(t[1][0])) && !real_arg(t[1], &s.x, msg)) return false;
-        if (s.x < 0 || s.x > 40) return fail_with(msg, "@give: unknown item '" + t[1] + "'");
-        if (!real_arg(t[2], &s.y, msg)) return false;
-        out.push_back(s);
-        return true;
-    }
-
     if (kw == "@sleep") {
         if (n != 2) return usage(msg, "@sleep <ms>");
         Step s = make(StepKind::WaitMs);
         if (!real_arg(t[1], &s.x, msg)) return false;
         if (s.x < 0.0) return fail_with(msg, "@sleep ms must be >= 0, got '" + t[1] + "'");
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@warp") {
-        if (n != 3) return usage(msg, "@warp <world> <area>");
-        Step s = make(StepKind::Warp);
-        if (!resolve_id(t[1], rt, false, s.id2, msg)) return false;
-        if (!resolve_id(t[2], rt, true, s.id, msg)) return false;
-        s.name1 = t[1];
-        s.name2 = t[2];
         out.push_back(s);
         return true;
     }
@@ -700,10 +612,54 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
+    // A step the game registered: its parser gets the line; the base only records which step it was.
+    if (const GameStepDef* gs = find_game_step(kw)) {
+        Step s = make(StepKind::Game);
+        s.game = gs;
+        StepLine line;
+        line.body = body;
+        line.t = t;
+        line.regions = rt;
+        if (!gs->parse || !gs->parse(line, &s, &msg)) {
+            if (msg.empty()) msg = "bad " + t[0];
+            return false;
+        }
+        out.push_back(s);
+        return true;
+    }
+
     return fail_with(msg, "unknown keyword '" + t[0] + "'");
 }
 
 }  // namespace
+
+std::string StepLine::rest(size_t words) const {
+    std::string s = body;
+    for (size_t i = 0; i < words; i++) s = rest_after_first_word(s);
+    return s;
+}
+bool StepLine::count(const std::string& tok, int64_t* v, std::string* err) const {
+    std::string m;
+    const bool ok = count_arg(tok, v, m);
+    if (!ok && err) *err = m;
+    return ok;
+}
+bool StepLine::real(const std::string& tok, double* v, std::string* err) const {
+    std::string m;
+    const bool ok = real_arg(tok, v, m);
+    if (!ok && err) *err = m;
+    return ok;
+}
+bool StepLine::id(const std::string& tok, bool want_area, uint8_t out[16], std::string* err) const {
+    std::string m;
+    const bool ok = resolve_id(tok, regions, want_area, out, m);
+    if (!ok && err) *err = m;
+    return ok;
+}
+bool StepLine::usage(const char* form, std::string* err) const {
+    if (err) *err = std::string("wrong number of arguments, expected: ") + form;
+    return false;
+}
 
 bool RegionTable::load(const std::string& path, std::string* err) {
     std::ifstream f(path, std::ios::binary);

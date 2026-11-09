@@ -245,12 +245,18 @@ uint64_t hash_state(State& s, uint64_t frame, const GameState& g, bool valid) {
     h = mix64(h, fbits(g.yaw));
     h = mix64(h, fbits(g.hp));
     h = mix64(h, dbits(g.igt));
-    h = mix64(h, g.move_state);
-    h = mix64(h, (g.have_phys ? 1u : 0u) | (g.have_aim ? 2u : 0u) | (g.have_ps ? 4u : 0u));
-    h = mix64(h, fbits(g.pitch));
-    h = mix64(h, static_cast<uint64_t>(static_cast<uint32_t>(g.cam_state)) | static_cast<uint64_t>(static_cast<uint32_t>(g.morph_state)) << 32);
-    h = mix64(h, static_cast<uint64_t>(static_cast<uint32_t>(g.orbit_state)) | static_cast<uint64_t>(static_cast<uint32_t>(g.beam)) << 32);
-    h = mix64(h, static_cast<uint64_t>(static_cast<uint32_t>(g.visor)) | static_cast<uint64_t>(static_cast<uint32_t>(g.missiles)) << 32);
+    // The game's own fields: one word each (an integer as unsigned 32 bits, a float as its bits); a High field shares the word of the Word field before it.
+    bool pending = false;
+    uint64_t word = 0;
+    for (const StateField& f : g.fields) {
+        if (f.hash == StateField::Hash::None) continue;
+        const uint64_t v = f.is_float ? fbits(static_cast<float>(f.value)) : static_cast<uint32_t>(static_cast<int64_t>(f.value));
+        if (f.hash == StateField::Hash::High && pending) { word |= v << 32; continue; }
+        if (pending) h = mix64(h, word);
+        word = v;
+        pending = true;
+    }
+    if (pending) h = mix64(h, word);
     h = hash_region_memory(s, h);
     return h;
 }
@@ -263,23 +269,28 @@ double now_ms(State& s) {
 
 void write_trace_line(State& s, uint64_t k, uint64_t h, const GameState& g, bool valid, double ms, double mem) {
     if (!s.trace) return;
-    char b[1024];
-    int n = std::snprintf(b, sizeof b, "{\"f\":%llu,\"h\":\"%016llx\"", static_cast<unsigned long long>(k), static_cast<unsigned long long>(h));
-    auto add = [&](const char* fmt, auto... a) { n += std::snprintf(b + n, sizeof b - n, fmt, a...); };
+    char b[256];
+    std::string line;
+    auto add = [&](const char* fmt, auto... a) {
+        const int n = std::snprintf(b, sizeof b, fmt, a...);
+        if (n > 0) line.append(b, static_cast<size_t>(std::min<int>(n, sizeof b - 1)));
+    };
+    add("{\"f\":%llu,\"h\":\"%016llx\"", static_cast<unsigned long long>(k), static_cast<unsigned long long>(h));
     if (valid) {
         if (g.have_world) add(",\"world\":\"%s\",\"area\":\"%s\"", tt_guid_hex(g.world).c_str(), tt_guid_hex(g.area).c_str());
-        if (g.have_player) add(",\"pos\":[%.9g,%.9g,%.9g],\"vel\":[%.9g,%.9g,%.9g],\"yaw\":%.9g,\"state\":%u", g.pos[0], g.pos[1], g.pos[2], g.vel[0], g.vel[1], g.vel[2], g.yaw, g.move_state);
-        if (g.have_player && g.have_phys) add(",\"phys\":1,\"spd\":%.9g", g.speed);
-        if (g.have_aim) add(",\"pitch\":%.9g,\"cam\":%d,\"morph\":%d,\"orbit\":%d", g.pitch, g.cam_state, g.morph_state, g.orbit_state);
-        if (g.have_cam) add(",\"camyaw\":%.9g,\"campitch\":%.9g", g.cam_yaw, g.cam_pitch);
-        if (g.have_ps) add(",\"beam\":%d,\"visor\":%d,\"msl\":%d", g.beam, g.visor, g.missiles);
+        if (g.have_player) add(",\"pos\":[%.9g,%.9g,%.9g],\"vel\":[%.9g,%.9g,%.9g],\"yaw\":%.9g", g.pos[0], g.pos[1], g.pos[2], g.vel[0], g.vel[1], g.vel[2], g.yaw);
+        for (const StateField& f : g.fields) {
+            if (!f.shown || !f.key[0]) continue;
+            if (f.is_float) add(",\"%s\":%.9g", f.key, f.value);
+            else add(",\"%s\":%lld", f.key, static_cast<long long>(f.value));
+        }
         if (g.have_hp) add(",\"hp\":%.9g", g.hp);
         if (g.have_igt) add(",\"igt\":%.9g", g.igt);
     }
     add(",\"t\":%llu,\"ms\":%.3f", static_cast<unsigned long long>(s.vticks.load()), ms);
     if (mem > 0) add(",\"mem\":%.1f", mem);
-    add("}\n");
-    std::fwrite(b, 1, static_cast<size_t>(n), s.trace);
+    line += "}\n";
+    std::fwrite(line.data(), 1, line.size(), s.trace);
     if (k % 64 == 0) std::fflush(s.trace);
 }
 
@@ -384,7 +395,6 @@ bool init() {
     s.replay_exit = config_get_bool("test", "replay_exit", false);
     s.shot_dir = config_get_str("test", "shot_dir", "");
     if (s.shot_dir.empty()) s.shot_dir = join(s.out, "shots");
-    detail::set_game_base(static_cast<uint64_t>(config_get_int("test", "game_base", static_cast<int64_t>(mem::kMainBase))));
     parse_regions(s, config_get_str("test", "hash_regions", ""));
     if (src == "tick") s.src = Source::Tick;
     else if (src == "manual") s.src = Source::Manual;
@@ -511,8 +521,7 @@ void reset_for_tests() {
     s.key_sink = keep_k;
     s.shot_fn = sf;
     s.shot_user = su;
-    detail::set_game_base(mem::kMainBase);
-    set_probe_layout(ProbeLayout{});
+    if (const GameProbes* p = game::info().probes; p && p->reset) p->reset();
 }
 
 void set_clock_rate(double hz) {
@@ -711,10 +720,8 @@ void frame_boundary(::Ctx* c) {
     // 2. state, hash, trace
     detail::install_input();
     GameState g;
-    set_call_context(c);
-    const bool valid = read_state(&g);
-    set_call_context(nullptr);
-    if (valid && !g.have_phys && s.have_prev && s.prev.have_player && g.have_player)      // no physics read (the game is not ticking the player): position difference
+    const bool valid = read_state(&g, c);
+    if (valid && !g.have_vel && s.have_prev && s.prev.have_player && g.have_player)      // no velocity from the game (it is not ticking the player): position difference
         for (int i = 0; i < 3; i++) g.vel[i] = (g.pos[i] - s.prev.pos[i]) * 60.0f;
     s.gs = g;
     s.gs_valid = valid;

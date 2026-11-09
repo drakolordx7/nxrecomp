@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The test tooling's side of the game boundary (docs/GAME_BOUNDARY.md): the guest memory helpers every probe uses, the generic script steps
 // @peek and @poke, and the entry points tt_core.cpp calls for the game's own probes, which go to the registered game's tt::GameProbes
-// (nxrt/game.h Info::probes; Metroid Prime Remastered: games/mpr/mpr_tt_probe.cpp). Without a table the frame source "hook" registers nothing,
-// read_state reads nothing and the game's script steps say they are not possible.
+// (nxrt/game.h Info::probes; Metroid Prime Remastered: games/mpr/runtime/mpr_tt_probe.cpp). Without a table the frame source "hook" registers
+// nothing and read_state reads nothing; the game's script steps are in the table (tt_script.cpp finds them, tt_runner.cpp runs them).
 #include <windows.h>
 
 #include <atomic>
@@ -20,12 +20,6 @@
 
 namespace nxrt::tt {
 namespace detail {
-namespace {
-std::atomic<uint64_t> g_base{mem::kMainBase};
-}
-uint64_t game_base() { return g_base.load(); }
-void set_game_base(uint64_t b) { g_base.store(b); }
-
 bool read_mem(uint64_t addr, void* out, size_t n) {
     if (addr < 0x10000) return false;
     SIZE_T got = 0;
@@ -53,10 +47,6 @@ const GameProbes* P() { return game::info().probes; }
 template <class T>
 bool rd(uint64_t a, T* v) { return detail::read_mem(a, v, sizeof(T)); }
 
-void no_game(std::string* err) {
-    if (err) *err = "the game has no probes for this step";
-}
-
 }  // namespace
 
 // ---- the game's probes ----
@@ -64,72 +54,12 @@ void install_game_hooks() {
     if (const GameProbes* p = P(); p && p->install_hooks) p->install_hooks();
     else NXLOG_W("tt", "frame source hook: the game (%s) has no probes, no game hooks are registered", game::info().id);
 }
-bool read_state(GameState* out) {
+bool read_state(GameState* out, ::Ctx* c) {
     const GameProbes* p = P();
-    return p && p->read_state && p->read_state(out);
-}
-void set_probe_layout(const ProbeLayout& l) {
-    if (const GameProbes* p = P(); p && p->set_probe_layout) p->set_probe_layout(l);
-}
-void set_player_pointers(uint64_t player, uint64_t mgr) {
-    if (const GameProbes* p = P(); p && p->set_player_pointers) p->set_player_pointers(player, mgr);
-}
-void set_call_context(::Ctx* c) {
-    if (const GameProbes* p = P(); p && p->set_call_context) p->set_call_context(c);
+    return p && p->read_state && p->read_state(out, c);
 }
 
 namespace detail {
-
-bool have_state_manager() {
-    const GameProbes* p = P();
-    return p && p->have_state_manager && p->have_state_manager();
-}
-LoaderState loader_state(uint32_t* pending) {
-    const GameProbes* p = P();
-    return p && p->loader_state ? p->loader_state(pending) : LoaderState::Unknown;
-}
-bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]) {
-    const GameProbes* p = P();
-    return p && p->warp && p->warp(c, world, area);
-}
-bool grant(int64_t item, int32_t amount, int32_t capacity) {
-    const GameProbes* p = P();
-    return p && p->grant && p->grant(item, amount, capacity);
-}
-bool give_item(int item, int amount) {
-    const GameProbes* p = P();
-    return p && p->give_item && p->give_item(item, amount);
-}
-bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err) {
-    const GameProbes* p = P();
-    if (!p || !p->call_guest) { no_game(err); return false; }
-    return p->call_guest(c, offset, args, result, err);
-}
-bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err) {
-    const GameProbes* p = P();
-    if (!p || !p->dump_objects) { no_game(err); return false; }
-    return p->dump_objects(classes, out_path, err);
-}
-bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
-    const GameProbes* p = P();
-    if (!p || !p->probe_positions) { no_game(err); return false; }
-    return p->probe_positions(c, in_path, out_path, err);
-}
-bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
-    const GameProbes* p = P();
-    if (!p || !p->cast_rays) { no_game(err); return false; }
-    return p->cast_rays(c, in_path, out_path, err);
-}
-bool watch_start(::Ctx* c, int what) {
-    const GameProbes* p = P();
-    return p && p->watch_start && p->watch_start(c, what);
-}
-void watch_stop() {
-    if (const GameProbes* p = P(); p && p->watch_stop) p->watch_stop();
-}
-void watch_flush(uint64_t frame) {
-    if (const GameProbes* p = P(); p && p->watch_flush) p->watch_flush(frame);
-}
 
 // ---- @peek: read guest memory (S26) --------------------------------------------------------------------------------------------------------------
 // in: lines `addr len [off1 off2 ...]` (hex or decimal): follow the 64-bit pointers p = *(p + off) for each off, then read len bytes at p.

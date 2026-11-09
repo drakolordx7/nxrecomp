@@ -12,20 +12,7 @@
 
 namespace nxrt::tt::detail {
 
-// ---- tt_game.cpp (memory helpers; the rest forwards to the game's tt::GameProbes) ----
-uint64_t game_base();
-void set_game_base(uint64_t b);
-// The warp sequence of the practice mod (docs/mpr/hooks.md section 8), executed with the live context. false: not possible now (no state manager yet).
-bool warp(::Ctx* c, const uint8_t world[16], const uint8_t area[16]);
-bool have_state_manager();
-// The game's resource loader thread, read from memory by the game's probe (games/<id>; S42). Unknown: the loader is not readable
-// (no game globals yet, or a test rig without them). *pending (optional) = the sum of its queue counts when readable.
-using LoaderState = ::nxrt::tt::LoaderState;     // nxrt/tt.h
-LoaderState loader_state(uint32_t* pending = nullptr);
-// @grant: write {amount, capacity} of one EItemType into the power-up array of the player state (CPlayerStateMP1 + 0x2c, 8 bytes per item: amount at +0, capacity at +4); item -1 = every upgrade.
-bool grant(int64_t item, int32_t amount, int32_t capacity);
-// @call: the guest function at main+offset with arguments (numbers, $gs $ps $mgr $player); false and *err when an argument is bad or the game is not ready.
-bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* result, std::string* err);
+// ---- tt_game.cpp (memory helpers; the game's own probes and steps are its tt::GameProbes) ----
 bool read_mem(uint64_t addr, void* out, size_t n);      // ReadProcessMemory on ourselves: false instead of a fault
 bool write_mem(uint64_t addr, const void* in, size_t n);
 
@@ -58,7 +45,7 @@ public:
 private:
     Script script_;
     size_t idx_ = 0;
-    bool started_ = false, done_ = false, warped_ = false, has_keys_ = false;
+    bool started_ = false, done_ = false, has_keys_ = false;
     int64_t remaining_ = 0;
     uint64_t start_frame_ = 0;
     uint64_t start_ms_ = 0;
@@ -72,14 +59,7 @@ private:
     int stick_tmp_which_ = 0;
     float mouse_x_ = 0, mouse_y_ = 0;
     int fail_line_ = 0;
-    double igt_base_ = -1;                               // @play: the play time at the first readable frame of the step
-    // @warp gate (S42): the warp's QuitGame tears the game instance down while the resource loader thread may still be building assets for it,
-    // which crashed CParticleStaticRenderState on a material token with no object. The warp is issued only after the loader has been idle for
-    // kWarpIdleFrames frames in a row ([test] warp_wait_loader, default on), or after warp_loader_max_ms of host time with a warning.
-    static constexpr int kWarpIdleFrames = 10;
-    bool warp_wait_loader_ = true, gate_open_ = false, gate_logged_ = false;
-    int idle_frames_ = 0;
-    uint64_t warp_loader_max_ms_ = 30000, gate_start_ms_ = 0;
+    double igt_base_ = -1;                               // @run: the play time at the first readable frame of the step
     // live mode ([test] live = file, env NXRT_TEST_LIVE): when the script runs out of steps the runner waits for more lines appended to that
     // file (so a person or a driver can play the game step by step), writing <file>.status (JSON, one line) each time it goes idle.
     std::string live_path_;
@@ -96,15 +76,8 @@ private:
 }  // namespace nxrt::tt::detail
 
 namespace nxrt::tt::detail {
-bool dump_objects(const std::string& classes, const std::string& out_path, std::string* err);   // the game's probes: @objs
-bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // the game's probes: @probe
 bool poke_memory(const std::string& in_path, std::string* err);   // tt_game.cpp: @poke
 bool peek_memory(const std::string& in_path, const std::string& out_path, std::string* err);   // tt_game.cpp: @peek
-bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err);   // the game's probes: @rays
-bool watch_start(::Ctx* c, int what);      // the game's probes: arm the debug-register write watch (1 vel.y, 2 pos.y, 3 both); false when the player is not readable yet
-void watch_stop();                          // disarm and log the hits
-void watch_flush(uint64_t frame);           // log the hits recorded since the last call (once per frame)
-bool give_item(int item, int amount);      // the game's probes: writes amount and capacity of one item of CPlayerStateMP1
 // ---- tt_hid.cpp: the hid adapter (a no-op when S3c's input_source.h is not in the tree) ----
 void install_input();                      // (re)installs the wrapping source when the hid service's source changed; called every frame
 bool sample_live(PadFrame* out);           // the pad of the live source (the one installed before ours); false when there is none

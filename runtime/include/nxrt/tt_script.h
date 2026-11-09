@@ -30,32 +30,25 @@
 //   @mash <keys> <period_ms> area|world <id> [timeout=<ms>]
 //                                     press the buttons for 250 ms of host time every <period_ms> until the area (or world) becomes current: gets
 //                                     through the front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
-//   @give <item> <amount>             set an item of the player state (CPlayerStateMP1 item table): amount and capacity. <item> is a number or the game's
-//                                     name without case or underscores (MorphBall, ChargeBeam, Missiles, XRayVisor, WaveBeam ...)
 //   @rate <hz>                        the game step is exactly 1/hz for every frame from here on (hz > 0), 0 = the configured mode again; the clock
 //                                     itself stays real, so areas load at full speed
 //   @sleep <ms>                       wait <ms> of host wall-clock time (not game time: loading and fade-outs run on the host clock even in
 //                                     deterministic mode); frames keep being delivered meanwhile
-//   @warp <world> <area>              warp to the area (practice-mod sequence, done by the runner); then waits until that area is current
 //   @shot <name>                      save a screenshot <shot_dir>/<name>.png at this frame (does not block)
 //   @hash [<label>]                   write a labelled hash line into the trace and the result file (does not block)
 //   @log <text...>                    write the rest of the line to the log
-//   @assert <field> <op> <value>      fail the run now if false. fields: area world frame igt health px py pz vx vy vz speed state.
-//                                     ops: == != < <= > >=. area/world compare ids (== and != only); the others compare numbers
+//   @assert <field> <op> <value>      fail the run now if false. fields: area world frame igt health px py pz vx vy vz speed, and the keys the
+//                                     game declares for its own state fields (GameProbes::state_keys). ops: == != < <= > >=. area/world
+//                                     compare ids (== and != only); the others compare numbers
 //   @mashuntil <keys> every <n> until <field> <op> <value> [timeout=<n>]   press the buttons for 4 frames every n frames until the condition
-//                                     (same fields and operators as @assert) holds, e.g. `@mashuntil A every 120 until state >= 0` drives menus
-//   @watch on [vely|posy|both] | off    hardware write watch (debug registers) on the player's physics velocity.y and/or transform position.y; every write is logged with
-//                                     the writing instruction, the frame and the value (lines `watch:` in the log); off stops it and logs how many hits were seen
-//   @objs <class>...                  list every live object of the named classes with its position (door dock pickup special actor platform trigger player, or a main-module
-//                                     vtable offset): a memory scan for the vtable pointer; result in <out>/objs.txt, one `class x y z addr` line per object
-//   @rays <in> <out>                  batch of ray casts against the static collision of the loaded areas (the game's own NCollisionMP1::RayStaticIntersection): in = lines `x y z dx dy dz len`
-//                                     (dir is a unit vector), out = lines `hit t px py pz nx ny nz` (hit 0/1). Runs in the frame hook, the game stands still meanwhile
-//   @probe <in> <out>                 the player's own collision box against the static world at positions: in = lines `x y z`, out = `0` free / `1` collides per line
+//                                     (same fields and operators as @assert) holds, e.g. `@mashuntil A every 120 until igt >= 1` drives menus
 //   @poke <in>                        write guest memory: lines `addr [off ...] : hexbytes` (pointers followed as in @peek; a token `+N` adds N without following); a development aid, e.g. to restore health
 //   @peek <in> <out>                  read guest memory: in = lines `addr len [off ...]` (hex addr; each off follows a 64-bit pointer first), out = one hex line per request (`-` on failure)
 //   @timeout <n>                      default timeout (frames) of every later wait; initial 3600; 0 = none
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
+//   @<name> ...                       a step the game registers (tt.h GameProbes::steps): its own syntax and meaning, documented by the game
+//                                     (Metroid Prime Remastered: games/mpr/runtime/mpr_tt_steps.cpp has @warp @give @grant @call @objs @probe @rays @watch)
 //
 // <keys>: button names joined with '+': A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK (LSTICK/RSTICK = the stick clicks),
 //         also START = PLUS, SELECT = MINUS. Names are case-insensitive. Same bit numbers as nn::hid::NpadButton.
@@ -67,6 +60,8 @@
 #include <vector>
 
 namespace nxrt::tt {
+
+struct GameStepDef;          // tt.h: a script step the game registers
 
 enum class StepKind : uint8_t {
     Wait,        // count frames
@@ -81,11 +76,9 @@ enum class StepKind : uint8_t {
     WaitPos,     // x, y, z, r, timeout
     WaitIgt,     // x = seconds, timeout
     WaitMs,      // x = milliseconds of host time
-    Give,        // x = item id, y = amount
     Rate,        // x = hz (0 = real clock)
     Mash,        // buttons every x ms until area (text "area") / world (text "world") id; timeout in host ms (-1 = 600000)
     WaitRun,     // x = seconds of in-game play time from the step start, timeout
-    Warp,        // id = area, id2 = world
     Shot,        // text = name
     Hash,        // text = label (may be empty)
     Log,         // text
@@ -96,18 +89,13 @@ enum class StepKind : uint8_t {
     Key,         // text = input name, count = frames (-1 = not given: the runner uses 4); blocks like Press
     KeyDown,     // text = input name
     KeyUp,       // text = input name
-    Grant,       // text = item name (or 'all'), count = item id (-1 for all), x = amount, y = capacity (written into the player state's power-up array)
-    Call,        // count = main-module offset of a guest function, text = its arguments (numbers or $gs $ps $mgr $player), run in the frame hook
-    Objs,        // text = class names (door dock pickup special actor platform trigger, or a vtable offset): scan memory for instances, write <out>/objs.txt
-    Watch,       // text = on|off|dump, y = 1 velocity.y, 2 position.y, 3 both (hardware write watch on the player, see the game's probes: games/mpr/mpr_tt_probe.cpp)
-    Probe,       // text = "IN OUT": does the player's collision box collide with the static world at these positions (S26)
+    Game,        // a step the game registered (game points at it); count, x, y, id, id2, name1, name2 and text are the game's own parse result
     Poke,        // text = in-file: write guest memory (S26, development aid)
     Peek,        // text = "IN OUT": read guest memory (S26)
-    Rays,        // text = "IN OUT": batch of static-collision ray casts (S26)
     PressUntil,  // buttons pressed 4 frames every `count` frames until the condition (field/op/x/id, as Assert) holds; timeout
 };
 
-enum class AssertField : uint8_t { Area, World, Frame, Igt, Health, PosX, PosY, PosZ, VelX, VelY, VelZ, Speed, State };
+enum class AssertField : uint8_t { Area, World, Frame, Igt, Health, PosX, PosY, PosZ, VelX, VelY, VelZ, Speed, Game };
 enum class AssertOp : uint8_t { Eq, Ne, Lt, Le, Gt, Ge };
 
 struct Step {
@@ -119,9 +107,10 @@ struct Step {
     int64_t timeout = -1;          // frames; -1 = use the script default; 0 = none
     int which = 0;                 // Stick: 0 left, 1 right
     double x = 0, y = 0, z = 0, r = 0;
-    uint8_t id[16] = {};           // Area/World/Assert(area, world)/Warp (the area): the resolved id in memory order (see tt_guid_to_bytes)
-    uint8_t id2[16] = {};          // Warp: the world id
-    std::string name1, name2;      // the id/name text as written (Warp: name1 = world, name2 = area)
+    uint8_t id[16] = {};           // Area/World/Assert(area, world): the resolved id in memory order (see tt_guid_to_bytes); free for a game step
+    uint8_t id2[16] = {};          // free for a game step
+    std::string name1, name2;      // Area/World/Mash/Assert: the id/name text as written; Assert on a game field: name2 = the field key
+    const GameStepDef* game = nullptr;   // Game: the registered step this line parsed as
     bool soft = false;             // PlayTime: a timeout logs and continues instead of failing
     std::string text;
     AssertField field = AssertField::Frame;
@@ -149,6 +138,19 @@ struct RegionTable {
 bool tt_guid_to_bytes(const std::string& text, uint8_t out[16]);
 std::string tt_guid_to_text(const uint8_t in[16]);
 std::string tt_guid_hex(const uint8_t in[16]);        // raw: 32 hex digits in memory order
+
+// One script line handed to a game step's parser: the line without its comment (trimmed), its whitespace-separated words (t[0] is the keyword,
+// written with its '@'), and the region table. The helpers parse a word the way the base steps do and leave the message the base steps use.
+struct StepLine {
+    std::string body;
+    std::vector<std::string> t;
+    const RegionTable* regions = nullptr;
+    std::string rest(size_t words) const;                                       // the text after the first `words` words, trimmed
+    bool count(const std::string& tok, int64_t* v, std::string* err) const;     // non-negative integer, decimal or 0x hex
+    bool real(const std::string& tok, double* v, std::string* err) const;       // finite float
+    bool id(const std::string& tok, bool want_area, uint8_t out[16], std::string* err) const;   // GUID text, or a region name (its area / its world)
+    bool usage(const char* form, std::string* err) const;                       // sets "wrong number of arguments, expected: <form>"; returns false
+};
 
 // Parse. `regions` may be null (then only GUID text is accepted as an id). On error returns false and *err =
 // "<path>:<line>: message" (the first error). `path` is only used for messages.
