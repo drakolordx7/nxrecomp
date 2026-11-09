@@ -34,7 +34,7 @@ struct TempDir {
         static std::atomic<unsigned> counter{0};
         std::error_code ec;
         const fs::path base = fs::temp_directory_path(ec);
-        path = base / (L"mprl_prepare_test_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(counter++));
+        path = base / (L"nxl_prepare_test_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(counter++));
         fs::remove_all(path, ec);
         fs::create_directories(path, ec);
     }

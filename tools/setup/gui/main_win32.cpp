@@ -2,7 +2,7 @@
 // The setup window: plain Win32 with Common Controls v6. The player picks the game dump and the Switch keys, picks the install
 // folder and presses Start. The pipeline runs on a worker thread and reports only by posting messages; every control is
 // touched on the window thread.
-//   mpr_setup.exe [--input <file>]... [--keys <file>[,<file>]] [--out <dir>] [--quality N] [--auto-start] [--exit-when-done]
+//   <id>_setup.exe [--input <file>]... [--keys <file>[,<file>]] [--out <dir>] [--quality N] [--auto-start] [--exit-when-done]
 //                 [--no-message-box] [--shader-pack <file or folder>] [--no-shaders]
 // --exit-when-done closes the window when the run ends (exit code 0 on success, else the Fail kind; 10 if the dump is not
 // supported) and skips the success summary box. --no-message-box suppresses every MessageBox.

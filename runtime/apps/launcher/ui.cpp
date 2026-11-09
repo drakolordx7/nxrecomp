@@ -15,8 +15,8 @@ namespace {
 
 enum Kind { kCheck = 1, kCombo, kSlider, kNumber };
 
-constexpr wchar_t kPageClass[] = L"MprLauncherPage";
-constexpr wchar_t kCaptureClass[] = L"MprLauncherCapture";
+constexpr wchar_t kPageClass[] = L"NxLauncherPage";
+constexpr wchar_t kCaptureClass[] = L"NxLauncherCapture";
 constexpr int kMargin = 16;       // logical px
 constexpr int kLabelW = 200;      // label column of a one-column form
 constexpr int kRowGap = 6;
@@ -476,7 +476,7 @@ bool capture_input(HWND owner, const Env& env, const std::wstring& what, nxrt::p
 
 namespace {
 
-constexpr wchar_t kPadCaptureClass[] = L"MprLauncherPadCapture";
+constexpr wchar_t kPadCaptureClass[] = L"NxLauncherPadCapture";
 constexpr UINT_PTR kPadPollTimer = 1;
 constexpr UINT kPadPollMs = 30;
 constexpr wchar_t kPadPressText[] = L"Press the controller button you want to change. Escape cancels.";

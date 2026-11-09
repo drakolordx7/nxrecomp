@@ -13,13 +13,13 @@ struct GameBuild {
 };
 
 struct GameProfile {
-    const char* id;            // "mpr"
-    const char* title;         // the game's name in messages: "Metroid Prime Remastered"
-    const char* product;       // the port's name in window titles: "Metroid Prime Remastered PC"
+    const char* id;            // "<id>", the manifest id
+    const char* title;         // the game's name in messages (title)
+    const char* product;       // the port's name in window titles (product)
     const char* title_id;      // the program's title id, 16 hex digits, upper case
     const char* build_id;      // main NSO build id, hex, first 20 bytes: the one supported release
     const char* version;       // that release's display version: "1.0.0"
-    const char* game_ini;      // the runtime's settings file setup writes into the game folder: "mpr.ini"
+    const char* game_ini;      // the runtime's settings file setup writes into the game folder: "<id>.ini"
     const char* shader_pack;   // the shader pack next to the setup program: "shader_cache.mprshc"
     // Optional: every supported release (base or base + update), ending with {nullptr, nullptr}. When null or empty, the single
     // build_id / version above is the one supported release.

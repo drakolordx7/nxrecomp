@@ -7,7 +7,7 @@
 //   aoc/<title id>/   the RomFS of each DLC (16 upper-case hex digits), for the runtime's add-on content service
 //   bc7_cache/        ASTC textures transcoded to BC7, one file per texture, in the runtime's cache format
 //   shader_cache/spirv/   translated shaders from the shader pack (setup stops without a pack, unless --no-shaders or an earlier run installed them)
-//   <game ini>        (game.h; mpr.ini) [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
+//   <game ini>        (game.h; <id>.ini) [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
 //   setup_state.tsv   what was done, hashes of every output file, quality used; makes re-runs cheap and resumable
 //   setup.log         the log of every run (appended); run_setup opens it itself (log_open) as soon as out_dir exists
 #pragma once

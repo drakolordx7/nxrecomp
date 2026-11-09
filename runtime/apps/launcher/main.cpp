@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The launcher: a small window that opens before the game. It edits controls.ini in the game folder (display, picture, mouse,
 // keyboard, controller, button prompts, frame rate counter), shows whether the game files are in place, starts the setup tool
-// for the first-time setup, and starts mpr.exe.
-//   mpr_launcher.exe [--game <folder>] [--page <n>] [--auto-play] [--auto-prepare] [--no-prepare] [--game-args "<text>"] [--setup-args "<text>"]
-// --game uses that game folder for this run (the folder saved in mpr_launcher.ini is left alone). --page opens that tab.
+// for the first-time setup, and starts the game exe (<id>.exe).
+//   <id>_launcher.exe [--game <folder>] [--page <n>] [--auto-play] [--auto-prepare] [--no-prepare] [--game-args "<text>"] [--setup-args "<text>"]
+// --game uses that game folder for this run (the folder saved in <id>_launcher.ini is left alone). --page opens that tab.
 // --auto-play saves nothing, opens no window and starts the game at once (for scripted runs). --game-args adds text to
-// the command line of mpr.exe; --setup-args does the same for the setup tool (scripted runs).
+// the command line of the game exe; --setup-args does the same for the setup tool (scripted runs).
 // --auto-prepare runs the shader preparation without asking: at startup when a window is open, and before the game when
 // --auto-play is given (then it waits for it). --no-prepare never asks and never starts the preparation on its own; the
 // Extras tab button still works.
@@ -186,7 +186,7 @@ private:
     int current_page_ = 0;
 
     std::wstring game_dir_;
-    bool game_dir_pinned_ = false;     // --game: do not write the folder to mpr_launcher.ini
+    bool game_dir_pinned_ = false;     // --game: do not write the folder to <id>_launcher.ini
     GameStatus game_;
     Settings cur_;                     // the settings the pages edit (whole file, including what no page shows)
     bool settings_broken_ = false;     // controls.ini exists but could not be read
@@ -531,7 +531,7 @@ void App::prepare_shaders_now() {
     start_prepare(true, false, PrepOrigin::extras);
 }
 
-// Starts mpr.exe --prepare-shaders (with --if-needed unless force) and shows the progress row. then_play: start the game when it
+// Starts <id>.exe --prepare-shaders (with --if-needed unless force) and shows the progress row. then_play: start the game when it
 // ends well. The result is handled in on_prepare_finished().
 void App::start_prepare(bool force, bool then_play, PrepOrigin origin) {
     if (prep_.active() || setup_running_) return;

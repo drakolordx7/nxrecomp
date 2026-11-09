@@ -240,7 +240,7 @@ int wmain(int argc, wchar_t** wargv) {
         }
     }
     if (romfs.empty()) {
-        std::fprintf(stderr, "usage: mpr_texq --romfs DIR --configs q3,q5 [--stride N] [--threads N] [--out f.tsv] [--dump DIR --dump-below DB]\n");
+        std::fprintf(stderr, "usage: nx_texq --romfs DIR --configs q3,q5 [--stride N] [--threads N] [--out f.tsv] [--dump DIR --dump-below DB]\n");
         return 2;
     }
     std::vector<Config> configs;

@@ -14,10 +14,10 @@
 namespace nxl {
 
 // ---- Branding: the registered game's names (nxrt/game.h Info) ---------------------------------------------------------------------
-std::wstring product_name();      // the window title and the dialogs: "Metroid Prime Remastered PC"
-std::wstring game_exe_name();     // "mpr.exe"
-std::wstring setup_exe_name();    // "mpr_setup.exe"
-std::wstring shader_pack_name();  // the shader pack next to the launcher: "shader_cache.mprshc"
+std::wstring product_name();      // the window title and the dialogs: "<Product> PC"
+std::wstring game_exe_name();     // "<id>.exe"
+std::wstring setup_exe_name();    // "<id>_setup.exe"
+std::wstring shader_pack_name();  // the shader pack next to the launcher: "shader_cache.<ext>"
 // A text of the registered game (UTF-8) as a wide string, or `fallback` when the game gives none.
 std::wstring game_text(const char* utf8, const wchar_t* fallback);
 
@@ -38,11 +38,11 @@ GameStatus check_game_dir(const std::wstring& dir);
 std::wstring launcher_exe_dir();
 std::wstring default_game_dir();
 std::wstring controls_path(const std::wstring& game_dir);  // <dir>\controls.ini
-std::wstring launcher_config_path();                       // <exe dir>\<the game's launcher ini> (mpr_launcher.ini)
+std::wstring launcher_config_path();                       // <exe dir>\<the game's launcher ini> (<id>_launcher.ini)
 
 // The launcher's own settings file: UTF-8 text with a [launcher] section.
 //   [launcher]
-//   game_dir = D:\Games\Metroid Prime
+//   game_dir = D:\Games\Some Game
 struct LauncherConfig {
     std::wstring game_dir;
 };
@@ -67,7 +67,7 @@ bool start_game(const std::wstring& game_dir, std::wstring* err, const std::wstr
 bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* err, const std::wstring& extra_args = L"");
 
 // ---- Shader preparation ----------------------------------------------------------------------------------------------
-// `mpr.exe --prepare-shaders [--if-needed]`, run in the game folder, compiles the game's shaders ahead of play. The setup tool
+// `<id>.exe --prepare-shaders [--if-needed]`, run in the game folder, compiles the game's shaders ahead of play. The setup tool
 // writes <game folder>\shader_cache\programs.bin (the list of programs); a finished run writes shader_cache\prepare.state.
 
 enum class PrepareKind { other, progress, ready, done, error };
@@ -88,7 +88,7 @@ bool shader_prepare_available(const std::wstring& game_dir);
 // True when shader_cache\prepare.state has the line "complete: 1". It does not know about driver changes; --if-needed checks those.
 bool shader_prepare_done(const std::wstring& game_dir);
 
-// One prepare run: starts mpr.exe --prepare-shaders [--if-needed] with the game folder as working folder, no console window,
+// One prepare run: starts <id>.exe --prepare-shaders [--if-needed] with the game folder as working folder, no console window,
 // and its output (stdout and stderr) read through a pipe. A worker thread reads and parses the lines and never touches a window.
 // It posts msg_update to `notify` when the progress or the result changed (changes may share one message), and msg_finished
 // once the child has exited and its output is read. The UI thread then calls ack_update() / progress() / result() and, after
@@ -100,7 +100,7 @@ public:
     PrepareRun(const PrepareRun&) = delete;
     PrepareRun& operator=(const PrepareRun&) = delete;
 
-    // Returns false with *err set when the run could not be started (mpr.exe missing, Windows error).
+    // Returns false with *err set when the run could not be started (the game exe missing, Windows error).
     bool start(const std::wstring& game_dir, bool if_needed, HWND notify, UINT msg_update, UINT msg_finished, std::wstring* err);
     bool active() const { return active_; }        // started and finish() not called yet
     void cancel();                                  // TerminateProcess of this run's child only; the next run starts from zero

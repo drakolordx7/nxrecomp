@@ -115,10 +115,10 @@ def set_game(game_dir):
     LEAK_FILES = (EXE_NAME, LAUNCHER_NAME) + SETUP_EXES
 def _leak_patterns():
     # This machine's own paths and user name must never end up in a release: the checkout's parent folders, the
-    # Windows user name and anything listed in MPR_LEAK_PATTERNS (comma separated).
+    # Windows user name and anything listed in NX_LEAK_PATTERNS (comma separated).
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     parts = root.replace('\\', '/').split('/')
-    pats = {root, '/'.join(parts[:2]), os.environ.get('USERNAME', ''), *os.environ.get('MPR_LEAK_PATTERNS', '').split(',')}
+    pats = {root, '/'.join(parts[:2]), os.environ.get('USERNAME', ''), *os.environ.get('NX_LEAK_PATTERNS', '').split(',')}
     out = set()
     for p in pats:
         p = p.strip()

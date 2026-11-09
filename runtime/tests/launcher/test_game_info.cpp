@@ -38,7 +38,7 @@ struct TempDir {
         static std::atomic<unsigned> counter{0};
         std::error_code ec;
         const fs::path base = fs::temp_directory_path(ec);
-        path = base / (L"mprl_game_info_test_" + std::to_wstring(GetCurrentProcessId()) + L"_" +
+        path = base / (L"nxl_game_info_test_" + std::to_wstring(GetCurrentProcessId()) + L"_" +
                        std::to_wstring(counter++));
         fs::remove_all(path, ec);
         fs::create_directories(path, ec);
@@ -73,7 +73,7 @@ const char* kFinishedState =
 
 NXTEST(quote_arg_plain_words_are_unchanged) {
     CHECK(nxl::quote_arg(L"plain") == L"plain");
-    CHECK(nxl::quote_arg(L"C:\\Games\\MPR") == L"C:\\Games\\MPR");
+    CHECK(nxl::quote_arg(L"C:\\Games\\Game") == L"C:\\Games\\Game");
     CHECK(nxl::quote_arg(L"--game") == L"--game");
 }
 
@@ -82,7 +82,7 @@ NXTEST(quote_arg_empty_is_two_quotes) {
 }
 
 NXTEST(quote_arg_space_is_wrapped) {
-    CHECK(nxl::quote_arg(L"C:\\My Games\\MPR") == L"\"C:\\My Games\\MPR\"");
+    CHECK(nxl::quote_arg(L"C:\\My Games\\Game") == L"\"C:\\My Games\\Game\"");
 }
 
 NXTEST(quote_arg_trailing_backslash_is_doubled_before_closing_quote) {
@@ -107,7 +107,7 @@ NXTEST(quote_arg_round_trips_through_command_line_parser) {
         L"back\\slash\\",
         L"x\\ y\\",
         L"\"",
-        L"C:\\Games\\Caf\u00e9 \u4e2d\u6587\\Metroid Prime\\",
+        L"C:\\Games\\Caf\u00e9 \u4e2d\u6587\\Some Game\\",
     };
     for (const std::wstring& c : cases) {
         CHECK_MSG(split_back(c) == c, "quote_arg does not survive CommandLineToArgvW");
@@ -118,7 +118,7 @@ NXTEST(quote_arg_round_trips_through_command_line_parser) {
 
 NXTEST(launcher_config_round_trip_non_ascii) {
     LauncherConfig in;
-    in.game_dir = L"D:\\Games\\Caf\u00e9 \u4e2d\u6587\\Metroid Prime";
+    in.game_dir = L"D:\\Games\\Caf\u00e9 \u4e2d\u6587\\Some Game";
     const std::string text = nxl::format_launcher_config(in);
     CHECK(text.find("\xC3\xA9") != std::string::npos);   // e acute, as UTF-8 bytes
 
@@ -312,10 +312,10 @@ NXTEST(controls_path_is_inside_game_folder) {
 
 NXTEST(launcher_config_save_then_load) {
     TempDir t;
-    const std::wstring path = (t.path / L"mpr_launcher.ini").wstring();
+    const std::wstring path = (t.path / L"fixture_launcher.ini").wstring();
 
     LauncherConfig in;
-    in.game_dir = L"E:\\Games\\Metroid Prime \u00e9";
+    in.game_dir = L"E:\\Games\\Some Game \u00e9";
     std::wstring err;
     CHECK(nxl::save_launcher_config(path, in, &err));
     CHECK(!fs::exists(path + L".tmp"));

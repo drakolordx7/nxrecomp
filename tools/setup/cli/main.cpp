@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// <game>_setup_cli (mpr_setup_cli for Metroid Prime Remastered): the setup as a command line tool (automation, headless machines, support).
+// <id>_setup_cli: the setup as a command line tool (automation, headless machines, support).
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -41,7 +41,7 @@ void usage() {
         "  --input <file>[,<file>]             the base game, and optionally its update and DLC (repeat --input or give a comma list,\n"
         "                                      any order). The newest update is applied; DLC goes to aoc\\<title id>.\n"
         "  --keys <prod.keys>[,<title.keys>]   keys file(s); default: look in the usual emulator folders\n"
-        "  --quality <0-6>                     texture conversion quality (default 3; the game reads the same value from mpr.ini)\n"
+        "  --quality <0-6>                     texture conversion quality (default 3; the game reads the same value from its ini)\n"
         "  --threads <n>                       worker threads (default: all)\n"
         "  --shader-pack <file|folder>         the translated shaders to install (default: shader_cache.mprshc, or a shader_cache folder, next to\n"
         "                                      this program). Setup stops without them.\n"

@@ -18,7 +18,7 @@ using nxrt::play::GlowMode;
 using nxrt::play::GlowRgb;
 using nxrt::play::TweakSettings;
 
-constexpr const wchar_t* kSwatchClass = L"MprlGlowSwatch";
+constexpr const wchar_t* kSwatchClass = L"NxlGlowSwatch";
 
 // A plain rectangle in one colour (GWLP_USERDATA holds the COLORREF).
 LRESULT CALLBACK swatch_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {

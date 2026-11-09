@@ -15,8 +15,8 @@
 #endif
 #include <windows.h>
 
-#ifndef MPR_VERSION
-#define MPR_VERSION "dev"
+#ifndef MPRS_VERSION
+#define MPRS_VERSION "dev"
 #endif
 
 namespace mprs {
@@ -31,7 +31,7 @@ bool log_open(const std::string& utf8_path) {
     std::lock_guard lk(g_mu);
     if (g_file) { std::fclose(g_file); g_file = nullptr; }
     g_file = _wfopen(widen(utf8_path).c_str(), L"ab");
-    if (g_file) { std::fprintf(g_file, MPRS_EXE_NAME " %s\n", MPR_VERSION); std::fflush(g_file); }
+    if (g_file) { std::fprintf(g_file, MPRS_EXE_NAME " %s\n", MPRS_VERSION); std::fflush(g_file); }
     return g_file != nullptr;
 }
 
