@@ -119,7 +119,13 @@ LoaderState loader_state(uint32_t* pending) {
 }
 
 bool read_state(GameState* out, ::Ctx* c) {
-    GameState g;
+    struct {                        // what the engine's memory says, before it becomes the tooling's fields
+        bool have_world = false, have_player = false, have_igt = false, have_hp = false, have_vel = false;
+        uint8_t world[16] = {}, area[16] = {};
+        float pos[3] = {}, vel[3] = {}, yaw = 0, hp = 0;
+        double igt = 0;
+    } g;
+    const GameState* previous = out->previous;
     uint32_t move_state = 0;
     bool have_phys = false, have_aim = false, have_cam = false, have_ps = false;
     float speed = 0, pitch = 0, cam_yaw = 0, cam_pitch = 0;
@@ -201,24 +207,47 @@ bool read_state(GameState* out, ::Ctx* c) {
             }
         }
     }
-    // The game's own fields, in the order the trace prints them and the hash folds them (the hash is the one the tooling computed before the state
-    // went generic: state; which groups were readable; pitch; cam|morph; orbit|beam; visor|missiles).
+    if (!g.have_vel && previous && g.have_player) {       // the game is not ticking the player: the position difference, units per second at 60 frames/s
+        const StateField* pp = previous->field("pos");
+        if (pp && pp->shown) for (int i = 0; i < 3; i++) g.vel[i] = (g.pos[i] - pp->vec[i]) * 60.0f;
+    }
+    // The fields, in the order the hash folds them (the hash is the one the tooling computed before the state went generic: ids; position and velocity
+    // words alternating; heading, health, play time; state; which groups were readable; pitch; cam|morph; orbit|beam; visor|missiles). The trace prints
+    // them in this order too.
     using H = StateField::Hash;
+    GameState& o = *out;
+    o = GameState();
+    o.hash_flags = (g.have_world ? 1u : 0u) | (g.have_player ? 2u : 0u) | (g.have_igt ? 4u : 0u) | (g.have_hp ? 8u : 0u);
+    o.add_id("world", g.world, g.have_world);
+    o.add_id("area", g.area, g.have_world);
+    for (int i = 0; i < 3; i++) { o.add_float("", g.pos[i]); o.add_float("", g.vel[i]); }          // hash only
+    o.add_vec3("pos", g.pos, g.have_player);
+    o.add_vec3("vel", g.vel, g.have_player);
+    o.add_float("yaw", g.yaw, g.have_player);
+    o.add_float("hp", g.hp, g.have_hp);
+    o.fields.back().alias = "health";
+    o.add_float("igt", g.igt, g.have_igt, H::Wide);
+    static const char* const axis[] = {"px", "py", "pz", "vx", "vy", "vz"};                         // what @assert can name; not in the trace
+    for (int i = 0; i < 6; i++) {
+        o.add_float(axis[i], i < 3 ? g.pos[i] : g.vel[i - 3], g.have_player, H::None);
+        o.fields.back().quiet = true;
+    }
+    o.add_float("speed", std::sqrt(double(g.vel[0]) * g.vel[0] + double(g.vel[1]) * g.vel[1] + double(g.vel[2]) * g.vel[2]), g.have_player, H::None);
+    o.fields.back().quiet = true;
     const bool pl = g.have_player;
-    g.add_int("state", move_state, pl);                                              // EPlayerMovementState
-    g.add_int("", (have_phys ? 1 : 0) | (have_aim ? 2 : 0) | (have_ps ? 4 : 0));     // hash only
-    g.add_int("phys", 1, pl && have_phys, H::None);                                  // vel is the physics object's velocity, not a position difference
-    g.add_float("spd", speed, pl && have_phys, H::None);
-    g.add_float("pitch", pitch, have_aim);                                           // free-look pitch, radians, + = up
-    g.add_int("cam", cam_state, have_aim);                                           // EPlayerCameraState (0 first person)
-    g.add_int("morph", morph_state, have_aim, H::High);                              // morph transition state word (0 = unmorphed)
-    g.add_int("orbit", orbit_state, have_aim);                                       // EPlayerOrbitState (0 = not locked on)
-    g.add_float("camyaw", cam_yaw, have_cam, H::None);                               // the first-person camera's heading and pitch
-    g.add_float("campitch", cam_pitch, have_cam, H::None);
-    g.add_int("beam", beam, have_ps, H::High);                                       // 0 power 1 ice 2 wave 3 plasma
-    g.add_int("visor", visor, have_ps);                                              // 0 combat 1 x-ray 2 scan 3 thermal
-    g.add_int("msl", missiles, have_ps, H::High, "missiles");                        // item 4 amount
-    *out = g;
+    o.add_int("state", move_state, pl);                                              // EPlayerMovementState
+    o.add_int("", (have_phys ? 1 : 0) | (have_aim ? 2 : 0) | (have_ps ? 4 : 0));     // hash only
+    o.add_int("phys", 1, pl && have_phys, H::None);                                  // vel is the physics object's velocity, not a position difference
+    o.add_float("spd", speed, pl && have_phys, H::None);
+    o.add_float("pitch", pitch, have_aim);                                           // free-look pitch, radians, + = up
+    o.add_int("cam", cam_state, have_aim);                                           // EPlayerCameraState (0 first person)
+    o.add_int("morph", morph_state, have_aim, H::High);                              // morph transition state word (0 = unmorphed)
+    o.add_int("orbit", orbit_state, have_aim);                                       // EPlayerOrbitState (0 = not locked on)
+    o.add_float("camyaw", cam_yaw, have_cam, H::None);                               // the first-person camera's heading and pitch
+    o.add_float("campitch", cam_pitch, have_cam, H::None);
+    o.add_int("beam", beam, have_ps, H::High);                                       // 0 power 1 ice 2 wave 3 plasma
+    o.add_int("visor", visor, have_ps);                                              // 0 combat 1 x-ray 2 scan 3 thermal
+    o.add_int("msl", missiles, have_ps, H::High, "missiles");                        // item 4 amount
     return g.have_world || g.have_player || g.have_igt || g.have_hp;
 }
 
@@ -655,7 +684,8 @@ namespace {
 void on_frame(uint64_t frame) { detail::watch_flush(frame); }
 void reset() { set_probe_layout(ProbeLayout{}); }
 // The keys of the fields read_state adds that @assert and @mashuntil may name.
-const char* const kStateKeys[] = {"state", "spd", "pitch", "cam", "morph", "orbit", "camyaw", "campitch", "beam", "visor", "msl", nullptr};
+const char* const kStateKeys[] = {"igt", "health", "px", "py", "pz", "vx", "vy", "vz", "speed", "state", "spd", "pitch", "cam", "morph", "orbit", "camyaw", "campitch", "beam", "visor", "msl", nullptr};
+const IdKeyDef kIdKeys[] = {{"world", false}, {"area", true}, {nullptr, false}};
 }
 
 const GameProbes& mpr_game_probes() {
@@ -666,6 +696,7 @@ const GameProbes& mpr_game_probes() {
         t.on_frame = &on_frame;
         t.reset = &reset;
         t.state_keys = kStateKeys;
+        t.id_keys = kIdKeys;
         t.steps = mpr_game_steps();
         t.step_count = mpr_game_step_count();
         return t;

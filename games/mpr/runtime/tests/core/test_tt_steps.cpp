@@ -196,3 +196,87 @@ NXTEST(state_keys_of_the_game_are_assert_fields) {
     CHECK_EQ(sc.steps[2].name2, std::string("state"));
     expect_err("@assert bogus == 1\n", 1, "unknown assert field 'bogus'");
 }
+
+// The waits and state keys that were the base's own before the untangle (test_tt_script.cpp there).
+namespace {
+constexpr const char* kGuid1 = "01234567-89ab-cdef-0123-456789abcdef";
+constexpr const char* kHex1 = "67452301ab89efcd0123456789abcdef";
+constexpr const char* kGuid2 = "fedcba98-7654-3210-fedc-ba9876543210";
+constexpr const char* kHex2 = "98badcfe54761032fedcba9876543210";
+}
+
+NXTEST(area_and_world_guids_with_timeout) {
+    Script sc;
+    REQUIRE(parse_ok(std::string("@area ") + kGuid1 + " timeout=90\n@world " + kGuid2 + "\n", sc));
+    REQUIRE(sc.steps.size() == 2);
+    CHECK_EQ(sc.steps[0].kind, StepKind::Game);
+    CHECK_EQ(sc.steps[0].text, std::string("area"));
+    CHECK_EQ(tt_guid_hex(sc.steps[0].id), std::string(kHex1));
+    CHECK_EQ(sc.steps[0].timeout, (int64_t)90);
+    CHECK_EQ(sc.steps[1].text, std::string("world"));
+    CHECK_EQ(tt_guid_hex(sc.steps[1].id), std::string(kHex2));
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)-1);
+}
+
+NXTEST(pos_radius_and_timeout_defaults) {
+    Script sc;
+    REQUIRE(parse_ok("@pos 1 2 3\n@pos 1 2 3 0.5 timeout=10\n@pos 4 5 6 timeout=7\n", sc));
+    REQUIRE(sc.steps.size() == 3);
+    CHECK_EQ(sc.steps[0].x, 1.0);
+    CHECK_EQ(sc.steps[0].y, 2.0);
+    CHECK_EQ(sc.steps[0].z, 3.0);
+    CHECK_EQ(sc.steps[0].r, 1.0);
+    CHECK_EQ(sc.steps[0].timeout, (int64_t)-1);
+    CHECK_EQ(sc.steps[1].r, 0.5);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)10);
+    CHECK_EQ(sc.steps[2].x, 4.0);
+    CHECK_EQ(sc.steps[2].r, 1.0);
+    CHECK_EQ(sc.steps[2].timeout, (int64_t)7);
+}
+
+NXTEST(igt_run_and_mash_parse) {
+    Script sc;
+    REQUIRE(parse_ok("@igt 12.5 timeout=60\n@igt 3\n@run 2.5 timeout=100\n@run 0 soft\n@mash A+B 5000 area 01234567-89ab-cdef-0123-456789abcdef timeout=1000\n", sc));
+    REQUIRE(sc.steps.size() == 5);
+    CHECK_EQ(sc.steps[0].x, 12.5);
+    CHECK_EQ(sc.steps[0].timeout, (int64_t)60);
+    CHECK_EQ(sc.steps[1].timeout, (int64_t)-1);
+    CHECK_EQ(sc.steps[2].x, 2.5);
+    CHECK_EQ(sc.steps[2].count, (int64_t)0);
+    CHECK_EQ(sc.steps[3].count, (int64_t)1);          // soft
+    CHECK_EQ(sc.steps[4].buttons, (1ull << 0) | (1ull << 1));
+    CHECK_EQ(sc.steps[4].x, 5000.0);
+    CHECK_EQ(sc.steps[4].text, std::string("area"));
+    CHECK_EQ(sc.steps[4].timeout, (int64_t)1000);
+    expect_err("@igt nan\n", 1, "bad number");
+    expect_err("@run -1\n", 1, "must be >= 0");
+    expect_err("@mash A 5000 room x\n", 1, "@mash");
+    expect_err("wait 1\n@pos 1 2\n", 2, "expected");
+}
+
+NXTEST(assert_health_and_ids_are_game_fields) {
+    Script sc;
+    REQUIRE(parse_ok(std::string("@assert health < 50\n@assert PX >= 1\n@assert speed > 0\n@assert area == ") + kGuid1 + "\n@assert world != " + kGuid2 + "\n", sc));
+    REQUIRE(sc.steps.size() == 5);
+    CHECK_EQ(sc.steps[0].field, AssertField::Game);
+    CHECK_EQ(sc.steps[0].name2, std::string("health"));
+    CHECK_EQ(sc.steps[1].name2, std::string("px"));
+    CHECK_EQ(sc.steps[2].name2, std::string("speed"));
+    CHECK_EQ(sc.steps[3].field, AssertField::GameId);
+    CHECK_EQ(sc.steps[3].op, AssertOp::Eq);
+    CHECK_EQ(tt_guid_hex(sc.steps[3].id), std::string(kHex1));
+    CHECK_EQ(sc.steps[4].op, AssertOp::Ne);
+    CHECK_EQ(tt_guid_hex(sc.steps[4].id), std::string(kHex2));
+    expect_err(std::string("wait 1\n@assert area < ") + kGuid1 + "\n", 2, "only == and !=");
+}
+
+NXTEST(id_errors_name_the_line) {
+    RegionTable rt;
+    std::string e;
+    CHECK_MSG(rt.load_text(region_text(), &e), e);
+    expect_err("wait 1\n@area 01234567-89ab-cdef-0123-45678\n", 2, "not a GUID");
+    expect_err("wait 1\n\n@world nosuch\n", 3, "nosuch", &rt);
+    expect_err("wait 1\n@area frigate\n", 2, "has no area", &rt);
+    expect_err(std::string("wait 1\n\n@area ") + kGuid1 + " timeout=\n", 3, "bad number");
+    expect_err(std::string("@area ") + kGuid1 + " timeout=1 timeout=2\n", 1, "timeout given twice");
+}
