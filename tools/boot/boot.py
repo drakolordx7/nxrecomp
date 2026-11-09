@@ -32,7 +32,7 @@ run (not only in test runs) belongs in its Info::config_defaults instead.
 
 Exit code: the exit code of the game exe (124 = deadline, 3/4 = crash).
 
-Other tools start a game the same way through this module (sys.path: base	oolsoot):
+Other tools start a game the same way through this module (sys.path: base\tools\boot):
   import boot
   g = boot.load_game('mpr', exe=DIR_OR_FILE, run=NAME_OR_NONE)   # a Game: .dir .data .id .exe .exe_name .log_name .run .presets
   r = boot.launch(g, env={...}, args=[...], run_dir=..., cwd=..., stdout=FILE, detach=False)   # a Run: .pid .log .wait(timeout) -> exit code
