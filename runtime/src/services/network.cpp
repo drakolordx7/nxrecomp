@@ -570,7 +570,7 @@ std::shared_ptr<ipc::Service> make_ssl_service() {
 // calls Prepare(InArray<char> path, InArray<char> post data), then Request(), then waits on the event CreateAsyncInterface returned,
 // then GetSize(Out<u64>) and Read(Out<u64> read, u64 offset, OutBuffer); GetErrorCode(Out<nn::err::ErrorCode>) only after a failure.
 // There is no shop server: Request completes at once with a 200 answer whose body is [ec] shop_body (default "[]", an empty JSON list,
-// what the shop API gives for "no consumables / no items"). The SDK treats GetSize 0 as success, but games such as a game treat an
+// what the shop API gives for "no consumables / no items"). The SDK treats GetSize 0 as success, but some titles treat an
 // empty body as a failed request, so the default body is not empty.
 struct ShopAsync {
     std::mutex mu;

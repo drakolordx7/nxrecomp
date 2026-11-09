@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "nxrt/strutil.h"
 #include "nxrt/config.h"
 
 #include "nxrt/log.h"
@@ -34,20 +35,9 @@ std::map<std::string, Seen> g_seen;
 
 std::string S(const char* p) { return p ? std::string(p) : std::string(); }
 
-bool is_space(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; }
-
-std::string trim(const std::string& s) {
-    size_t b = 0, e = s.size();
-    while (b < e && is_space(s[b])) ++b;
-    while (e > b && is_space(s[e - 1])) --e;
-    return s.substr(b, e - b);
-}
-
-std::string lower(std::string s) {
-    for (char& c : s)
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-    return s;
-}
+using nxrt::str::is_space;
+using nxrt::str::trim;
+using nxrt::str::lower;
 
 std::string canon_id(const std::string& section, const std::string& key) {
     std::string id = lower(trim(section));

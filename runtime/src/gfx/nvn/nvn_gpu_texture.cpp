@@ -659,7 +659,7 @@ VkSampler create_sampler(const SamplerInfo& s) {
 
 namespace {
 // A texture in a CPU_UNCACHED pool is coherent on the console: the game writes it and the GPU sees the bytes without FlushMappedRange.
-// ACNH's text renderer rasterizes the glyphs it needs into such a texture (an R8 2048x4096 glyph cache) as new characters come up; an
+// One title's text renderer rasterizes the glyphs it needs into such a texture (an R8 2048x4096 glyph cache) as new characters come up; an
 // image uploaded once kept the old glyph set and every later new glyph drew as nothing. The storage pages of an uploaded coherent texture
 // are therefore armed in one write-watch region over the heap (nxrt/write_watch.h), before the storage is read for the upload. At the start
 // of every submission the pages the CPU wrote since are handed to textures_cpu_wrote, as a flush of them would be: the textures there are

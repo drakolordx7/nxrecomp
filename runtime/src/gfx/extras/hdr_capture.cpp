@@ -7,7 +7,7 @@
 #include <cstring>
 #include <utility>
 
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 
 namespace nxrt::extras {
 

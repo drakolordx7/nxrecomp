@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/strutil.h"
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/log.h"
@@ -38,14 +39,7 @@ constexpr GUID kSubtypePcm = {0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xa
 // SPEAKER_5POINT1: FRONT_LEFT | FRONT_RIGHT | FRONT_CENTER | LOW_FREQUENCY | BACK_LEFT | BACK_RIGHT.
 constexpr DWORD kChannelMask51 = 0x3F;
 
-std::string to_utf8(const std::wstring& w) {
-    if (w.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-    if (n <= 1) return {};
-    std::string out(static_cast<size_t>(n - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, out.data(), n, nullptr, nullptr);
-    return out;
-}
+using nxrt::str::narrow;
 
 std::string lower_ascii(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -56,7 +50,7 @@ void log_devices(const std::vector<OutputDevice>& devices) {
     if (devices.empty()) NXLOG_I("audio", "xaudio2: no active output endpoints");
     for (const OutputDevice& d : devices) {
         NXLOG_I("audio", "xaudio2: output device%s: %s [%s]", d.is_default ? " (default)" : "", d.name.c_str(),
-                to_utf8(d.id).c_str());
+                narrow(d.id).c_str());
     }
 }
 
@@ -65,7 +59,7 @@ void log_devices(const std::vector<OutputDevice>& devices) {
 std::wstring pick_device(const std::vector<OutputDevice>& devices, const std::string& want) {
     if (want.empty() || lower_ascii(want) == "default") return {};
     for (const OutputDevice& d : devices) {
-        if (to_utf8(d.id) == want) return d.id;
+        if (narrow(d.id) == want) return d.id;
     }
     const std::string needle = lower_ascii(want);
     for (const OutputDevice& d : devices) {

@@ -4,7 +4,7 @@
 //     ([fs] romfs, default: the game exe sets it to its game folder's romfs; fs_romfs.h). The SDK parses the RomFS itself (nn::fs::MountRom), so the storage is byte addressed.
 //     OpenDataFileSystemByCurrentProcess serves the same folder as a read-only IFileSystem.
 //     Mods (fs_mods.h, docs/MODS.md): the mods folder next to the exe is merged over that folder, in both views, once at start-up.
-//   * Save data: account, device and cache saves live in folders under [fs] save_dir (default %APPDATA%\<game save_folder>\save, nxrt/game.h; MPRRecomp for Metroid Prime Remastered) with the journal
+//   * Save data: account, device and cache saves live in folders under [fs] save_dir (default %APPDATA%\<game save_folder>\save, nxrt/game.h) with the journal
 //     semantics of fs_volume.h: writes are invisible to the committed state until IFileSystem::Commit.
 //   * SD card, game card, BIS: absent (the results of a console without them).
 // Command ids, argument layouts: Switchbrew "Filesystem services", ScarletNX fs.swipc (GPL-3.0-or-later), Ryujinx IFileSystemProxy (MIT).
@@ -568,7 +568,7 @@ uint32_t open_save(uint8_t space, const SaveAttr& a, bool read_only, std::shared
         create_save(d, static_cast<int64_t>(p.device_save_size), static_cast<int64_t>(p.device_save_journal), p.save_data_owner_id);
     }
     // Cache storage (type 5): the console makes it from control.nacp's CacheStorageSize (Ryujinx EnsureApplicationCacheStorage),
-    // and titles that only mount it (a game: cache/0 at boot, an abort on TargetNotFound) never create it themselves.
+    // and titles that only mount it (one title mounts cache/0 at boot and aborts on TargetNotFound) never create it themselves.
     if (a.type == 5 && p.cache_save_size > 0 && !save_exists(key))
         create_save(a, static_cast<int64_t>(p.cache_save_size), static_cast<int64_t>(p.cache_save_journal), p.save_data_owner_id);
     if (!save_exists(key)) {

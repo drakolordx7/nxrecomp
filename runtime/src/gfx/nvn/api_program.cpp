@@ -7,8 +7,8 @@
 // Signatures: the five entries in work/nvn/sigs.txt use those types. nvnProgramSetSampleShading has no signature in sigs.txt
 // (table entry '?'): assumed void(NVNprogram*, int), the argument order smo-recomp runtime/gfx/nvn_gl.c (GPL-3.0) uses
 // (layout/defaults checked, no code copied). nvnProgramSetShadersExt(NVNprogram*, int count, entries): 0x18-byte entries whose first
-// two words are NVNshaderData's {data, control}; the third word is not used here. Stride from ACNH 3.0.3 main+0x24d9a8 (the caller
-// fills the array with `mov w24, #0x18`), as ACNHRecomp (MIT) found. nvnProgramSetSubroutineLinkage is accepted and ignored: the back end has no subroutine support.
+// two words are NVNshaderData's {data, control}; the third word is not used here. Stride from main+0x24d9a8 of a title built with SDK 3.0.3 (the caller
+// fills the array with `mov w24, #0x18`), as an MIT-licensed recompilation project of that title found. nvnProgramSetSubroutineLinkage is accepted and ignored: the back end has no subroutine support.
 #include <cstdint>
 #include <cstdio>
 #include <mutex>

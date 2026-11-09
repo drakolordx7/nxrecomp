@@ -25,6 +25,7 @@
 
 #include "game_info.h"
 #include "pages.h"
+#include "nxrt/strutil.h"
 #include "nxrt/game/launcher_ui.h"
 
 namespace nxl {
@@ -57,21 +58,9 @@ std::wstring version_text() {
     return (v[0] >= '0' && v[0] <= '9') ? L"v" + w : L"dev build";
 }
 
-std::string narrow(const std::wstring& w) {
-    if (w.empty()) return {};
-    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-    std::string s(static_cast<size_t>(std::max(n, 0)), '\0');
-    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), s.data(), n, nullptr, nullptr);
-    return s;
-}
+using nxrt::str::narrow;
+using nxrt::str::widen;
 
-std::wstring widen(const std::string& s) {
-    if (s.empty()) return {};
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
-    std::wstring w(static_cast<size_t>(std::max(n, 0)), L'\0');
-    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), w.data(), n);
-    return w;
-}
 
 // Who started a shader preparation: decides what is said when it ends.
 enum class PrepOrigin { automatic, play, extras };
