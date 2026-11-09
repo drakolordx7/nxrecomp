@@ -32,6 +32,8 @@ void display_remove();
 // Applies the live options (everything except the internal size, which only changes with a restart).
 void display_apply(const DisplaySettings& d);
 DisplayLive display_live();
+// [upscale] scene_scale (percent of the output size, 25..100), told by the base through the render table (mpr_render.cpp). 100 = off.
+void display_set_scene_scale(int percent);
 uint32_t display_hook_calls();             // calls into the hooks since install (tests, log)
 
 }  // namespace nxrt::play

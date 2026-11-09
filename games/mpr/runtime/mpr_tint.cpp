@@ -21,8 +21,7 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
-#include "nxrt/tex_edit.h"
-#include "mpr_texedit.h"
+#include "nxrt/tex_upload.h"
 #include "pak.h"
 #include "txtr.h"
 
@@ -162,6 +161,7 @@ struct G {
     std::mutex mu;
     bool installed = false;
     bool hooks_set = false;
+    int upload_sub = 0;              // the texture upload subscription (nxrt/tex_upload.h)
     // what the settings and the F1 page ask for
     Want saved, preview;
     uint64_t preview_ns = 0;
@@ -230,7 +230,7 @@ void scan_paks() {
     g().scan.store(2, std::memory_order_release);
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     NXLOG_I(kTag, "found %u of %zu suit and cannon textures in the game's paks (%.0f ms)", n, kTargetCount, ms);
-    gfx::texture_edit_changed();   // textures uploaded before the table was ready
+    gfx::texture_upload_changed();   // textures uploaded before the table was ready
 }
 
 void start_scan() {
@@ -239,8 +239,9 @@ void start_scan() {
 }
 
 // ---- texture edit hooks ------------------------------------------------------------------------------------------------------
-uint64_t hook_match(const gfx::TexEditReq& r, void*) {
+uint64_t hook_match(const gfx::TexUploadReq& r, void*) {
     G& s = g();
+    if (!r.astc) return 0;
     if (s.scan.load(std::memory_order_acquire) != 2) return 0;
     Want a;
     {
@@ -262,8 +263,8 @@ uint64_t hook_match(const gfx::TexEditReq& r, void*) {
 
 uint64_t hook_generation(void*) { return g().gen.load(std::memory_order_acquire); }
 
-void hook_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
-    if (id == 0 || id > kTargetCount) return;
+bool hook_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
+    if (id == 0 || id > kTargetCount) return false;
     G& s = g();
     const Target& tg = kTargets[id - 1];
     Want a;
@@ -279,9 +280,9 @@ void hook_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgb
         }
     }
     const bool on = tg.part == Part::Suit ? a.suit_on : a.gun_on;
-    if (!on) return;
+    if (!on) return false;
     if (!have_ref) {
-        if (level != 0) return;   // the reference comes from level 0 (always edited first)
+        if (level != 0) return false;   // the reference comes from level 0 (always edited first)
         ref = paint_ref(rgba, w, h, tg.profile);
         std::lock_guard<std::mutex> lk(s.mu);
         s.refs[id] = ref;
@@ -305,18 +306,19 @@ void hook_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgb
     }
     std::lock_guard<std::mutex> lk(s.mu);
     s.st.edits++;
+    return true;
 }
 
 void ensure_hooks() {
     G& s = g();
     if (s.hooks_set) return;
     s.hooks_set = true;
-    static gfx::TexEditHooks h;
+    gfx::TexUploadHooks h;
     h.match = &hook_match;
     h.generation = &hook_generation;
     h.edit = &hook_edit;
     h.user = nullptr;
-    texedit_set(TexEditClient::Tint, &h);   // the hook is shared with the glow colour (mpr_texedit.h)
+    s.upload_sub = gfx::texture_upload_subscribe(h);   // the runtime keeps this and the glow colour's ids apart
 }
 
 // Test aid: NXRT_TINT_TEST_FILE names a file of [tweaks] lines (suit_color = ..., gun_color = ...). When it changes, its values replace the
@@ -342,7 +344,7 @@ void poll_test_file() {
         std::string msg;
         if (!apply_tweaks_key(line.substr(0, eq), line.substr(eq + 1), &tw, &known, &msg)) NXLOG_W(kTag, "test file: %s", msg.c_str());
     }
-    const gfx::TexEditStats es = gfx::texture_edit_stats();
+    const gfx::TexUploadStats es = gfx::texture_upload_stats();
     NXLOG_I(kTag, "test file: suit %s, gun %s (edits %llu, reuses %llu, last edit %.1f ms, last rebuild %.1f ms for %u textures)",
             tw.suit_color_on ? glow_rgb_text(tw.suit_color).c_str() : "off", tw.gun_color_on ? glow_rgb_text(tw.gun_color).c_str() : "off",
             static_cast<unsigned long long>(es.edits), static_cast<unsigned long long>(es.reuses), es.last_edit_ms, es.last_rebuild_ms,
@@ -478,7 +480,7 @@ void tint_remove() {
     }
     if (s.hooks_set) {
         s.gen.fetch_add(1);
-        gfx::texture_edit_changed();   // the edited textures go back to the game's
+        gfx::texture_upload_changed();   // the edited textures go back to the game's
     }
 }
 
@@ -521,7 +523,7 @@ void tint_frame() {
         ensure_hooks();
     }
     s.gen.fetch_add(1, std::memory_order_acq_rel);
-    if (s.hooks_set) gfx::texture_edit_changed();
+    if (s.hooks_set) gfx::texture_upload_changed();
 }
 
 }  // namespace nxrt::play

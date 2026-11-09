@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Button prompts (S17): the icon resolver (prompt_resolve.cpp), the icon pack reader and the shipped pack (prompts.cpp,
-// assets/prompts/prompt_icons.pak), the texture override hook of the NVN upload path (nxrt/tex_override.h) and the block height rule
+// assets/prompts/prompt_icons.pak), the texture upload hook of the NVN upload path (nxrt/tex_upload.h) and the block height rule
 // that makes the game's small BC7 textures come out right (nvn_texture_layout.cpp).
 #include <SDL3/SDL_scancode.h>
 
@@ -19,7 +19,7 @@
 #include "nvn_texture_layout.h"
 #include "nxrt/config.h"
 #include "nxrt/input_source.h"
-#include "nxrt/tex_override.h"
+#include "nxrt/tex_upload.h"
 #include "pak.h"
 #include "play/play_types.h"
 #include "play/prompt_resolve.h"
@@ -339,17 +339,20 @@ NXTEST(a_36x36_bc7_texture_is_laid_out_with_one_gob) {
     CHECK_EQ(L.storage_size, 3072u);   // 3 GOBs wide, 2 GOB rows: what the game's TXTR buffer holds
 }
 
-// ---- the override hook in the upload path ----------------------------------------------------------------------------------------------
+// ---- the upload hook in the upload path ----------------------------------------------------------------------------------------------
 namespace {
 struct HookData {
     uint64_t want = 0;
     uint8_t value = 0;
     int calls = 0;
 };
-bool test_hook(const gfx::TexOverrideReq& r, uint8_t* rgba, void* user) {
+uint64_t test_match(const gfx::TexUploadReq& r, void* user) {
     HookData* d = static_cast<HookData*>(user);
     ++d->calls;
-    if (r.width != 36 || r.height != 36 || r.tiled_size < 3072 || prompt_hash(r.tiled, 3072) != d->want) return false;
+    return !r.astc && r.width == 36 && r.height == 36 && r.tiled_size >= 3072 && prompt_hash(r.tiled, 3072) == d->want ? 1 : 0;
+}
+bool test_edit(uint64_t, uint32_t, uint32_t, uint32_t, uint8_t* rgba, void* user) {
+    HookData* d = static_cast<HookData*>(user);
     for (size_t i = 0; i < 36u * 36u; ++i) {
         rgba[4 * i] = d->value;
         rgba[4 * i + 1] = 0;
@@ -360,7 +363,7 @@ bool test_hook(const gfx::TexOverrideReq& r, uint8_t* rgba, void* user) {
 }
 }  // namespace
 
-NXTEST(the_upload_path_asks_the_hook_and_replaces_the_pixels) {
+NXTEST(the_upload_path_asks_the_subscriber_and_replaces_the_pixels) {
     using namespace nxrt::nvn;
     using namespace nxrt::nvn::be;
     config_set("nvn", "bc7_cache", "");
@@ -388,7 +391,6 @@ NXTEST(the_upload_path_asks_the_hook_and_replaces_the_pixels) {
     tex->layers = 1;
 
     // no hook: the game's blocks come out unchanged
-    gfx::set_texture_override(nullptr, nullptr);
     be::PreparedTexture out;
     CHECK_MSG(be::prepare_texture(*tex, be::TexCaps(), out), out.error);
     CHECK(out.data == lin);
@@ -396,7 +398,12 @@ NXTEST(the_upload_path_asks_the_hook_and_replaces_the_pixels) {
     // a hook that does not know the texture leaves it alone
     HookData d;
     d.want = 1;
-    gfx::set_texture_override(&test_hook, &d);
+    gfx::TexUploadHooks hk;
+    hk.match = &test_match;
+    hk.edit = &test_edit;
+    hk.user = &d;
+    const int sub = gfx::texture_upload_subscribe(hk);
+    CHECK(sub > 0);
     CHECK_MSG(be::prepare_texture(*tex, be::TexCaps(), out), out.error);
     CHECK(d.calls >= 1);
     CHECK(out.data == lin);
@@ -408,7 +415,7 @@ NXTEST(the_upload_path_asks_the_hook_and_replaces_the_pixels) {
     CHECK_EQ(out.data.size(), lin.size());
     CHECK(out.data != lin);
     CHECK_EQ(out.format, tex->fmt->vk);
-    gfx::set_texture_override(nullptr, nullptr);
+    gfx::texture_upload_unsubscribe(sub);
 }
 
 // ---- real data: the game's own icon (skipped without the paks) ------------------------------------------------------------------------

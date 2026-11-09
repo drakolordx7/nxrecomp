@@ -28,8 +28,7 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
-#include "nxrt/tex_edit.h"
-#include "mpr_texedit.h"
+#include "nxrt/tex_upload.h"
 #include "mpr_tint.h"
 #include "play_aim.h"
 
@@ -71,9 +70,10 @@ struct State {
     bool wrong_thread_logged = false;
     std::atomic<uint64_t> gun_writes{0};                 // frames the charge effect was tinted
     // glow ramp textures (S44b), main thread only
+    int upload_sub = 0;                                  // its texture upload subscription (nxrt/tex_upload.h)
     bool recolor_hook = false;                           // the texture edit client is set (from the first time a ramp part is on)
     uint32_t ramps_applied[2] = {};                      // what the gun's and the suit's ramps were last uploaded with
-    uint64_t ramps_changed_ns = 0;                       // when texture_edit_changed was last called
+    uint64_t ramps_changed_ns = 0;                       // when texture_upload_changed was last called
     std::atomic<uint64_t> ramp_levels{0};                // texture levels recoloured (test log)
 };
 State g;
@@ -184,7 +184,7 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
 // stripes), the colour comes from a small sRGB "ramp" texture (128 x 16, ASTC 8x5) looked up at a second UV set, and the intensity is a
 // scalar of the material (no colour constant anywhere). The suit's lights are its glow map (ICAN) times the material's ICNC colour, and mode 2
 // would replace the suit's alpha-blended and additive draws. So the textures themselves are recoloured as the game uploads them, through the
-// texture edit hook (nxrt/tex_edit.h, shared with the tint in mpr_texedit.h). Recolouring replaces the hue and keeps the game's brightness
+// texture upload hook (nxrt/tex_upload.h, shared with the tint). Recolouring replaces the hue and keeps the game's brightness
 // (glow_recolor_texel), so every beam's ramp takes the setting's colour.
 constexpr GlowTexture kTextures[] = {
     // the arm cannon's lit panels: the colour ramp of its glow shaders (102960b5d01faefd, 64223e9717113568). Every beam uses it (the beams'
@@ -224,7 +224,8 @@ uint32_t want_part(GlowTexPart p) { return p == GlowTexPart::Gun ? want_gun() : 
 constexpr uint64_t kDiscoveryFlag = 1ull << 55;
 constexpr uint64_t kRowBits = 8;
 
-uint64_t ramp_match(const gfx::TexEditReq& r, void*) {
+uint64_t ramp_match(const gfx::TexUploadReq& r, void*) {
+    if (!r.astc) return 0;
     static const std::string log_env = [] {
         const char* e = std::getenv("NXRT_GLOW_LOG_TEXTURES");
         return std::string(e && *e != '0' ? e : "");
@@ -259,12 +260,12 @@ uint64_t ramp_match(const gfx::TexEditReq& r, void*) {
 
 uint64_t ramp_generation(void*) { return g_ramp_gen.load(std::memory_order_acquire); }
 
-void ramp_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
+bool ramp_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void*) {
     const int row = glow_texture_row(id);   // -1: a discovery id, changes nothing
-    if (row < 0) return;
+    if (row < 0) return false;
     const GlowTexture& tx = kTextures[row];
     const uint32_t want = want_part(tx.part);
-    if (!(want & kOn)) return;
+    if (!(want & kOn)) return false;
     const GlowRgb c = unpack(want);
     const size_t n = static_cast<size_t>(w) * h;
     // Test aid: NXRT_GLOW_TEST_FILL=1 paints every texel in the colour at full strength (shows whether a texture reaches the screen at all).
@@ -284,6 +285,7 @@ void ramp_edit(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgb
     }
     g.ramp_levels.fetch_add(1, std::memory_order_relaxed);
     if (level == 0) NXLOG_I(kTag, "%s: recoloured (level 0: %zu of %zu texels lit, peak %u)", tx.what, lit, n, peak);
+    return true;
 }
 
 // Main thread, every frame: when the gun's or the suit's wanted colour changed, the textures are made again (at most every 100 ms while the F1
@@ -300,13 +302,13 @@ void ramps_frame() {
     if (!g.recolor_hook) {
         if (!((gun | suit) & kOn)) return;
         g.recolor_hook = true;
-        gfx::TexEditHooks h;
+        gfx::TexUploadHooks h;
         h.match = &ramp_match;
         h.generation = &ramp_generation;
         h.edit = &ramp_edit;
-        texedit_set(TexEditClient::Glow, &h);
+        g.upload_sub = gfx::texture_upload_subscribe(h);
     }
-    gfx::texture_edit_changed();
+    gfx::texture_upload_changed();
 }
 
 }  // namespace
@@ -442,9 +444,10 @@ void glow_install(uint64_t game_base) {
 
 void glow_remove() {
     if (g.recolor_hook) {
-        texedit_set(TexEditClient::Glow, nullptr);
+        gfx::texture_upload_unsubscribe(g.upload_sub);
+        g.upload_sub = 0;
         g_ramp_gen.fetch_add(1, std::memory_order_acq_rel);
-        gfx::texture_edit_changed();   // the recoloured textures go back to the game's
+        gfx::texture_upload_changed();   // the recoloured textures go back to the game's
     }
     g.recolor_hook = false;
     g.ramps_applied[0] = g.ramps_applied[1] = 0;
