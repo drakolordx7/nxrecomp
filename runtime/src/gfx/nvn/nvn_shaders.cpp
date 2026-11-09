@@ -10,6 +10,9 @@
 // neither the names nor the numbers carry is the c[0] offset a storage buffer's address was loaded from; that comes
 // from the harness's results.tsv (apply_harness).
 #include "nvn_shaders.h"
+#include "nvn_settings.h"
+#include "nvn_debug.h"
+#include "spirv_module.h"
 
 #include <windows.h>
 
@@ -144,24 +147,7 @@ void support_buffer_set_viewport(SupportBuffer& sb, float width, float height, b
 
 namespace {
 
-// The handful of SPIR-V opcodes, decorations and storage classes reflection needs (SPIR-V 1.x unified spec).
-enum : uint32_t {
-    OpName = 5, OpEntryPoint = 15, OpExecutionMode = 16, OpTypeBool = 20, OpTypeInt = 21, OpTypeFloat = 22,
-    OpTypeVector = 23, OpTypeMatrix = 24, OpTypeImage = 25, OpTypeSampler = 26, OpTypeSampledImage = 27,
-    OpTypeArray = 28, OpTypeRuntimeArray = 29, OpTypeStruct = 30, OpTypePointer = 32, OpConstant = 43,
-    OpVariable = 59, OpDecorate = 71, OpMemberDecorate = 72,
-};
-enum : uint32_t {
-    DecBlock = 2, DecBufferBlock = 3, DecBuiltIn = 11, DecLocation = 30, DecComponent = 31, DecBinding = 33,
-    DecDescriptorSet = 34,
-};
-enum : uint32_t {
-    ScUniformConstant = 0, ScInput = 1, ScUniform = 2, ScOutput = 3, ScStorageBuffer = 12,
-};
-constexpr uint32_t kExecutionModelVertex = 0, kExecutionModelGeometry = 3, kExecutionModelFragment = 4,
-                   kExecutionModelCompute = 5;
-constexpr uint32_t kExecutionModeLocalSize = 17;
-constexpr uint32_t kDimBuffer = 5;
+using namespace nxrt::spirv;   // the shared walker, opcodes and enumerants (spirv_module.h)
 
 struct Decorations {
     int set = -1, binding = -1, location = -1, component = 0, builtin = -1;
@@ -173,28 +159,6 @@ struct Type {
     uint32_t op = 0;
     std::vector<uint32_t> w;  // operands after the result id
 };
-
-std::string spirv_string(const uint32_t* w, size_t n, size_t* used) {
-    std::string s;
-    size_t i = 0;
-    for (; i < n; i++) {
-        bool end = false;
-        for (int b = 0; b < 4; b++) {
-            char ch = char((w[i] >> (8 * b)) & 0xff);
-            if (!ch) {
-                end = true;
-                break;
-            }
-            s.push_back(ch);
-        }
-        if (end) {
-            i++;
-            break;
-        }
-    }
-    if (used) *used = i;
-    return s;
-}
 
 bool parse_uint(std::string_view s, int base, int& out) {
     if (s.empty()) return false;
@@ -324,7 +288,9 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
         return false;
     };
     out = ShaderReflection{};
-    if (count < 5 || words[0] != 0x07230203) return fail("not a SPIR-V module");
+    if (!is_module(words, count)) return fail("not a SPIR-V module");
+    std::vector<Inst> insts;
+    if (!split(words, count, insts)) return fail("truncated instruction");
 
     std::unordered_map<uint32_t, std::string> names;
     std::unordered_map<uint32_t, Decorations> dec;
@@ -338,11 +304,10 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
     uint32_t entry_id = 0;
     bool have_entry = false;
 
-    for (size_t i = 5; i < count;) {
-        uint32_t wc = words[i] >> 16, op = words[i] & 0xffff;
-        if (wc == 0 || i + wc > count) return fail("truncated instruction");
-        const uint32_t* w = words + i + 1;  // operands
-        size_t n = wc - 1;
+    for (const Inst& ins : insts) {
+        const uint32_t op = ins.op;
+        const uint32_t* w = words + ins.at + 1;  // operands
+        size_t n = ins.len - 1;
         // Operands of code instructions are taken as ids. Declarations, decorations, names, types, constants and
         // literal-only instructions are not: they never reference a variable through an id.
         if (!(op <= 7 || op == 10 || op == 11 || op == 14 || op == 15 || op == 16 || op == 17 || (op >= 19 && op <= 40) ||
@@ -354,20 +319,20 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
                 have_entry = true;
                 uint32_t model = w[0];
                 entry_id = w[1];
-                out.entry = spirv_string(w + 2, n - 2, nullptr);
-                out.stage = model == kExecutionModelVertex ? ShaderStage::Vertex
-                            : model == kExecutionModelFragment ? ShaderStage::Fragment
-                            : model == kExecutionModelCompute ? ShaderStage::Compute
-                            : model == kExecutionModelGeometry ? ShaderStage::Geometry
+                out.entry = literal_string(w + 2, n - 2, nullptr);
+                out.stage = model == ExecModelVertex ? ShaderStage::Vertex
+                            : model == ExecModelFragment ? ShaderStage::Fragment
+                            : model == ExecModelCompute ? ShaderStage::Compute
+                            : model == ExecModelGeometry ? ShaderStage::Geometry
                             : ShaderStage::Unknown;
             }
             break;
         case OpExecutionMode:
-            if (n >= 5 && w[0] == entry_id && w[1] == kExecutionModeLocalSize)
+            if (n >= 5 && w[0] == entry_id && w[1] == ExecLocalSize)
                 out.local_size[0] = w[2], out.local_size[1] = w[3], out.local_size[2] = w[4];
             break;
         case OpName:
-            if (n >= 2) names[w[0]] = spirv_string(w + 1, n - 1, nullptr);
+            if (n >= 2) names[w[0]] = literal_string(w + 1, n - 1, nullptr);
             break;
         case OpDecorate:
             if (n >= 2) {
@@ -399,7 +364,6 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
             if (n >= 3) vars.push_back({w[1], w[0], w[2]});
             break;
         }
-        i += wc;
     }
     if (!have_entry) return fail("no OpEntryPoint");
 
@@ -494,12 +458,12 @@ bool reflect_spirv(const uint32_t* words, size_t count, ShaderReflection& out, s
             b.type = storage ? DescriptorType::StorageBuffer : DescriptorType::UniformBuffer;
         } else if (t->op == OpTypeSampledImage) {
             b.image = image_shape(t->w.empty() ? nullptr : type(t->w[0]));
-            b.type = b.image.dim == kDimBuffer ? DescriptorType::UniformTexelBuffer
+            b.type = b.image.dim == DimBuffer ? DescriptorType::UniformTexelBuffer
                                                : DescriptorType::CombinedImageSampler;
         } else if (t->op == OpTypeImage) {
             b.image = image_shape(t);
             bool storage = b.image.sampled == 2;
-            if (b.image.dim == kDimBuffer)
+            if (b.image.dim == DimBuffer)
                 b.type = storage ? DescriptorType::StorageTexelBuffer : DescriptorType::UniformTexelBuffer;
             else
                 b.type = storage ? DescriptorType::StorageImage : DescriptorType::SampledImage;
@@ -838,7 +802,7 @@ namespace {
 // the shader corpus (code_<hash>.bin, ctrl_<hash>.bin, manifest.tsv), so `spirv_harness --batch <folder>` can translate it.
 // The stage is the word at control +0x714 (0 vertex, 1 fragment, 2 geometry, 5 compute).
 void dump_missing_block(const std::string& hash, const uint8_t* code, const uint8_t* control, uint32_t code_size) {
-    static const std::string dir = nxrt::config_get_str("nvn", "dump_missing", "");
+    const std::string& dir = nvn_debug().dump_missing;
     if (dir.empty()) return;
     static std::mutex mu;
     static std::unordered_set<std::string> done;
@@ -1015,7 +979,7 @@ ShaderCache& shader_cache() {
     static ShaderCacheGauges gauges(cache);
     static std::once_flag once;
     std::call_once(once, [] {
-        std::string configured = nxrt::config_get_str("nvn", "shader_cache", "");
+        const std::string configured = nvn_settings().shader_cache;
         if (!configured.empty()) {
             cache.open(configured);  // logs its own failure
             return;

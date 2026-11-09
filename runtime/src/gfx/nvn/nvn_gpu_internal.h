@@ -17,7 +17,6 @@
 #include <volk.h>
 
 #include "nxrt/gfx.h"
-#include "nvn_present_pass.h"
 
 namespace nxrt::extras { class OutputPass; }
 #include "nvn_core.h"
@@ -214,7 +213,6 @@ int window_origin_mode();
 int depth_mode();
 gfx::Renderer* renderer();
 FrameLimiter* limiter();
-PresentPass* present_pass();
 extras::OutputPass* output_pass();
 bool keep_aspect();
 

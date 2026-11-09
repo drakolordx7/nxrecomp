@@ -130,8 +130,7 @@ struct PipeUpgrade {
 };
 // null: not possible for this key, build it whole. *up (when given) gets the upgrade the linked pipeline will be replaced by (null: none queued).
 VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout, std::shared_ptr<PipeUpgrade>* up = nullptr);
-bool gpl_ab_whole();                                                 // measurement only ([nvn] gpl_ab): true in the windows that run the optimised pipelines
-void gpl_take_upgrade(VkPipeline& current, VkPipeline& alt, std::shared_ptr<PipeUpgrade>& up);   // render thread: swaps in the finished optimised pipeline (the old one is destroyed once the GPU is done with it)
+void gpl_take_upgrade(VkPipeline& current, std::shared_ptr<PipeUpgrade>& up);   // render thread: swaps in the finished optimised pipeline (the old one is destroyed once the GPU is done with it)
 void gpl_program(const ShaderInfo* const stages[6], bool covered);   // a program got its shaders: queue its shader parts (covered: the key file has pipelines for it, skip)
 void gpl_program_bound(const ShaderInfo* const stages[6]);           // a command buffer was recorded with the program bound: its parts go first
 void gpl_progress_log();                                             // one log line when something changed since the last call

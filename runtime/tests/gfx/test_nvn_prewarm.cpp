@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "nvn_settings.h"
 #include "nvn_app.h"
 #include "nvn_pipeline.h"
 #include "nxrt/config.h"
@@ -53,13 +54,19 @@ struct PrewarmConfig {
           cache(nxrt::config_get_str("nvn", "pipeline_cache", "pipeline_cache.bin")) {
         const std::string ks = k.string(), cs = c.string();
         nxrt::config_set("nvn", "pipeline_keys", ks.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "pipeline_cache", cs.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "prewarm", "1");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     }
     ~PrewarmConfig() {
         nxrt::config_set("nvn", "pipeline_keys", keys.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "pipeline_cache", cache.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "prewarm", "1");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     }
 };
 
@@ -234,6 +241,7 @@ NXTEST(disabled_by_config) {
     const fs::path keys = td.path / "pipeline_keys.bin", cache = td.path / "pipeline_cache.bin";
     PrewarmConfig cfg(keys, cache);            // ends with prewarm = 1
     nxrt::config_set("nvn", "prewarm", "0");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     App::Opts o;
     o.width = 64;
     o.height = 48;

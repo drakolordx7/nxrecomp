@@ -46,6 +46,9 @@
 #endif
 
 #include "nxrt/config.h"
+#include "nvn_settings.h"
+#include "nvn_debug.h"
+#include "ab_windows.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
@@ -118,15 +121,20 @@ thread_local const GraphicsKey* t_link_key = nullptr;      // the draw being lin
 
 void predict_int_attributes(GraphicsKey& k);
 
-// Measurement only ([nvn] gpl_ab_pause = N presents): the background threads work in odd windows of N presents and rest in even ones, so the frame time of the two
-// kinds of window shows what the compile threads cost the game. 0 = always work.
-bool ab_pause_on() { return config_get_int("nvn", "gpl_ab_pause", 0) > 0; }
+// Measurement only ([nvn] gpl_ab_pause = N presents, nvn_debug.h): the background threads work in odd windows of N presents and rest in even ones, so the
+// frame time of the two kinds of window shows what the compile threads cost the game. 0 = always work.
+gfx::AbWindows& ab_pause() {
+    static gfx::AbWindows w(static_cast<uint64_t>(std::max<int64_t>(0, nvn_debug().gpl_ab_pause)), 0);
+    return w;
+}
+bool ab_pause_on() { return ab_pause().active(); }
 bool workers_paused() {
-    static const int64_t frames = config_get_int("nvn", "gpl_ab_pause", 0);
-    if (frames <= 0) return false;
-    static std::atomic<int64_t> last{-1};
-    const int64_t w = static_cast<int64_t>(counters().presents.load(std::memory_order_relaxed)) / frames;
-    if (last.exchange(w) != w) NXLOG_I(kTag, "ab: present %lld starts a window with the compile threads %s", static_cast<long long>(w * frames), (w & 1) ? "working" : "resting");
+    gfx::AbWindows& ab = ab_pause();
+    if (!ab.active()) return false;
+    const uint64_t presents = counters().presents.load(std::memory_order_relaxed);
+    uint64_t w = 0;
+    if (ab.entered(presents, &w))
+        NXLOG_I(kTag, "ab: present %lld starts a window with the compile threads %s", static_cast<long long>(w * ab.period()), (w & 1) ? "working" : "resting");
     return (w & 1) == 0;
 }
 
@@ -554,25 +562,23 @@ void init_once() {
     if (g_inited) return;
     g_inited = true;
     g_stop = false;
-    g_enabled = config_get_bool("nvn", "gpl", true) && device().features().graphics_pipeline_library;
-    g_lto = config_get_bool("nvn", "gpl_lto", false);
-    g_cold = config_get_bool("nvn", "gpl_cold", true);
-    {
-        const std::string m = config_get_str("nvn", "gpl_upgrade", "whole");
-        g_up_mode = (m == "off" || m == "false" || m == "0") ? UpMode::Off : (m == "lto") ? UpMode::Lto : UpMode::Whole;
-        g_retain = g_lto || g_up_mode == UpMode::Lto;
-    }
+    const NvnSettings& cfg = nvn_settings();
+    g_enabled = cfg.gpl && device().features().graphics_pipeline_library;
+    g_lto = cfg.gpl_lto;
+    g_cold = cfg.gpl_cold;
+    g_up_mode = cfg.gpl_upgrade == NvnUpgrade::Off ? UpMode::Off : cfg.gpl_upgrade == NvnUpgrade::Lto ? UpMode::Lto : UpMode::Whole;
+    g_retain = g_lto || g_up_mode == UpMode::Lto;
+    nxrt::gfx::set_compile_note(cfg.compile_note);   // the overlay shows the backlog these threads publish
     g_on.store(g_enabled, std::memory_order_release);
     if (!g_enabled) {
         NXLOG_I(kTag, "pipeline libraries off (%s)", device().features().graphics_pipeline_library ? "[nvn] gpl is false" : "the GPU or driver does not support them");
         return;
     }
     g_rasters.assign(1, RasterKey{});
-    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
-    const int64_t want = config_get_int("nvn", "gpl_threads", std::clamp<int64_t>(hw / 6, 1, 4));
+    const int64_t want = cfg.gpl_threads;
     for (int64_t i = 0; i < want; ++i) g_workers.emplace_back(worker_main);
     if (g_up_mode != UpMode::Off) {
-        const int64_t nup = config_get_int("nvn", "gpl_upgrade_threads", 1);
+        const int64_t nup = cfg.gpl_upgrade_threads;
         for (int64_t i = 0; i < nup; ++i) g_up_workers.emplace_back(upgrade_main);
     }
     NXLOG_I(kTag, "pipeline libraries on: %zu background threads%s; linked pipelines are replaced by %s", g_workers.size(), g_lto ? ", link-time optimisation requested" : "",
@@ -600,14 +606,14 @@ void learn_raster(const RasterKey& r) {
 
 void set_compile_thread_priority(bool background) {
 #if defined(_WIN32)
-    static const std::string mode = config_get_str("nvn", "compile_priority", "below");
+    const std::string& mode = nvn_settings().compile_priority;
     int p = THREAD_PRIORITY_BELOW_NORMAL;
     if (mode == "normal") p = THREAD_PRIORITY_NORMAL;
     else if (mode == "idle") p = THREAD_PRIORITY_IDLE;
     SetThreadPriority(GetCurrentThread(), p);
     // Efficiency mode (EcoQoS): Windows runs the thread on the efficiency cores of a hybrid CPU and at a lower clock elsewhere, so a burst of
     // shader compiles does not take the fast cores from the game's own threads. Not for the shader preparation, which wants all the speed.
-    static const bool eco = config_get_bool("nvn", "compile_eco", true);
+    const bool eco = nvn_settings().compile_eco;
     if (background && eco) {
         THREAD_POWER_THROTTLING_STATE st = {};
         st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
@@ -747,27 +753,14 @@ VkPipeline gpl_link(const GraphicsKey& key, const ProgLayout& layout, std::share
     return pipe;
 }
 
-bool gpl_ab_whole() {
-    static const int64_t frames = config_get_int("nvn", "gpl_ab", 0);
-    if (frames <= 0) return false;
-    static std::atomic<int64_t> last{-1};
-    const int64_t w = static_cast<int64_t>(counters().presents.load(std::memory_order_relaxed)) / frames;
-    if (last.exchange(w) != w) NXLOG_I(kTag, "ab: present %lld starts a window of %s pipelines", static_cast<long long>(w * frames), (w & 1) ? "optimised" : "linked");
-    return (w & 1) != 0;
-}
-
-void gpl_take_upgrade(VkPipeline& current, VkPipeline& alt, std::shared_ptr<PipeUpgrade>& up) {
+void gpl_take_upgrade(VkPipeline& current, std::shared_ptr<PipeUpgrade>& up) {
     if (up->state.load(std::memory_order_acquire) != 1) return;
     VkPipeline fresh = up->pipe;
     if (fresh) {
         up->pipe = VK_NULL_HANDLE;
-        if (config_get_int("nvn", "gpl_ab", 0) > 0) {
-            alt = fresh;                           // measurement: keep both and let gpl_ab_whole pick
-        } else {
-            const VkPipeline old = current;
-            current = fresh;
-            defer_destroy([old] { vkDestroyPipeline(vkdev(), old, nullptr); });      // the frame being recorded may have bound it
-        }
+        const VkPipeline old = current;
+        current = fresh;
+        defer_destroy([old] { vkDestroyPipeline(vkdev(), old, nullptr); });      // the frame being recorded may have bound it
         std::lock_guard<std::mutex> lk(g_mu);
         ++g_stats.upgrades_taken;
     }
@@ -856,8 +849,8 @@ std::string prepare_key(uint64_t programs) {
     char uuid[40];
     for (int i = 0; i < 16; ++i) std::snprintf(uuid + 2 * i, 3, "%02x", p.pipelineCacheUUID[i]);
     char b[512];
-    std::snprintf(b, sizeof b, "scheme=%d programs=%llu gpu=%s driver=%u api=%u cache=%s salt=%s", kPrepareScheme, static_cast<unsigned long long>(programs),
-                  p.deviceName, p.driverVersion, p.apiVersion, uuid, config_get_str("nvn", "spirv_salt", "").c_str());
+    std::snprintf(b, sizeof b, "scheme=%d programs=%llu gpu=%s driver=%u api=%u cache=%s salt=", kPrepareScheme, static_cast<unsigned long long>(programs),
+                  p.deviceName, p.driverVersion, p.apiVersion, uuid);   // "salt=" stays (empty) so the keys of finished preparations still match
     return b;
 }
 
@@ -911,7 +904,7 @@ bool gpl_prepare(const PrepareOptions& o, PrepareResult* res) {
         g_stop = false;
     }
     g_prep_fast.store(0);
-    g_prepare_cache.store(config_get_bool("nvn", "prepare_cache", true));
+    g_prepare_cache.store(nvn_settings().prepare_cache);
     g_discard.store(true);
     const auto t0 = Clock::now();
     constexpr size_t kBatch = 192;                       // programs per batch; the shader modules and SPIR-V of a batch are released after it

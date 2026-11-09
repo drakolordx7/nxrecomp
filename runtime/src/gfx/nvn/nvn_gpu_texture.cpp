@@ -22,6 +22,8 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nvn_settings.h"
+#include "nvn_debug.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/gauge.h"
@@ -686,7 +688,7 @@ std::vector<uint64_t> g_tex_ww_pages;
 mem::ww::Region* tex_ww() {
     if (!g_tex_ww_tried) {
         g_tex_ww_tried = true;
-        if (nxrt::config_get_bool("nvn", "tex_write_watch", true) && mem::heap_exists())
+        if (nvn_settings().tex_write_watch && mem::heap_exists())
             g_tex_ww = mem::ww::region_create(mem::kHeapBase, mem::heap_reserved());
     }
     return g_tex_ww;
@@ -770,7 +772,7 @@ void tex_ensure_current(Texture* t, Frame& f) {
     }
     be::tx_mark("tx.use", t);
     {
-        static const bool log_uploads = nxrt::config_get_bool("nvn", "tex_prep_log", false);      // [nvn] tex_prep_log = 1: one line per upload with where the data came from
+        const bool log_uploads = nvn_debug().tex_prep_log;      // [nvn] tex_prep_log = 1: one line per upload with where the data came from
         if (log_uploads)
             NXLOG_I(kTag, "upload t%u %s %ux%ux%u L%u storage %llu KB%s sched 0x%x gen %u: %s %.2f ms", t->id, t->fmt ? t->fmt->name : "?", t->b.width, t->b.height, t->b.depth, t->levels,
                     static_cast<unsigned long long>(t->storage_size >> 10), t->vpool ? " sparse" : "", static_cast<unsigned>(t->prep_sched.load()), static_cast<unsigned>(t->prep_gen.load()),

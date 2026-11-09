@@ -1,0 +1,61 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define FFX_GPU 1
+#define FFX_GLSL 1
+#define FFX_HALF 0
+#include "ffx_core.h"
+#define FFX_FSR_EASU_FLOAT 1
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0) uniform sampler2D u_src;                       // linear filter, clamp to edge
+layout(set = 0, binding = 1, rgba16f) writeonly uniform image2D u_dst;
+layout(push_constant) uniform PushConstants {
+    uvec4 con0;   // fsr1_easu_consts() output, in this order
+    uvec4 con1;
+    uvec4 con2;
+    uvec4 con3;
+    vec4 opt;     // x: 1 = scene-linear HDR input (compress/expand), 0 = [0,1] input; y, z: output width, height; w: pre-scale k of the compression (0 = 1)
+} pc;
+
+bool linear_in() { return pc.opt.x > 0.5; }
+
+// Perceptual compression for scene-linear input: c = k*x / (1 + k*x) with k = opt.w (0 means 1), so FSR sees values in [0, 1).
+float prescale() { return pc.opt.w > 0.0 ? pc.opt.w : 1.0; }
+
+vec4 compress4(vec4 x) {
+    x = max(x, vec4(0.0)) * prescale();
+    return x / (vec4(1.0) + x);
+}
+
+// Undo the compression after EASU: x = c / (1 - c) / k, with c clamped to [0, 0.999].
+vec3 expand3(vec3 c) {
+    c = clamp(c, vec3(0.0), vec3(0.999));
+    return c / (vec3(1.0) - c) / prescale();
+}
+
+// The fetch callbacks of the SDK's ffx_fsr1_callbacks_glsl.h, on this pass's bindings.
+FfxFloat32x4 FsrEasuRF(FfxFloat32x2 p) { vec4 r = textureGather(u_src, p, 0); return linear_in() ? compress4(r) : r; }
+FfxFloat32x4 FsrEasuGF(FfxFloat32x2 p) { vec4 r = textureGather(u_src, p, 1); return linear_in() ? compress4(r) : r; }
+FfxFloat32x4 FsrEasuBF(FfxFloat32x2 p) { vec4 r = textureGather(u_src, p, 2); return linear_in() ? compress4(r) : r; }
+
+#include "fsr1/ffx_fsr1.h"
+
+void CurrFilter(uvec2 pos) {
+    if (any(greaterThanEqual(pos, uvec2(pc.opt.yz)))) return;   // outside the output
+    vec3 c;
+    ffxFsrEasuFloat(c, pos, pc.con0, pc.con1, pc.con2, pc.con3);
+    if (linear_in()) c = expand3(c);
+    imageStore(u_dst, ivec2(pos), vec4(c, 1.0));
+}
+
+void main() {
+    // Remap the 64 invocations to a PS-like 8x8 swizzle, then four pixels per invocation: a 16x16 tile.
+    uvec2 gxy = ffxRemapForQuad(gl_LocalInvocationID.x) + uvec2(gl_WorkGroupID.x << 4u, gl_WorkGroupID.y << 4u);
+    CurrFilter(gxy);
+    gxy.x += 8u;
+    CurrFilter(gxy);
+    gxy.y += 8u;
+    CurrFilter(gxy);
+    gxy.x -= 8u;
+    CurrFilter(gxy);
+}
