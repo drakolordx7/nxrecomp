@@ -18,14 +18,15 @@ add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_tt_pro
 target_link_libraries(nxrt_game_mpr_core PUBLIC nxrt_game_mpr_data nxrt)
 
 if(TARGET nxrt_gfx)
-    # The setup tool's Retro pak and TXTR readers (base tools/setup/src, MIT-derived format knowledge): the button prompts read the game's icon
-    # textures from the player's own paks to recognise them (mpr_prompts.cpp).
+    # The Retro pak and TXTR readers of the game's setup hook (games/mpr/setup, MIT-derived format knowledge) on the base setup tool's storage and
+    # utility sources: the button prompts read the game's icon textures from the player's own paks to recognise them (mpr_prompts.cpp).
+    set(NXRT_MPR_SETUP "${_mpr}/../setup")
     set(NXRT_SETUP_SRC "${NXRT_TOOLS_DIR}/setup/src")
-    if(NOT EXISTS "${NXRT_SETUP_SRC}/pak.cpp")
-        message(FATAL_ERROR "tools/setup/src/pak.cpp not found in ${NXRT_TOOLS_DIR}")
+    if(NOT EXISTS "${NXRT_MPR_SETUP}/pak.cpp")
+        message(FATAL_ERROR "setup/pak.cpp not found in the game folder (${NXRT_MPR_SETUP})")
     endif()
-    add_library(nxrt_mprpak STATIC "${NXRT_SETUP_SRC}/pak.cpp" "${NXRT_SETUP_SRC}/txtr.cpp" "${NXRT_SETUP_SRC}/storage.cpp" "${NXRT_SETUP_SRC}/util.cpp")
-    target_include_directories(nxrt_mprpak PUBLIC "${NXRT_SETUP_SRC}")
+    add_library(nxrt_mprpak STATIC "${NXRT_MPR_SETUP}/pak.cpp" "${NXRT_MPR_SETUP}/txtr.cpp" "${NXRT_SETUP_SRC}/storage.cpp" "${NXRT_SETUP_SRC}/util.cpp")
+    target_include_directories(nxrt_mprpak PUBLIC "${NXRT_MPR_SETUP}" "${NXRT_SETUP_SRC}")
     target_compile_features(nxrt_mprpak PUBLIC cxx_std_20)
 
     add_library(nxrt_game_mpr STATIC

@@ -50,21 +50,21 @@ const PromptIcon kIcons[kIconCount] = {
 // Reads the icon textures from the player's own paks. Every icon has up to two copies: the one of the in-game interface (GuiSysMP1.pak, blue)
 // and the front end's own (PreloadFrontEndMPT.pak, red: the title screen and the menus draw those).
 int scan(const std::string& romfs, void (*found_fn)(void* user, Icon icon, const uint8_t* tiled, size_t size), void* user) {
-    std::map<std::string, std::unique_ptr<mprs::Pak>> paks;
+    std::map<std::string, std::unique_ptr<nxs::Pak>> paks;
     int found = 0;
     const auto add = [&](Icon ic, const std::string& rel, const std::string& uuid) {
         try {
             auto it = paks.find(rel);
             if (it == paks.end()) {
                 const std::filesystem::path p = std::filesystem::path(romfs) / rel;
-                it = paks.emplace(rel, mprs::Pak::open(mprs::open_file_storage(p.string()))).first;
+                it = paks.emplace(rel, nxs::Pak::open(nxs::open_file_storage(p.string()))).first;
             }
-            const mprs::Pak& pak = *it->second;
-            for (const mprs::PakEntry& e : pak.assets()) {
+            const nxs::Pak& pak = *it->second;
+            for (const nxs::PakEntry& e : pak.assets()) {
                 if (std::strcmp(e.type, "TXTR") != 0 || e.id.str() != uuid) continue;
-                const mprs::TxtrInfo info = mprs::txtr_read_info(pak, e);
+                const nxs::TxtrInfo info = nxs::txtr_read_info(pak, e);
                 if (info.width != kIconSize || info.height != kIconSize || info.mips != 1) break;
-                const std::vector<mprs::u8> buf = mprs::txtr_read_tiled(pak, e, info);
+                const std::vector<nxs::u8> buf = nxs::txtr_read_tiled(pak, e, info);
                 found_fn(user, ic, buf.data(), buf.size());
                 ++found;
                 break;
