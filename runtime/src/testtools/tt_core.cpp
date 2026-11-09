@@ -10,7 +10,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <regex>
 #include <thread>
 
 #include "nxrt/config.h"
@@ -57,6 +59,8 @@ struct State {
     double wall_timeout_s = 0;
     bool freeze_exit = false, require_shots = false, replay_exit = false;
     std::string shot_dir;
+    int shot_timeout_ms = 30000;
+    std::string script_text;                 // a script that has no file (set_script_text)
 
     std::atomic<uint64_t> frames{0};
     bool started = false;
@@ -88,7 +92,10 @@ struct State {
     std::string verdict;
 
     ScreenshotFn shot_fn = nullptr;
+    ScreenshotPollFn shot_poll_fn = nullptr;
     void* shot_user = nullptr;
+    std::string shot_name, shot_path;        // the @shot that waits for its file
+    uint64_t shot_start_ms = 0;
     ExitFn exit_fn = nullptr;
     MouseSinkFn mouse_sink = nullptr;
     KeySinkFn key_sink = nullptr;
@@ -100,7 +107,7 @@ struct State {
     std::atomic<bool> svc_thread_known{false};
     std::atomic<::Ctx*> svc_ctx{nullptr};
     std::atomic<uint64_t> svc_count{0};
-    std::thread wall_thread;
+    std::vector<std::thread> timers;         // the wall deadlines and the timed shots
     std::atomic<bool> stop_wall{false};
 };
 
@@ -238,25 +245,23 @@ uint64_t hash_region_memory(State& s, uint64_t h) {
 uint64_t hash_state(State& s, uint64_t frame, const GameState& g, bool valid) {
     uint64_t h = 0xcbf29ce484222325ull;
     h = mix64(h, frame);
-    h = mix64(h, (valid ? 1u : 0u) | (g.have_world ? 2u : 0u) | (g.have_player ? 4u : 0u) | (g.have_igt ? 8u : 0u) | (g.have_hp ? 16u : 0u));
-    h = mix_bytes(h, g.world, 16);
-    h = mix_bytes(h, g.area, 16);
-    for (int i = 0; i < 3; i++) { h = mix64(h, fbits(g.pos[i])); h = mix64(h, fbits(g.vel[i])); }
-    h = mix64(h, fbits(g.yaw));
-    h = mix64(h, fbits(g.hp));
-    h = mix64(h, dbits(g.igt));
-    // The game's own fields: one word each (an integer as unsigned 32 bits, a float as its bits); a High field shares the word of the Word field before it.
+    h = mix64(h, (valid ? 1u : 0u) | (static_cast<uint64_t>(g.hash_flags) << 1));
+    // The game's fields: one word each (an integer as unsigned 32 bits, a float as its bits); a High field shares the word of the Word field before it.
+    using H = StateField::Hash;
     bool pending = false;
     uint64_t word = 0;
+    auto flush = [&] { if (pending) h = mix64(h, word); pending = false; };
     for (const StateField& f : g.fields) {
-        if (f.hash == StateField::Hash::None) continue;
-        const uint64_t v = f.is_float ? fbits(static_cast<float>(f.value)) : static_cast<uint32_t>(static_cast<int64_t>(f.value));
-        if (f.hash == StateField::Hash::High && pending) { word |= v << 32; continue; }
-        if (pending) h = mix64(h, word);
+        if (f.hash == H::None) continue;
+        if (f.hash == H::Wide) { flush(); h = mix64(h, dbits(f.value)); continue; }
+        if (f.hash == H::Bytes) { flush(); h = mix_bytes(h, f.id, 16); continue; }
+        const uint64_t v = f.kind == StateField::Kind::Float ? fbits(static_cast<float>(f.value)) : static_cast<uint32_t>(static_cast<int64_t>(f.value));
+        if (f.hash == H::High && pending) { word |= v << 32; continue; }
+        flush();
         word = v;
         pending = true;
     }
-    if (pending) h = mix64(h, word);
+    flush();
     h = hash_region_memory(s, h);
     return h;
 }
@@ -277,15 +282,15 @@ void write_trace_line(State& s, uint64_t k, uint64_t h, const GameState& g, bool
     };
     add("{\"f\":%llu,\"h\":\"%016llx\"", static_cast<unsigned long long>(k), static_cast<unsigned long long>(h));
     if (valid) {
-        if (g.have_world) add(",\"world\":\"%s\",\"area\":\"%s\"", tt_guid_hex(g.world).c_str(), tt_guid_hex(g.area).c_str());
-        if (g.have_player) add(",\"pos\":[%.9g,%.9g,%.9g],\"vel\":[%.9g,%.9g,%.9g],\"yaw\":%.9g", g.pos[0], g.pos[1], g.pos[2], g.vel[0], g.vel[1], g.vel[2], g.yaw);
         for (const StateField& f : g.fields) {
-            if (!f.shown || !f.key[0]) continue;
-            if (f.is_float) add(",\"%s\":%.9g", f.key, f.value);
-            else add(",\"%s\":%lld", f.key, static_cast<long long>(f.value));
+            if (!f.shown || f.quiet || !f.key[0]) continue;
+            switch (f.kind) {
+                case StateField::Kind::Float: add(",\"%s\":%.9g", f.key, f.value); break;
+                case StateField::Kind::Int: add(",\"%s\":%lld", f.key, static_cast<long long>(f.value)); break;
+                case StateField::Kind::Id: add(",\"%s\":\"%s\"", f.key, tt_guid_hex(f.id).c_str()); break;
+                case StateField::Kind::Vec3: add(",\"%s\":[%.9g,%.9g,%.9g]", f.key, f.vec[0], f.vec[1], f.vec[2]); break;
+            }
         }
-        if (g.have_hp) add(",\"hp\":%.9g", g.hp);
-        if (g.have_igt) add(",\"igt\":%.9g", g.igt);
     }
     add(",\"t\":%llu,\"ms\":%.3f", static_cast<unsigned long long>(s.vticks.load()), ms);
     if (mem > 0) add(",\"mem\":%.1f", mem);
@@ -357,14 +362,42 @@ void tick_listener() {
     if (s.src == Source::Tick && s.on && !s.finished) frame_boundary(nullptr);
 }
 
-void wall_loop(State* s, double secs) {
-    log_set_thread_name("tt-wall");
+// Sleeps `secs` in slices; false when the tooling was shut down meanwhile.
+bool timer_sleep(State* s, double secs) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(static_cast<int64_t>(secs * 1000));
     while (std::chrono::steady_clock::now() < until) {
-        if (s->stop_wall.load()) return;
+        if (s->stop_wall.load()) return false;
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    if (!s->finished) end_run(124, "timeout", "wall-clock timeout of " + std::to_string(static_cast<int64_t>(secs)) + " s reached after " + std::to_string(s->frames.load()) + " frames");
+    return !s->stop_wall.load();
+}
+
+void deadline_loop(State* s, double secs, void (*report)()) {
+    log_set_thread_name("tt-wall");
+    if (!timer_sleep(s, secs) || s->finished) return;
+    const std::string what = "wall-clock timeout of " + std::to_string(static_cast<int64_t>(secs)) + " s reached after " + std::to_string(s->frames.load()) + " frames";
+    NXLOG_W("tt", "max_seconds reached: the guest is still running; ending the process (%s)", what.c_str());
+    log_flush();
+    if (report) report();
+    if (s->on) {
+        end_run(124, "timeout", what);
+        return;
+    }
+    NXLOG_I("tt", "state at the deadline:\n%s", nxrt::summary().c_str());
+    log_flush();
+    TerminateProcess(GetCurrentProcess(), 124);
+}
+
+void shots_loop(State* s, double first, double every, std::string dir) {
+    log_set_thread_name("tt-shots");
+    if (!timer_sleep(s, first)) return;
+    for (int n = 0;; n++) {
+        char name[64];
+        std::snprintf(name, sizeof name, "shot_%d.png", n);
+        const std::string path = dir.empty() ? std::string(name) : join(dir, name);
+        if (take_screenshot(path)) NXLOG_I("tt", "screenshot: %s", name);
+        if (every <= 0 || !timer_sleep(s, every)) return;
+    }
 }
 
 }  // namespace
@@ -377,14 +410,17 @@ bool init() {
     s.inited = true;
     s.frame_tid.store(0, std::memory_order_relaxed);   // set again by the first frame boundary of this run
     s.script = config_get_str("test", "script", "");
+    if (const std::string press = config_get_str("boot", "press", ""); s.script.empty() && !press.empty())      // the start key of players and tools, see press_list_to_script
+        s.script_text = "@timeout 0\n" + press_list_to_script(press);
     s.record_path = config_get_str("test", "record", "");
     s.replay_path = config_get_str("test", "replay", "");
     s.det = config_get_bool("test", "deterministic", false);
-    const std::string trace = config_get_str("test", "trace", "");
-    const std::string src = config_get_str("test", "frame_source", "hook");
-    s.on = !s.script.empty() || !s.record_path.empty() || !s.replay_path.empty() || s.det || !trace.empty() || config_get_bool("test", "enabled", false);
+    const std::string trace = config_get_str("test", "trace", s.script.empty() && !s.script_text.empty() ? "none" : "");
+    const std::string src = config_get_str("test", "frame_source", s.script.empty() && !s.script_text.empty() ? "tick" : "hook");
+    s.on = !s.script.empty() || !s.script_text.empty() || !s.record_path.empty() || !s.replay_path.empty() || s.det || !trace.empty() || config_get_bool("test", "enabled", false);
     if (!s.on) return false;
     s.script_mode = !s.script.empty();
+    s.shot_timeout_ms = static_cast<int>(config_get_int("test", "shot_timeout_ms", 30000));
     s.out = config_get_str("test", "out", "testout");
     s.seed = static_cast<uint64_t>(config_get_int("test", "seed", 0x5EED5EED));
     s.step_ticks = static_cast<uint64_t>(config_get_int("test", "clock_step_ticks", 320000));
@@ -439,6 +475,14 @@ bool init() {
             return true;
         }
         s.runner_on = true;
+    } else if (!s.script_text.empty()) {
+        std::string err;
+        if (!s.runner.load_text(s.script_text, "[boot] press", nullptr, &err)) {
+            NXLOG_E("tt", "script error: %s", err.c_str());
+            end_run(2, "error", err);
+            return true;
+        }
+        s.runner_on = true;
     }
     NXLOG_I("tt", "test tooling on: script='%s' replay='%s' record='%s' deterministic=%d seed=0x%llx source=%s out='%s' regions=%zu", s.script.c_str(),
             s.replay_path.c_str(), s.record_path.c_str(), s.det, static_cast<unsigned long long>(s.seed), src.c_str(), s.out.c_str(), s.hash_regions.size());
@@ -460,7 +504,7 @@ bool init() {
     if (s.det) install_kernel_providers();
     if (s.src == Source::Svc) kernel::set_svc_observer(detail::on_svc);
     if (s.src == Source::Hook) install_game_hooks();
-    if (s.wall_timeout_s > 0) s.wall_thread = std::thread(wall_loop, &s, s.wall_timeout_s);
+    if (s.wall_timeout_s > 0) start_wall_deadline(s.wall_timeout_s);
     return true;
 }
 
@@ -469,7 +513,8 @@ void shutdown() {
     std::lock_guard<std::recursive_mutex> lk(s.mu);
     if (!s.on) return;
     s.stop_wall = true;
-    if (s.wall_thread.joinable()) s.wall_thread.join();
+    for (std::thread& t : s.timers) if (t.joinable()) t.join();
+    s.timers.clear();
     clear_kernel_providers();
     release_held_keys(s);
     if (!s.finished) {
@@ -496,7 +541,29 @@ uint64_t chain_hash() { return S().chain; }
 const GameState& last_state() { return S().gs; }
 PadFrame current_pad() { return S().pad; }
 void set_live_pad(const PadFrame& p) { S().live_pad = p; }
-void set_screenshot_provider(ScreenshotFn fn, void* user) { S().shot_fn = fn; S().shot_user = user; }
+void set_screenshot_provider(ScreenshotFn fn, void* user, ScreenshotPollFn poll) { S().shot_fn = fn; S().shot_user = user; S().shot_poll_fn = poll; }
+bool take_screenshot(const std::string& png_path, int timeout_ms) {
+    State& s = S();
+    if (!s.shot_fn || !s.shot_fn(png_path.c_str(), s.shot_user)) return false;
+    if (!s.shot_poll_fn) return true;
+    const uint64_t t0 = GetTickCount64();
+    for (;;) {
+        const int r = s.shot_poll_fn(png_path.c_str(), s.shot_user);
+        if (r != 0) return r > 0;
+        if (static_cast<int64_t>(GetTickCount64() - t0) >= timeout_ms) return false;
+        Sleep(10);
+    }
+}
+void start_wall_deadline(double seconds, void (*report)()) {
+    State& s = S();
+    if (seconds <= 0) return;
+    s.timers.emplace_back(deadline_loop, &s, seconds, report);
+}
+void start_timed_shots(double first_s, double every_s, const std::string& dir) {
+    State& s = S();
+    if (first_s <= 0) return;
+    s.timers.emplace_back(shots_loop, &s, first_s, every_s, dir);
+}
 void set_exit_handler(ExitFn fn) { S().exit_fn = fn; }
 void set_mouse_sink(MouseSinkFn fn) { S().mouse_sink = fn; }
 void set_key_sink(KeySinkFn fn) { S().key_sink = fn; }
@@ -504,8 +571,10 @@ void set_key_sink(KeySinkFn fn) { S().key_sink = fn; }
 void reset_for_tests() {
     State& s = S();
     s.stop_wall = true;
-    if (s.wall_thread.joinable()) s.wall_thread.join();
+    for (std::thread& t : s.timers) if (t.joinable()) t.join();
+    s.timers.clear();
     s.stop_wall = false;
+    detail::log_watch_clear();
     s.frame_tid.store(0, std::memory_order_relaxed);   // a recycled thread id must not move the next run's clock
     if (s.trace) { std::fclose(s.trace); s.trace = nullptr; }
     clear_kernel_providers();
@@ -513,6 +582,7 @@ void reset_for_tests() {
     MouseSinkFn keep_m = s.mouse_sink;
     KeySinkFn keep_k = s.key_sink;
     ScreenshotFn sf = s.shot_fn;
+    ScreenshotPollFn sp = s.shot_poll_fn;
     void* su = s.shot_user;
     s.~State();
     new (&s) State;
@@ -520,6 +590,7 @@ void reset_for_tests() {
     s.mouse_sink = keep_m;
     s.key_sink = keep_k;
     s.shot_fn = sf;
+    s.shot_poll_fn = sp;
     s.shot_user = su;
     if (const GameProbes* p = game::info().probes; p && p->reset) p->reset();
 }
@@ -659,22 +730,80 @@ bool key_event(const std::string& name, bool down) {
     return true;
 }
 
-bool take_shot(const std::string& name, std::string* why_not) {
+bool shot_request(const std::string& name, std::string* why_not) {
     State& s = S();
-    const std::string path = join(s.shot_dir, name + ".png");
+    s.shot_name = name;
+    s.shot_path = join(s.shot_dir, name + ".png");
     if (!s.shot_fn) {
         s.missing_shots.push_back(name);
         if (why_not) *why_not = "no screenshot provider registered (the graphics layer has not hooked in yet)";
         NXLOG_W("tt", "@shot %s: no screenshot provider", name.c_str());
         return false;
     }
-    if (!s.shot_fn(path.c_str(), s.shot_user)) {
+    s.shot_start_ms = GetTickCount64();
+    if (!s.shot_fn(s.shot_path.c_str(), s.shot_user)) {
         s.missing_shots.push_back(name);
-        if (why_not) *why_not = "the screenshot provider failed";
+        if (why_not) *why_not = "the screenshot provider refused the request";
         return false;
     }
-    s.shots.push_back(name + ".png");
     return true;
+}
+
+ShotStatus shot_poll(std::string* why_not) {
+    State& s = S();
+    int r = 1;
+    if (s.shot_poll_fn) r = s.shot_poll_fn(s.shot_path.c_str(), s.shot_user);
+    if (r > 0) {
+        s.shots.push_back(s.shot_name + ".png");
+        return ShotStatus::Done;
+    }
+    const bool timed_out = static_cast<int64_t>(GetTickCount64() - s.shot_start_ms) >= s.shot_timeout_ms;
+    if (r == 0 && !timed_out) return ShotStatus::Pending;
+    s.missing_shots.push_back(s.shot_name);
+    if (why_not) *why_not = r < 0 ? "the screenshot provider failed" : "the file was not written within " + std::to_string(s.shot_timeout_ms) + " ms";
+    NXLOG_W("tt", "@shot %s: %s", s.shot_name.c_str(), why_not ? why_not->c_str() : "failed");
+    return ShotStatus::Failed;
+}
+
+bool take_shot(const std::string& name, std::string* why_not) {
+    if (!shot_request(name, why_not)) return false;
+    for (;;) {
+        const ShotStatus r = shot_poll(why_not);
+        if (r != ShotStatus::Pending) return r == ShotStatus::Done;
+        Sleep(10);
+    }
+}
+
+// ---- @waitlog: the regexes of the script's steps, tapped from the runtime log ----
+namespace {
+struct LogWatch { std::regex rx; bool seen = false; };
+std::mutex g_watch_mu;
+std::vector<std::unique_ptr<LogWatch>> g_watches;
+void watch_tap(LogLevel, const char* line, void*) {
+    std::lock_guard<std::mutex> lk(g_watch_mu);
+    for (auto& w : g_watches)
+        if (!w->seen && std::regex_search(line, w->rx)) w->seen = true;
+}
+}  // namespace
+
+int log_watch_add(const std::string& regex) {
+    std::lock_guard<std::mutex> lk(g_watch_mu);
+    auto w = std::make_unique<LogWatch>();
+    try { w->rx = std::regex(regex); } catch (const std::regex_error&) { return -1; }
+    g_watches.push_back(std::move(w));
+    log_set_tap(watch_tap, nullptr);
+    return static_cast<int>(g_watches.size()) - 1;
+}
+
+bool log_watch_seen(int id) {
+    std::lock_guard<std::mutex> lk(g_watch_mu);
+    return id >= 0 && id < static_cast<int>(g_watches.size()) && g_watches[static_cast<size_t>(id)]->seen;
+}
+
+void log_watch_clear() {
+    log_set_tap(nullptr, nullptr);
+    std::lock_guard<std::mutex> lk(g_watch_mu);
+    g_watches.clear();
 }
 
 }  // namespace detail
@@ -717,9 +846,9 @@ void frame_boundary(::Ctx* c) {
     }
     detail::install_input();
     GameState g;
+    g.previous = s.have_prev ? &s.prev : nullptr;
     const bool valid = read_state(&g, c);
-    if (valid && !g.have_vel && s.have_prev && s.prev.have_player && g.have_player)      // no velocity from the game (it is not ticking the player): position difference
-        for (int i = 0; i < 3; i++) g.vel[i] = (g.pos[i] - s.prev.pos[i]) * 60.0f;
+    g.previous = nullptr;
     s.gs = g;
     s.gs_valid = valid;
     s.prev = g;

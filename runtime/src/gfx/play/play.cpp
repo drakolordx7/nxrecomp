@@ -362,19 +362,37 @@ bool key_sink(const char* name, bool down) {
     return true;
 }
 
-// @shot in a script: the renderer writes the next presented frame as a PNG; the call returns when the file exists (or after 5 s).
-bool screenshot_provider(const char* path, void*) {
+// @shot in a script and the timed shots: the renderer writes the next presented frame as a PNG. The request does not wait (the caller may be the thread
+// that presents that frame); the poll says when the file is complete: the renderer counts a shot after it wrote the file.
+struct ShotRequest { std::string path; uint64_t before; };
+std::vector<ShotRequest> g_shot_requests;
+std::mutex g_shot_mu;
+
+bool screenshot_request(const char* path, void*) {
     G& st = g();
     if (!st.renderer || !path) return false;
     DeleteFileA(path);
     if (std::strstr(path, "nvntrace_")) nvn::backend_trace_next_frame();   // `@shot nvntrace_<name>`: also trace the frame that is captured
-    const uint64_t before = st.renderer->stats().screenshots;
-    st.renderer->request_screenshot(path);
-    for (int i = 0; i < 500; ++i) {
-        if (st.renderer->stats().screenshots > before) return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;   // counted after the file is written
-        Sleep(10);
+    {
+        std::lock_guard<std::mutex> lk(g_shot_mu);
+        std::erase_if(g_shot_requests, [&](const ShotRequest& r) { return r.path == path; });
+        g_shot_requests.push_back({path, st.renderer->stats().screenshots});
     }
-    return false;
+    st.renderer->request_screenshot(path);
+    return true;
+}
+
+int screenshot_poll(const char* path, void*) {
+    G& st = g();
+    std::lock_guard<std::mutex> lk(g_shot_mu);
+    for (const ShotRequest& r : g_shot_requests) {
+        if (r.path != path) continue;
+        if (!st.renderer || st.renderer->stats().screenshots <= r.before) return 0;
+        const bool ok = GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+        std::erase_if(g_shot_requests, [&](const ShotRequest& q) { return q.path == path; });
+        return ok ? 1 : -1;
+    }
+    return -1;
 }
 
 void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
@@ -1022,7 +1040,7 @@ bool start(const StartOptions& opt) {
         tt::set_mouse_sink(&input::mouse_delta_add);
     }
     tt::set_key_sink(&key_sink);
-    if (st.renderer) tt::set_screenshot_provider(&screenshot_provider, nullptr);
+    if (st.renderer) tt::set_screenshot_provider(&screenshot_request, nullptr, &screenshot_poll);
     if (const std::string script = config_get_str("play", "selftest", ""); !script.empty()) {
         std::string err;
         if (!st.selftest.parse(script, &err)) {

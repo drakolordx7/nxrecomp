@@ -19,6 +19,7 @@
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
+#include "nxrt/log.h"
 #include "nxrt/game.h"
 #include "nxrt/tt.h"
 #include "fixture_game.h"
@@ -31,7 +32,6 @@ using namespace nxrt::tt;
 
 const char* kWorld = "4b5e8635-0f43-4ffb-9427-2e62186e517d";
 const char* kAreaA = "4ca69978-0000-4000-8000-000000000001";
-const char* kAreaB = "4ca69978-0000-4000-8000-000000000002";
 
 // A toy game: its state lives in this struct (the probes read it), its simulation is step(): UP walks +y, the left stick strafes +x, A raises z, igt counts.
 // Registers itself as the game while it lives (the base tests run with the neutral fixture game otherwise).
@@ -66,12 +66,24 @@ Rig* Rig::cur = nullptr;
 bool toy_read_state(GameState* g, ::Ctx*) {
     Rig* r = Rig::cur;
     if (!r) return false;
-    std::memcpy(g->world, r->world, 16);
-    std::memcpy(g->area, r->area, 16);
-    g->have_world = g->have_player = g->have_igt = g->have_hp = true;
-    for (int i = 0; i < 3; i++) g->pos[i] = r->pos[i];
-    g->hp = r->hp;
-    g->igt = r->igt;
+    // the fields in the order the hash folds them: ids, position and velocity words, heading, health, play time
+    using H = StateField::Hash;
+    g->hash_flags = 1u | 2u | 4u | 8u;                  // world, player, play time and health were readable
+    g->add_id("world", r->world);
+    g->add_id("area", r->area);
+    const float zero3[3] = {0, 0, 0};
+    const char* const px[3] = {"px", "py", "pz"};
+    for (int i = 0; i < 3; i++) {
+        g->add_float("", r->pos[i]);                     // hash only: position and velocity words alternate
+        g->add_float("", 0);
+    }
+    for (int i = 0; i < 3; i++) { g->add_float(px[i], r->pos[i], true, H::None); g->fields.back().quiet = true; }
+    g->add_vec3("pos", r->pos);
+    g->add_vec3("vel", zero3);
+    g->add_float("yaw", 0);
+    g->add_float("hp", r->hp);
+    g->fields.back().alias = "health";
+    g->add_float("igt", r->igt, true, H::Wide);
     g->add_int("mode", r->mode);
     g->add_float("fuel", 0.5 * r->mode, r->mode != 0, StateField::Hash::None);       // printed only once the mode is set; not hashed
     g->add_int("lives", 3, true, StateField::Hash::High);                              // shares the word of "mode"
@@ -95,11 +107,13 @@ StepStatus toy_run_lift(StepRun& r) {
     return StepStatus::Wait;
 }
 const GameStepDef kToySteps[] = {{"@bump", toy_parse_bump, toy_run_bump}, {"@lift", toy_parse_lift, toy_run_lift}};
-const char* const kToyKeys[] = {"mode", "fuel", nullptr};
+const char* const kToyKeys[] = {"mode", "fuel", "px", "py", "pz", "health", "igt", nullptr};
+const IdKeyDef kToyIds[] = {{"world", false}, {"area", true}, {nullptr, false}};
 const GameProbes kToyProbes = [] {
     GameProbes p;
     p.read_state = toy_read_state;
     p.state_keys = kToyKeys;
+    p.id_keys = kToyIds;
     p.steps = kToySteps;
     p.step_count = 2;
     return p;
@@ -156,14 +170,14 @@ void run_frames(Rig& r, int max_frames) {
 
 NXTEST(wait_timeout_fails_with_the_script_line) {
     Rig r("timeout");
-    const std::string s = scriptfile("timeout.nxs", "3\n@area " + std::string(kAreaB) + " timeout=12\n@pass\n");
+    const std::string s = scriptfile("timeout.nxs", "@timeout 12\n3\n@frame 100000\n@pass\n");
     begin(r, {{"script", s}});
     run_frames(r, 100);
     CHECK_EQ(r.exit_code_seen, 1);
     const std::string res = slurp(r.out + "\\result.json");
     CHECK(res.find("\"verdict\":\"fail\"") != std::string::npos);
-    CHECK(res.find("timeout.nxs:2:") != std::string::npos);
-    CHECK(res.find("\"fail_line\":2") != std::string::npos);
+    CHECK(res.find("timeout.nxs:3:") != std::string::npos);
+    CHECK(res.find("\"fail_line\":3") != std::string::npos);
     shutdown();
 }
 
@@ -281,6 +295,69 @@ NXTEST(shots_go_through_the_provider) {
     CHECK_EQ(slurp(r.out + "\\shots\\first.png"), std::string("PNG?"));
     shutdown();
     set_screenshot_provider(nullptr, nullptr);
+}
+
+namespace {
+int g_polls = 0;
+bool shot_async_request(const char*, void*) { g_polls = 0; return true; }
+int shot_async_poll(const char* path, void*) {      // the renderer writes the file on its own frame: not before the third poll
+    if (++g_polls < 3) return 0;
+    spit(path, "PNG?");
+    return 1;
+}
+int shot_never_poll(const char*, void*) { return 0; }
+}
+
+NXTEST(a_shot_waits_for_its_file_before_the_next_step) {
+    Rig r("shot_async");
+    const std::string s = scriptfile("shot_async.nxs", "@shot late\n@pass\n");
+    begin(r, {{"script", s}});
+    set_screenshot_provider(shot_async_request, nullptr, shot_async_poll);
+    ::Ctx ctx{};
+    frame_boundary(&ctx);
+    frame_boundary(&ctx);
+    CHECK(!finished());                              // asked, not written yet: the script has not reached @pass
+    run_frames(r, 10);
+    CHECK_EQ(r.exit_code_seen, 0);
+    CHECK_EQ(slurp(r.out + "\\shots\\late.png"), std::string("PNG?"));     // on disk when the run ended
+    CHECK(slurp(r.out + "\\result.json").find("\"shots\":[\"late.png\"]") != std::string::npos);
+    shutdown();
+    set_screenshot_provider(nullptr, nullptr);
+}
+
+NXTEST(a_shot_that_never_lands_is_missing_after_the_timeout) {
+    Rig r("shot_never");
+    const std::string s = scriptfile("shot_never.nxs", "@shot never\n@pass\n");
+    begin(r, {{"script", s}, {"shot_timeout_ms", "50"}});
+    set_screenshot_provider(shot_async_request, nullptr, shot_never_poll);
+    ::Ctx ctx{};
+    for (int i = 0; i < 400 && !finished(); i++) { frame_boundary(&ctx); Sleep(1); }
+    CHECK_EQ(r.exit_code_seen, 0);
+    CHECK(slurp(r.out + "\\result.json").find("\"missing_shots\":[\"never\"]") != std::string::npos);
+    shutdown();
+    set_screenshot_provider(nullptr, nullptr);
+}
+
+NXTEST(waitlog_waits_for_a_log_line_and_counts_lines_logged_before_the_step) {
+    Rig r("waitlog");
+    const std::string s = scriptfile("waitlog.nxs", "@waitlog marker-[0-9]+ 5\n@waitlog never-logged 0.05\n@pass\n");
+    nxrt::config_clear();
+    reset_for_tests();
+    set_exit_handler(on_exit_code);
+    nxrt::config_set("test", "out", r.out.c_str());
+    nxrt::config_set("test", "frame_source", "manual");
+    nxrt::config_set("test", "script", s.c_str());
+    init();
+    ::Ctx ctx{};
+    frame_boundary(&ctx);
+    CHECK(!finished());                              // nothing logged yet
+    NXLOG_I("test", "the marker-42 line");
+    frame_boundary(&ctx);
+    CHECK(!finished());                              // the first wait is done, the second one waits
+    for (int i = 0; i < 100 && !finished(); i++) { frame_boundary(&ctx); Sleep(2); }
+    CHECK_EQ(r.exit_code_seen, 1);                   // the second regex never appears: the run fails at its line
+    CHECK(slurp(r.out + "\\result.json").find("waitlog.nxs:2:") != std::string::npos);
+    shutdown();
 }
 
 NXTEST(missing_provider_is_a_note_unless_required) {
@@ -429,8 +506,8 @@ NXTEST(game_fields_are_in_the_hash_and_the_trace) {
     }
     CHECK_EQ(h[0], h[1]);                    // the same state, the same hash
     CHECK(h[0] != h[2]);                     // a game field changed
-    // printed in the order the game added them, before hp and igt; "fuel" is shown because the mode is set
-    CHECK(trace.find("\"mode\":1,\"fuel\":0.5,\"lives\":3,\"hp\":99") != std::string::npos);
+    // printed in the order the game added them; "fuel" is shown because the mode is set
+    CHECK(trace.find("\"mode\":1,\"fuel\":0.5,\"lives\":3") != std::string::npos);
 }
 
 NXTEST(a_game_field_that_is_not_shown_is_left_out_of_the_trace) {

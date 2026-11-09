@@ -39,6 +39,8 @@ uint64_t log_count(LogLevel l);
 // Test hook: every formatted line (without the trailing newline) is also passed to the sink. Null removes it.
 using LogSink = void (*)(LogLevel level, const char* line, void* user);
 void log_set_sink(LogSink sink, void* user);
+// A second observer for the test tooling (@waitlog), independent of the sink: same lines, called with the log's lock held, so it must be quick and must not log.
+void log_set_tap(LogSink tap, void* user);
 
 void logv(LogLevel l, const char* tag, const char* fmt, va_list ap);
 void logf(LogLevel l, const char* tag, const char* fmt, ...)

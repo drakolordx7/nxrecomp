@@ -20,26 +20,20 @@
 //                                     without it the vector persists until the next stick step for that stick
 //   mouse <dx> <dy> [for <n>]         raw mouse counts delivered once per frame for n frames (default 1); blocks for n frames
 //   @frame <n>                        wait until the global frame counter is >= n
-//   @area <id> [timeout=<n>]          wait until the current area id equals <id> (GUID text 8-4-4-4-12, or a name from the region table)
-//   @world <id> [timeout=<n>]         the same for the world id
-//   @pos <x> <y> <z> [<r>] [timeout=<n>]   wait until the player is within r (default 1.0) world units of the point
-//   @igt <seconds> [timeout=<n>]      wait until the in-game play time is >= seconds
-//   @run <seconds> [timeout=<n>] [soft]      wait until the in-game play time has advanced by <seconds> since this step began (the game clock stands
-//                                     still while an area loads, so this is "the game ran for that long"). `soft`: when the timeout runs out,
-//                                     log "SOFT-TIMEOUT" and go on instead of failing the run
-//   @mash <keys> <period_ms> area|world <id> [timeout=<ms>]
-//                                     press the buttons for 250 ms of host time every <period_ms> until the area (or world) becomes current: gets
-//                                     through the front end without knowing how long each menu and load takes. Timeout in host ms, default 600000
 //   @rate <hz>                        the game step is exactly 1/hz for every frame from here on (hz > 0), 0 = the configured mode again; the clock
 //                                     itself stays real, so areas load at full speed
 //   @sleep <ms>                       wait <ms> of host wall-clock time (not game time: loading and fade-outs run on the host clock even in
 //                                     deterministic mode); frames keep being delivered meanwhile
-//   @shot <name>                      save a screenshot <shot_dir>/<name>.png at this frame (does not block)
+//   @shot <name>                      save a screenshot <shot_dir>/<name>.png of the next presented frame; goes on when the file is on disk (a
+//                                     file that is not there after [test] shot_timeout_ms is logged, and fails the run with [test] require_shots)
+//   @waitlog <regex> [<seconds>]      wait until a line of the runtime log matches the regex (ECMAScript, searched anywhere in the line; the lines
+//                                     since the start of the run count, so a marker that came early is not missed); fails the run after <seconds> of
+//                                     host time (default 120; the regex is the rest of the line up to a trailing number)
 //   @hash [<label>]                   write a labelled hash line into the trace and the result file (does not block)
 //   @log <text...>                    write the rest of the line to the log
-//   @assert <field> <op> <value>      fail the run now if false. fields: area world frame igt health px py pz vx vy vz speed, and the keys the
-//                                     game declares for its own state fields (GameProbes::state_keys). ops: == != < <= > >=. area/world
-//                                     compare ids (== and != only); the others compare numbers
+//   @assert <field> <op> <value>      fail the run now if false. fields: frame, and the keys the game declares for its own state fields
+//                                     (GameProbes::state_keys numeric, GameProbes::id_keys ids: == and != only, against a GUID or a region name).
+//                                     ops: == != < <= > >=
 //   @mashuntil <keys> every <n> until <field> <op> <value> [timeout=<n>]   press the buttons for 4 frames every n frames until the condition
 //                                     (same fields and operators as @assert) holds, e.g. `@mashuntil A every 120 until igt >= 1` drives menus
 //   @poke <in>                        write guest memory: lines `addr [off ...] : hexbytes` (pointers followed as in @peek; a token `+N` adds N without following); a development aid, e.g. to restore health
@@ -48,6 +42,7 @@
 //   @pass | @fail [<message...>]      end the run (exit code 0 or 1) at once
 //   @end                              the same as @pass
 //   @<name> ...                       a step the game registers (tt.h GameProbes::steps): its own syntax and meaning, documented by the game
+//                                     (the position, area and play-time waits of a game are such steps)
 //
 // <keys>: button names joined with '+': A B X Y L R ZL ZR PLUS MINUS UP DOWN LEFT RIGHT LSTICK RSTICK (LSTICK/RSTICK = the stick clicks),
 //         also START = PLUS, SELECT = MINUS. Names are case-insensitive. Same bit numbers as nn::hid::NpadButton.
@@ -70,14 +65,9 @@ enum class StepKind : uint8_t {
     Stick,       // which (0 left 1 right), x, y; count > 0: blocks count frames then zero; count == 0: persists
     Mouse,       // x, y raw counts per frame for count frames
     WaitFrame,   // count = target frame
-    WaitArea,    // id (16 bytes), timeout
-    WaitWorld,   // id (16 bytes), timeout
-    WaitPos,     // x, y, z, r, timeout
-    WaitIgt,     // x = seconds, timeout
     WaitMs,      // x = milliseconds of host time
     Rate,        // x = hz (0 = real clock)
-    Mash,        // buttons every x ms until area (text "area") / world (text "world") id; timeout in host ms (-1 = 600000)
-    WaitRun,     // x = seconds of in-game play time from the step start, timeout
+    WaitLog,     // text = regex, x = timeout in seconds, count = the watch the runner registers
     Shot,        // text = name
     Hash,        // text = label (may be empty)
     Log,         // text
@@ -94,7 +84,7 @@ enum class StepKind : uint8_t {
     PressUntil,  // buttons pressed 4 frames every `count` frames until the condition (field/op/x/id, as Assert) holds; timeout
 };
 
-enum class AssertField : uint8_t { Area, World, Frame, Igt, Health, PosX, PosY, PosZ, VelX, VelY, VelZ, Speed, Game };
+enum class AssertField : uint8_t { Frame, Game, GameId };
 enum class AssertOp : uint8_t { Eq, Ne, Lt, Le, Gt, Ge };
 
 struct Step {
@@ -106,11 +96,10 @@ struct Step {
     int64_t timeout = -1;          // frames; -1 = use the script default; 0 = none
     int which = 0;                 // Stick: 0 left, 1 right
     double x = 0, y = 0, z = 0, r = 0;
-    uint8_t id[16] = {};           // Area/World/Assert(area, world): the resolved id in memory order (see tt_guid_to_bytes); free for a game step
+    uint8_t id[16] = {};           // Assert on an id field: the resolved id in memory order (see tt_guid_to_bytes); free for a game step
     uint8_t id2[16] = {};          // free for a game step
-    std::string name1, name2;      // Area/World/Mash/Assert: the id/name text as written; Assert on a game field: name2 = the field key
+    std::string name1, name2;      // Assert on an id field: name1 = the id/name text as written; on a game field: name2 = the field key
     const GameStepDef* game = nullptr;   // Game: the registered step this line parsed as
-    bool soft = false;             // PlayTime: a timeout logs and continues instead of failing
     std::string text;
     AssertField field = AssertField::Frame;
     AssertOp op = AssertOp::Eq;
@@ -121,7 +110,7 @@ struct Script {
     std::string path;
 };
 
-// Name -> (world id, area id) table. File format (UTF-8, '#' comments): `name <TAB> world-guid <TAB> area-guid` per line; an area
+// Name -> (world id, area id) table: the names the game's steps and id keys resolve (a game says which column a name stands for). File format (UTF-8, '#' comments): `name <TAB> world-guid <TAB> area-guid` per line; an area
 // name is unique ("frigate_cargo_freight_lift") and a world entry has an empty area column ("frigate\t<guid>\t").
 struct RegionTable {
     struct Entry { std::string name; uint8_t world[16]; uint8_t area[16]; bool has_area; };
@@ -148,7 +137,10 @@ struct StepLine {
     bool count(const std::string& tok, int64_t* v, std::string* err) const;     // non-negative integer, decimal or 0x hex
     bool real(const std::string& tok, double* v, std::string* err) const;       // finite float
     bool id(const std::string& tok, bool want_area, uint8_t out[16], std::string* err) const;   // GUID text, or a region name (its area / its world)
+    bool keys(const std::string& tok, uint64_t* mask, std::string* err) const;       // button names joined with '+' (A B X ... PLUS MINUS UP DOWN LEFT RIGHT) as a NpadButton bit mask
     bool usage(const char* form, std::string* err) const;                       // sets "wrong number of arguments, expected: <form>"; returns false
+    // The words after the first, without a `timeout=<n>` word: *positional gets the others, *timeout = n (left alone when there is none; a second one is an error).
+    bool take_timeout(std::vector<std::string>* positional, int64_t* timeout, std::string* err) const;
 };
 
 // Parse. `regions` may be null (then only GUID text is accepted as an id). On error returns false and *err =
