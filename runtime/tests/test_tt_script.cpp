@@ -243,13 +243,13 @@ NXTEST(igt_seconds_and_timeout) {
 
 NXTEST(shot_hash_log_timeout_pass) {
     Script sc;
-    REQUIRE(parse_ok("@shot shot_01\n@hash\n@hash after warp\n@log  loading area # kept  \n@timeout 0\n@end\n", sc));
+    REQUIRE(parse_ok("@shot shot_01\n@hash\n@hash after load\n@log  loading area # kept  \n@timeout 0\n@end\n", sc));
     REQUIRE(sc.steps.size() == 6);
     CHECK_EQ(sc.steps[0].kind, StepKind::Shot);
     CHECK_EQ(sc.steps[0].text, std::string("shot_01"));
     CHECK_EQ(sc.steps[1].kind, StepKind::Hash);
     CHECK_EQ(sc.steps[1].text, std::string(""));
-    CHECK_EQ(sc.steps[2].text, std::string("after warp"));
+    CHECK_EQ(sc.steps[2].text, std::string("after load"));
     CHECK_EQ(sc.steps[3].kind, StepKind::Log);
     CHECK_EQ(sc.steps[3].text, std::string("loading area # kept"));
     CHECK_EQ(sc.steps[4].kind, StepKind::Timeout);
@@ -269,16 +269,16 @@ NXTEST(fail_with_and_without_message) {
 }
 
 NXTEST(assert_numeric_fields_map_to_enums) {
-    const char* names[] = {"frame", "igt", "health", "px", "py", "pz", "vx", "vy", "vz", "speed", "state"};
+    const char* names[] = {"frame", "igt", "health", "px", "py", "pz", "vx", "vy", "vz", "speed"};
     const AssertField fields[] = {AssertField::Frame,  AssertField::Igt,  AssertField::Health, AssertField::PosX,
                                   AssertField::PosY,  AssertField::PosZ, AssertField::VelX,   AssertField::VelY,
-                                  AssertField::VelZ, AssertField::Speed, AssertField::State};
+                                  AssertField::VelZ, AssertField::Speed};
     std::string text;
     for (const char* n : names) text += std::string("@assert ") + n + " == 2\n";
     Script sc;
     REQUIRE(parse_ok(text, sc));
-    REQUIRE(sc.steps.size() == 11);
-    for (std::size_t i = 0; i < 11; i++) {
+    REQUIRE(sc.steps.size() == 10);
+    for (std::size_t i = 0; i < 10; i++) {
         CHECK_EQ(sc.steps[i].kind, StepKind::Assert);
         CHECK_EQ(sc.steps[i].field, fields[i]);
         CHECK_EQ(sc.steps[i].x, 2.0);
@@ -391,7 +391,6 @@ NXTEST(error_wrong_argument_count_line) {
     expect_err("press\n", 1, "expected");
     expect_err("wait 1\n@pos 1 2\n", 2, "expected");
     expect_err("stick left 0\n", 1, "expected");
-    expect_err("wait 1\n\n@warp frigate\n", 3, "expected");
 }
 
 NXTEST(error_key_verbs_need_a_name) {
@@ -411,7 +410,6 @@ NXTEST(error_bad_number_line) {
 
 NXTEST(error_bad_guid_line) {
     expect_err("wait 1\n@area 01234567-89ab-cdef-0123-45678\n", 2, "not a GUID");
-    expect_err("@warp 0123 0123\n", 1, "not a GUID");
 }
 
 NXTEST(error_unknown_region_name_line) {
@@ -419,7 +417,6 @@ NXTEST(error_unknown_region_name_line) {
     std::string e;
     CHECK_MSG(rt.load_text(region_text(), &e), e);
     expect_err("wait 1\n\n@world nosuch\n", 3, "nosuch", &rt);
-    expect_err("@warp frigate nosuch\n", 1, "nosuch", &rt);
 }
 
 NXTEST(error_area_name_without_area_line) {
@@ -427,7 +424,6 @@ NXTEST(error_area_name_without_area_line) {
     std::string e;
     CHECK_MSG(rt.load_text(region_text(), &e), e);
     expect_err("wait 1\n@area frigate\n", 2, "has no area", &rt);
-    expect_err("@warp frigate ruins\n", 1, "has no area", &rt);
 }
 
 NXTEST(error_assert_id_ordering_line) {
@@ -448,7 +444,7 @@ NXTEST(error_unknown_assert_field_line) {
     expect_err("@assert frame ~ 3\n", 1, "unknown operator");
 }
 
-// ---- region table and @warp -------------------------------------------------------------------------------
+// ---- region table -------------------------------------------------------------------------------
 
 NXTEST(region_table_round_trip) {
     RegionTable rt;
@@ -473,27 +469,6 @@ NXTEST(region_table_round_trip) {
     CHECK_EQ(tt_guid_to_text(area2->world), std::string(kWorld2));
 
     CHECK(rt.find("missing") == nullptr);
-}
-
-NXTEST(warp_resolves_region_names) {
-    RegionTable rt;
-    std::string e;
-    CHECK_MSG(rt.load_text(region_text(), &e), e);
-
-    Script sc;
-    REQUIRE(parse_ok(std::string("@warp frigate frigate_cargo_freight_lift\n@warp RUINS ruins_hall\n") + "@warp " +
-                         kWorld1 + " " + kArea2 + "\n",
-                     sc, &rt));
-    REQUIRE(sc.steps.size() == 3);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Warp);
-    CHECK_EQ(sc.steps[0].name1, std::string("frigate"));
-    CHECK_EQ(sc.steps[0].name2, std::string("frigate_cargo_freight_lift"));
-    CHECK_EQ(tt_guid_to_text(sc.steps[0].id), std::string(kArea1));
-    CHECK_EQ(tt_guid_to_text(sc.steps[0].id2), std::string(kWorld1));
-    CHECK_EQ(tt_guid_to_text(sc.steps[1].id), std::string(kArea2));
-    CHECK_EQ(tt_guid_to_text(sc.steps[1].id2), std::string(kWorld2));
-    CHECK_EQ(tt_guid_to_text(sc.steps[2].id), std::string(kArea2));
-    CHECK_EQ(tt_guid_to_text(sc.steps[2].id2), std::string(kWorld1));
 }
 
 NXTEST(region_table_bad_guid_reports_line) {
@@ -583,36 +558,30 @@ NXTEST(guid_malformed_text_rejected) {
     CHECK(!tt_guid_to_bytes("", b));
 }
 
-NXTEST(gameplay_steps_sleep_run_mash_give_rate) {
+NXTEST(gameplay_steps_sleep_run_mash_rate) {
     Script sc;
-    REQUIRE(parse_ok("@sleep 1500\n@run 2.5 timeout=100\n@give MorphBall 1\n@give charge_beam 1\n@give 4 50\n@rate 144\n@rate 0\n@mash A 5000 area 01234567-89ab-cdef-0123-456789abcdef timeout=1000\n", sc));
-    REQUIRE(sc.steps.size() == 8);
+    REQUIRE(parse_ok("@sleep 1500\n@run 2.5 timeout=100\n@rate 144\n@rate 0\n@mash A 5000 area 01234567-89ab-cdef-0123-456789abcdef timeout=1000\n", sc));
+    REQUIRE(sc.steps.size() == 5);
     CHECK_EQ(sc.steps[0].kind, StepKind::WaitMs);
     CHECK_EQ(sc.steps[0].x, 1500.0);
     CHECK_EQ(sc.steps[1].kind, StepKind::WaitRun);
     CHECK_EQ(sc.steps[1].x, 2.5);
     CHECK_EQ(sc.steps[1].timeout, (int64_t)100);
-    CHECK_EQ(sc.steps[2].kind, StepKind::Give);
-    CHECK_EQ(sc.steps[2].x, 16.0);          // MorphBall
-    CHECK_EQ(sc.steps[3].x, 10.0);          // ChargeBeam
-    CHECK_EQ(sc.steps[4].x, 4.0);
-    CHECK_EQ(sc.steps[4].y, 50.0);
-    CHECK_EQ(sc.steps[5].kind, StepKind::Rate);
-    CHECK_EQ(sc.steps[5].x, 144.0);
-    CHECK_EQ(sc.steps[6].x, 0.0);
-    CHECK_EQ(sc.steps[7].kind, StepKind::Mash);
-    CHECK_EQ(sc.steps[7].x, 5000.0);
-    CHECK_EQ(sc.steps[7].timeout, (int64_t)1000);
+    CHECK_EQ(sc.steps[2].kind, StepKind::Rate);
+    CHECK_EQ(sc.steps[2].x, 144.0);
+    CHECK_EQ(sc.steps[3].x, 0.0);
+    CHECK_EQ(sc.steps[4].kind, StepKind::Mash);
+    CHECK_EQ(sc.steps[4].x, 5000.0);
+    CHECK_EQ(sc.steps[4].timeout, (int64_t)1000);
     expect_err("@rate -1\n", 1, "@rate hz");
-    expect_err("@give Nonsense 1\n", 1, "unknown item");
     expect_err("@mash A 5000 room x\n", 1, "@mash");
 }
 
-// ---- S15 steps: @mash, @run, @grant, @call ----------------------------------------------------------------
+// ---- S15 steps: @mash, @run ----------------------------------------------------------------
 
 NXTEST(mashuntil_parses_keys_interval_condition_and_timeout) {
     Script sc;
-    REQUIRE(parse_ok("@mashuntil A+B every 90 until health > 0 timeout=500\n@mashuntil START every 5 until state >= 0\n", sc));
+    REQUIRE(parse_ok("@mashuntil A+B every 90 until health > 0 timeout=500\n@mashuntil START every 5 until igt >= 0\n", sc));
     REQUIRE(sc.steps.size() == 2);
     CHECK_EQ(sc.steps[0].kind, StepKind::PressUntil);
     CHECK_EQ(sc.steps[0].buttons, bit(0) | bit(1));
@@ -621,7 +590,7 @@ NXTEST(mashuntil_parses_keys_interval_condition_and_timeout) {
     CHECK_EQ(sc.steps[0].op, AssertOp::Gt);
     CHECK_EQ(sc.steps[0].x, 0.0);
     CHECK_EQ(sc.steps[0].timeout, (int64_t)500);
-    CHECK_EQ(sc.steps[1].field, AssertField::State);
+    CHECK_EQ(sc.steps[1].field, AssertField::Igt);
     CHECK_EQ(sc.steps[1].op, AssertOp::Ge);
     CHECK_EQ(sc.steps[1].timeout, (int64_t)-1);
 }
@@ -643,91 +612,7 @@ NXTEST(run_parses_seconds_and_timeout) {
     expect_err("@run -1\n", 1, "must be >= 0");
 }
 
-NXTEST(grant_names_numbers_and_all) {
-    Script sc;
-    REQUIRE(parse_ok("@grant MorphBall\n@grant missiles 250 250\n@grant Charge_Beam\n@grant 0x12 1\n@grant all\n", sc));
-    REQUIRE(sc.steps.size() == 5);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Grant);
-    CHECK_EQ(sc.steps[0].count, (int64_t)0x10);
-    CHECK_EQ(sc.steps[0].x, 1.0);
-    CHECK_EQ(sc.steps[1].count, (int64_t)4);
-    CHECK_EQ(sc.steps[1].x, 250.0);
-    CHECK_EQ(sc.steps[1].y, 250.0);
-    CHECK_EQ(sc.steps[2].count, (int64_t)0xa);
-    CHECK_EQ(sc.steps[3].count, (int64_t)0x12);
-    CHECK_EQ(sc.steps[4].count, (int64_t)-1);
-    expect_err("@grant sword\n", 1, "unknown item");
-}
-
-NXTEST(call_parses_offset_and_argument_text) {
-    Script sc;
-    REQUIRE(parse_ok("@call 0xb03a58 $mgr\n@call 0xc88f30 $ps 4 250\n", sc));
-    REQUIRE(sc.steps.size() == 2);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Call);
-    CHECK_EQ(sc.steps[0].count, (int64_t)0xb03a58);
-    CHECK_EQ(sc.steps[0].text, std::string("$mgr"));
-    CHECK_EQ(sc.steps[1].text, std::string("$ps 4 250"));
-    expect_err("@call\n", 1, "@call <offset>");
-}
-
-// ---- S25 step: @watch -------------------------------------------------------------------------------
-
-NXTEST(watch_on_defaults_to_both_axes) {
-    Script sc;
-    REQUIRE(parse_ok("@watch on\n", sc));
-    REQUIRE(sc.steps.size() == 1);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Watch);
-    CHECK_EQ(sc.steps[0].text, std::string("on"));
-    CHECK_EQ(sc.steps[0].y, 3.0);
-}
-
-NXTEST(watch_on_selects_vely_or_posy) {
-    Script sc;
-    REQUIRE(parse_ok("@watch on vely\n@watch on posy\n@watch on both\n", sc));
-    REQUIRE(sc.steps.size() == 3);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Watch);
-    CHECK_EQ(sc.steps[0].y, 1.0);
-    CHECK_EQ(sc.steps[1].y, 2.0);
-    CHECK_EQ(sc.steps[2].y, 3.0);
-}
-
-NXTEST(watch_off_parses) {
-    Script sc;
-    REQUIRE(parse_ok("@watch off\n", sc));
-    REQUIRE(sc.steps.size() == 1);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Watch);
-    CHECK_EQ(sc.steps[0].text, std::string("off"));
-}
-
-NXTEST(watch_errors) {
-    expect_err("@watch\n", 1, "@watch on [vely|posy|both]");
-    expect_err("@watch maybe\n", 1, "expected on or off");
-    expect_err("@watch on bogus\n", 1, "expected vely, posy or both");
-}
-
-// ---- S26 step: @rays -------------------------------------------------------------------------------
-
-NXTEST(rays_parses_in_and_out_files) {
-    Script sc;
-    REQUIRE(parse_ok("@rays a.txt b.txt\n", sc));
-    REQUIRE(sc.steps.size() == 1);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Rays);
-    CHECK_EQ(sc.steps[0].text, std::string("a.txt b.txt"));
-}
-
-NXTEST(rays_wrong_argument_count_is_usage_error) {
-    expect_err("@rays\n", 1, "@rays <in-file> <out-file>");
-    expect_err("@rays a.txt\n", 1, "@rays <in-file> <out-file>");
-    expect_err("@rays a b c\n", 1, "@rays <in-file> <out-file>");
-}
-
-NXTEST(objs_parses_class_list) {
-    Script sc;
-    REQUIRE(parse_ok("@objs *\n", sc));
-    REQUIRE(sc.steps.size() == 1);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Objs);
-    CHECK_EQ(sc.steps[0].text, std::string("*"));
-}
+// ---- S26 steps: @peek, @poke -----------------------------------------------------------------------
 
 NXTEST(peek_parses_in_and_out_files) {
     Script sc;
@@ -743,19 +628,10 @@ NXTEST(peek_wrong_argument_count_is_usage_error) {
     expect_err("@peek a b c\n", 1, "@peek <in-file> <out-file>");
 }
 
-NXTEST(probe_parses_in_and_out_files) {
-    Script sc;
-    REQUIRE(parse_ok("@probe a.txt b.txt\n", sc));
-    REQUIRE(sc.steps.size() == 1);
-    CHECK_EQ(sc.steps[0].kind, StepKind::Probe);
-    CHECK_EQ(sc.steps[0].text, std::string("a.txt b.txt"));
-}
-
-NXTEST(poke_parses_one_file_and_probe_needs_two) {
+NXTEST(poke_parses_one_file) {
     Script sc;
     REQUIRE(parse_ok("@poke a.txt\n", sc));
     REQUIRE(sc.steps.size() == 1);
     CHECK_EQ(sc.steps[0].kind, StepKind::Poke);
     expect_err("@poke\n", 1, "@poke <in-file>");
-    expect_err("@probe a.txt\n", 1, "@probe <in-file> <out-file>");
 }

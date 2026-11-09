@@ -458,12 +458,12 @@ All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment
 |---|---|---|
 | `script` | empty | Scripted run (`.nxs`, grammar in `include/nxrt/tt_script.h`). Exit code 0 pass, 1 fail, 2 usage/parse error, 4 crash, 5 freeze, 6 process ended early, 124 wall timeout. |
 | `enabled` | `false` | Turns the test tools on by themselves, without a script, record, replay, deterministic or trace key set. |
-| `regions` | `regions.tsv` next to the script | Name table for `@area` / `@warp` (`name<TAB>world guid<TAB>area guid`). |
+| `regions` | `regions.tsv` next to the script | Name table for `@area` / `@world` and the game steps that take a region (`name<TAB>world guid<TAB>area guid`). |
 | `out` | `testout` | Output folder: `result.json`, `trace.jsonl`, `shots/`. |
 | `deterministic` | `false` | Virtual clock (one frame = `clock_step_ticks`), seeded RNG, fixed wall-clock epoch. |
 | `seed` | `0x5EED5EED` | RNG seed of deterministic mode. |
 | `clock_step_ticks` | `320000` | Virtual ticks (19.2 MHz) per frame. |
-| `frame_source` | `hook` | `hook` (needs `tests/sites/mpr_testtools.sites` in the lifted game), `tick` (`diag_frame_tick`), `svc:N` (a frame every N SVCs, bring-up), `manual` (tests). |
+| `frame_source` | `hook` | `hook` (the game registers the hook; its site has to be in the sites the lifted game was built with), `tick` (`diag_frame_tick`), `svc:N` (a frame every N SVCs, bring-up), `manual` (tests). |
 | `trace` | `<out>/trace.jsonl` | Per-frame JSON lines; `none` disables. |
 | `record` / `replay` | empty | Record the live pad of every frame / feed a recorded input trace. |
 | `replay_exit` | `false` | With `replay`: `1` ends the run where the recorded input ends. |
@@ -472,8 +472,8 @@ All off by default; details in `include/nxrt/tt.h` and `docs/S5.md`. Environment
 | `wall_timeout_s` | `900` with a script | End the run with exit code 124 after this long. |
 | `freeze_exit` | `true` with a script | A watchdog fire ends the run with exit code 5. |
 | `shot_dir` / `require_shots` | `<out>/shots` / `false` | Where `@shot` writes; a missing screenshot provider fails the run when set. |
-| `game_base` | `0x7100000000` | Base of the game's main module (probe and hook addresses). |
-| `warp_wait_loader` | `true` | `@warp` waits until the game's resource loader thread has been idle for 10 frames in a row before it starts the warp. Warping while the loader still builds assets for the old game instance crashed it in `CParticleStaticRenderState` (S42). `false` warps at once, as before. |
+| `game_base` | `0x7100000000` | Read by the game's probes (Metroid Prime Remastered: `games/mpr/runtime/mpr_tt_probe.cpp`), not by the base: base of the game's main module for its probe and hook addresses. |
+| `warp_wait_loader` | `true` | Read by the game's `@warp` step (`games/mpr/runtime/mpr_tt_steps.cpp`): it waits until the game's resource loader thread has been idle for 10 frames in a row before it starts the warp. Warping while the loader still builds assets for the old game instance crashed it in `CParticleStaticRenderState` (S42). `false` warps at once, as before. |
 | `warp_loader_max_ms` | `30000` | How long `@warp` waits for the idle loader, in host milliseconds, before it warps anyway with a warning. |
 | `mouse_sdl_hz` | `0` | Test aid: script `mouse` counts go through SDL's own event queue instead of straight to the aim. A thread pushes `SDL_EVENT_MOUSE_MOTION` events at this rate (up to 8000), and a log line compares counts pushed, pumped and applied to the aim. `0`: off. |
 | `mouse_sdl_max` | `64` | With `mouse_sdl_hz`: the most counts per axis in one pushed event. |
