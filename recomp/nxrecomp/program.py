@@ -201,11 +201,18 @@ class Env:
         self.ends = {}
         for r in rows:
             self.ends[self.base + r['start']] = self.base + r['end']
+        added = []
         for off in list(self.cfg.extra_entries.get(self.img.name, ())) + list(extra):
             a = self.base + off
             if a not in self.ends:
                 self.ends[a] = self.base + off + 4
+                added.append(a)
         self.starts = sorted(self.ends)
+        # an extra entry runs to the next known entry (or the end of .text), not one instruction: an entry reached only
+        # through a pointer may hold several instructions before the next function (SDK 10 rtld+0x14a0)
+        for a in added:
+            i = bisect.bisect_right(self.starts, a)
+            self.ends[a] = self.starts[i] if i < len(self.starts) else max(self.ends[a], self.text_hi)
         # an extra entry splits the function it falls into: keep that function's end as is
         return self.starts
 
@@ -410,10 +417,13 @@ def _worker_init(spec):
 
 
 def _worker_scan(entries):
+    """entries: [(entry, end or None)]; an end given here replaces the one the worker's spec has (discovery shortens them)."""
     env = _worker_env
     env.wanted = collections.OrderedDict()
     total = bad = 0
-    for a in entries:
+    for a, end in entries:
+        if end is not None:
+            env.ends[a] = end
         _, n, b, _ = lift_function(env, a)
         total += n
         bad += len(b)
@@ -476,22 +486,34 @@ def lift_module(spec, outdir, jobs=8, shards=0, bucket=0xC000, log=print):
         _worker_init(spec)
     try:
         mapper = pool.imap_unordered if pool else map
-        # discovery: lifting finds branch targets that are not listed functions (tail calls, fall-through ends)
+        # discovery: lifting finds branch targets that are not listed functions (tail calls, fall-through ends).
+        # A found entry has no exact end (no FDE covers it): it ends at the next known entry and falls through into it. Each round can
+        # find entries inside earlier found ones (code without unwind tables); those shrink and are scanned again, so no stretch of
+        # code is lifted into more than one function.
+        found, listed = set(), set()
         while pending:
             pending.sort()
-            parts = [pending[i:i + 400] for i in range(0, len(pending), 400)]
+            parts = [[(a, env.ends.get(a) if a in found else None) for a in pending[i:i + 400]] for i in range(0, len(pending), 400)]
             new = set()
             for n, b, wanted in mapper(_worker_scan, parts):
                 total += n
                 bad += b
                 new.update(w for w in wanted if w not in known and env.text_lo <= w < env.text_hi)
-            all_funcs += pending
+            all_funcs += [a for a in pending if a not in listed]
+            listed.update(pending)
             log('discovery: %d functions, %d extra branch targets  (%.1fs)' % (len(pending), len(new), time.time() - t0))
             known |= new
-            for w in new:
-                if w not in env.ends:
-                    env.ends[w] = env.extent(w)          # extent by next start, as a worker would compute it
-            pending = list(new)
+            found |= {w for w in new if w not in env.ends}
+            order = sorted(known)
+            again = []
+            for a in found:
+                i = bisect.bisect_right(order, a)
+                end = order[i] if i < len(order) else env.text_hi
+                if env.ends.get(a) != end:
+                    if a in env.ends and a not in new:
+                        again.append(a)
+                    env.ends[a] = end
+            pending = sorted(new | set(again))
         all_funcs.sort()
         # workers must know the new entries too (their extents are by the next start): rebuild the spec
         if len(all_funcs) != len(starts):
