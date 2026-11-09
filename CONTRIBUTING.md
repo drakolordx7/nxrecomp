@@ -78,7 +78,7 @@ Use the issue forms and attach what you have.
 - For a crash, the crash report: `<program name>_crash.txt` next to the executable. For a fatal service error, `<program name>_fatal.txt`. For a freeze, `<program name>_freeze.txt`, which the watchdog writes when the program stops making progress for 10 seconds.
 - A screenshot of the bug in a running build.
 
-For more detail, turn on the trace switches. Each is a key in the ini file (`nxrt.ini`, or the game's own) or an environment variable (`[section] name` becomes `NXRT_SECTION_NAME`). All keys are listed in [`runtime/docs/CONFIG.md`](runtime/docs/CONFIG.md).
+For more detail, turn on the trace switches. Each is a key in the ini file (`nxrt.ini`, or the game's own) or an environment variable (`[section] name` becomes `NXRT_SECTION_NAME`). All keys are listed in [`base/runtime/docs/CONFIG.md`](base/runtime/docs/CONFIG.md).
 
 | Switch | What it adds |
 |---|---|
