@@ -31,6 +31,7 @@
 #include "nxrt/tex_upload.h"
 #include "mpr_tint.h"
 #include "play_aim.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play {
 
@@ -48,7 +49,7 @@ constexpr uint64_t kBallTables[] = {
 };
 constexpr int kTableCount = 5;
 constexpr int kEntries = 5;                       // glow index: Power, Varia, Varia + Spider Ball, Gravity, Phazon
-constexpr uint64_t kFnGunUpdate = 0xc93950;       // CPlayerGunMP1::Update(IMP1EntityBaseGOC&, float, float, float, CStateManager&): x0 the gun
+using namespace nxrt::games::mpr::addr;
 constexpr uint64_t kPreviewNs = 250'000'000;      // the F1 page's preview holds this long after its last call
 
 // A wanted colour: bit 24 set = recolour, low 24 bits = R G B.
@@ -174,7 +175,7 @@ int gun_update_hook(::Ctx* c, uint64_t addr, void*) {
 
 // ---- model incandescence: not used since S44c ----
 // S44 gave the morph ball's draws CModelFlagsMPT colour mode 2 (CModelFlagsMPT::ColorModulateIncan) through three hook sites on
-// CModelDataMP1::Render / RenderGun (0xfa9694, 0xfa6c0c, 0xfa7dd0, still in recomp/main.sites, no longer registered). In the mode-2
+// CModelDataMP1::Render / RenderGun (kFnModelDataRender, kFnModelDataRenderWhich, kFnModelDataRenderGun: spare sites in recomp/addrs.tsv, no longer registered). In the mode-2
 // variant of the hull shader (02fe1ae2e1b12445) that colour is a constant emission over the whole hull, so the shell turned pink. The ball's
 // glowing stripes are its inner glow (a particle effect, tinted above) and its light (skBallLightColors), which take the colour without it.
 

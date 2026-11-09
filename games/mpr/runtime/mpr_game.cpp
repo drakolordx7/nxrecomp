@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Metroid Prime Remastered: the whole game module as one nxrt::game::Info (mpr_game.h): the core part (mpr_core.cpp) plus the play-mode hooks, the
-// button prompts and the boot hook, which need the graphics library.
+// button prompts, which need the graphics library.
 #include "mpr_game.h"
 
 #include "nxrt/game_render.h"
@@ -14,10 +14,6 @@ const PromptGame& mpr_prompt_game();
 }
 
 namespace nxrt::games::mpr {
-bool boot(std::string& error);
-}
-
-namespace nxrt::games::mpr {
 
 const game::Info& full_info() {
     static const game::Info info = [] {
@@ -25,7 +21,6 @@ const game::Info& full_info() {
         g.play = &play::mpr_game_play();
         g.settings = &play::mpr_settings_section();
         g.prompts = &play::mpr_prompt_game();
-        g.boot = &boot;
         return g;
     }();
     return info;

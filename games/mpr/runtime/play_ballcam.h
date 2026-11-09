@@ -19,12 +19,13 @@
 #pragma once
 #include <cstdint>
 
+#include "mpr_addrs.h"
 #include "nxrt/game/play_camlook.h"
 
 namespace nxrt::play {
 
 struct BallCamLayout {
-    uint64_t fn_teleport = 0xcf6d84;   // CBallCameraMP1::TeleportCamera(CTransform4f const&, CStateManager&): x0 camera, x1 transform, x2 state manager
+    uint64_t fn_teleport = games::mpr::addr::kFnBallCamTeleport;   // CBallCameraMP1::TeleportCamera(CTransform4f const&, CStateManager&): x0 camera, x1 transform, x2 state manager
     uint32_t state = 0x510;            // EBallCameraState: 0 default, 1 one, 2 chase, 3 boost, 4 to ball, 5 from ball (Think 0xcff7ec, ProcessInput 0xcffe34)
     uint32_t behaviour = 0x28c;        // EBallCameraBehaviour: 0 default, 1 freeze look, 2 hint ball-to-cam, 3 init position, 4 and 5 fixed, 6 path desired
                                        // position, 7 path, 8 spindle (the switch in Think)

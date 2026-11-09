@@ -14,7 +14,7 @@ Cases: detretail (the same with the game's own 1/60 per frame: what the unpatche
 time), retail (mode=off, off_rate=N: the game's own 1/60 per call, held to N frames per second: what the unpatched game does),
 real (mode=real, max_rate=N: measured frame time, held to N), fixed (mode=fixed, rate=N: the lock).
 
-  tools\\.venv\\Scripts\\python tools\\test\\hifps_timing.py [--rates 60,120,240] [--modes retail,real,fixed] [--seconds 40] [--warmup 14] [--exe FILE]
+  base\\tools\\.venv\\Scripts\\python tools\\test\\hifps_timing.py [--rates 60,120,240] [--modes retail,real,fixed] [--seconds 40] [--warmup 14] [--exe FILE]
 
 Exit code 0 when every det case has movie x and sim/wall, and every real/fixed case has movie x, within --tol (default 0.06) of 1.0; retail rows are informational
 (they are expected to show N/60). Output: a table on stdout and work/hifps_timing/<case>.csv + summary.json.

@@ -27,6 +27,7 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
 #include "play_aim.h"
 #include "play_ballcam.h"
 #include "nxrt/game/play_camlook.h"
@@ -36,20 +37,18 @@
 #include "play_lockcam.h"
 #include "play_scenefix.h"
 #include "play_lookrate.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play {
 
 namespace {
 
 constexpr const char* kTag = "play";
-constexpr uint64_t kFnProcessInput = 0xc70334;    // CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&)
-constexpr uint64_t kFnSetTransform = 0xc4d588;    // CActorMP1::SetTransform(CTransform4f const&): x0 = the actor, x1 = the transform
-constexpr uint64_t kFnFpCamThink = 0xd72314;      // CFirstPersonCameraMP1::Think(float, CStateManager&): x0 the camera
-constexpr uint64_t kFnBallCamThink = 0xcff7ec;    // CBallCameraMP1::Think(float, CStateManager&): x0 the camera
+using namespace nxrt::games::mpr::addr;
 
 struct M {
     GameHost* host = nullptr;
-    uint64_t base = 0x7100000000ull;
+    uint64_t base = mem::kMainBase;
     std::unique_ptr<AimDriver> aim;
     std::atomic<uint64_t> player{0};
     LookOffsets free_look;                // free look (first person, Alt held); main thread only

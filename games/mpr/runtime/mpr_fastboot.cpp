@@ -18,6 +18,7 @@
 #include "nxrt/log.h"
 #include "play_aim.h"
 #include "nxrt/game/play_types.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play {
 
@@ -26,19 +27,9 @@ namespace {
 constexpr const char* kTag = "fastboot";
 
 // main-module offsets (Metroid Prime Remastered 1.0.0; names from the game's symbols)
-constexpr uint64_t kFnDigitalPressed = 0x4d71f0;        // CCommandFrame::GetDigitalPressedInput(CDataEnumValue const&, CFinalInput const&, EFilterMode) const: bool in w0
-constexpr uint64_t kRetSkipUserInput = 0xe51e78;        // return address of its call for the skip command (1) in CGameIOWinMP1::UserInput
-constexpr uint64_t kRetSkipCameraManager = 0x4bd840;    // ... and in CCameraManager::CheckForCinematicSkip(CStateManager&, CFinalInput const&)
-constexpr uint64_t kFnIsCinematicSkippable = 0x40a2dc;  // CGameState::IsCinematicSkippable(CGuid const&) const: bool in w0
-constexpr uint64_t kFnMovieThink = 0x852b28;            // CStreamedMovieGOC::Think(CStateManager&, float): x0 the movie component, x1 the state manager
-constexpr uint64_t kFnMovieSkip = 0x8536d4;             // CStreamedMovieGOC::Skip(CStateManager&, bool immediate)
-constexpr uint64_t kFnMovieIsPlaying = 0x41fe48;        // CMovieIOWin::IsMoviePlaying(uint handle)
-constexpr uint64_t kMovieInvalidHandle = 0x1d15334;     // CMovieIOWin::skInvalidId (u32)
+using namespace nxrt::games::mpr::addr;
 constexpr uint64_t kMovieId = 128, kMovieHandle = 160, kMovieSkipState = 144;   // CStreamedMovieGOC: the FMV's CObjectId, the CMovieIOWin handle, the skip state (0 = none)
-constexpr uint64_t kFnFrontEndTimerTick = 0x41a21c;     // CFrontEndIOWin::TimerTick(CArchMsgParmTimerTick const&, CArchitectureQueue&)
-constexpr uint64_t kFnUpdateStateManager = 0x41b000;    // NIOWinStateManagerUtils::UpdateStateManager(CStateManager&, CArchMsgParmTimerTick const&): x1 the parm
 constexpr uint64_t kTickDt = 8;                         // CArchMsgParmTimerTick: the step in seconds (float)
-constexpr uint64_t kGpGameState = 0x459cc70;            // gpGameState: CGameStateMP1*; +0 world id, +0x10 world-state count, +0x18 world states (0x50 each, +0x10 current area)
 constexpr double kMaxMenuStep = 0.1;                    // the front end never gets a step longer than this
 
 // CObjectId bytes as the game keeps them (GUID text with its first three groups stored little-endian, tt_script.cpp tt_guid_to_bytes)

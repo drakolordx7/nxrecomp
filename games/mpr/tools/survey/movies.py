@@ -1,6 +1,6 @@
 """Survey every FMV0 movie asset: extract with retrotool, probe with ffprobe, write movies.tsv.
 
-Run from the project folder: tools/.venv/Scripts/python.exe tools/survey/movies.py
+Run from the project folder: base/tools/.venv/Scripts/python.exe tools/survey/movies.py
 """
 import collections
 import glob

@@ -1,4 +1,4 @@
-"""Minimal GDB remote-protocol client for Eden's GDB stub (work area S5), plus the game-state reader that mirrors runtime/src/testtools/tt_probe.cpp.
+"""Minimal GDB remote-protocol client for Eden's GDB stub (work area S5), plus the game-state reader that mirrors games/mpr/runtime/mpr_tt_probe.cpp.
 
 Eden (v0.2.1, src/core/debugger) listens on [Debugging] gdbstub_port (default 6543) when use_gdbstub is on. A client connecting PAUSES the game; it keeps
 running only after a continue. Supported packets used here: qSupported, QStartNoAckMode, qRcmd (monitor get info / mappings), m (memory), g/p (registers),
@@ -11,16 +11,26 @@ Z0/z0 (software breakpoints), vCont (c, s), 0x03 interrupt.
 import argparse
 import json
 import math
+import os
 import socket
 import struct
 import sys
 import time
 
-# ---- the probe layout: main-module offsets of v1.0.0, see runtime/src/testtools/tt_probe.cpp for where each comes from ----
-GP_GAME_STATE = 0x459CC70
+# ---- the probe layout: main-module offsets of v1.0.0, see runtime/mpr_tt_probe.cpp for where each comes from ----
+def _addr(name):
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'recomp', 'addrs.tsv'), encoding='utf-8') as f:
+        for line in f:
+            p = line.rstrip('\r\n').split('\t')
+            if len(p) >= 3 and p[1] == name and not line.startswith('#'):
+                return int(p[2], 16)
+    raise KeyError(name)
+
+
+GP_GAME_STATE = _addr('kGpGameState')
 WORLD_STATE_SIZE = 0x50
-FN_UPDATE = 0x3C81C8              # CGameArchitectureSupport::Update(float*): the frame boundary
-FN_PROCESS_INPUT = 0xC70334       # CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 = player, x2 = state manager
+FN_UPDATE = _addr('kUpdate')                # CGameArchitectureSupport::Update(float*): the frame boundary
+FN_PROCESS_INPUT = _addr('kFnProcessInput')   # CPlayerMP1::ProcessInput(CFinalInput const&, CStateManager&): x0 = player, x2 = state manager
 
 
 class GdbError(RuntimeError):

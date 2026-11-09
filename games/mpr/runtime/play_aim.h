@@ -17,13 +17,15 @@
 #include <cstdint>
 #include <functional>
 
+#include "mpr_addrs.h"
+
 namespace nxrt::play {
 
 struct AimLayout {
     // main-module relative addresses (added to the game base)
-    uint64_t gp_game_state = 0x459cc70;      // gpGameState: pointer to CGameStateMP1; +0x20 = CPlayerStateMP1*
-    uint64_t gp_tweak_player = 0x4b32880;    // gpTweakPlayer: pointer to CTweakPlayerMP1
-    uint64_t fn_set_transform = 0xc4d588;    // CActorMP1::SetTransform(CTransform4f const&)
+    uint64_t gp_game_state = games::mpr::addr::kGpGameState;      // gpGameState: pointer to CGameStateMP1; +0x20 = CPlayerStateMP1*
+    uint64_t gp_tweak_player = games::mpr::addr::kGpTweakPlayer;    // gpTweakPlayer: pointer to CTweakPlayerMP1
+    uint64_t fn_set_transform = games::mpr::addr::kFnSetTransform;    // CActorMP1::SetTransform(CTransform4f const&)
     // absolute overrides for tests (0 = base + relative)
     uint64_t gp_game_state_abs = 0, gp_tweak_player_abs = 0;
     // CPlayerMP1

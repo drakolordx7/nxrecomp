@@ -9,12 +9,12 @@
 #include "nxrt/config.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play {
 namespace {
 constexpr const char* kTag = "scenefix";
-constexpr uint64_t kFnModConProcessRenderQuery = 0x1b57ac;       // CModConSceneNode::ProcessRenderQuery(CSceneRenderQuery const&, CSceneRenderQueryResult&)
-constexpr uint64_t kFnModConMP1ProcessRenderQuery = 0xfba8b8;    // CModConSceneNodeMP1::ProcessRenderQuery (same, plus the draw flags at +0x1d0)
+using namespace nxrt::games::mpr::addr;
 constexpr uint64_t kListedByte = 0x31;       // CRenderSceneNode: bit 0 = in a render list (PullTransferData)
 constexpr uint64_t kReadyByte = 0x32;        // CModConSceneNode: bit 0 = tokens ready, render data built (UpdateTokenReadiness)
 constexpr uint64_t kRenderData = 0x80;       // CModConSceneNode: NModConFormat::CModConRenderData*, the bounds at +0x190 (GetBounds)

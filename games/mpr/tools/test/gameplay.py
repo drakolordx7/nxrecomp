@@ -13,26 +13,27 @@ Facts the scripts rely on (all read off the running game, see runtime/docs/S13.m
 """
 import json, os, subprocess, sys, time
 
-def _project_root():
-    """The project folder: NXRT_ROOT, else the nearest parent of this file that holds both tools/ and work/."""
-    import os, pathlib
-    env = os.environ.get('NXRT_ROOT')
-    if env:
-        return pathlib.Path(env).as_posix()
-    here = pathlib.Path(__file__).resolve()
-    for p in here.parents:
-        if (p / 'tools').is_dir() and (p / 'work').is_dir():
-            return p.as_posix()
-    return here.parents[2].as_posix()
+GAME_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))      # games/mpr, or a worktree of it
 
 
-ROOT = _project_root()
-EXE_DIR = os.environ.get('NXRT_VERIFY_EXE', ROOT + '/game-build-verify/build/snap')
+def _nx_boot():
+    d = os.environ.get('NX_ROOT') or GAME_DIR
+    while d and not os.path.isdir(os.path.join(d, 'games')):
+        p = os.path.dirname(d)
+        d = None if p == d else p
+    return os.path.join(d, 'base', 'tools', 'boot') if d else sys.exit('gameplay: NX folder not found (set NX_ROOT)')
+
+
+sys.path.insert(0, _nx_boot())
+import boot  # noqa: E402
+
+G = boot.load_game(GAME_DIR, exe=os.environ.get('NXRT_VERIFY_EXE'))        # exe: NXRT_VERIFY_EXE, else NX/build/<checkout>/release
+ROOT = G.data.replace(os.sep, '/')                                          # the game's data folder (game/, work/)
+EXE_DIR = G.exe_dir
 RUN_DIR = ROOT + '/work/run_verify'
-# The game exe and its log are named after the game folder (games/<id> -> <id>.exe, <id>.log) unless the environment or run() says otherwise.
-GAME_ID = os.path.basename(ROOT)
-EXE_NAME = os.environ.get('NXRT_GAME_EXE', GAME_ID + '.exe')
-LOG_NAME = os.environ.get('NXRT_GAME_LOG', GAME_ID + '.log')
+GAME_ID = G.id
+EXE_NAME = G.exe_name
+LOG_NAME = G.log_name
 TICK_HZ = 19200000
 
 
@@ -46,33 +47,25 @@ def warp(world, area, settle=4.0):
     return ['@warp %s %s' % (world, area), '@run %g' % settle]
 
 
-def run(lines, out, rate=None, env=None, seconds=600, gfx='headless', exe_dir=None, watchdog=60, exe_name=None, log_name=None):
+def run(lines, out, rate=None, env=None, seconds=600, gfx='headless', exe_dir=None, watchdog=60):
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
-    cwd = os.path.join(out, 'cwd')            # own working directory per run: save folder, controls.ini, logs; the texture cache is shared by a junction
+    cwd = os.path.join(out, 'cwd')            # own working directory per run: save folder, controls.ini, logs
     os.makedirs(cwd, exist_ok=True)
-    cache = os.path.join(cwd, 'bc7_cache')
-    if not os.path.exists(cache):
-        src = os.path.normpath(os.path.join(ROOT, 'work', 'run', 'bc7_cache'))
-        subprocess.run('mklink /J "%s" "%s"' % (os.path.normpath(cache), src), shell=True, capture_output=True)
     script = os.path.join(out, 'script.nxs')
     open(script, 'w').write('\n'.join(lines) + '\n')
-    e = dict(os.environ)
-    e.update(NXRT_TEST_SCRIPT=script, NXRT_TEST_OUT=os.path.join(out, 'out'), NXRT_TEST_REGIONS=ROOT + '/tools/test/regions.tsv', NXRT_BOOT_GFX=gfx,
-             NXRT_FS_ROMFS=ROOT + '/game/romfs', NXRT_FS_SAVE_DIR=os.path.join(cwd, 'save'), NXRT_TEST_WALL_TIMEOUT_S=str(seconds), NXRT_TIME_MODE='real',
-             NXRT_DIAG_WATCHDOG_SECONDS=str(watchdog))
+    e = dict(NXRT_TEST_SCRIPT=script, NXRT_TEST_OUT=os.path.join(out, 'out'), NXRT_BOOT_GFX=gfx, NXRT_FS_SAVE_DIR=os.path.join(cwd, 'save'),
+             NXRT_TEST_WALL_TIMEOUT_S=str(seconds), NXRT_TIME_MODE='real', NXRT_DIAG_WATCHDOG_SECONDS=str(watchdog))
     if gfx == 'headless':
         e['NXRT_GFX_HEADLESS'] = '1'
     if rate:
         e['NXRT_TEST_DETERMINISTIC'] = '1'
         e['NXRT_TEST_CLOCK_STEP_TICKS'] = str(int(round(TICK_HZ / rate)))
     e.update(env or {})
-    cmd = [(exe_dir or EXE_DIR) + '/' + (exe_name or EXE_NAME), '--log', os.path.join(out, log_name or LOG_NAME), '--max-seconds', str(seconds)]
+    g = boot.load_game(GAME_DIR, exe=exe_dir) if exe_dir else G
     t = time.time()
-    try:
-        rc = subprocess.run(cmd, cwd=cwd, env=e, capture_output=True, text=True, timeout=seconds + 60).returncode
-    except subprocess.TimeoutExpired:
-        rc = 124
+    r = boot.launch(g, e, ['--max-seconds', str(seconds)], run_dir=out, cwd=cwd, stdout=subprocess.DEVNULL)
+    rc = r.wait(seconds + 60)
     res = dict(exit=rc, wall=time.time() - t)
     rp = os.path.join(out, 'out', 'result.json')
     if os.path.exists(rp):

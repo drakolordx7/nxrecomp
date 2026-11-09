@@ -12,7 +12,7 @@ splits them into IMPORTS (SHN_UNDEF) and DEFINED, and writes:
   work/survey/audio/audio_layer_main.txt
   work/survey/audio/opus_symbols.txt
 
-Run from the project folder: tools/.venv/Scripts/python.exe tools/survey/audio_symbols.py
+Run from the project folder: base/tools/.venv/Scripts/python.exe tools/survey/audio_symbols.py
 """
 import os
 import re

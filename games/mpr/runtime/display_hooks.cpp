@@ -16,6 +16,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "mpr_addrs.h"
 
 namespace nxrt::play {
 
@@ -23,14 +24,7 @@ namespace {
 
 constexpr const char* kTag = "display";
 constexpr uint64_t kGetScreenWidth = 0x1248, kGetScreenHeight = 0x1250;
-constexpr uint64_t kGetResolutionScale = 0x3c08a0;
-constexpr uint64_t kUpdateCameraNodes = 0xafe41c;
-constexpr uint64_t kGuiProjectionState = 0xbd52fc;
-constexpr uint64_t kGetVerticalFov = 0x4c2998;
-constexpr uint64_t kUiUpdateCameraNodes = 0xb0e5ec;       // CUIDisplayManager::UpdateCameraNodes
-constexpr uint64_t kBloomRender = 0x3a450c;
-constexpr uint64_t kChromaticRender = 0x3a69b0;
-constexpr uint64_t kDefaultAspectGlobal = 0x20e7a7c;      // CCameraManagerMP1's cached aspect (written by CreateCameras)
+using namespace nxrt::games::mpr::addr;
 constexpr size_t kProxyAspect = 152;       // [CDisplayManager + 16] + 152
 constexpr size_t kGuiCamType = 264, kGuiCamA = 268, kGuiCamB = 272, kGuiCamC = 276, kGuiCamD = 280;   // CGuiCamera
 constexpr size_t kCameraVerticalFov = 1120;               // CGameCamera, radians

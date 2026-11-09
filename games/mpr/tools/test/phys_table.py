@@ -14,7 +14,7 @@ Scenarios (times in game seconds, `@run`; pad steps count frames, one frame = 1/
 All time is igt. The player speed is the trace `spd` (the game's physics speed: CPhysicsActorMP1::GetVelocityWR, 3D magnitude);
 distances come from the position.
 
-  tools\\.venv\\Scripts\\python tools\\test\\phys_table.py --exe game-build-rel\\build\\rel [--rates 60,120,144,240] [--jobs 2]
+  base/tools/.venv/Scripts/python tools/test/phys_table.py --exe NX/build/mpr/release [--rates 60,120,144,240] [--jobs 2]
         [--scenarios walk,half,jump,rjump,ball] [--out work\\run_rel\\phys] [--real] [--no-run] [--tag name]
 Output: <out>/<tag>_r<rate>/ (script.nxs, mpr.log, out/trace.jsonl, out/result.json) and the table; <out>/<tag>_results.json.
 Exit code: 0 all rows within 1 % of the 60 step/s column, 1 deviation or a run that did not pass, 3 a window without samples, 2 usage.
@@ -288,7 +288,7 @@ def run_one(a, rate, outdir, results):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--exe', default=ROOT + '/game-build-rel/build/rel', help='folder with mpr.exe')
+    ap.add_argument('--exe', default=gp.EXE_DIR, help='folder with the game exe')
     ap.add_argument('--rates', default=','.join(str(r) for r in RATES))
     ap.add_argument('--scenarios', default=','.join(SCENARIOS))
     ap.add_argument('--out', default=ROOT + '/work/run_rel/phys')

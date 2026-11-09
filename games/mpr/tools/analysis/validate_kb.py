@@ -11,7 +11,7 @@ lowest PT_LOAD vaddr is taken as the image base (0 for nx2elf, 0x7100000000 if r
 Statuses:  PASS  claim confirmed by the binary
            FAIL  claim contradicted (wrong address / bytes / name missing for a hooked symbol)
            WARN  cannot be confirmed (stripped, internal, inlined) but not contradicted
-Exit code = 1 if any FAIL.  Needs pyelftools + capstone (tools/.venv) and llvm-cxxfilt (LLVM bin) for demangling.
+Exit code = 1 if any FAIL.  Needs pyelftools + capstone (base/tools/.venv) and llvm-cxxfilt (LLVM bin) for demangling.
 """
 import argparse, json, os, pathlib, re, shutil, struct, subprocess, sys, collections
 from elftools.elf.elffile import ELFFile
