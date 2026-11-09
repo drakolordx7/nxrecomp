@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Windows x64 release of one game (--game DIR, its manifest game.json names every file): a release folder and a zip of it, audited before and after the zip is written.
+r"""Build the Windows x64 release of one game (--game DIR, its manifest game.json names every file): a release folder and a zip of it, audited before and after the zip is written.
 
     python tools/release/make_release.py --game DIR [--out DIR] [--version V] [--no-shader-pack] [--allow-local-paths]
                                          [--deny-hash-dir DIR ...] [--repo DIR] [--base DIR] [--exe F] [--setup-bin DIR]
