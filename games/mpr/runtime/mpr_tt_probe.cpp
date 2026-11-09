@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Game-state probes of Metroid Prime Remastered (S5; tt::GameProbes, nxrt/tt.h): read the player transform, world/area ids, health and play time out of guest memory, install the two
-// entry hooks the tooling needs, and run the practice mod's warp sequence. Guest pointers are host pointers (memory.h), so a probe is a
+// entry hooks the tooling needs, and run the practice mod's warp sequence. The script steps built on them are in mpr_tt_steps.cpp. Guest pointers are host pointers (memory.h), so a probe is a
 // chain of reads; every read goes through ReadProcessMemory on this process so that a stale pointer gives "not available", not a fault.
 //
 // Layout, all main-module offsets of the v1.0.0 binary, each read off the disassembly of the named function (work/elf/main.elf):
@@ -33,17 +33,19 @@
 #include <unordered_set>
 #include <vector>
 
+#include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
 #include "mpr_sites.h"
+#include "mpr_tt_probe.h"
 #include "tt_internal.h"
 
 // The probes live in their own namespace and reach the test tooling through tt::GameProbes (nxrt/tt.h, mpr_game_probes() below). The memory
 // helpers they use are the base's (src/testtools/tt_game.cpp).
 namespace nxrt::tt::mpr {
 namespace detail {
-using nxrt::tt::detail::game_base;
 using nxrt::tt::detail::read_mem;
 using nxrt::tt::detail::write_mem;
 }  // namespace detail
@@ -72,9 +74,13 @@ constexpr uint64_t kLoaderCounts[] = {0xe8, 0xa4, 0x138, 0x110};
 constexpr uint64_t kLoaderBusyByte = 0x144;
 
 std::atomic<uint64_t> g_player{0}, g_mgr{0}, g_pi_stamp{0};
-std::atomic<::Ctx*> g_call_ctx{nullptr};
 constexpr uint64_t kFnGetVelocityWR = 0xc577c4;        // CPhysicsActorMP1::GetVelocityWR(player, CStateManager const&) -> CVector3f*
 ProbeLayout g_layout;
+
+// Base of the main module: the probe layout's, else [test] game_base, else where the console maps main.
+uint64_t game_base() {
+    return g_layout.game_base ? g_layout.game_base : static_cast<uint64_t>(config_get_int("test", "game_base", static_cast<int64_t>(mem::kMainBase)));
+}
 
 template <class T>
 bool rd(uint64_t a, T* v) { return detail::read_mem(a, v, sizeof(T)); }
@@ -97,32 +103,34 @@ int input_hook(::Ctx* c, uint64_t, void*) { set_player_pointers(c->x[0], c->x[2]
 
 void set_probe_layout(const ProbeLayout& l) { g_layout = l; }
 void set_player_pointers(uint64_t player, uint64_t mgr) { g_player.store(player); g_mgr.store(mgr); }
-void set_call_context(::Ctx* c) { g_call_ctx.store(c); }
 
 namespace detail {
-bool have_state_manager() { return (g_layout.state_manager ? g_layout.state_manager : g_mgr.load()) != 0; }
-
-tt::LoaderState loader_state(uint32_t* pending) {
+LoaderState loader_state(uint32_t* pending) {
     const uint64_t globals = g_layout.game_globals ? g_layout.game_globals : game_base() + kGameGlobals;
     const uint64_t factory = rd64(globals);
     const uint64_t mgr = factory ? rd64(factory + kFactoryLoader) : 0;
-    if (!mgr) return tt::LoaderState::Unknown;
+    if (!mgr) return LoaderState::Unknown;
     uint32_t sum = 0;
     for (uint64_t off : kLoaderCounts) {
         int32_t n = 0;
-        if (!rd(mgr + off, &n)) return tt::LoaderState::Unknown;
+        if (!rd(mgr + off, &n)) return LoaderState::Unknown;
         if (n > 0) sum += static_cast<uint32_t>(n);
     }
     uint8_t busy = 0;
-    if (!rd(mgr + kLoaderBusyByte, &busy)) return tt::LoaderState::Unknown;
+    if (!rd(mgr + kLoaderBusyByte, &busy)) return LoaderState::Unknown;
     if (pending) *pending = sum;
-    return (sum == 0 && busy == 0) ? tt::LoaderState::Idle : tt::LoaderState::Busy;
+    return (sum == 0 && busy == 0) ? LoaderState::Idle : LoaderState::Busy;
 }
 }
 
-bool read_state(GameState* out) {
+bool read_state(GameState* out, ::Ctx* c) {
     GameState g;
-    const uint64_t base = detail::game_base();
+    // what the base state has no slot for goes into g's field list at the end (below)
+    uint32_t move_state = 0;
+    bool have_phys = false, have_aim = false, have_cam = false, have_ps = false;
+    float speed = 0, pitch = 0, cam_yaw = 0, cam_pitch = 0;
+    int32_t cam_state = -1, morph_state = -1, orbit_state = -1, beam = -1, visor = -1, missiles = -1;
+    const uint64_t base = game_base();
     const uint64_t gp = g_layout.game_state_global ? g_layout.game_state_global : base + kGpGameState;
     const uint64_t gs = rd64(gp);
     if (gs) {
@@ -142,10 +150,8 @@ bool read_state(GameState* out) {
         const uint64_t ps = rd64(gs + 0x20);
         float hp;
         if (ps && rd(ps + 0xc, &hp)) { g.hp = hp; g.have_hp = true; }
-        int32_t beam = -1, visor = -1, missiles = -1;
-        if (ps && rd(ps + 0x8, &beam) && rd(ps + 0x18, &visor) && rd(ps + 0x2c + 8 * 4, &missiles)) {
-            g.beam = beam; g.visor = visor; g.missiles = missiles; g.have_ps = true;
-        }
+        int32_t b = -1, v = -1, m = -1;
+        if (ps && rd(ps + 0x8, &b) && rd(ps + 0x18, &v) && rd(ps + 0x2c + 8 * 4, &m)) { beam = b; visor = v; missiles = m; have_ps = true; }
     }
     const uint64_t mgr = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
     uint64_t player = g_layout.player ? g_layout.player : 0;
@@ -165,7 +171,7 @@ bool read_state(GameState* out) {
         if (xf && rd(xf, &m)) {
             g.pos[0] = m[3]; g.pos[1] = m[7]; g.pos[2] = m[11];
             g.yaw = std::atan2(m[2], m[0]);        // heading about Y (the world is Y up; forward is +Z at 0; + = turn left)
-            rd(player + 0x3f0, &g.move_state);
+            rd(player + 0x3f0, &move_state);
             g.have_player = std::isfinite(g.pos[0]) && std::isfinite(g.pos[1]) && std::isfinite(g.pos[2]);
         }
         if (g.have_player && mgr) {            // the first-person camera: [[[mgr + 0x4e0150] + 0x30] + 0x80]
@@ -175,41 +181,58 @@ bool read_state(GameState* out) {
             float cx[12];
             const uint64_t xfp = fp ? rd64(rd64(rd64(fp + 8) + 0x20) + 0x40) : 0;
             if (xfp && rd(xfp, &cx) && std::isfinite(cx[2]) && std::isfinite(cx[0])) {
-                g.cam_yaw = std::atan2(cx[2], cx[0]);
-                g.cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, cx[6])));
-                g.have_cam = true;
+                cam_yaw = std::atan2(cx[2], cx[0]);
+                cam_pitch = std::asin(std::max(-1.0f, std::min(1.0f, cx[6])));
+                have_cam = true;
             }
         }
         if (g.have_player) {
-            float pitch = 0;
+            float pt = 0;
             int32_t cs = 0, ms = 0, os = 0;
-            if (rd(player + 0x5cc, &pitch) && rd(player + 0x4d0, &cs) && rd(player + 0x4d4, &ms) && rd(player + 0x4e0, &os)) {
-                g.pitch = pitch; g.cam_state = cs; g.morph_state = ms; g.orbit_state = os; g.have_aim = true;
+            if (rd(player + 0x5cc, &pt) && rd(player + 0x4d0, &cs) && rd(player + 0x4d4, &ms) && rd(player + 0x4e0, &os)) {
+                pitch = pt; cam_state = cs; morph_state = ms; orbit_state = os; have_aim = true;
             }
             // The physics velocity needs a guest call, so only from inside the frame hook and only while the game is calling ProcessInput
             // (the player pointer is then live; during loads it is stale).
-            ::Ctx* c = g_call_ctx.load();
             const uint64_t mgr_now = g_layout.state_manager ? g_layout.state_manager : g_mgr.load();
-            if (c && mgr_now && frame() - g_pi_stamp.load() <= 2 && fn_lookup(detail::game_base() + kFnGetVelocityWR)) {
-                const uint64_t vp = guest_call(c, detail::game_base() + kFnGetVelocityWR, player, mgr_now);
+            if (c && mgr_now && frame() - g_pi_stamp.load() <= 2 && fn_lookup(game_base() + kFnGetVelocityWR)) {
+                const uint64_t vp = guest_call(c, game_base() + kFnGetVelocityWR, player, mgr_now);
                 float v[3];
                 if (vp && rd(vp, &v) && std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2])) {
                     for (int i = 0; i < 3; i++) g.vel[i] = v[i];
-                    g.speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-                    g.have_phys = true;
+                    speed = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                    have_phys = true;
+                    g.have_vel = true;
                 }
             }
         }
     }
+    // The game's own fields, in the order the trace prints them and the hash folds them (the hash is the one the tooling computed before the state
+    // went generic: state; which groups were readable; pitch; cam|morph; orbit|beam; visor|missiles).
+    using H = StateField::Hash;
+    const bool pl = g.have_player;
+    g.add_int("state", move_state, pl);                                              // EPlayerMovementState
+    g.add_int("", (have_phys ? 1 : 0) | (have_aim ? 2 : 0) | (have_ps ? 4 : 0));     // hash only
+    g.add_int("phys", 1, pl && have_phys, H::None);                                  // vel is the physics object's velocity, not a position difference
+    g.add_float("spd", speed, pl && have_phys, H::None);
+    g.add_float("pitch", pitch, have_aim);                                           // free-look pitch, radians, + = up
+    g.add_int("cam", cam_state, have_aim);                                           // EPlayerCameraState (0 first person)
+    g.add_int("morph", morph_state, have_aim, H::High);                              // morph transition state word (0 = unmorphed)
+    g.add_int("orbit", orbit_state, have_aim);                                       // EPlayerOrbitState (0 = not locked on)
+    g.add_float("camyaw", cam_yaw, have_cam, H::None);                               // the first-person camera's heading and pitch
+    g.add_float("campitch", cam_pitch, have_cam, H::None);
+    g.add_int("beam", beam, have_ps, H::High);                                       // 0 power 1 ice 2 wave 3 plasma
+    g.add_int("visor", visor, have_ps);                                              // 0 combat 1 x-ray 2 scan 3 thermal
+    g.add_int("msl", missiles, have_ps, H::High, "missiles");                        // item 4 amount
     *out = g;
     return g.have_world || g.have_player || g.have_igt || g.have_hp;
 }
 
-void install_game_hooks() {
-    const uint64_t base = detail::game_base();
+static void install_game_hooks() {
+    const uint64_t base = game_base();
     hook_add_entry(base + kFnUpdate, frame_hook, nullptr);
     hook_add_entry(base + kFnProcessInput, input_hook, nullptr);
-    NXLOG_I("tt", "game hooks registered: frame boundary at 0x%llx, state capture at 0x%llx (they fire only if the lifted game was built with tests/sites/mpr_testtools.sites)",
+    NXLOG_I("tt", "game hooks registered: frame boundary at 0x%llx, state capture at 0x%llx (they fire only if the lifted game was built with recomp/main.sites)",
             static_cast<unsigned long long>(base + kFnUpdate), static_cast<unsigned long long>(base + kFnProcessInput));
 }
 
@@ -389,7 +412,7 @@ bool watch_start(::Ctx* c, int what) {
     if (g_watch_on.load()) watch_stop();
     g_watch_addr[0] = g_watch_addr[1] = 0;
     if (what & 1) {
-        const uint64_t vp = guest_call(c, detail::game_base() + kFnGetVelocityWR, player, mgr);
+        const uint64_t vp = guest_call(c, game_base() + kFnGetVelocityWR, player, mgr);
         if (!vp) return false;
         g_watch_addr[0] = vp + 4;
     }
@@ -453,13 +476,13 @@ bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path
     if (!in) { *err = "cannot read " + in_path; return false; }
     FILE* out = std::fopen(out_path.c_str(), "wb");
     if (!out) { std::fclose(in); *err = "cannot write " + out_path; return false; }
-    const uint64_t fn = detail::game_base() + kFnRayStaticIntersection;
+    const uint64_t fn = game_base() + kFnRayStaticIntersection;
     // the filter argument (x3): CIncludeExcludeCollisionFilterMP1 built from CMaterialFilterMP1::skPassEverything (every surface passes)
     alignas(16) uint8_t filt[512] = {};
     {
         ::Ctx saved = *c;
-        c->x[0] = reinterpret_cast<uint64_t>(filt); c->x[1] = detail::game_base() + kSkPassEverything;
-        dispatch_call(c, detail::game_base() + kFnMakeIncludeExcludeFilter);
+        c->x[0] = reinterpret_cast<uint64_t>(filt); c->x[1] = game_base() + kSkPassEverything;
+        dispatch_call(c, game_base() + kFnMakeIncludeExcludeFilter);
         *c = saved;
     }
     size_t n = 0, nhit = 0, nfault = 0;
@@ -500,7 +523,7 @@ bool probe_positions(::Ctx* c, const std::string& in_path, const std::string& ou
     if (!in) { *err = "cannot read " + in_path; return false; }
     FILE* out = std::fopen(out_path.c_str(), "wb");
     if (!out) { std::fclose(in); *err = "cannot write " + out_path; return false; }
-    const uint64_t base = detail::game_base();
+    const uint64_t base = game_base();
     alignas(16) uint8_t filt[512] = {};
     alignas(16) uint64_t rc[2] = {0, 0};
     {
@@ -544,7 +567,7 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
     struct Cls { const char* name; uint64_t vtable; };
     static const Cls kCls[] = {{"door", 0x20e9fc0}, {"dock", 0x20e9df8}, {"pickup", 0x20f8300}, {"special", 0x20efdb0}, {"actor", 0x20ed470},
                                {"platform", 0x20edda8}, {"trigger", 0x20ea188}, {"relay", 0x2105700}};
-    const uint64_t base = detail::game_base();
+    const uint64_t base = game_base();
     std::vector<std::pair<std::string, uint64_t>> want;
     // "*" = every class listed in the file NXRT_TEST_VTABLES (lines `name offset`, offset = vtable symbol offset in the main module); S26
     if (classes.find('*') != std::string::npos) {
@@ -639,26 +662,23 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
 }
 }  // namespace detail
 
+namespace {
+void on_frame(uint64_t frame) { detail::watch_flush(frame); }
+void reset() { set_probe_layout(ProbeLayout{}); }
+// The keys of the fields read_state adds that @assert and @mashuntil may name.
+const char* const kStateKeys[] = {"state", "spd", "pitch", "cam", "morph", "orbit", "camyaw", "campitch", "beam", "visor", "msl", nullptr};
+}  // namespace
+
 const GameProbes& mpr_game_probes() {
     static const GameProbes p = [] {
         GameProbes t;
         t.install_hooks = &install_game_hooks;
         t.read_state = &read_state;
-        t.set_probe_layout = &set_probe_layout;
-        t.set_player_pointers = &set_player_pointers;
-        t.set_call_context = &set_call_context;
-        t.have_state_manager = &detail::have_state_manager;
-        t.loader_state = &detail::loader_state;
-        t.warp = &detail::warp;
-        t.grant = &detail::grant;
-        t.give_item = &detail::give_item;
-        t.call_guest = &detail::call_guest;
-        t.dump_objects = &detail::dump_objects;
-        t.probe_positions = &detail::probe_positions;
-        t.cast_rays = &detail::cast_rays;
-        t.watch_start = &detail::watch_start;
-        t.watch_stop = &detail::watch_stop;
-        t.watch_flush = &detail::watch_flush;
+        t.on_frame = &on_frame;
+        t.reset = &reset;
+        t.state_keys = kStateKeys;
+        t.steps = mpr_game_steps();
+        t.step_count = mpr_game_step_count();
         return t;
     }();
     return p;

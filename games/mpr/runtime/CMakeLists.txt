@@ -14,7 +14,7 @@ add_library(nxrt_game_mpr_data STATIC "${_mpr}/mpr_data.cpp" "${_mpr}/mpr_defaul
 target_include_directories(nxrt_game_mpr_data PUBLIC ${NXRT_GAME_MPR_INCLUDES})
 target_compile_features(nxrt_game_mpr_data PUBLIC cxx_std_20)
 
-add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_tt_probe.cpp")
+add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_tt_probe.cpp" "${_mpr}/mpr_tt_steps.cpp")
 target_link_libraries(nxrt_game_mpr_core PUBLIC nxrt_game_mpr_data nxrt)
 
 if(TARGET nxrt_gfx)

@@ -1,5 +1,5 @@
 # From the game's first level frame: warp to the Frigate's first room, check where we are, walk forward and see that the player moves.
-# Needs the lifted game built with runtime/tests/sites/mpr_testtools.sites and a game that has reached gameplay.
+# Needs the lifted game built with recomp/main.sites (its two test-tooling entry hooks) and a game that has reached gameplay.
 @timeout 1800
 @warp frigate frigate_start
 @shot frigate_start_00
