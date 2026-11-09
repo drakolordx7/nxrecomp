@@ -25,7 +25,7 @@ nxrt is the game-independent OS and HLE runtime for the Metroid Prime Remastered
 | `tests/data` | Loader fixtures, HIPC test vectors (generated, see Build and test) |
 | `tests/fixture` | `fixture.c` and `make_fixture.cmd`, which builds the loader fixtures |
 | `tests/tools` | `gen_hipc_vectors.py` (HIPC vectors); for the lifted tests: `guest_build.py`, `make_sites.py`, `unicorn_expect.py`, `native_check.cmd`, `dump_results.py` |
-| `docs` | `S3.md`, `S3b.md`, `S4b.md`, `S4d.md` and `S4e.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes) |
+| `docs` | `S3.md`, `S3b.md`, `S4b.md`, `S4d.md` and `S4e.md` (dev logs, decisions and gaps; S3b has the C++ exception boundary), `nvn_struct_sizes.md` (NVN object sizes), `CONFIG.md` (every ini key and environment variable), `debug/NNN.md` (numbered bug notes), `REFERENCES.md` (cited documents that live outside this repository) |
 | `scripts` | `build.ps1` (configure, build, optional test), `env.cmd` (MSVC, LLVM, CMake and Ninja on PATH), `gen_nvn_table.py` (NVN table), `gen_shaders.py` (SPIR-V of the runtime's own shaders in src/gfx/shaders: test scene, output pass, FSR 1, masked clear; uses `VULKAN_SDK`), `nvn_unit.ps1` (build and run one NVN unit test without CMake), `gen_nvn_test_api.py` (typed NVN callers for the tests), `gen_nvn_coverage_doc.py` (entry-point coverage table) |
 
 ## Build and test
