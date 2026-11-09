@@ -81,6 +81,12 @@ int scan(const std::string& romfs, void (*found_fn)(void* user, Icon icon, const
     return found;
 }
 
+// The map's stick icons: the mouse buttons that drive the map (left drag turns it, middle drag moves it).
+const char* pointer_icon(Ctx ctx, Icon icon) {
+    if (ctx != Ctx::Map) return nullptr;
+    return icon == Icon::LStick ? "kbm/mouse1" : "kbm/mouse2";
+}
+
 }
 
 const PromptGame& mpr_prompt_game() {
@@ -91,6 +97,7 @@ const PromptGame& mpr_prompt_game() {
         p.icon_size = kIconSize;
         p.upside_down = true;      // the game stores its UI textures upside down (row 0 of the storage is the bottom row; the UI flips v when it draws)
         p.scan = &scan;
+        p.pointer_icon = &pointer_icon;
         return p;
     }();
     return g;

@@ -7,6 +7,7 @@
 // switches an input off in that context. The Switch side (what "fire" or "beam_2" press on the pad) is the [switch] table; the defaults
 // there are the Remastered "dual stick" layout: ZR fire, ZL lock on, R missile, B jump, Y morph ball, + map, - pause, X held with the
 // d-pad picks a beam, the d-pad alone picks a visor.
+#include "mpr_acts.h"
 #include "nxrt/game/play_types.h"
 
 namespace nxrt::play {
@@ -259,7 +260,7 @@ Mouse2 = none
 constexpr int kDefaultsRev = 4;
 const GameDefaultAddition kAdditions[] = {
     {2, Ctx::Map, "X", Act::BtnX},   // the map's Key / Legend button (its footer shows X)
-    {4, Ctx::All, "Left Shift", Act::AltForm},   // morph ball on Shift (playtest: sprint-like key)
+    {4, Ctx::All, "Left Shift", mact::AltForm},   // morph ball on Shift (playtest: sprint-like key)
     {4, Ctx::Menu, "Left Shift", Act::None},
 };
 // Factory values a later revision changed; a file still on the old factory value moves to the new one once.

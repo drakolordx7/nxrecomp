@@ -4,6 +4,7 @@
 #include "mpr_game.h"
 
 #include "mpr_sites.h"
+#include "mpr_timestep.h"
 #include "mpr_tt_probe.h"
 #include "nxrt/services.h"
 #include "nxrt/timestep.h"
@@ -30,34 +31,23 @@ void title_defaults(services::TitleProfile& p) {
     p.user_uid_lo = 0x4d50525265636f6dull;     // "MPRRecom"
 }
 
-// The real-time frame step (nxrt/timestep.h): CGameArchitectureSupport::Update and the places that hold 1/60, in the order the base registers them.
+// The real-time frame step (nxrt/timestep.h): the places that hold the retail 1/60 as an immediate. CGameArchitectureSupport::Update is Info::frame_update.
 using timestep::Load;
 using timestep::MidSite;
 const MidSite kMids[] = {
     {site::kDtClamp, Load::Step, 8},
     {site::kDtLoop, Load::Step, 27},
     {site::kDtFloor, Load::NegStep, 8},
-    {site::kBudget0, Load::ScaledReg, 8, site::kExtraBudget},
-    {site::kBudget1, Load::ScaledReg, 8, site::kExtraBudget},
-    {site::kBudget2, Load::ScaledReg, 8, site::kExtraBudget},
-    {site::kBudget3, Load::ScaledReg, 8, site::kExtraBudget},
-    {site::kFriction, Load::ScaledFloat, 1, site::kFrictionPerTick},   // CPlayerMP1::GetDampedClampedVelocityWR: s1 = 3.5 per 1/60 s
-    {site::kStreamA0, Load::Stream1, 8},
-    {site::kStreamA1, Load::Stream2, 8},
-    {site::kStreamB0, Load::Stream1, 9},
-    {site::kStreamB1, Load::Stream2, 9},
 };
 
 const timestep::Sites kTimestep = [] {
     timestep::Sites s;
-    s.frame_update = site::kUpdate;
+    s.retail_step = site::kRetailStep;                    // 0x3C888889
     s.mids = kMids;
     s.mid_count = static_cast<uint32_t>(sizeof kMids / sizeof kMids[0]);
-    s.tick_render_timings = site::kTickRenderTimings;     // NRenderUtilMPT::TickRenderTimings
-    s.render_timing_counter = site::kRenderTimingCounter;
-    s.render_counter_wrap = site::kRenderCounterWrap;
     s.movie_update = site::kMovieUpdate;                  // CMovieList::Update(float)
-    s.per_tick_sampler = site::kStuckAddState;            // CPlayerStuckTrackerMP1::AddState
+    s.install = &timestep_install;                        // friction, render timings, streaming, budget, stuck tracker (mpr_timestep.h)
+    s.remove = &timestep_remove;
     return s;
 }();
 

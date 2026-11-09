@@ -4,6 +4,7 @@
 // Keyboard tab logic in apps/launcher/bindings_edit.cpp: the list rows, slot edits, clears and resets on the factory bindings.
 // Only in-memory settings are used; no file, no window.
 #include "test_framework.h"
+#include "mpr_acts.h"
 
 #include <cstddef>
 #include <string>
@@ -24,6 +25,8 @@ using nxl::reset_shown_bindings;
 using nxrt::play::Act;
 using nxrt::play::Binding;
 using nxrt::play::Ctx;
+namespace mact = nxrt::play::mact;
+namespace mctx = nxrt::play::mctx;
 using nxrt::play::InKind;
 using nxrt::play::InputId;
 using nxrt::play::Settings;
@@ -185,8 +188,8 @@ NXTEST(reset_shown_bindings_leaves_other_contexts_alone) {
     bind_slot(s, Act::Jump, 1, key("Z"), nullptr);
     s.bindings.push_back(binding("H", Ctx::Menu, Act::Confirm));
     s.bindings.push_back(binding("J", Ctx::Map, Act::Map));
-    s.bindings.push_back(binding("K", Ctx::Alt, Act::Jump));
-    s.bindings.push_back(binding("L", Ctx::Inspect, Act::SetB2));
+    s.bindings.push_back(binding("K", mctx::Alt, Act::Jump));
+    s.bindings.push_back(binding("L", mctx::Inspect, mact::Visor2));
     s.bindings.push_back(binding("M", Ctx::Play, Act::Primary));
     s.bindings.push_back(binding("N", Ctx::Play, Act::Jump));
     // Remove the first gameplay binding (M); N stays.
@@ -257,6 +260,6 @@ NXTEST(inputs_for_without_bindings_is_empty) {
 
 NXTEST(act_label_comes_from_the_rows) {
     CHECK(act_label(Act::Jump) == L"Jump");
-    CHECK(act_label(Act::AltForm) == L"Morph ball");
+    CHECK(act_label(mact::AltForm) == L"Morph ball");
     CHECK(act_label(Act::BtnA).empty());
 }

@@ -6,7 +6,7 @@
 
 namespace nxrt::games::mpr::site {
 
-constexpr uint64_t kUpdate = 0x3c81c8;
+constexpr uint64_t kUpdate = 0x3c81c8;          // CGameArchitectureSupport::Update(float*): once per rendered frame (Info::frame_update)
 constexpr uint64_t kDtClamp = 0x3c8238;          // mid: w8 = step (elapsed clamp)
 constexpr uint64_t kDtLoop = 0x3c830c;           // mid: w27 = step
 constexpr uint64_t kDtFloor = 0x3c8354;          // mid: w8 = -step
@@ -23,6 +23,7 @@ constexpr uint64_t kJumpInputBlend = 0xcf0750;   // mid: the blend frame, s8 = f
 constexpr uint64_t kFnMaxRiseSpeed = 0xc72354;   // CPlayerMP1::GetMaximumPlayerPositiveVerticalVelocity(CStateManager const&) -> s0
 constexpr uint64_t kFnGetVelocityWR = 0xc577c4;  // CPhysicsActorMP1::GetVelocityWR(CStateManager const&) -> CVector3f* (y = up)
 constexpr uint64_t kRenderTimingCounter = 0x459cc10;   // u32 frame counter (data); the float seconds follow at +4
+constexpr float kRetailStep = 0.016666668f;       // what the code loads (0x3C888889 as a float)
 constexpr float kFrictionPerTick = 3.5f;         // the in-air walk friction the friction site loads, per 1/60 s
 constexpr float kExtraBudget = 0.014f;           // the extra-processing budget the budget sites load, seconds (0x3C656042)
 constexpr double kRenderCounterWrap = 53000.0;   // TickRenderTimings keeps frame % 0xD2F0

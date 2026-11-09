@@ -16,6 +16,8 @@
 #include "nxrt/input_source.h"
 #include "nxrt/game/play_types.h"
 #include "test_framework.h"
+#include "mpr_acts.h"
+#include "mpr_settings.h"
 NXTEST_GROUP(mpr_play_config)
 
 // A REQUIRE with a message (test_framework.h has REQUIRE only).
@@ -93,12 +95,15 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(ma.yaw_rad == mb.yaw_rad && ma.pitch_rad == mb.pitch_rad && ma.invert_y == mb.invert_y && ma.invert_x == mb.invert_x &&
           ma.menu_cursor == mb.menu_cursor && ma.wheel_cycles == mb.wheel_cycles))
         return false;
-    if (a.aim.lock_mode != b.aim.lock_mode || a.aim.free_lock_margin != b.aim.free_lock_margin || a.camera.view_sway != b.camera.view_sway)
+    const MprSettings &xa = mpr_settings(a), &xb = mpr_settings(b);
+    if (xa.aim.lock_mode != xb.aim.lock_mode || xa.aim.free_lock_margin != xb.aim.free_lock_margin || xa.camera.view_sway != xb.camera.view_sway ||
+        xa.ball.yaw_rad != xb.ball.yaw_rad || xa.ball.pitch_rad != xb.ball.pitch_rad || xa.ball.on != xb.ball.on || xa.ball.orbit != xb.ball.orbit ||
+        xa.dynamic_resolution != xb.dynamic_resolution || xa.bloom != xb.bloom || xa.chromatic_aberration != xb.chromatic_aberration)
         return false;
     const PadSettings &pa = a.pad, &pb = b.pad;
     if (!(pa.label_abxy == pb.label_abxy && pa.stick_deadzone == pb.stick_deadzone && pa.trigger_threshold == pb.trigger_threshold &&
           pa.gyro == pb.gyro && pa.gyro_scale == pb.gyro_scale && pa.rumble == pb.rumble && pa.rumble_scale == pb.rumble_scale &&
-          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens && pa.alt_orbit == pb.alt_orbit))
+          pa.right_deadzone == pb.right_deadzone && pa.invert_y == pb.invert_y && pa.look_sens == pb.look_sens))
         return false;
     const TimingSettings &ta = a.timing, &tb = b.timing;
     if (!(ta.tap_ms == tb.tap_ms && ta.hold_ms == tb.hold_ms && ta.double_ms == tb.double_ms && ta.pulse_ms == tb.pulse_ms)) return false;
@@ -107,9 +112,8 @@ bool same_settings(const Settings& a, const Settings& b) {
           da.height == db.height && da.keep_aspect == db.keep_aspect))
         return false;
     if (!(da.render_scale == db.render_scale && da.render_width == db.render_width && da.render_height == db.render_height &&
-          da.aspect == db.aspect && da.fov_offset == db.fov_offset && da.dynamic_resolution == db.dynamic_resolution &&
-          da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.bloom == db.bloom &&
-          da.chromatic_aberration == db.chromatic_aberration && da.fast_gpu_memory == db.fast_gpu_memory &&
+          da.aspect == db.aspect && da.fov_offset == db.fov_offset &&
+          da.anisotropy == db.anisotropy && da.lod_bias == db.lod_bias && da.fast_gpu_memory == db.fast_gpu_memory &&
           da.fewer_gpu_waits == db.fewer_gpu_waits))
         return false;
     const nxrt::extras::Settings &ea = a.extras, &eb = b.extras;
@@ -126,10 +130,10 @@ bool same_settings(const Settings& a, const Settings& b) {
     for (int i = 0; i < kPadSrcCount; ++i) {
         if (a.pad.remap[i] != b.pad.remap[i]) return false;
     }
-    for (int i = 0; i < kActCount; ++i) {
+    for (int i = 0; i < act_count(); ++i) {
         if (!(a.out[i] == b.out[i])) return false;
     }
-    for (int c = 0; c < kCtxCount; ++c) {
+    for (int c = 0; c < ctx_count(); ++c) {
         const std::vector<Binding> va = bindings_in(a, c), vb = bindings_in(b, c);
         if (va.size() != vb.size()) return false;
         for (size_t i = 0; i < va.size(); ++i) {
@@ -176,7 +180,7 @@ NXTEST(output_parse_terms) {
     REQUIRE(parse_output("X+UP", &o));
     CHECK(o == make_out(btn(kBtnX) | btn(kBtnUp)));
     Output beam1;   // the Beam1 default must be the same output
-    REQUIRE(parse_output(act_info(Act::SetA1).default_out, &beam1));
+    REQUIRE(parse_output(act_info(mact::Beam1).default_out, &beam1));
     CHECK(o == beam1);
 
     REQUIRE(parse_output(" x + up ", &o));   // case and spaces
@@ -199,13 +203,13 @@ NXTEST(default_settings_bindings_and_outputs) {
     CHECK(act_at(s, "W", Ctx::All) == Act::MoveForward);
     CHECK(act_at(s, "Mouse1", Ctx::All) == Act::Primary);
     CHECK(act_at(s, "Mouse1", Ctx::Menu) == Act::Confirm);
-    CHECK(act_at(s, "WheelUp", Ctx::All) == Act::SetAPrev);
+    CHECK(act_at(s, "WheelUp", Ctx::All) == mact::BeamPrev);
     CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
-    CHECK(act_at(s, "Left Ctrl", Ctx::All) == Act::AltForm);
+    CHECK(act_at(s, "Left Ctrl", Ctx::All) == mact::AltForm);
     CHECK(act_at(s, "W", Ctx::Menu) == Act::kCount);   // menus have no move binding of their own
 
     CHECK(s.out[(int)Act::Primary] == make_out(btn(kBtnZR)));
-    CHECK(s.out[(int)Act::SetA1] == make_out(btn(kBtnX) | btn(kBtnUp)));
+    CHECK(s.out[(int)mact::Beam1] == make_out(btn(kBtnX) | btn(kBtnUp)));
     CHECK(s.out[(int)Act::Confirm] == make_out(btn(kBtnA)));
 
     CHECK_EQ(s.timing.hold_ms, 250);
@@ -228,12 +232,12 @@ NXTEST(old_factory_lock_mode_moves_to_free_once) {
     Settings s;
     std::string err;
     REQUIRE(parse_settings("[aim]\nlock_mode = classic\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 2\n", &s, &err));
-    CHECK(s.aim.lock_mode == LockMode::Free);
+    CHECK(mpr_settings(s).aim.lock_mode == LockMode::Free);
     CHECK(s.migrated);
     CHECK(s.migration_added.find("lock_mode = free") != std::string::npos);
     Settings k;
     REQUIRE(parse_settings("[aim]\nlock_mode = classic\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 3\n", &k, &err));
-    CHECK(k.aim.lock_mode == LockMode::Classic);
+    CHECK(mpr_settings(k).aim.lock_mode == LockMode::Classic);
 }
 
 NXTEST(binding_trigger_and_ms_parse) {
@@ -243,7 +247,7 @@ NXTEST(binding_trigger_and_ms_parse) {
     REQUIRE_MSG(s.bindings.size() == 3u, "three bindings");
     CHECK(s.bindings[0].in == key_id(SDL_SCANCODE_LCTRL));
     CHECK(s.bindings[0].ctx == Ctx::Play);
-    CHECK(s.bindings[0].act == Act::AltForm);
+    CHECK(s.bindings[0].act == mact::AltForm);
     CHECK(s.bindings[0].trig == Trig::Hold);
     CHECK_EQ(s.bindings[0].ms, 250);
     CHECK(s.bindings[1].trig == Trig::Toggle);
@@ -265,9 +269,9 @@ NXTEST(inline_comments_and_case) {
 
 NXTEST(camera_and_aim_defaults_are_free_and_on) {
     const Settings d = default_settings();
-    CHECK(d.aim.lock_mode == LockMode::Free);
-    CHECK(d.aim.free_lock_margin == 0.15);
-    CHECK(d.camera.view_sway);
+    CHECK(mpr_settings(d).aim.lock_mode == LockMode::Free);
+    CHECK(mpr_settings(d).aim.free_lock_margin == 0.15);
+    CHECK(mpr_settings(d).camera.view_sway);
 }
 
 // A rejected file names the line and the offending key or word, so the player can find it; the wording around them is free.
@@ -333,7 +337,7 @@ NXTEST(old_file_gets_new_factory_binding_on_map) {
     REQUIRE_MSG(parse_settings("[bindings.map]\nReturn = confirm\n", &s, &err), err);
     CHECK(s.migrated);
     CHECK_EQ(s.defaults_rev, 4);
-    CHECK(act_at(s, "Left Shift", Ctx::All) == Act::AltForm);   // rev 4: morph ball on Shift
+    CHECK(act_at(s, "Left Shift", Ctx::All) == mact::AltForm);   // rev 4: morph ball on Shift
     CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
     CHECK(act_at(s, "Return", Ctx::Map) == Act::Confirm);   // the file's own binding is kept
     CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 2);
@@ -367,7 +371,7 @@ NXTEST(factory_text_is_at_current_revision) {
     CHECK_EQ(s.defaults_rev, 4);
     CHECK(!s.migrated);
     CHECK_EQ(default_settings().defaults_rev, 4);
-    CHECK(act_at(default_settings(), "Left Shift", Ctx::All) == Act::AltForm);
+    CHECK(act_at(default_settings(), "Left Shift", Ctx::All) == mact::AltForm);
     CHECK(act_at(default_settings(), "X", Ctx::Map) == Act::BtnX);
 }
 
@@ -406,28 +410,28 @@ NXTEST(pad_stick_keys_range_errors) {
 
 NXTEST(ball_camera_keys_with_the_mpr_vocabulary) {
     // the test executable registers Metroid Prime Remastered: its words for the alternate body's camera keys
-    REQUIRE(std::string(key_alt_camera()) == "ball_camera");
-    REQUIRE(std::string(key_alt_sens()) == "ball_sensitivity");
-    REQUIRE(std::string(key_alt_yaw()) == "morph_yaw");
-    REQUIRE(std::string(key_alt_pitch()) == "morph_pitch");
+    REQUIRE(std::string("ball_camera") == "ball_camera");
+    REQUIRE(std::string("ball_sensitivity") == "ball_sensitivity");
+    REQUIRE(std::string("morph_yaw") == "morph_yaw");
+    REQUIRE(std::string("morph_pitch") == "morph_pitch");
     Settings s;
     std::string err;
     REQUIRE_MSG(parse_settings("[mouse]\nball_camera = 0\nball_sensitivity = 4\n", &s, &err), err);
-    CHECK(!s.mouse.alt_camera);
-    CHECK(near(s.mouse.alt_yaw_rad, rad_per_count(4.0)) && s.mouse.alt_pitch_rad == s.mouse.alt_yaw_rad);
+    CHECK(!mpr_settings(s).ball.on);
+    CHECK(near(mpr_settings(s).ball.yaw_rad, rad_per_count(4.0)) && mpr_settings(s).ball.pitch_rad == mpr_settings(s).ball.yaw_rad);
     const std::string text = format_settings(s);
     CHECK(text.find("\nball_camera = 0\nball_sensitivity = 4\n") != std::string::npos);
     CHECK(text.find("morph_yaw") == std::string::npos && text.find("morph_pitch") == std::string::npos);
     // older files: morph_yaw and morph_pitch in radians per count
     REQUIRE_MSG(parse_settings("[mouse]\nmorph_yaw = 0.002\nmorph_pitch = 0.001\n", &s, &err), err);
-    CHECK(s.mouse.alt_yaw_rad == 0.002 && s.mouse.alt_pitch_rad == 0.001);
-    CHECK(s.mouse.alt_camera);
+    CHECK(mpr_settings(s).ball.yaw_rad == 0.002 && mpr_settings(s).ball.pitch_rad == 0.001);
+    CHECK(mpr_settings(s).ball.on);
     // morph_pitch before ball_sensitivity: the later key wins, so both take the sensitivity
     REQUIRE_MSG(parse_settings("[mouse]\nmorph_pitch = 0.001\nball_sensitivity = 3\n", &s, &err), err);
-    CHECK(near(s.mouse.alt_pitch_rad, rad_per_count(3.0)) && s.mouse.alt_yaw_rad == s.mouse.alt_pitch_rad);
+    CHECK(near(mpr_settings(s).ball.pitch_rad, rad_per_count(3.0)) && mpr_settings(s).ball.yaw_rad == mpr_settings(s).ball.pitch_rad);
     // after it: the vertical keeps its own
     REQUIRE_MSG(parse_settings("[mouse]\nball_sensitivity = 3\nmorph_pitch = 0.001\n", &s, &err), err);
-    CHECK(near(s.mouse.alt_yaw_rad, rad_per_count(3.0)) && s.mouse.alt_pitch_rad == 0.001);
+    CHECK(near(mpr_settings(s).ball.yaw_rad, rad_per_count(3.0)) && mpr_settings(s).ball.pitch_rad == 0.001);
 }
 
 NXTEST(ball_sensitivity_range) {

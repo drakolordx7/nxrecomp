@@ -3,7 +3,7 @@
 # title. Configured by the base runtime for each folder in NXRT_GAME_DIRS, with the manifest read (NX_GAME_*, nx_game.h in
 # NX_GAME_GENERATED_DIR). Three libraries, each a superset of the one before:
 #   nxrt_game_mpr_data   identity, branding, factory controls.ini (pure data; the launcher links it)
-#   nxrt_game_mpr_core   + title facts, frame-step sites, test-tooling probes (links nxrt)
+#   nxrt_game_mpr_core   + title facts, frame-step sites and hooks, test-tooling probes (links nxrt)
 #   nxrt_game_mpr        + play-mode hooks, button prompts, boot hook (links nxrt_gfx; only with NXRT_BUILD_GFX). mpr.exe links this one.
 #   nxrt_game_mpr_launcher  the data library + the launcher pages (Tweaks tab, language and start-up rows); only the launcher exe links it.
 # The module is written against the base's public SDK headers (include/nxrt/game/...) alone: no private src/ directory is on its path.
@@ -18,7 +18,7 @@ add_library(nxrt_game_mpr_data STATIC "${_mpr}/mpr_data.cpp" "${_mpr}/mpr_defaul
 target_include_directories(nxrt_game_mpr_data PUBLIC ${NXRT_GAME_MPR_INCLUDES})
 target_compile_features(nxrt_game_mpr_data PUBLIC cxx_std_20)
 
-add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_tt_probe.cpp" "${_mpr}/mpr_tt_steps.cpp")
+add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_timestep.cpp" "${_mpr}/mpr_tt_probe.cpp" "${_mpr}/mpr_tt_steps.cpp")
 target_link_libraries(nxrt_game_mpr_core PUBLIC nxrt_game_mpr_data nxrt)
 
 if(TARGET nxrt_launcher_core)
@@ -40,7 +40,7 @@ if(TARGET nxrt_gfx)
     target_compile_features(nxrt_mprpak PUBLIC cxx_std_20)
 
     add_library(nxrt_game_mpr STATIC
-        "${_mpr}/mpr_game.cpp" "${_mpr}/mpr_boot.cpp" "${_mpr}/mpr_play.cpp" "${_mpr}/mpr_ui.cpp" "${_mpr}/mpr_prompts.cpp" "${_mpr}/mpr_tonemap.cpp" "${_mpr}/mpr_render.cpp" "${_mpr}/mpr_tonemap_patch.cpp"
+        "${_mpr}/mpr_game.cpp" "${_mpr}/mpr_boot.cpp" "${_mpr}/mpr_play.cpp" "${_mpr}/hud_math.cpp" "${_mpr}/mpr_prompts.cpp" "${_mpr}/mpr_tonemap.cpp" "${_mpr}/mpr_render.cpp" "${_mpr}/mpr_tonemap_patch.cpp"
         "${_mpr}/display_hooks.cpp" "${_mpr}/menu_mouse_game.cpp" "${_mpr}/play_aim.cpp" "${_mpr}/play_ballcam.cpp" "${_mpr}/play_lockcam.cpp" "${_mpr}/play_lookrate.cpp"
         "${_mpr}/play_scenefix.cpp" "${_mpr}/play_jump.cpp" "${_mpr}/play_glow.cpp" "${_mpr}/play_glow_ui.cpp" "${_mpr}/mpr_fastboot.cpp"
         "${_mpr}/mpr_tint.cpp" "${_mpr}/mpr_settings_ui.cpp" "${_mpr}/mpr_ui_fastboot.cpp")

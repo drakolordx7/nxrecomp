@@ -5,6 +5,7 @@
 #include "nx_game.h"     // generated from games/mpr/game.json (NXGAME_*)
 #include "nxrt/game/play_types.h"
 #include "mpr_settings.h"
+#include "mpr_sites.h"
 
 namespace nxrt::play {
 const GameDefaults& mpr_game_defaults();      // mpr_defaults.cpp
@@ -31,6 +32,7 @@ const game::Info& data_info() {
         g.game_ini = NXGAME_GAME_INI;
         g.shader_pack = NXGAME_SHADER_PACK;
         g.save_folder = NXGAME_SAVE_FOLDER;
+        g.frame_update = site::kUpdate;
         g.play_defaults = &play::mpr_game_defaults();
         g.settings = &play::mpr_settings_section_data();
         return g;
