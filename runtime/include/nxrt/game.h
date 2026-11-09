@@ -6,16 +6,16 @@
 // launcher's WinMain and of the test mains. Every part is optional. A null table or an empty string turns off what needs it (no hooks, no
 // probes, neutral title facts), so a new title can start with the identity alone and add tables as its hooks are found.
 //
-// What each table is for, and where the Metroid Prime Remastered one lives:
-//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    games/mpr/runtime/mpr_core.cpp
-//   timestep         the sites of the real-time frame step and the game's own step hooks (nxrt/timestep.h)   games/mpr/runtime/mpr_core.cpp, mpr_timestep.cpp
-//   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  games/mpr/runtime/mpr_tt_probe.cpp
-//   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       games/mpr/runtime/mpr_defaults.cpp
-//   play             play-mode hooks: aim, camera, lock-on, display, menu pointer, F1 entries (play_game.h)     games/mpr/runtime/mpr_play.cpp
-//   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      games/mpr/runtime/mpr_prompts.cpp
-//   settings         the game's own section of controls.ini and its F1 tab (nxrt/game/settings.h)             games/mpr/runtime/mpr_settings.cpp
-//   launcher         the game's launcher pages (nxrt/game/launcher_ui.h, GameLauncher; the launcher exe only)  games/mpr/runtime/mpr_launcher.cpp
-//   render           the tone-map shader and its HDR patch, the render-target rule, NVN sizes (nxrt/game_render.h)  games/mpr/runtime/mpr_render.cpp
+// What each table is for, and the file of a game module that fills it (games/<id>/runtime/):
+//   title_defaults   services::TitleProfile defaults (main.npdm, control.nacp); ini keys still override them    <id>_core.cpp
+//   timestep         the sites of the real-time frame step and the game's own step hooks (nxrt/timestep.h)     <id>_core.cpp, <id>_timestep.cpp
+//   probes           test-tooling game-state probes and script steps (nxrt/tt.h, GameProbes)                  <id>_tt_probe.cpp
+//   play_defaults    factory controls.ini text and the bindings added by later revisions (play_types.h)       <id>_defaults.cpp
+//   play             play-mode hooks: aim, camera, display, menu pointer (play_game.h)                         <id>_play.cpp
+//   prompts          the game's button icon textures (play/prompt_resolve.h, PromptGame)                      <id>_prompts.cpp
+//   settings         the game's options and own section of controls.ini and its F1 tab (nxrt/game/settings.h)  <id>_settings.cpp
+//   launcher         the game's launcher pages (nxrt/game/launcher_ui.h, GameLauncher; the launcher exe only)  <id>_launcher.cpp
+//   render           the tone-map shader and its HDR patch, the render-target rule, NVN sizes (nxrt/game_render.h)  <id>_render.cpp
 // The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
 #pragma once
 #include <cstdint>
@@ -35,20 +35,20 @@ struct GameRender;
 
 struct Info {
     // ---- identity ----
-    const char* id = "";                    // short id, also the stem of the game's file names: "mpr"
-    const char* title = "";                 // the game's own name: "Metroid Prime Remastered"
-    const char* product = "";               // the PC port's name in window titles and dialogs: "Metroid Prime Remastered PC"
-    const char* short_title = "";           // a short name for file headers (the launcher's ini comment): "Metroid Prime" (empty: product)
+    const char* id = "";                    // short id, also the stem of the game's file names: "<id>"
+    const char* title = "";                 // the game's own name: "Example Game"
+    const char* product = "";               // the PC port's name in window titles and dialogs: "Example Game PC"
+    const char* short_title = "";           // a short name for file headers (the launcher's ini comment): "Example" (empty: product)
     uint64_t program_id = 0;                // the Switch title id
     const char* version = "";               // the game version the hooks were found in: "1.0.0"
     uint32_t languages = 0;                 // control.nacp SupportedLanguage: bit n = services::Language n (0: American English only)
 
     // ---- files and branding ----
-    const char* exe_name = "";              // the game exe: "mpr.exe"
-    const char* setup_exe_name = "";        // the setup tool: "mpr_setup.exe"
-    const char* launcher_ini = "";          // the launcher's own settings file: "mpr_launcher.ini"
-    const char* game_ini = "";              // the settings file the setup tool writes and the game exe reads: "mpr.ini"
-    const char* shader_pack = "";           // the shader pack file next to the setup tool: "shader_cache.mprshc"
+    const char* exe_name = "";              // the game exe: "<id>.exe"
+    const char* setup_exe_name = "";        // the setup tool: "<id>_setup.exe"
+    const char* launcher_ini = "";          // the launcher's own settings file: "<id>_launcher.ini"
+    const char* game_ini = "";              // the settings file the setup tool writes and the game exe reads: "<id>.ini"
+    const char* shader_pack = "";           // the shader pack file next to the setup tool: "shader_cache.<id>shc"
     const char* save_folder = "";           // save data folder under %APPDATA%: "MPRRecomp" (empty: "nxrt")
 
     // ---- the frame boundary ----

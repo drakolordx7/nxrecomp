@@ -3,6 +3,7 @@
 // stretch. The behaviour and the thread rules are the contract in include/nxrt/frame_limiter.h.
 #include "nxrt/frame_limiter.h"
 
+#include "nxrt/hires_wait.h"
 #include "nxrt/log.h"
 
 #include <windows.h>
@@ -33,7 +34,6 @@ struct FrameLimiter::Impl {
     std::atomic<double> target_fps{0.0};
     std::atomic<FrameLimiter::PreFrameFn> pre_fn{nullptr};
     std::atomic<void*> pre_user{nullptr};
-    HANDLE timer = nullptr;  // high-resolution waitable timer; null means the Sleep(1) coarse wait
 
     // Guards the state below. begin_frame holds it only for bookkeeping, never during the wait.
     std::mutex mu;
@@ -67,12 +67,8 @@ struct FrameLimiter::Impl {
     }
 
     bool coarse_wait_timer(uint64_t coarse_ns) {
-        LARGE_INTEGER due;
-        const LONGLONG units = static_cast<LONGLONG>(coarse_ns / 100);  // 100 ns units; negative = relative
-        due.QuadPart = -(units > 0 ? units : 1);
         const uint64_t set_at = FrameLimiter::now_ns();
-        if (!SetWaitableTimerEx(timer, &due, 0, nullptr, nullptr, nullptr, 0)) return false;
-        WaitForSingleObject(timer, INFINITE);
+        if (!hires_wait_ns(static_cast<int64_t>(coarse_ns))) return false;
         const uint64_t woke = FrameLimiter::now_ns();
         const uint64_t requested = set_at + coarse_ns;
         const double over = woke > requested ? static_cast<double>(woke - requested) : 0.0;
@@ -86,12 +82,8 @@ struct FrameLimiter::Impl {
             if (t >= target) return;
             const uint64_t remaining = target - t;
             if (remaining > margin_ns()) {
-                if (timer) {
-                    if (coarse_wait_timer(remaining - margin_ns())) continue;
-                } else {
-                    Sleep(1);  // fallback when no high-resolution timer exists; no timeBeginPeriod
-                    continue;
-                }
+                if (!coarse_wait_timer(remaining - margin_ns())) Sleep(1);  // no high-resolution timer: no timeBeginPeriod
+                continue;
             }
             while (FrameLimiter::now_ns() < target) _mm_pause();
             return;
@@ -100,11 +92,9 @@ struct FrameLimiter::Impl {
 };
 
 FrameLimiter::FrameLimiter() : impl_(new Impl) {
-    impl_->timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
 }
 
 FrameLimiter::~FrameLimiter() {
-    if (impl_->timer) CloseHandle(impl_->timer);
     delete impl_;
 }
 

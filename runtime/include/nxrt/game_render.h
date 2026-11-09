@@ -9,7 +9,6 @@
 //   scene upscale (FSR)  needs is_tonemap (the pass the scene is read in) and scene_scale to have an effect on the game
 //   NVN struct sizes     none: the base's generated defaults (the NVN header) stand
 //
-// Where the Metroid Prime Remastered table lives: games/mpr/runtime/mpr_render.cpp.
 #pragma once
 #include <cstdint>
 #include <vector>

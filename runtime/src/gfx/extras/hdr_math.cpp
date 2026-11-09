@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 
 #include <algorithm>
 #include <cmath>

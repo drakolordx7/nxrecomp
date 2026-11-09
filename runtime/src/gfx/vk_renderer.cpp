@@ -18,7 +18,7 @@
 #include "nxrt/lowlat.h"
 #include "nxrt/platform.h"
 #include "extras/hdr_capture.h"
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 #include "extras/win_display.h"
 #include "vk_gauges.h"
 

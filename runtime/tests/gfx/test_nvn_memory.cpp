@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // NVNmemoryPool, NVNbuffer, NVNtexturePool and NVNsamplerPool through the typed thunks (the memory family, api_memory.cpp).
 // Every function is called through abi::proc, the way a game calls it. Pool storage is 4096 aligned host memory; textures are
-// host objects built by hand (no GPU: the unit test links nvn_gpu_stub.cpp).
+// host objects built by hand.
 #include <malloc.h>
 
 #include <algorithm>

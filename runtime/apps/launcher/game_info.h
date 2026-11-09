@@ -4,6 +4,7 @@
 // launcher's own folder. The names of the game's programs and files are the registered game's (nxrt/game.h; the launcher registers
 // the data part of its game module at start, cmake/launcher.cmake NXRT_LAUNCHER_GAME).
 #pragma once
+#include "nx_formats.h"
 #include <windows.h>
 
 #include <atomic>
@@ -70,22 +71,14 @@ bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* er
 // `<id>.exe --prepare-shaders [--if-needed]`, run in the game folder, compiles the game's shaders ahead of play. The setup tool
 // writes <game folder>\shader_cache\programs.bin (the list of programs); a finished run writes shader_cache\prepare.state.
 
-enum class PrepareKind { other, progress, ready, done, error };
-
-// One line of the prepare run's output. Only lines starting with "prepare:" are of a known kind; anything else is `other`.
-struct PrepareLine {
-    PrepareKind kind = PrepareKind::other;
-    unsigned long long done = 0;    // progress: programs compiled so far
-    unsigned long long total = 0;   // progress: programs in all
-    long long failed = -1;          // done: the failed= count, -1 when the line has none
-    bool cancelled = false;         // done: the line ends with "cancelled"
-    std::string text;               // error: the error text; ready and done: the rest of the line; other: the whole line
-};
+// The "prepare:" lines and prepare.state are defined in formats/nx_formats.h (the game exe writes them, the launcher reads them).
+using nxfmt::PrepareKind;
+using nxfmt::PrepareLine;
 PrepareLine parse_prepare_line(const std::string& line);
 
 // True when shader_cache\programs.bin exists. Without it there is nothing to prepare (older game folders).
 bool shader_prepare_available(const std::wstring& game_dir);
-// True when shader_cache\prepare.state has the line "complete: 1". It does not know about driver changes; --if-needed checks those.
+// True when shader_cache\prepare.state says complete: 1. It does not know about driver changes; --if-needed checks those.
 bool shader_prepare_done(const std::wstring& game_dir);
 
 // One prepare run: starts <id>.exe --prepare-shaders [--if-needed] with the game folder as working folder, no console window,

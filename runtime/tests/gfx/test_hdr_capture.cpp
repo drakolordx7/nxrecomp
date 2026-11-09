@@ -12,7 +12,7 @@
 #include "test_framework.h"
 
 #include "extras/hdr_capture.h"
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 
 NXTEST_GROUP(hdr_capture)
 

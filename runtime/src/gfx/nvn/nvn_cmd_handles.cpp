@@ -3,7 +3,7 @@
 // the command memory the list used (or frees the memory pool). The back end keeps the same rule with an estimate of the
 // memory a list uses (nvn_cmd_lifecycle in api_cmdbuf.cpp): a list is dropped when a newer list occupies an overlapping
 // range of command memory or when its pool is finalized. Finalizing the command buffer does not end its lists: the command
-// words are in the game's memory, not the buffer object's. Animal Crossing initializes a command buffer per worker job each
+// words are in the game's memory, not the buffer object's. A title that initializes a command buffer per worker job each
 // frame, records one list, finalizes the buffer and only then has the frame's primary list call that handle. Only a list
 // without a command memory region (nothing else would ever drop it) goes with its buffer. There is no count limit: the
 // game calls some lists (character draw lists, the map) long after recording them.

@@ -29,7 +29,7 @@ namespace {
 constexpr uint32_t kSfci = 0x49434653;                                   // 'SFCI': CMIF request header
 constexpr uint32_t kSfco = 0x4F434653;                                   // 'SFCO': CMIF response header
 constexpr uint32_t kCmifInvalidObject = 0xF601;                          // CMIF: unknown domain object or bad magic
-constexpr uint32_t kInvalidCombination = kernel::make_result(1, 116);   // 0xE801: malformed message (kernel)
+using kernel::kInvalidCombination;                                       // 0xE801: malformed message
 constexpr uint64_t kMaxMsgBytes = 0x1000;
 constexpr size_t kHeaderBytes = 16;                                      // CmifIn/OutHeader, CmifDomain*Header, SFCI payload start
 constexpr size_t kConnectNameMax = 12;                                   // ConnectToNamedPort reads at most 12 bytes

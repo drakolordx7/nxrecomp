@@ -116,7 +116,7 @@ private:
 };
 
 // ---- the hook for game modules -----------------------------------------------------------------------------------------------------
-// Some games keep data that must agree with the files that are served; ACNH's resource size table (System/Resource/ResourceSizeTable.
+// Some games keep data that must agree with the files that are served; one title's resource size table (System/Resource/ResourceSizeTable.
 // srsizetable) lists the size of every resource, and a modded file of another size without a matching entry can crash the game. The
 // base knows nothing about such tables. A game module names its hook in its Info (nxrt/game.h mods_index_hook; set_mods_index_hook sets
 // one that takes precedence, for tests); load_mods

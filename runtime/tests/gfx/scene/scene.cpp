@@ -5,7 +5,7 @@
 
 #include "nxrt/gfx.h"
 #include "nxrt/log.h"
-#include "nxrt/scene.h"
+#include "scene.h"
 #include "tegra_tiling.h"
 #include "vk_gauges.h"
 

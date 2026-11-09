@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "nxrt/strutil.h"
 #include "nxrt/extras.h"
 
 #include <algorithm>
@@ -9,15 +10,12 @@
 #include "nxrt/config.h"
 #include "nxrt/game.h"
 #include "nxrt/game_render.h"
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 
 namespace nxrt::extras {
 namespace {
 
-std::string lower(std::string s) {
-    for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return s;
-}
+using nxrt::str::lower;
 
 std::mutex g_mu;
 Settings g_settings;

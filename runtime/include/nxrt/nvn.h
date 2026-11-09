@@ -23,7 +23,7 @@
 namespace nxrt::nvn {
 
 enum SourceMask : uint8_t {
-    kSrcPracticeMod = 1,   // nvn.h of the MP1R practice mod (reverse-engineered, used against this game)
+    kSrcPracticeMod = 1,   // nvn.h of a community modding framework for one title (reverse-engineered)
     kSrcSmoSsbu = 2,       // names registered by smo-recomp / ssbu-recomp
     kSrcOther = 4,         // explicit extras (Wonder, LAS recomp)
     kSrcGame = 8,          // a size the registered game fixes itself (GameRender::nvn_struct_sizes)

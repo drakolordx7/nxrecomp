@@ -14,7 +14,7 @@
 #include "nxrt/input.h"
 #include "nxrt/log.h"
 #include "nxrt/platform.h"
-#include "nxrt/scene.h"
+#include "scene/scene.h"
 #include "test_framework.h"
 
 namespace gfxtest {

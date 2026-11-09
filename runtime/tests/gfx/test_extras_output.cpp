@@ -17,7 +17,7 @@
 #include "test_framework.h"
 
 #include "extras/hdr_capture.h"
-#include "extras/hdr_math.h"
+#include "nxrt/game/hdr_math.h"
 #include "extras/output_pass.h"
 #include "nxrt/gfx.h"
 
