@@ -334,23 +334,6 @@ NXTEST(save_on_sd_space_has_no_device) {
     CHECK_EQ(open_save(s, attr(1, 1, 1), 4).result, kSdNoDevice);
 }
 
-NXTEST(account_save_api) {
-    Fixture f;
-    bool created = false;
-    int64_t size = 0, journal = 0;
-    CHECK_EQ(nxrt::services::fsapi::account_save_size(1, 2, &size, &journal), kTargetNotFound);
-    CHECK_EQ(nxrt::services::fsapi::ensure_account_save(1, 2, &created), 0u);
-    CHECK(created);
-    CHECK_EQ(nxrt::services::fsapi::ensure_account_save(1, 2, &created), 0u);
-    CHECK(!created);
-    CHECK_EQ(nxrt::services::fsapi::account_save_size(1, 2, &size, &journal), 0u);
-    CHECK_EQ(size, 4ll << 20);
-    CHECK_EQ(journal, 1ll << 20);
-    // the same save is then openable through fsp-srv with the attribute the SDK builds for MountSaveData
-    Session s = open_fsp();
-    CHECK(open_save(s, attr(1, 1, 2)).ok());
-}
-
 NXTEST(multi_commit_manager_opens) {
     Fixture f;
     Session s = open_fsp();

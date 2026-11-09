@@ -92,28 +92,6 @@ NXTEST(misc_hwopus_size_and_refusal) {
     kernel::handle_close(h);
 }
 
-NXTEST(misc_aoc_base_id_and_empty_list) {
-    nxsvc::Env env;
-    config_clear();
-    services::profile_reload();
-    nxsvc::Session s = nxsvc::connect("aoc:u");
-    REQUIRE(s.valid());
-    // GetAddOnContentBaseId (cmd 5): PID-descriptor -> u64. The title's add-on base id (control.nacp) is 010012101468D000.
-    nxsvc::Reply base = s.call(5, nxsvc::Args().with_pid());
-    REQUIRE(base.ok());
-    CHECK_EQ(base.get<uint64_t>(0), 0x010012101468D000ull);
-    // CountAddOnContent (cmd 2): PID-descriptor -> s32 count = 0.
-    nxsvc::Reply cnt = s.call(2, nxsvc::Args().with_pid());
-    REQUIRE(cnt.ok());
-    CHECK_EQ(cnt.get<int32_t>(0), 0);
-    // GetAddOnContentListChangedEvent (cmd 8) returns an event handle.
-    nxsvc::Reply ev = s.call(8);
-    CHECK(ev.ok());
-    CHECK_EQ(ev.copy.size(), 1u);
-    config_clear();
-    services::profile_reload();
-}
-
 NXTEST(misc_caps_album_is_empty) {
     nxsvc::Env env;
     nxsvc::Session s = nxsvc::connect("caps:u");

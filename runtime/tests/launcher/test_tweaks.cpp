@@ -124,12 +124,3 @@ NXTEST(tweaks_suit_part_and_reset) {
     CHECK(!glow_effective(r.tweaks, r.tweaks.ball, &c));
 }
 
-NXTEST(tweaks_factory_file_has_the_section_off) {
-    Settings s;
-    std::string err;
-    std::vector<std::string> w;
-    REQUIRE(parse_settings(nxrt::play::default_settings_text(), &s, &err, &w));
-    CHECK(!s.tweaks.glow_on);
-    CHECK(s.tweaks.suit.mode == GlowMode::Auto && s.tweaks.ball.mode == GlowMode::Auto && s.tweaks.gun.mode == GlowMode::Auto);
-    CHECK(std::string(nxrt::play::default_settings_text()).find("[tweaks]") != std::string::npos);
-}

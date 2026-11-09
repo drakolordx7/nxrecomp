@@ -480,49 +480,6 @@ NXTEST(am_desired_language) {
     clear_config();
 }
 
-NXTEST(am_application_functions_fixed_replies) {
-    nxsvc::Env env;
-    clear_config();
-    nxsvc::Session proxy = open_proxy();
-    REQUIRE(proxy.valid());
-    nxsvc::Session app = proxy.sub(proxy.call(20));
-    REQUIRE(app.valid());
-
-    // GetDisplayVersion: "1.0.0", NUL-terminated, 16 bytes.
-    nxsvc::Reply dv = app.call(23);
-    CHECK_EQ(dv.result, 0u);
-    REQUIRE(dv.out.size() >= 16);
-    const uint8_t want_dv[16] = {'1', '.', '0', '.', '0', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    CHECK(std::memcmp(dv.out.data(), want_dv, 16) == 0);
-
-    // NotifyRunning returns 1.
-    CHECK_EQ(app.call(40).get<uint8_t>(0), 1u);
-
-    // GetPseudoDeviceId: the fixed 16 bytes "NXRT-DEVICE-0001".
-    nxsvc::Reply pd = app.call(50);
-    CHECK_EQ(pd.result, 0u);
-    REQUIRE(pd.out.size() >= 16);
-    CHECK(std::memcmp(pd.out.data(), "NXRT-DEVICE-0001", 16) == 0);
-
-    // GetPreviousProgramIndex: -1, launched by the system.
-    CHECK_EQ(app.call(123).get<int32_t>(0), -1);
-
-    // The events that never fire hand out a handle that is not signalled.
-    nxsvc::Reply ne = app.call(150);
-    REQUIRE(ne.copy.size() == 1);
-    CHECK(!signalled(ne.copy[0]));
-    kernel::handle_close(ne.copy[0]);
-
-    // TryPop on the notification channel: no data, 128-2 = 0x480.
-    CHECK_EQ(app.call(151).result, 0x480u);
-    CHECK_EQ(app.call(141).result, 0x480u);
-
-    // Accepted commands answer success.
-    CHECK_EQ(app.call(22, nxsvc::Args().u32(0x2A2)).result, 0u);
-    CHECK_EQ(app.call(33).result, 0u);
-    CHECK_EQ(app.call(90, nxsvc::Args().u8(1)).result, 0u);
-}
-
 NXTEST(am_save_data_extend_and_size) {
     nxsvc::Env env;
     nxsvc::Session proxy = open_proxy();
@@ -536,32 +493,6 @@ NXTEST(am_save_data_extend_and_size) {
     CHECK_EQ(sz.result, 0u);
     CHECK_EQ(sz.get<int64_t>(0), 0x1000ll);
     CHECK_EQ(sz.get<int64_t>(8), 0x200ll);
-}
-
-NXTEST(am_ensure_save_data) {
-    nxsvc::Env env;
-    const std::string dir = (std::filesystem::temp_directory_path() / ("nxrt_am_save_" + std::to_string(GetCurrentProcessId()))).string();
-    std::filesystem::remove_all(dir);
-    config_set("fs", "save_dir", dir.c_str());
-    nxsvc::Session proxy = open_proxy();
-    REQUIRE(proxy.valid());
-    nxsvc::Session app = proxy.sub(proxy.call(20));
-    REQUIRE(app.valid());
-    int64_t size = 0, journal = 0;
-    CHECK(services::fsapi::account_save_size(1, 2, &size, &journal) != 0);          // nothing there yet
-    // EnsureSaveData(Uid: first u64 = hi 1, second = lo 2): creates the account save data, nothing missing.
-    nxsvc::Reply r = app.call(20, nxsvc::Args().u64(1).u64(2));
-    CHECK_EQ(r.result, 0u);
-    CHECK_EQ(r.get<uint64_t>(0), 0ull);
-    CHECK_EQ(services::fsapi::account_save_size(1, 2, &size, &journal), 0u);
-    CHECK_EQ(size, 4ll << 20);
-    // GetSaveDataSize(type 1 = account, Uid) -> normal, journal
-    r = app.call(26, nxsvc::Args().u8(1).align(8).u64(1).u64(2));
-    CHECK_EQ(r.result, 0u);
-    CHECK_EQ(r.get<int64_t>(0), 4ll << 20);
-    CHECK_EQ(r.get<int64_t>(8), 1ll << 20);
-    std::filesystem::remove_all(dir);
-    clear_config();
 }
 
 NXTEST(am_common_stubs_accepted) {

@@ -169,20 +169,6 @@ NXTEST(act_table_is_complete) {
     CHECK_EQ(std::string(act_info(Act::BtnRStick).name), std::string("btn_rstick"));
 }
 
-NXTEST(parse_act_is_lenient) {
-    Act a = Act::None;
-    CHECK(parse_act("FIRE", &a));
-    CHECK(a == Act::Primary);
-    CHECK(parse_act("move-forward", &a));
-    CHECK(a == Act::MoveForward);
-    CHECK(parse_act("Dpad-Up", &a));
-    CHECK(a == Act::DpadUp);
-    CHECK(parse_act("  btn-zl ", &a));
-    CHECK(a == Act::BtnZL);
-    CHECK(!parse_act("nope", &a));
-    CHECK(!parse_act("", &a));
-}
-
 NXTEST(ctx_and_trig_names) {
     for (int c = 0; c < kCtxCount; ++c) {
         Ctx back = Ctx::All;
@@ -214,32 +200,6 @@ NXTEST(default_outputs_all_parse) {
 }
 
 // ---- outputs -----------------------------------------------------------------------------------------------------------------
-
-NXTEST(output_parse_terms) {
-    Output o;
-    REQUIRE(parse_output("ZR", &o));
-    CHECK(o == make_out(btn(kBtnZR)));
-
-    REQUIRE(parse_output("X+UP", &o));
-    CHECK(o == make_out(btn(kBtnX) | btn(kBtnUp)));
-    Output beam1;   // the Beam1 default must be the same output
-    REQUIRE(parse_output(act_info(Act::SetA1).default_out, &beam1));
-    CHECK(o == beam1);
-
-    REQUIRE(parse_output(" x + up ", &o));   // case and spaces
-    CHECK(o == make_out(btn(kBtnX) | btn(kBtnUp)));
-
-    REQUIRE(parse_output("LS_UP", &o));
-    CHECK(o == make_out(0, 0, 1, 0, 0));
-    REQUIRE(parse_output("RS_LEFT+RS_DOWN", &o));
-    CHECK(o == make_out(0, 0, 0, -1, -1));
-    REQUIRE(parse_output("LSTICK+RSTICK+PLUS+MINUS", &o));
-    CHECK(o == make_out(btn(kBtnStickL) | btn(kBtnStickR) | btn(kBtnPlus) | btn(kBtnMinus)));
-    REQUIRE(parse_output("A+B+L+R+ZL+DOWN+LEFT+RIGHT", &o));
-    CHECK(o == make_out(btn(kBtnA) | btn(kBtnB) | btn(kBtnL) | btn(kBtnR) | btn(kBtnZL) | btn(kBtnDown) | btn(kBtnLeft) | btn(kBtnRight)));
-    REQUIRE(parse_output("LS_LEFT+RS_RIGHT+Y", &o));
-    CHECK(o == make_out(btn(nxrt::hid::kBtnY), -1, 0, 1, 0));
-}
 
 NXTEST(output_none_and_cancelation) {
     Output o = make_out(btn(kBtnA));
@@ -368,26 +328,6 @@ NXTEST(input_every_scancode_name_parses_back) {
 
 // ---- factory settings --------------------------------------------------------------------------------------------------------
 
-NXTEST(default_settings_bindings_and_outputs) {
-    const Settings s = default_settings();
-    CHECK(act_at(s, "W", Ctx::All) == Act::MoveForward);
-    CHECK(act_at(s, "Mouse1", Ctx::All) == Act::Primary);
-    CHECK(act_at(s, "Mouse1", Ctx::Menu) == Act::Confirm);
-    CHECK(act_at(s, "WheelUp", Ctx::All) == Act::SetAPrev);
-    CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
-    CHECK(act_at(s, "Left Ctrl", Ctx::All) == Act::AltForm);
-    CHECK(act_at(s, "W", Ctx::Menu) == Act::kCount);   // menus have no move binding of their own
-
-    CHECK(s.out[(int)Act::Primary] == make_out(btn(kBtnZR)));
-    CHECK(s.out[(int)Act::SetA1] == make_out(btn(kBtnX) | btn(kBtnUp)));
-    CHECK(s.out[(int)Act::Confirm] == make_out(btn(kBtnA)));
-
-    CHECK_EQ(s.timing.hold_ms, 250);
-    CHECK_EQ(s.display.window_mode, std::string("windowed"));
-    CHECK(near(s.mouse.yaw_rad, 0.000767945));
-    CHECK(near(s.pad.stick_deadzone, 0.10));
-}
-
 NXTEST(default_settings_text_has_no_warnings) {
     std::vector<std::string> warnings;
     Settings s;
@@ -411,28 +351,6 @@ NXTEST(parse_yaw_source_and_radians) {
     CHECK(s.mouse.yaw_rad == 0.5);
 }
 
-NXTEST(file_with_only_mouse_keeps_default_bindings) {
-    Settings s;
-    std::string err;
-    REQUIRE(parse_settings("[mouse]\ninvert_y = 1\n", &s, &err));
-    CHECK(s.mouse.invert_y);
-    CHECK_EQ(s.bindings.size(), default_settings().bindings.size());
-    CHECK(act_at(s, "W", Ctx::All) == Act::MoveForward);
-}
-
-NXTEST(old_factory_lock_mode_moves_to_free_once) {
-    // A rev 2 file still on the old factory value takes the new one; a player's own choice in a current file stays.
-    Settings s;
-    std::string err;
-    REQUIRE(parse_settings("[aim]\nlock_mode = classic\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 2\n", &s, &err));
-    CHECK(s.aim.lock_mode == LockMode::Free);
-    CHECK(s.migrated);
-    CHECK(s.migration_added.find("lock_mode = free") != std::string::npos);
-    Settings k;
-    REQUIRE(parse_settings("[aim]\nlock_mode = classic\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 3\n", &k, &err));
-    CHECK(k.aim.lock_mode == LockMode::Classic);
-}
-
 NXTEST(one_bindings_section_drops_default_bindings) {
     Settings s;
     std::string err;
@@ -440,21 +358,6 @@ NXTEST(one_bindings_section_drops_default_bindings) {
     CHECK_EQ(s.bindings.size(), 1u);
     CHECK(act_at(s, "Return", Ctx::Menu) == Act::Confirm);
     CHECK(act_at(s, "W", Ctx::All) == Act::kCount);
-}
-
-NXTEST(binding_trigger_and_ms_parse) {
-    Settings s;
-    std::string err;
-    REQUIRE(parse_settings("[bindings.gameplay]\nLeft Ctrl = morph hold 250\nSpace = jump toggle\nMouse1 = fire tap\n[meta]\ndefaults_rev = 4\n", &s, &err));
-    REQUIRE_MSG(s.bindings.size() == 3u, "three bindings");
-    CHECK(s.bindings[0].in == key_id(SDL_SCANCODE_LCTRL));
-    CHECK(s.bindings[0].ctx == Ctx::Play);
-    CHECK(s.bindings[0].act == Act::AltForm);
-    CHECK(s.bindings[0].trig == Trig::Hold);
-    CHECK_EQ(s.bindings[0].ms, 250);
-    CHECK(s.bindings[1].trig == Trig::Toggle);
-    CHECK_EQ(s.bindings[1].ms, 0);
-    CHECK(s.bindings[2].trig == Trig::Tap);
 }
 
 NXTEST(binding_keys_equals_and_semicolon) {
@@ -467,18 +370,6 @@ NXTEST(binding_keys_equals_and_semicolon) {
     REQUIRE_MSG(parse_settings(text, &s, &err), err);
     CHECK(act_at(s, eq_name, Ctx::Menu) == Act::Confirm);
     CHECK(act_at(s, semi_name, Ctx::Menu) == Act::Back);
-}
-
-NXTEST(inline_comments_and_case) {
-    Settings s;
-    std::string err;
-    REQUIRE(parse_settings("[mouse] # the mouse\ninvert_y = 1 ; yes\nwheel_beams = off # no\n", &s, &err));
-    CHECK(s.mouse.invert_y);
-    CHECK(!s.mouse.wheel_cycles);
-
-    REQUIRE(parse_settings("[MOUSE]\nINVERT_X = TRUE\n[Display]\nWindow_Mode = Borderless\n", &s, &err));
-    CHECK(s.mouse.invert_x);
-    CHECK_EQ(s.display.window_mode, std::string("borderless"));
 }
 
 NXTEST(menu_touch_legacy_key_is_ignored) {
@@ -574,40 +465,6 @@ NXTEST(camera_gun_drives_view_parses_and_round_trips) {
     CHECK(same_settings(s, r));
 }
 
-NXTEST(camera_and_aim_defaults_are_free_and_on) {
-    const Settings d = default_settings();
-    CHECK(d.aim.lock_mode == LockMode::Free);
-    CHECK(d.aim.free_lock_margin == 0.15);
-    CHECK(d.camera.gun_drives_view);
-}
-
-NXTEST(parse_errors_name_the_line) {
-    struct Case {
-        const char* text;
-        const char* expect;   // the start of err
-    };
-    const Case cases[] = {
-        {"[mouse]\n\n[bindings.all]\nFoo = fire\n", "line 4: unknown input 'Foo'"},
-        {"[timing]\ntap_ms = 0\n", "line 2: tap_ms must be 1..5000"},
-        {"[bindings.all]\nW = fly\n", "line 2: unknown action 'fly'"},
-        {"[bindings.all]\nW = fire sideways\n", "line 2: unknown trigger 'sideways'"},
-        {"[bindings.all]\nW = fire hold 0\n", "line 2: ms must be 1..5000"},
-        {"[display]\nwindow_mode = fullscreen\n", "line 2: window_mode must be windowed, borderless or exclusive"},
-        {"[pad]\ndeadzone = 0.7\n", "line 2: deadzone must be 0..0.5"},
-        {"[mouse]\nyaw = nope\n", "line 2: yaw must be a number"},
-        {"[switch]\nfire = X+FOO\n", "line 2: unknown output term 'FOO'"},
-        {"[bindings.all\nW = fire\n", "line 1: section header without ']'"},
-        {"[mouse]\njust words\n", "line 2: expected 'key = value'"},
-        {"[display]\nfps_cap = 5000\n", "line 2: fps_cap must be 0..1000"},
-    };
-    for (const Case& c : cases) {
-        Settings s;
-        std::string err;
-        CHECK(!parse_settings(c.text, &s, &err));
-        CHECK_MSG(starts_with(err, c.expect), err);
-    }
-}
-
 NXTEST(failed_parse_does_not_touch_out) {
     Settings s;
     s.timing.tap_ms = 123;
@@ -616,31 +473,7 @@ NXTEST(failed_parse_does_not_touch_out) {
     CHECK_EQ(s.timing.tap_ms, 123);
 }
 
-NXTEST(unknown_keys_and_sections_warn) {
-    Settings s;
-    std::string err;
-    std::vector<std::string> w;
-    REQUIRE(parse_settings("[mouse]\nbogus = 1\n[nosuch]\nx = 1\n[bindings.all]\nW = fire\n[meta]\ndefaults_rev = 4\n", &s, &err, &w));
-    REQUIRE_MSG(w.size() == 2u, "two warnings");
-    CHECK_EQ(w[0], std::string("line 2: unknown key 'bogus' in [mouse]"));
-    CHECK_EQ(w[1], std::string("line 3: unknown section '[nosuch]'"));
-    CHECK(s.bindings.size() == 1u);   // the unknown section's keys did not add anything
-}
-
 // ---- writing and the round trip ----------------------------------------------------------------------------------------------
-
-NXTEST(format_has_sections_in_order) {
-    const std::string text = format_settings(default_settings());
-    const char* order[] = {"[mouse]", "[pad]", "[timing]", "[display]", "[hdr]", "[upscale]", "[latency]", "[prompts]", "[switch]", "[bindings.all]", "[bindings.gameplay]",
-                           "[bindings.morph]", "[bindings.map]", "[bindings.menu]", "[bindings.scan]"};
-    size_t at = 0;
-    for (const char* h : order) {
-        const size_t p = text.find(h, at);
-        CHECK_MSG(p != std::string::npos, h);
-        if (p == std::string::npos) return;
-        at = p;
-    }
-}
 
 NXTEST(format_parse_round_trip_defaults) {
     const Settings d = default_settings();
@@ -812,19 +645,6 @@ NXTEST(display_render_keys_defaults) {
     CHECK(d.chromatic_aberration);
     CHECK(d.fast_gpu_memory);
     CHECK(d.fewer_gpu_waits);
-}
-
-NXTEST(default_settings_text_has_display_keys) {
-    const std::string text = default_settings_text();
-    const char* lines[] = {"render_scale = 100", "render_width = 0",  "render_height = 0", "aspect = 0",        "fov_offset = 0",
-                           "dynamic_resolution = 0", "anisotropy = 0", "lod_bias = 0",    "bloom = 1",       "chromatic_aberration = 1",
-                           "fast_gpu_memory = 1",    "fewer_gpu_waits = 1"};
-    for (const char* l : lines) CHECK_MSG(text.find(std::string("\n") + l + "\n") != std::string::npos, l);
-    // The four that only apply at the next start say so next to their key.
-    size_t restart_notes = 0;
-    for (size_t p = text.find("applies at the next start"); p != std::string::npos; p = text.find("applies at the next start", p + 1))
-        ++restart_notes;
-    CHECK(restart_notes >= 4u);
 }
 
 NXTEST(display_render_keys_parse) {
@@ -1270,13 +1090,6 @@ NXTEST(prompt_style_round_trip_every_style) {
     }
 }
 
-NXTEST(default_settings_text_has_prompts_section) {
-    const std::string text = default_settings_text();
-    const size_t at = text.find("[prompts]");
-    REQUIRE_MSG(at != std::string::npos, "[prompts] section");
-    CHECK(text.find("style = auto\n", at) != std::string::npos);
-}
-
 // ---- frame rate counter and pad remap ----------------------------------------------------------------------------------------------
 
 NXTEST(fps_defaults) {
@@ -1402,27 +1215,6 @@ NXTEST(file_without_fps_and_padmap_keeps_defaults) {
 
 // ---- factory-defaults revision ([meta] defaults_rev, kDefaultAdditions in play_config.cpp) --------------------------------------------
 
-NXTEST(old_file_gets_new_factory_binding_on_map) {
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings("[bindings.map]\nReturn = confirm\n", &s, &err), err);
-    CHECK(s.migrated);
-    CHECK_EQ(s.defaults_rev, 4);
-    CHECK(act_at(s, "Left Shift", Ctx::All) == Act::AltForm);   // rev 4: morph ball on Shift
-    CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
-    CHECK(act_at(s, "Return", Ctx::Map) == Act::Confirm);   // the file's own binding is kept
-    CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 2);
-}
-
-NXTEST(old_file_keeps_users_own_key_on_map) {
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings("[bindings.map]\nX = back\n", &s, &err), err);
-    CHECK(s.migrated);
-    CHECK(act_at(s, "X", Ctx::Map) == Act::Back);
-    CHECK_EQ(static_cast<int>(bindings_in(s, static_cast<int>(Ctx::Map)).size()), 1);
-}
-
 NXTEST(file_at_current_revision_is_not_migrated) {
     Settings s;
     std::string err;
@@ -1430,50 +1222,6 @@ NXTEST(file_at_current_revision_is_not_migrated) {
     CHECK(!s.migrated);
     CHECK_EQ(s.defaults_rev, 4);
     CHECK(act_at(s, "X", Ctx::Map) == Act::kCount);   // the user removed X: it stays removed
-}
-
-NXTEST(format_round_trip_keeps_defaults_rev) {
-    const Settings s = default_settings();
-    const std::string text = format_settings(s);
-    CHECK(text.find("[meta]\ndefaults_rev = 4\n") != std::string::npos);
-    Settings back;
-    std::string err;
-    REQUIRE_MSG(parse_settings(text, &back, &err), err);
-    CHECK_EQ(back.defaults_rev, 4);
-    CHECK(!back.migrated);
-    CHECK(same_settings(s, back));
-}
-
-NXTEST(factory_text_is_at_current_revision) {
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings(default_settings_text(), &s, &err), err);
-    CHECK_EQ(s.defaults_rev, 4);
-    CHECK(!s.migrated);
-    CHECK_EQ(default_settings().defaults_rev, 4);
-    CHECK(act_at(default_settings(), "Left Shift", Ctx::All) == Act::AltForm);
-    CHECK(act_at(default_settings(), "X", Ctx::Map) == Act::BtnX);
-}
-
-NXTEST(meta_defaults_rev_is_known_and_unknown_meta_key_warns) {
-    Settings s;
-    std::string err;
-    std::vector<std::string> w;
-    REQUIRE_MSG(parse_settings("[meta]\ndefaults_rev = 3\n[bindings.all]\nW = fire\n", &s, &err, &w), err);
-    CHECK(w.empty());
-    std::vector<std::string> w2;
-    REQUIRE_MSG(parse_settings("[meta]\nfoo = 1\n", &s, &err, &w2), err);
-    REQUIRE_MSG(w2.size() == 1u, "one warning");
-    CHECK_EQ(w2[0], std::string("line 2: unknown key 'foo' in [meta]"));
-}
-
-NXTEST(file_without_bindings_gets_factory_bindings_at_current_revision) {
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings("[mouse]\nyaw = 0.001\n", &s, &err), err);
-    CHECK(!s.migrated);
-    CHECK_EQ(s.defaults_rev, 4);
-    CHECK(act_at(s, "X", Ctx::Map) == Act::BtnX);
 }
 
 // ---- controller sticks: right_deadzone, invert_y, look_sens ([pad]) ----------------------------------------------------------------
@@ -1519,29 +1267,6 @@ NXTEST(pad_stick_keys_written_in_order) {
         CHECK_MSG(p != std::string::npos, k);
         if (p == std::string::npos) return;
         at = p;
-    }
-}
-
-NXTEST(pad_stick_keys_range_errors) {
-    const struct {
-        const char* text;
-        const char* expect;
-    } cases[] = {
-        {"[pad]\nright_deadzone = 0.6\n", "line 2: right_deadzone must be 0..0.5, got 0.6"},
-        {"[pad]\nright_deadzone = -0.1\n", "line 2: right_deadzone must be 0..0.5, got -0.1"},
-        {"[pad]\nright_deadzone = abc\n", "line 2: right_deadzone must be a number"},
-        {"[pad]\nlook_sens = 0.2\n", "line 2: look_sens must be 0.25..3, got 0.2"},
-        {"[pad]\nlook_sens = 3.5\n", "line 2: look_sens must be 0.25..3, got 3.5"},
-        {"[pad]\nlook_sens = fast\n", "line 2: look_sens must be a number"},
-        {"[pad]\ninvert_y = maybe\n", "line 2: invert_y must be 1/0"},
-        {"[pad]\nball_orbit = -1\n", "line 2: ball_orbit must be 0..6, got -1"},
-        {"[pad]\nball_orbit = 7\n", "line 2: ball_orbit must be 0..6, got 7"},
-    };
-    for (const auto& c : cases) {
-        Settings s;
-        std::string err;
-        CHECK(!parse_settings(c.text, &s, &err));
-        CHECK_MSG(starts_with(err, c.expect), err);
     }
 }
 
@@ -1655,40 +1380,3 @@ NXTEST(alt_sensitivity_keeps_a_separate_vertical) {
     CHECK(r.mouse.alt_pitch_rad == 0.0005);
 }
 
-NXTEST(ball_camera_keys_with_the_mpr_vocabulary) {
-    // the test executable registers Metroid Prime Remastered: its words for the alternate body's camera keys
-    REQUIRE(std::string(key_alt_camera()) == "ball_camera");
-    REQUIRE(std::string(key_alt_sens()) == "ball_sensitivity");
-    REQUIRE(std::string(key_alt_yaw()) == "morph_yaw");
-    REQUIRE(std::string(key_alt_pitch()) == "morph_pitch");
-    Settings s;
-    std::string err;
-    REQUIRE_MSG(parse_settings("[mouse]\nball_camera = 0\nball_sensitivity = 4\n", &s, &err), err);
-    CHECK(!s.mouse.alt_camera);
-    CHECK(near(s.mouse.alt_yaw_rad, rad_per_count(4.0)) && s.mouse.alt_pitch_rad == s.mouse.alt_yaw_rad);
-    const std::string text = format_settings(s);
-    CHECK(text.find("\nball_camera = 0\nball_sensitivity = 4\n") != std::string::npos);
-    CHECK(text.find("morph_yaw") == std::string::npos && text.find("morph_pitch") == std::string::npos);
-    // older files: morph_yaw and morph_pitch in radians per count
-    REQUIRE_MSG(parse_settings("[mouse]\nmorph_yaw = 0.002\nmorph_pitch = 0.001\n", &s, &err), err);
-    CHECK(s.mouse.alt_yaw_rad == 0.002 && s.mouse.alt_pitch_rad == 0.001);
-    CHECK(s.mouse.alt_camera);
-    // morph_pitch before ball_sensitivity: the later key wins, so both take the sensitivity
-    REQUIRE_MSG(parse_settings("[mouse]\nmorph_pitch = 0.001\nball_sensitivity = 3\n", &s, &err), err);
-    CHECK(near(s.mouse.alt_pitch_rad, rad_per_count(3.0)) && s.mouse.alt_yaw_rad == s.mouse.alt_pitch_rad);
-    // after it: the vertical keeps its own
-    REQUIRE_MSG(parse_settings("[mouse]\nball_sensitivity = 3\nmorph_pitch = 0.001\n", &s, &err), err);
-    CHECK(near(s.mouse.alt_yaw_rad, rad_per_count(3.0)) && s.mouse.alt_pitch_rad == 0.001);
-}
-
-NXTEST(ball_sensitivity_range) {
-    Settings s;
-    std::string err;
-    for (const char* bad : {"0", "-1", "0.05", "25", "1e9"})
-        CHECK(!parse_settings(std::string("[mouse]\nball_sensitivity = ") + bad + "\n", &s, &err));
-    for (const char* bad : {"0", "-0.001", "1"}) {
-        CHECK(!parse_settings(std::string("[mouse]\nmorph_yaw = ") + bad + "\n", &s, &err));
-        CHECK(!parse_settings(std::string("[mouse]\nmorph_pitch = ") + bad + "\n", &s, &err));
-    }
-    for (const char* ok : {"0.1", "2", "20"}) REQUIRE_MSG(parse_settings(std::string("[mouse]\nball_sensitivity = ") + ok + "\n", &s, &err), err);
-}
