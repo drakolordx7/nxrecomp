@@ -152,7 +152,7 @@ message box titles from `info().title`. Its own names (`mpr.log`, `mpr.ini`, `--
 | Where (before) | Kind | Now |
 | --- | --- | --- |
 | `make_release.py` `mpr.exe`, setup exes, launcher, `mpr.ini.example`, `shader_cache.mprshc`, magic `MPRSHC01`, `mpr-<version>-windows-x64` | (a) | `tools/release/games/mpr.json`; the module reads it at import |
-| `templates/README.txt`, `HELP.txt` | (c) | not moved (gap) |
+| `templates/README.txt`, `HELP.txt`, `THIRD_PARTY_NOTICES.txt` | (c) | `games/<id>/release/templates/` (`make_release.py --templates` defaults to it) |
 
 ### recomp
 
@@ -184,10 +184,9 @@ These are still Metroid-shaped in the base. None of them blocks a second game fr
   the tests that use Metroid sites or hooks directly (timestep, play aim, lock-on, look rate, display hooks, play hook, camera look) are
   in `games/mpr/tests` and `games/mpr/tests/core`.
 - Setup tool. The texture and program stages read Retro's formats; the version resources and the window class name are Metroid's.
-- Release templates (README, HELP) and the release's licence notice name the game.
 - Docs. Older docs (S*.md) and CONFIG.md still give the old paths of the moved files.
-- Shader program list magic `MPRPRG01` (`nvn_gpl.cpp`, setup `programs.cpp`) is a file format name shared by the base and the
-  setup tool; harmless, but named after the game.
+- Shader program list and shader pack magics are neutral now (`NXPRG002`, `NXSHC002`, `formats/nx_formats.h`, shared by the runtime
+  and the setup tool); `MPRPRG01` and `MPRSHC01` of the first Metroid release are still read.
 
 ## Deterministic mode and the New Game stall
 

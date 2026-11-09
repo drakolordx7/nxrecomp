@@ -132,7 +132,7 @@ bool has_entries(const fs::path& dir) {
     return !ec && it != fs::directory_iterator();
 }
 
-// setup_state.tsv as the setup tool writes it (pipeline.cpp, State): first line "mprs_setup_state\t1", then
+// setup_state.tsv as the setup tool writes it (pipeline.cpp, State): first line "nx_setup_state\t1" (the first Metroid release wrote "mprs_setup_state\t1", still read), then
 // "meta\tkey\tvalue" lines; the last "meta\tfinished" line wins. Anything else in the file is ignored.
 bool setup_finished_in(const fs::path& state_file) {
     std::ifstream f(state_file, std::ios::binary);
@@ -140,7 +140,7 @@ bool setup_finished_in(const fs::path& state_file) {
     std::string line;
     if (!std::getline(f, line)) return false;
     if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line != "mprs_setup_state\t1") return false;
+    if (line != "nx_setup_state\t1" && line != "mprs_setup_state\t1") return false;
 
     bool finished = false;
     while (std::getline(f, line)) {

@@ -9,7 +9,7 @@
 
 #include "storage.h"
 
-namespace mprs {
+namespace nxs {
 
 struct PfsEntry {
     std::string name;   // as stored (UTF-8); never empty, never contains '/' or '\\', never "." or ".." (rejected at open)
@@ -40,4 +40,4 @@ private:
     StoragePtr storage_;
 };
 
-}  // namespace mprs
+}  // namespace nxs

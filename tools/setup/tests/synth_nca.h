@@ -2,7 +2,7 @@
 // Builders for synthetic Switch dumps (NCA, ticket, ExeFS, NSP, XCI) with a fake key set, used by test_nca and test_container.
 // They write the formats the way src/nca.cpp, src/container.cpp and src/keys.cpp read them, and they carry their own AES-128,
 // AES-XTS (Nintendo) and AES-CTR, so they do not depend on the project's crypto (synth*.cpp is linked into every test exe,
-// including the ones that do not link mprs_crypto).
+// including the ones that do not link nxs_crypto).
 #pragma once
 #include <array>
 #include <cstdint>
@@ -12,7 +12,7 @@
 
 #include "synth.h"
 
-namespace mprs_test {
+namespace nxs_test {
 
 using Bytes16 = std::array<uint8_t, 16>;
 
@@ -113,4 +113,4 @@ SynthDump make_synth_dump(const char* kind, uint64_t program_id, const std::stri
 Bytes16 synth_dump_rights_id();
 Bytes16 synth_dump_titlekey();
 
-}  // namespace mprs_test
+}  // namespace nxs_test

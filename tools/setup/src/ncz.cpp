@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // NCZ reader: the zstd-compressed NCA of NSZ / XCZ dumps, format as written by the nsz project (see ncz.h).
-// Built with zstd (MPRS_HAVE_ZSTD); without it open_ncz refuses the file.
+// Built with zstd (NXS_HAVE_ZSTD); without it open_ncz refuses the file.
 #include "ncz.h"
 
 #include <algorithm>
@@ -12,13 +12,13 @@
 #include "crypto.h"
 #include "storage.h"
 
-#ifdef MPRS_HAVE_ZSTD
+#ifdef NXS_HAVE_ZSTD
 #include <zstd.h>
 #endif
 
-namespace mprs {
+namespace nxs {
 
-#ifndef MPRS_HAVE_ZSTD
+#ifndef NXS_HAVE_ZSTD
 
 StoragePtr open_ncz(StoragePtr) {
     fail(Fail::Input, "Compressed dumps (NSZ / XCZ) are not supported by this build. Decompress it to an NSP first.");
@@ -377,4 +377,4 @@ StoragePtr open_ncz(StoragePtr ncz) {
 
 #endif
 
-}  // namespace mprs
+}  // namespace nxs

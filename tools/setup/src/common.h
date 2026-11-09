@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace mprs {
+namespace nxs {
 
 using u8 = uint8_t;
 using u16 = uint16_t;
@@ -41,4 +41,4 @@ bool hex_decode(std::string_view s, u8* out, size_t n);
 std::wstring widen(std::string_view utf8);
 std::string narrow(std::wstring_view wide);
 
-}  // namespace mprs
+}  // namespace nxs

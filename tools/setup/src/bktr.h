@@ -8,7 +8,7 @@
 
 #include "storage.h"
 
-namespace mprs {
+namespace nxs {
 
 constexpr u64 kBucketNodeSize = 0x4000;
 // Largest table this reader takes: one index node plus as many entry sets as it can list.
@@ -42,4 +42,4 @@ StoragePtr make_aes_ctr_ex_storage(StoragePtr raw, const Key128& key, const std:
 // the first at 0.
 StoragePtr make_indirect_storage(std::vector<IndirectEntry> entries, u64 size, StoragePtr base, StoragePtr patch);
 
-}  // namespace mprs
+}  // namespace nxs

@@ -20,13 +20,13 @@
 #include "synth.h"
 #include "synth_nca.h"
 
-using namespace mprs;
-using mprs_test::Bytes16;
-using mprs_test::SynthCorruption;
-using mprs_test::SynthFiles;
-using mprs_test::SynthKeys;
-using mprs_test::SynthNcaSpec;
-using mprs_test::SynthSection;
+using namespace nxs;
+using nxs_test::Bytes16;
+using nxs_test::SynthCorruption;
+using nxs_test::SynthFiles;
+using nxs_test::SynthKeys;
+using nxs_test::SynthNcaSpec;
+using nxs_test::SynthSection;
 
 namespace {
 
@@ -56,7 +56,7 @@ Outcome run(F&& f) {
 }
 
 std::string tmp_dir(const char* name) {
-    const auto p = std::filesystem::temp_directory_path() / (std::string("mprs_test_nca_") + name);
+    const auto p = std::filesystem::temp_directory_path() / (std::string("nxs_test_nca_") + name);
     std::filesystem::create_directories(p);
     return p.string();
 }
@@ -99,7 +99,7 @@ SynthNcaSpec program_spec(const SynthFiles& romfs) {
     sp.program_id = kProgramId;
     sp.content_index = 0;
     sp.key_generation = 11;
-    sp.sections = {SynthSection{1, 3, mprs_test::synth_exefs(kBuildId)}, SynthSection{0, 3, mprs_test::synth_romfs(romfs)}};
+    sp.sections = {SynthSection{1, 3, nxs_test::synth_exefs(kBuildId)}, SynthSection{0, 3, nxs_test::synth_romfs(romfs)}};
     return sp;
 }
 
@@ -121,11 +121,11 @@ void check_round_trip(const Nca& nca, int index, const std::vector<uint8_t>& pla
 
 int main() {
     const std::string dir = tmp_dir("nca");
-    const std::string keys_path = mprs_test::write_synth_keys_file(dir);
+    const std::string keys_path = nxs_test::write_synth_keys_file(dir);
     const KeySet keys = load_keys(keys_path);
     const SynthFiles files = romfs_files();
-    const std::vector<uint8_t> exefs = mprs_test::synth_exefs(kBuildId);
-    const std::vector<uint8_t> romfs = mprs_test::synth_romfs(files);
+    const std::vector<uint8_t> exefs = nxs_test::synth_exefs(kBuildId);
+    const std::vector<uint8_t> romfs = nxs_test::synth_romfs(files);
 
     // ---- the independent AES used by the builder: FIPS-197 C.1 (AES-128) ----
     {
@@ -134,7 +134,7 @@ int main() {
             key[i] = uint8_t(i);
             blk[i] = uint8_t((i << 4) | i);
         }
-        mprs_test::synth_aes128_encrypt_block(key, blk);
+        nxs_test::synth_aes128_encrypt_block(key, blk);
         CHECK_EQ(hex_encode(blk, 16), std::string("69c4e0d86a7b0430d8cdb78070b4c55a"));
     }
 
@@ -144,7 +144,7 @@ int main() {
 
     // ---- header decryption ----
     const SynthNcaSpec base = program_spec(files);
-    const mprs_test::SynthNcaBuild built = mprs_test::synth_nca_build(base);
+    const nxs_test::SynthNcaBuild built = nxs_test::synth_nca_build(base);
     {
         auto nca = Nca::open(mem(built.bytes), keys, TicketKeys{});
         CHECK(nca->content_type() == NcaContentType::Program);
@@ -170,7 +170,7 @@ int main() {
     }
     {
         // A meta NCA (content type 1) with version-0 CNMT built by the builder.
-        auto meta = Nca::open(mem(mprs_test::synth_cnmt_nca(kProgramId, 0)), keys, TicketKeys{});
+        auto meta = Nca::open(mem(nxs_test::synth_cnmt_nca(kProgramId, 0)), keys, TicketKeys{});
         CHECK(meta->content_type() == NcaContentType::Meta);
         CHECK_EQ(meta->program_id(), kProgramId);
     }
@@ -179,7 +179,7 @@ int main() {
     {
         SynthKeys bad = SynthKeys::standard();
         bad.header_kek_source[0] ^= 0xFF;
-        const KeySet bad_keys = load_keys(mprs_test::write_synth_keys_file_with(dir + "/bad", bad, "prod.keys"));
+        const KeySet bad_keys = load_keys(nxs_test::write_synth_keys_file_with(dir + "/bad", bad, "prod.keys"));
         const Outcome o = run([&] { Nca::open(mem(built.bytes), bad_keys, TicketKeys{}); });
         CHECK(o.threw && o.kind == Fail::Keys);
         if (!(o.threw && o.kind == Fail::Keys)) std::printf("  got: %s\n", o.msg.c_str());
@@ -261,7 +261,7 @@ int main() {
     for (const auto& t : tampers) {
         SynthNcaSpec sp = base;
         sp.corrupt = {SynthCorruption{t.first, t.second}};
-        const mprs_test::SynthNcaBuild b = mprs_test::synth_nca_build(sp);
+        const nxs_test::SynthNcaBuild b = nxs_test::synth_nca_build(sp);
         auto nca = Nca::open(mem(b.bytes), keys, TicketKeys{});   // the header itself is intact
         const Outcome o = run([&] { nca->verify_section(t.first, nullptr, nullptr); });
         CHECK(o.threw && o.kind == Fail::Input);
@@ -273,27 +273,27 @@ int main() {
         SynthNcaSpec sp = base;
         sp.truncate = true;
         sp.truncate_to = built.bytes.size() - 0x200;   // the last section ends past the end
-        const mprs_test::SynthNcaBuild b = mprs_test::synth_nca_build(sp);
+        const nxs_test::SynthNcaBuild b = nxs_test::synth_nca_build(sp);
         const Outcome o = run([&] { Nca::open(mem(b.bytes), keys, TicketKeys{}); });
         CHECK(o.threw && o.kind == Fail::Input);
         sp.truncate_to = 0xBFF;                         // shorter than the header
-        const Outcome o2 = run([&] { Nca::open(mem(mprs_test::synth_nca(sp)), keys, TicketKeys{}); });
+        const Outcome o2 = run([&] { Nca::open(mem(nxs_test::synth_nca(sp)), keys, TicketKeys{}); });
         CHECK(o2.threw && o2.kind == Fail::Input);
     }
 
     // ---- ticket / rights id paths ----
     {
-        const Bytes16 rights = mprs_test::synth_dump_rights_id();
-        const Bytes16 titlekey = mprs_test::synth_dump_titlekey();
+        const Bytes16 rights = nxs_test::synth_dump_rights_id();
+        const Bytes16 titlekey = nxs_test::synth_dump_titlekey();
         SynthNcaSpec rs = base;
         rs.has_rights = true;
         rs.rights_id = rights;
         rs.titlekey = titlekey;
-        const mprs_test::SynthNcaBuild rb = mprs_test::synth_nca_build(rs);
+        const nxs_test::SynthNcaBuild rb = nxs_test::synth_nca_build(rs);
 
         // With the title key from a ticket (common), the section decrypts.
         TicketKeys tk;
-        tk.common[hex16(rights)] = mprs_test::synth_encrypt_titlekey(11, titlekey);
+        tk.common[hex16(rights)] = nxs_test::synth_encrypt_titlekey(11, titlekey);
         auto nca = Nca::open(mem(rb.bytes), keys, tk);
         CHECK(nca->has_rights_id());
         CHECK(nca->rights_id() == rights);
@@ -314,9 +314,9 @@ int main() {
         CHECK(po.msg.find("console") != std::string::npos);
 
         // title.keys line in the keys file ("rights id = encrypted title key") works without a ticket.
-        const KeySet tkeys = load_keys(mprs_test::write_synth_keys_file_with(
+        const KeySet tkeys = load_keys(nxs_test::write_synth_keys_file_with(
             dir + "/titlekeys", SynthKeys::standard(), "prod.keys",
-            {{rights, mprs_test::synth_encrypt_titlekey(11, titlekey)}}));
+            {{rights, nxs_test::synth_encrypt_titlekey(11, titlekey)}}));
         auto via_file = Nca::open(mem(rb.bytes), tkeys, TicketKeys{});
         check_round_trip(*via_file, 1, rb.plain[1]);
     }
@@ -325,7 +325,7 @@ int main() {
     {
         SynthNcaSpec s2 = base;
         s2.magic_digit = '2';
-        const mprs_test::SynthNcaBuild b2 = mprs_test::synth_nca_build(s2);
+        const nxs_test::SynthNcaBuild b2 = nxs_test::synth_nca_build(s2);
         auto nca = Nca::open(mem(b2.bytes), keys, TicketKeys{});
         CHECK(nca->section(0) != nullptr && nca->section(1) != nullptr);
         check_round_trip(*nca, 0, b2.plain[0]);
@@ -333,7 +333,7 @@ int main() {
 
         SynthNcaSpec s0 = base;
         s0.magic_digit = '0';
-        const Outcome o = run([&] { Nca::open(mem(mprs_test::synth_nca(s0)), keys, TicketKeys{}); });
+        const Outcome o = run([&] { Nca::open(mem(nxs_test::synth_nca(s0)), keys, TicketKeys{}); });
         CHECK(o.threw && o.kind == Fail::Input);
     }
 

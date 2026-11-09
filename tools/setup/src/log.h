@@ -5,7 +5,7 @@
 #include <functional>
 #include <string>
 
-namespace mprs {
+namespace nxs {
 
 enum class LogLevel { Debug, Info, Warn, Error };
 
@@ -16,9 +16,9 @@ void log_close();
 void log_set_sink(std::function<void(LogLevel, const std::string&)> sink, LogLevel min_level = LogLevel::Info);
 
 void logf(LogLevel level, const char* fmt, ...);
-#define MPRS_LOGI(...) ::mprs::logf(::mprs::LogLevel::Info, __VA_ARGS__)
-#define MPRS_LOGW(...) ::mprs::logf(::mprs::LogLevel::Warn, __VA_ARGS__)
-#define MPRS_LOGE(...) ::mprs::logf(::mprs::LogLevel::Error, __VA_ARGS__)
-#define MPRS_LOGD(...) ::mprs::logf(::mprs::LogLevel::Debug, __VA_ARGS__)
+#define NXS_LOGI(...) ::nxs::logf(::nxs::LogLevel::Info, __VA_ARGS__)
+#define NXS_LOGW(...) ::nxs::logf(::nxs::LogLevel::Warn, __VA_ARGS__)
+#define NXS_LOGE(...) ::nxs::logf(::nxs::LogLevel::Error, __VA_ARGS__)
+#define NXS_LOGD(...) ::nxs::logf(::nxs::LogLevel::Debug, __VA_ARGS__)
 
-}  // namespace mprs
+}  // namespace nxs

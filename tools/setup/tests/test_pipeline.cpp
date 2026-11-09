@@ -28,14 +28,14 @@
 #include "synth.h"
 #include "synth_nca.h"
 
-using namespace mprs;
+using namespace nxs;
 namespace fs = std::filesystem;
-using mprs_test::SynthCorruption;
-using mprs_test::SynthDump;
-using mprs_test::SynthFiles;
-using mprs_test::SynthKeys;
-using mprs_test::SynthNcaSpec;
-using mprs_test::SynthSection;
+using nxs_test::SynthCorruption;
+using nxs_test::SynthDump;
+using nxs_test::SynthFiles;
+using nxs_test::SynthKeys;
+using nxs_test::SynthNcaSpec;
+using nxs_test::SynthSection;
 
 namespace {
 
@@ -57,7 +57,7 @@ const std::vector<Stage> kOnlyInspect = {Stage::Inspect};
 // (run_setup leaves setup.log open), so the folder can be deleted on Windows.
 class Scratch {
 public:
-    explicit Scratch(const std::string& name) : dir_(fs::temp_directory_path() / ("mprs_test_pipeline_" + name)) {
+    explicit Scratch(const std::string& name) : dir_(fs::temp_directory_path() / ("nxs_test_pipeline_" + name)) {
         std::error_code ec;
         fs::remove_all(dir_, ec);
         fs::create_directories(dir_, ec);
@@ -188,13 +188,13 @@ std::string make_damaged_dump(const std::string& dir, const SynthFiles& files, c
     sp.program_id = kProgramId;
     sp.content_index = 0;
     sp.key_generation = 11;
-    sp.sections = {SynthSection{1, 3, mprs_test::synth_exefs(kBuildId)}, SynthSection{0, 3, mprs_test::synth_romfs(files)}};
+    sp.sections = {SynthSection{1, 3, nxs_test::synth_exefs(kBuildId)}, SynthSection{0, 3, nxs_test::synth_romfs(files)}};
     sp.corrupt = {c};
-    SynthFiles entries = {{std::string(kTitleId) + ".nca", mprs_test::synth_nca(sp)},
-                          {std::string(kTitleId) + ".cnmt.nca", mprs_test::synth_cnmt_nca(kProgramId, 0)}};
+    SynthFiles entries = {{std::string(kTitleId) + ".nca", nxs_test::synth_nca(sp)},
+                          {std::string(kTitleId) + ".cnmt.nca", nxs_test::synth_cnmt_nca(kProgramId, 0)}};
     const std::string path = (fs::path(dir) / "game.nsp").string();
-    write_bytes(path, mprs_test::synth_nsp(entries));
-    keys_out = mprs_test::write_synth_keys_file(dir);
+    write_bytes(path, nxs_test::synth_nsp(entries));
+    keys_out = nxs_test::write_synth_keys_file(dir);
     return path;
 }
 
@@ -228,7 +228,7 @@ std::vector<uint8_t> make_shader_pack_bytes() {
         put(out, off, 8);             // data offset
         put(out, data.size(), 8);     // stored size
         put(out, data.size(), 8);     // raw size
-        const auto h = mprs_test::synth_sha256(data.data(), data.size());
+        const auto h = nxs_test::synth_sha256(data.data(), data.size());
         out.insert(out.end(), h.begin(), h.end());
         out.push_back(0);             // method 0 = stored
         off += data.size();
@@ -244,7 +244,7 @@ std::string make_shader_folder(const std::string& dir) {
     const SynthFiles items = shader_files();
     std::string manifest;
     for (const auto& [name, data] : items) {
-        const auto h = mprs_test::synth_sha256(data.data(), data.size());
+        const auto h = nxs_test::synth_sha256(data.data(), data.size());
         manifest += hex_encode(h.data(), 32) + "  " + name + "\n";
         write_bytes((fs::path(dir) / name).string(), data);
     }
@@ -317,7 +317,7 @@ const char* kind_name(Fail f) {
 // ---- running -----------------------------------------------------------------------------------------------------------------
 struct Outcome {
     bool threw = false;
-    bool non_error = false;   // threw something that is not mprs::Error
+    bool non_error = false;   // threw something that is not nxs::Error
     Fail kind = Fail::Generic;
     std::string msg;
 };
@@ -358,7 +358,7 @@ SetupOptions base_opts(const std::string& input, const std::string& keys, const 
     o.input_path = input;
     o.key_files = {keys};
     o.out_dir = out;
-    o.expected_build_id = build_id;
+    o.profile.builds = {{nxs_test::keep_cstr(build_id), "1.0.0"}};
     o.skip_textures = true;
     o.verify_input = true;
     o.verify_output = false;
@@ -369,7 +369,7 @@ SetupOptions base_opts(const std::string& input, const std::string& keys, const 
 // Checks everything a complete run writes for a dump with this build id and RomFS (quality 3, no textures).
 void check_installed(const std::string& out, const std::string& build_id, const SynthFiles& files) {
     const fs::path root(out);
-    const auto pfs = Pfs::open(make_memory_storage(mprs_test::synth_exefs(build_id)));
+    const auto pfs = Pfs::open(make_memory_storage(nxs_test::synth_exefs(build_id)));
     CHECK_EQ(count_files((root / "exefs").string()), pfs->entries().size());
     for (const PfsEntry& e : pfs->entries()) {
         const std::vector<uint8_t> want = read_all(*pfs->open_file(e), 0, static_cast<size_t>(e.size));
@@ -379,7 +379,7 @@ void check_installed(const std::string& out, const std::string& build_id, const 
     for (const auto& [rel, bytes] : files) CHECK(same_bytes((root / "romfs" / rel).string(), bytes));
     const std::vector<uint8_t> ini = read_bytes((root / game().game_ini).string());
     CHECK(has(as_text(ini), "bc7_quality = 3"));
-    CHECK(has(as_text(ini), "; Written by " MPRS_EXE_NAME));
+    CHECK(has(as_text(ini), "; Written by " NXS_EXE_NAME));
     CHECK(fs::is_regular_file(root / "setup_state.tsv"));
     CHECK(fs::is_regular_file(root / "setup.log"));
     std::error_code ec;
@@ -408,7 +408,7 @@ void expect_refusal(const SetupOptions& o, Fail kind, const char* needle) {
 void case_install(const char* tag, const char* kind, bool use_ticket) {
     Scratch s(tag);
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump(kind, kProgramId, kBuildId, files, use_ticket, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump(kind, kProgramId, kBuildId, files, use_ticket, s.path("dump"));
     const std::string out = s.path("out");
     const SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
 
@@ -441,7 +441,7 @@ void case_install(const char* tag, const char* kind, bool use_ticket) {
 void case_idempotent() {
     Scratch s("idem");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string out = s.path("out");
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
     const u64 n = 5 + files.size();
@@ -499,7 +499,7 @@ void case_idempotent() {
 void case_resume() {
     Scratch s("resume");
     const SynthFiles files = big_romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string out = s.path("out");
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
     o.threads = 4;
@@ -532,17 +532,17 @@ void case_refusals() {
 
     {   // another game
         Scratch s("refuse_title");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", 0x0100000000001000ull, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", 0x0100000000001000ull, kBuildId, files, false, s.path("dump"));
         expect_refusal(base_opts(d.path, d.keys_file_path, d.build_id, s.path("out")), Fail::Input, "different game");
     }
     {   // update only
         Scratch s("refuse_update");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId + 0x800, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId + 0x800, kBuildId, files, false, s.path("dump"));
         expect_refusal(base_opts(d.path, d.keys_file_path, d.build_id, s.path("out")), Fail::Input, "update");
     }
     {   // a valid dump, but the caller expects another build
         Scratch s("refuse_build");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
         expect_refusal(base_opts(d.path, d.keys_file_path, kOtherBuildId, s.path("out")), Fail::Input, "v1.0.0");
     }
     {   // RomFS hash layer damaged: caught by the hash check (verify_input), not by parsing
@@ -576,7 +576,7 @@ void case_refusals() {
     }
     {   // truncated file
         Scratch s("refuse_trunc");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
         std::vector<uint8_t> img = read_bytes(d.path);
         CHECK(img.size() > 10000);
         img.resize(img.size() - 10000);
@@ -585,15 +585,15 @@ void case_refusals() {
     }
     {   // keys whose header key source differs from the dump's
         Scratch s("refuse_keys");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
         SynthKeys k = SynthKeys::standard();
         k.header_kek_source[0] ^= 0x5A;
-        const std::string bad = mprs_test::write_synth_keys_file_with(s.path("keys"), k, "prod.keys");
+        const std::string bad = nxs_test::write_synth_keys_file_with(s.path("keys"), k, "prod.keys");
         expect_refusal(base_opts(d.path, bad, d.build_id, s.path("out")), Fail::Keys, "");
     }
     {   // no keys given and none in the usual places (only when this machine has none)
         Scratch s("refuse_nokeys");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
         if (find_key_files().empty()) {
             SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, s.path("out"));
             o.key_files.clear();
@@ -604,12 +604,12 @@ void case_refusals() {
     }
     {   // the input does not exist
         Scratch s("refuse_missing");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
         expect_refusal(base_opts(s.path("nope.nsp"), d.keys_file_path, d.build_id, s.path("out")), Fail::Input, "");
     }
     {   // not a dump at all
         Scratch s("refuse_garbage");
-        const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+        const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
         write_bytes(s.path("garbage.nsp"), pattern(4096, 7));
         expect_refusal(base_opts(s.path("garbage.nsp"), d.keys_file_path, d.build_id, s.path("out")), Fail::Input, "");
     }
@@ -619,7 +619,7 @@ void case_refusals() {
 void case_inspect_disk() {
     Scratch s("disk");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, s.path("out_not_created_yet"));
     const InputSummary in = inspect_input(o);
     CHECK(in.supported);
@@ -632,7 +632,7 @@ void case_inspect_disk() {
 void case_shader_cache() {
     Scratch s("shader");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string src = make_shader_folder(s.path("shaders"));
 
     const std::string out = s.path("out");
@@ -663,7 +663,7 @@ void case_shader_cache() {
 void case_shader_pack_file() {
     Scratch s("shaderpack");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string pack = s.path(game().shader_pack);
     write_bytes(pack, make_shader_pack_bytes());
 
@@ -686,7 +686,7 @@ void case_shader_pack_file() {
 void case_no_shader_pack() {
     Scratch s("nopack");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, s.path("out"));
     o.allow_no_shaders = false;
     expect_refusal(o, Fail::Input, game().shader_pack);
@@ -696,7 +696,7 @@ void case_no_shader_pack() {
 void case_no_shaders_flag() {
     Scratch s("noflag");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string out = s.path("out");
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
     CHECK(o.allow_no_shaders);
@@ -712,7 +712,7 @@ void case_no_shaders_flag() {
 void case_existing_shader_install() {
     Scratch s("keep");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string out = s.path("out");
 
     SetupOptions first = base_opts(d.path, d.keys_file_path, d.build_id, out);
@@ -736,7 +736,7 @@ void case_existing_shader_install() {
 void case_ini_protection() {
     Scratch s("ini");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string out = s.path("out");
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
     CHECK(!run(o, *std::make_unique<RecordingReporter>()).out.threw);
@@ -755,7 +755,7 @@ void case_ini_protection() {
 void case_threads() {
     Scratch s("threads");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string one = s.path("out_t1"), eight = s.path("out_t8");
 
     SetupOptions a = base_opts(d.path, d.keys_file_path, d.build_id, one);
@@ -769,13 +769,18 @@ void case_threads() {
     check_installed(eight, d.build_id, files);
 }
 
-// ---- extra: textures stage on a RomFS without .pak files -------------------------------------------------------------------
-void case_textures_without_paks() {
-    Scratch s("tex_nopak");
+// ---- extra: the game hook decides the stages -------------------------------------------------------------------------------
+// A hook with an empty texture list: the Textures stage runs and finds nothing.
+void case_textures_empty_hook() {
+    Scratch s("tex_hook");
     const SynthFiles files = romfs_files();
-    const SynthDump d = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
     const std::string out = s.path("out");
     SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
+    GameSetup hook;
+    hook.texture_cache = [](const std::string&, const std::function<bool()>&) { return TextureList{}; };
+    hook.ini_lines = [] { return std::vector<std::string>{"[game]", "hook_line = 1"}; };
+    o.hook = &hook;
     o.skip_textures = false;
 
     RecordingReporter rec;
@@ -785,6 +790,25 @@ void case_textures_without_paks() {
     CHECK_EQ(rr.rep.textures_total, u32(0));
     CHECK_EQ(rr.rep.textures_converted, u32(0));
     CHECK_EQ(rr.rep.textures_failed, u32(0));
+    check_installed(out, d.build_id, files);
+    CHECK(has(as_text(read_bytes((fs::path(out) / o.profile.game_ini).string())), "[game]\nhook_line = 1\n"));   // the hook's ini lines
+}
+
+// A game with no hook: no Textures stage even when textures are not skipped, and no program list.
+void case_no_hook() {
+    Scratch s("no_hook");
+    const SynthFiles files = romfs_files();
+    const SynthDump d = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, s.path("dump"));
+    const std::string out = s.path("out");
+    SetupOptions o = base_opts(d.path, d.keys_file_path, d.build_id, out);
+    o.hook = nullptr;
+    o.skip_textures = false;
+
+    RecordingReporter rec;
+    const RunResult rr = run(o, rec);
+    CHECK(!rr.out.threw);
+    CHECK(distinct_runs(rec.begins) == kOrderNoTextures);
+    CHECK_EQ(rr.rep.textures_total, u32(0));
     check_installed(out, d.build_id, files);
 }
 
@@ -805,6 +829,7 @@ int main() {
     case_existing_shader_install();
     case_ini_protection();
     case_threads();
-    case_textures_without_paks();
+    case_textures_empty_hook();
+    case_no_hook();
     return TEST_SUMMARY("test_pipeline");
 }

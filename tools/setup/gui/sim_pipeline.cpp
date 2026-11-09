@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// FAKE pipeline for the GUI test build (CMake option MPRS_GUI_SIM). It reads and writes nothing; it sleeps and reports
+// FAKE pipeline for the GUI test build (CMake option NXS_GUI_SIM). It reads and writes nothing; it sleeps and reports
 // believable numbers so the window can be driven and checked. Never part of the shipped tool.
 //   input file name contains "bad"  -> inspect says the dump is not supported
 //   input file name contains "boom" -> run_setup fails midway with Fail::Input
@@ -20,7 +20,7 @@
 #include "log.h"
 #include "pipeline.h"
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 using namespace std::chrono_literals;
@@ -96,7 +96,7 @@ const char* stage_name(Stage s) {
 
 std::vector<KeyFileCandidate> find_key_files() {
     std::vector<KeyFileCandidate> out;
-    if (const char* sim = std::getenv("MPRS_SIM_KEYS"); sim && *sim) {
+    if (const char* sim = std::getenv("NXS_SIM_KEYS"); sim && *sim) {
         if (fs::exists(widen(sim))) out.push_back({sim, "simulated"});
         return out;
     }
@@ -139,7 +139,7 @@ InputSummary inspect_input(const SetupOptions& o) {
     InputSummary s;
     s.container = container_for(first_input(o));
     s.title_id = game().title_id;
-    s.build_id = game().build_id;
+    s.build_id = game().builds.back().build_id;
     s.romfs_bytes = kRomfsBytes;
     s.exefs_bytes = kExefsBytes;
     s.romfs_files = 2817;
@@ -163,20 +163,20 @@ InputSummary inspect_input(const SetupOptions& o) {
 SetupReport run_setup(const SetupOptions& o, Reporter& r) {
     const auto t0 = std::chrono::steady_clock::now();
     const bool boom = file_name_has(first_input(o), L"boom");
-    MPRS_LOGI("Simulated setup (fake pipeline, nothing is written) for %s", first_input(o).c_str());
+    NXS_LOGI("Simulated setup (fake pipeline, nothing is written) for %s", first_input(o).c_str());
 
     SetupReport rep;
     rep.seconds[static_cast<int>(Stage::Exefs)] =
         run_steps(r, Stage::Exefs, "Copying the program files", kExefsBytes, "bytes", 20, 1000ms, false);
-    MPRS_LOGI("Program files copied");
+    NXS_LOGI("Program files copied");
 
     rep.seconds[static_cast<int>(Stage::Romfs)] = run_steps(r, Stage::Romfs, "Extracting the game files (RomFS)", kRomfsBytes,
                                                              "bytes", 200, 20000ms, boom);
-    MPRS_LOGI("Game files extracted");
+    NXS_LOGI("Game files extracted");
 
     rep.seconds[static_cast<int>(Stage::Textures)] =
         run_steps(r, Stage::Textures, "Converting textures for fast loading", kTextures, "textures", kTextures, 30000ms, false);
-    MPRS_LOGI("Textures converted");
+    NXS_LOGI("Textures converted");
 
     rep.seconds[static_cast<int>(Stage::ShaderCache)] =
         run_steps(r, Stage::ShaderCache, "Preparing the shader cache", kShaderBytes, "bytes", 30, 3000ms, false);
@@ -196,8 +196,8 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
     rep.textures_skipped = 0;
     rep.textures_failed = 0;
     rep.total_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-    MPRS_LOGI("Simulated setup finished");
+    NXS_LOGI("Simulated setup finished");
     return rep;
 }
 
-}  // namespace mprs
+}  // namespace nxs

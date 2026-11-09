@@ -1,4 +1,4 @@
-"""Run mpr.exe in a window for a fixed time with the frame trace on, then print the report.
+"""Run the game exe in a window for a fixed time with the frame trace on, then print the report.
 
   NX_GAME=<id> python prof_run.py [--exe <game exe>] --cap 120 --seconds 40 --tag base120 [--vsync] [--env K=V ...] [--ini-extra "[sec]\\nkey=v"]
 
@@ -53,7 +53,7 @@ def main():
     ap.add_argument('--no-report', action='store_true')
     ap.add_argument('--ini-append', default='', help='text appended to the run folder controls.ini (for example "[fps]\nin_screenshots = 1"; \n is a new line)')
     ap.add_argument('--hogs', type=int, default=0, help='run N busy-loop processes (normal priority) during the run: a repeatable background load')
-    ap.add_argument('--prio', default='', help='process priority class of mpr.exe: high | above | idle (default normal)')
+    ap.add_argument('--prio', default='', help='process priority class of the game exe: high | above | idle (default normal)')
     a = ap.parse_args()
     run = os.path.join(ROOT, 'work', 'run_prof_' + a.tag)
     os.makedirs(run, exist_ok=True)
@@ -79,7 +79,7 @@ def main():
     if a.shots_every: env['NXRT_BOOT_SCREENSHOT_EVERY'] = a.shots_every
     for kv in a.env:
         k, v = kv.split('=', 1); env[k] = v
-    cmd = [a.exe, '--log', 'mpr.log', '--max-seconds', str(a.seconds), '--link', 'rtld']
+    cmd = [a.exe, '--log', os.path.splitext(os.path.basename(a.exe))[0] + '.log', '--max-seconds', str(a.seconds), '--link', 'rtld']
     t = time.time()
     flags = {'high': 0x80, 'above': 0x8000, 'idle': 0x40, 'realtime': 0x100}.get(a.prio, 0)
     hogs = [subprocess.Popen([sys.executable, '-c', 'while True: pass']) for _ in range(a.hogs)]

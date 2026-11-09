@@ -11,11 +11,11 @@
 #include <string>
 #include <vector>
 
-using namespace mprs;
+using namespace nxs;
 
 namespace {
 
-const std::string kRealMainStr = mprs_test::project_path("game/exefs/main");
+const std::string kRealMainStr = nxs_test::project_path("game/exefs/main");
 const char* kRealMain = kRealMainStr.c_str();
 const char* kRealBuildId = "67C9CA1428222752F951021464A7B3597EB98FEC";
 
@@ -35,7 +35,7 @@ std::vector<u8> make_nso(const std::string& module_id_hex40, u32 text_c, u32 ro_
     put32(v, 0x3C, 0x2000);      // bss size
     // module id: first 20 bytes from the hex string, the rest is a pattern
     std::vector<u8> id(32);
-    if (!hex_decode(module_id_hex40, id.data(), 20)) std::printf("FAIL test data: bad module id hex\n"), ++mprs_test::failures();
+    if (!hex_decode(module_id_hex40, id.data(), 20)) std::printf("FAIL test data: bad module id hex\n"), ++nxs_test::failures();
     for (size_t i = 20; i < 32; ++i) id[i] = static_cast<u8>(0xA0 + i);
     std::memcpy(v.data() + 0x40, id.data(), 32);
     put32(v, 0x60, text_c);

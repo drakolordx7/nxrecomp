@@ -12,10 +12,10 @@
 #include <cstring>
 #include <vector>
 
-namespace mprs {
+namespace nxs {
 namespace {
 
-// Throws mprs::Error. The message carries only the CNG status code, never key or data bytes.
+// Throws nxs::Error. The message carries only the CNG status code, never key or data bytes.
 [[noreturn]] void cng_fail(const char* what, NTSTATUS st) {
     fail(Fail::Generic, "%s (Windows crypto status 0x%08lX)", what, static_cast<unsigned long>(st));
 }
@@ -276,4 +276,4 @@ std::array<u8, 20> sha1(const void* data, size_t len) {
     return h.finish();
 }
 
-}  // namespace mprs
+}  // namespace nxs

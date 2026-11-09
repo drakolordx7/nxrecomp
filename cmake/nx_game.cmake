@@ -7,7 +7,8 @@
 #   nx_game_header(<prefix> <out file>)      writes a C/C++ header with the same fields as NXGAME_<FIELD> macros
 #
 # Fields: ID TITLE PRODUCT SHORT_TITLE TITLE_ID VERSION (of the newest build) BUILD_IDS VERSIONS (lists, one per build) EXE SETUP SETUP_CLI
-# LAUNCHER LAUNCHER_INI GAME_INI LOG SHADER_PACK SAVE_FOLDER RELEASE_PREFIX ENTRY_MODULE MODULES (names, in index order) and per module
+# LAUNCHER LAUNCHER_INI GAME_INI LOG SHADER_PACK SAVE_FOLDER RELEASE_PREFIX ENTRY_MODULE SETUP_HOOK (absolute path of the game's
+# setup CMake file, or empty) MODULES (names, in index order) and per module
 # MODULE_<name>_FILE _INDEX _BASE _SHARDS _SITES (absolute, empty when none).
 include_guard(GLOBAL)
 
@@ -69,6 +70,12 @@ function(nx_game_read dir prefix)
     endforeach()
     _nx_json_get(v "${j}" release prefix)
     set(${prefix}_RELEASE_PREFIX "${v}" PARENT_SCOPE)
+    # setup_hook: the game's CMake file for its part of the setup tool (tools/setup/CMakeLists.txt); absolute, "" when the game has none
+    _nx_json_get(v "${j}" setup_hook)
+    if(v)
+        set(v "${dir}/${v}")
+    endif()
+    set(${prefix}_SETUP_HOOK "${v}" PARENT_SCOPE)
     # builds
     set(ids "")
     set(vers "")

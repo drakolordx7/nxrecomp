@@ -18,11 +18,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", ""
-            VALUE "FileDescription", MPRS_RC_PRODUCT " - Setup"
+            VALUE "FileDescription", NXS_RC_PRODUCT " - Setup"
             VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", MPRS_RC_EXE
-            VALUE "OriginalFilename", MPRS_RC_EXE ".exe"
-            VALUE "ProductName", MPRS_RC_PRODUCT " - Setup"
+            VALUE "InternalName", NXS_RC_EXE
+            VALUE "OriginalFilename", NXS_RC_EXE ".exe"
+            VALUE "ProductName", NXS_RC_PRODUCT " - Setup"
             VALUE "ProductVersion", "1.0.0.0"
         END
     END

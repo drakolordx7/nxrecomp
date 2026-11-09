@@ -18,9 +18,9 @@
 #include "synth.h"
 #include "synth_nca.h"
 
-using namespace mprs;
-using mprs_test::SynthFiles;
-using mprs_test::SynthKeys;
+using namespace nxs;
+using nxs_test::SynthFiles;
+using nxs_test::SynthKeys;
 
 namespace {
 
@@ -51,7 +51,7 @@ Outcome run(F&& f) {
 }
 
 std::string tmp_dir(const char* name) {
-    const auto p = std::filesystem::temp_directory_path() / (std::string("mprs_test_container_") + name);
+    const auto p = std::filesystem::temp_directory_path() / (std::string("nxs_test_container_") + name);
     std::filesystem::create_directories(p);
     return p.string();
 }
@@ -89,14 +89,14 @@ bool program_ok(const Container& c, const KeySet& keys, uint64_t title_id_value)
 int main() {
     const std::string root = tmp_dir("all");
     const SynthFiles files = romfs_files();
-    const mprs_test::SynthDump nsp = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, root + "/nsp");
-    const mprs_test::SynthDump xci = mprs_test::make_synth_dump("xci", kProgramId, kBuildId, files, false, root + "/xci");
-    const mprs_test::SynthDump nsp_tik = mprs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, true, root + "/nsp_tik");
-    const mprs_test::SynthDump xci_tik = mprs_test::make_synth_dump("xci", kProgramId, kBuildId, files, true, root + "/xci_tik");
-    const mprs_test::SynthDump other =
-        mprs_test::make_synth_dump("nsp", 0x0100000000001000ull, kBuildId, files, false, root + "/other");
-    const mprs_test::SynthDump update =
-        mprs_test::make_synth_dump("nsp", kProgramId + 0x800, kBuildId, files, false, root + "/update");
+    const nxs_test::SynthDump nsp = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, false, root + "/nsp");
+    const nxs_test::SynthDump xci = nxs_test::make_synth_dump("xci", kProgramId, kBuildId, files, false, root + "/xci");
+    const nxs_test::SynthDump nsp_tik = nxs_test::make_synth_dump("nsp", kProgramId, kBuildId, files, true, root + "/nsp_tik");
+    const nxs_test::SynthDump xci_tik = nxs_test::make_synth_dump("xci", kProgramId, kBuildId, files, true, root + "/xci_tik");
+    const nxs_test::SynthDump other =
+        nxs_test::make_synth_dump("nsp", 0x0100000000001000ull, kBuildId, files, false, root + "/other");
+    const nxs_test::SynthDump update =
+        nxs_test::make_synth_dump("nsp", kProgramId + 0x800, kBuildId, files, false, root + "/update");
     const KeySet keys = [&] {
         KeySet k;
         k.load_file(nsp.keys_file_path);
@@ -122,7 +122,7 @@ int main() {
     // The dump's ticket stores the title key under its rights id. The reader must index it under the same rights id the NCA
     // carries (ticket offset 0x2A0, body 0x160). See the test report: src/container.cpp reads body 0x15C instead.
     {
-        const std::string want = hex16(mprs_test::synth_dump_rights_id());
+        const std::string want = hex16(nxs_test::synth_dump_rights_id());
         auto c = open_container(nsp_tik.path);
         CHECK_EQ(c->kind, std::string("NSP"));
         CHECK_EQ(c->tickets.common.size(), size_t(1));
@@ -136,7 +136,7 @@ int main() {
     }
 
     // ---- find_program: base game, NSP and XCI ----
-    for (const mprs_test::SynthDump* d : {&nsp, &xci}) {
+    for (const nxs_test::SynthDump* d : {&nsp, &xci}) {
         auto c = open_container(d->path);
         const DumpTitle t = find_program(*c, keys, kTitleId);
         CHECK(t.program != nullptr);
@@ -186,7 +186,7 @@ int main() {
         SynthKeys bad = SynthKeys::standard();
         bad.header_kek_source[0] ^= 0xFF;
         KeySet bad_keys;
-        bad_keys.load_file(mprs_test::write_synth_keys_file_with(root + "/bad", bad, "prod.keys"));
+        bad_keys.load_file(nxs_test::write_synth_keys_file_with(root + "/bad", bad, "prod.keys"));
         auto c = open_container(nsp.path);
         const Outcome o = run([&] { find_program(*c, bad_keys, kTitleId); });
         CHECK(o.threw && o.kind == Fail::Keys);
@@ -210,13 +210,13 @@ int main() {
     }
     {
         const std::string empty_nsp = root + "/empty_pfs.nsp";
-        write_file(empty_nsp, mprs_test::synth_nsp({}));
+        write_file(empty_nsp, nxs_test::synth_nsp({}));
         const Outcome o = run([&] { open_container(empty_nsp); });
         CHECK(o.threw && o.kind == Fail::Input);
     }
     {
         const std::string no_secure = root + "/no_secure.xci";
-        write_file(no_secure, mprs_test::synth_xci({}, false));
+        write_file(no_secure, nxs_test::synth_xci({}, false));
         const Outcome o = run([&] { open_container(no_secure); });
         CHECK(o.threw && o.kind == Fail::Input);
     }

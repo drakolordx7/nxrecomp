@@ -6,11 +6,10 @@
 #include <functional>
 #include <map>
 
-#include "game.h"
 #include "log.h"
 #include "ncz.h"
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 u32 rd32(const u8* p) { return u32(p[0]) | u32(p[1]) << 8 | u32(p[2]) << 16 | u32(p[3]) << 24; }
@@ -152,7 +151,8 @@ struct Meta {
 
 }  // namespace
 
-DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet& keys, const std::string& title_id) {
+DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet& keys, const std::string& title_id,
+                      const std::string& game_title) {
     const u64 want = parse_title_id(title_id);
     const u64 patch_id = want + 0x800, aoc_base = want + 0x1000;
     TicketKeys tickets;
@@ -175,7 +175,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
                     if (first_keyerr.empty()) first_keyerr = e.what();
                     if (std::string id = content_id_of(f.name); !id.empty()) key_failed[id] = e.what();
                 } else {
-                    MPRS_LOGW("Skipping %s: %s", f.name.c_str(), e.what());
+                    NXS_LOGW("Skipping %s: %s", f.name.c_str(), e.what());
                 }
                 continue;
             }
@@ -199,7 +199,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
                 break;
             }
         } catch (const std::exception& ex) {
-            MPRS_LOGW("Could not read a content list in the dump: %s", ex.what());
+            NXS_LOGW("Could not read a content list in the dump: %s", ex.what());
         }
     }
     // Newest first, so the first match of a title wins.
@@ -272,15 +272,13 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
             else other = it.nca->program_id();
         }
         if (update_seen) {
-            if (!game_lists_builds())
-                fail(Fail::Input, "This is an update (patch) for the game, not the game itself. Setup needs the original v%s "
-                                  "dump (the base game), and updates are not supported.", game().version);
             fail(Fail::Input, "This is an update (patch) for the game, not the game itself. Setup needs the base game dump too: "
                               "give the base game and the update together.");
         }
         if (other)
-            fail(Fail::Input, "This dump is a different game (title id %s). Setup needs %s (%s).", tid_hex(other).c_str(),
-                 game().title, title_id.c_str());
+            fail(Fail::Input, "This dump is a different game (title id %s). Setup needs %s%s.", tid_hex(other).c_str(),
+                 game_title.empty() ? "the game with title id " : (game_title + " (").c_str(),
+                 (game_title.empty() ? title_id : title_id + ")").c_str());
         fail(Fail::Input, "The dump does not contain the game program. It may be DLC or an incomplete dump.");
     }
 
@@ -293,7 +291,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
         r.patch = take(mt, 1, "update's program", [&](const Nca& n) { return is_program(n, true); });
         if (!r.patch) {
             r.skipped.push_back("The update v" + std::to_string(mt.m.version) + " has no readable program; it was not used.");
-            MPRS_LOGW("%s", r.skipped.back().c_str());
+            NXS_LOGW("%s", r.skipped.back().c_str());
             continue;
         }
         r.patch_version = mt.m.version;
@@ -311,7 +309,7 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
         std::unique_ptr<Nca> d = take(mt, 2, what.c_str(), is_data);
         if (!d) {
             r.skipped.push_back("DLC " + tid_hex(t) + " v" + std::to_string(mt.m.version) + " has no readable data; it was not used.");
-            MPRS_LOGW("%s", r.skipped.back().c_str());
+            NXS_LOGW("%s", r.skipped.back().c_str());
             continue;
         }
         r.aoc.push_back({t, mt.m.version, std::move(d)});
@@ -325,8 +323,8 @@ DumpSet select_titles(const std::vector<const Container*>& inputs, const KeySet&
     return r;
 }
 
-DumpTitle find_program(const Container& c, const KeySet& keys, const std::string& title_id) {
-    DumpSet s = select_titles({&c}, keys, title_id);
+DumpTitle find_program(const Container& c, const KeySet& keys, const std::string& title_id, const std::string& game_title) {
+    DumpSet s = select_titles({&c}, keys, title_id, game_title);
     DumpTitle r;
     r.program = std::move(s.base);
     r.title_id = s.title_id;
@@ -335,4 +333,4 @@ DumpTitle find_program(const Container& c, const KeySet& keys, const std::string
     return r;
 }
 
-}  // namespace mprs
+}  // namespace nxs

@@ -8,7 +8,7 @@
 #include "common.h"
 #include "crypto.h"
 
-namespace mprs {
+namespace nxs {
 
 // Writes a file so that the final path only ever holds a complete file. Data goes to "<final>.part" and finish() renames it over
 // the final path. If finish() was never reached (error, cancel, exception), the destructor closes and deletes the .part file and
@@ -59,4 +59,4 @@ std::string exe_dir();
 // Deletes leftover "*.part" files (from a run that was killed) under dir, recursively. Returns how many were removed.
 int remove_part_files(const std::string& dir_utf8);
 
-}  // namespace mprs
+}  // namespace nxs

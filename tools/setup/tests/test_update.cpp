@@ -22,11 +22,11 @@
 #include "synth.h"
 #include "synth_nca.h"
 
-using namespace mprs;
-using mprs_test::Bytes16;
-using mprs_test::SynthFiles;
-using mprs_test::SynthNcaSpec;
-using mprs_test::SynthSection;
+using namespace nxs;
+using nxs_test::Bytes16;
+using nxs_test::SynthFiles;
+using nxs_test::SynthNcaSpec;
+using nxs_test::SynthSection;
 namespace fs = std::filesystem;
 
 namespace {
@@ -38,7 +38,7 @@ const char* const kOldBuild = "1111111111111111111111111111111111111111";
 const char* const kNewBuild = "FEDCBA9876543210FEDCBA987654321000000000";
 
 std::string tmp_dir(const char* name) {
-    const fs::path p = fs::temp_directory_path() / (std::string("mprs_test_update_") + name);
+    const fs::path p = fs::temp_directory_path() / (std::string("nxs_test_update_") + name);
     std::error_code ec;
     fs::remove_all(p, ec);
     fs::create_directories(p);
@@ -103,8 +103,8 @@ std::vector<uint8_t> meta_nca(u64 tid, const std::vector<uint8_t>& cnmt) {
     SynthNcaSpec sp;
     sp.content_type = 1;
     sp.program_id = tid;
-    sp.sections = {SynthSection{1, 3, mprs_test::synth_pfs0({{"Meta_" + tid_hex(tid) + ".cnmt", cnmt}})}};
-    return mprs_test::synth_nca(sp);
+    sp.sections = {SynthSection{1, 3, nxs_test::synth_pfs0({{"Meta_" + tid_hex(tid) + ".cnmt", cnmt}})}};
+    return nxs_test::synth_nca(sp);
 }
 
 KeySet load_keys(const std::string& path) {
@@ -151,35 +151,35 @@ std::vector<uint8_t> dlc_nca(u64 tid, const SynthFiles& files) {
     SynthNcaSpec sp;
     sp.content_type = 5;   // PublicData
     sp.program_id = tid;
-    sp.sections = {SynthSection{0, 3, mprs_test::synth_romfs(files)}};
-    return mprs_test::synth_nca(sp);
+    sp.sections = {SynthSection{0, 3, nxs_test::synth_romfs(files)}};
+    return nxs_test::synth_nca(sp);
 }
 
 Game make_game(const char* name, bool damage_patch = false) {
     Game g;
     g.dir = tmp_dir(name);
-    g.keys = mprs_test::write_synth_keys_file(g.dir);
+    g.keys = nxs_test::write_synth_keys_file(g.dir);
 
     SynthNcaSpec base;
     base.program_id = kApp;
-    base.sections = {SynthSection{1, 3, mprs_test::synth_exefs(kBaseBuild)}, SynthSection{0, 3, mprs_test::synth_romfs(kBaseFiles)}};
-    const mprs_test::SynthNcaBuild bb = mprs_test::synth_nca_build(base);
+    base.sections = {SynthSection{1, 3, nxs_test::synth_exefs(kBaseBuild)}, SynthSection{0, 3, nxs_test::synth_romfs(kBaseFiles)}};
+    const nxs_test::SynthNcaBuild bb = nxs_test::synth_nca_build(base);
 
-    auto patch_nca = [&](const char* build, const SynthFiles& files, bool rights, mprs_test::SynthNcaBuild* out) {
+    auto patch_nca = [&](const char* build, const SynthFiles& files, bool rights, nxs_test::SynthNcaBuild* out) {
         SynthNcaSpec sp;
         sp.program_id = kApp;   // an update's program carries the game's own id
-        SynthSection rs{0, 4, mprs_test::synth_romfs(files)};
+        SynthSection rs{0, 4, nxs_test::synth_romfs(files)};
         rs.patch_base = bb.plain[1];
-        sp.sections = {SynthSection{1, 3, mprs_test::synth_exefs(build)}, rs};
+        sp.sections = {SynthSection{1, 3, nxs_test::synth_exefs(build)}, rs};
         if (rights) {
             sp.has_rights = true;
             sp.rights_id = seeded(40);
             sp.titlekey = seeded(41);
         }
-        *out = mprs_test::synth_nca_build(sp);
+        *out = nxs_test::synth_nca_build(sp);
         return out->bytes;
     };
-    mprs_test::SynthNcaBuild old_b, new_b;
+    nxs_test::SynthNcaBuild old_b, new_b;
     const std::vector<uint8_t> old_patch = patch_nca(kOldBuild, kOldFiles, false, &old_b);
     std::vector<uint8_t> new_patch = patch_nca(kNewBuild, kNewFiles, true, &new_b);
     g.new_section = new_b.plain[1];
@@ -195,23 +195,23 @@ Game make_game(const char* name, bool damage_patch = false) {
         {cid(6) + ".cnmt.nca", meta_nca(dlc_a, cnmt_bytes(dlc_a, 0, 0x82, kApp, {{cid(5), 2}}))},
     };
     g.xci = g.dir + "/game.xci";
-    write_file(g.xci, mprs_test::synth_xci(xci_entries));
+    write_file(g.xci, nxs_test::synth_xci(xci_entries));
 
     const SynthFiles nsp_entries = {
         {cid(7) + ".nca", new_patch},
         {cid(8) + ".cnmt.nca", meta_nca(patch_id, cnmt_bytes(patch_id, 0x20000, 0x81, kApp, {{cid(7), 1}}))},
         {hex_encode(seeded(40).data(), 16) + ".tik",
-         mprs_test::synth_ticket(seeded(40), mprs_test::synth_encrypt_titlekey(11, seeded(41)), false)},
+         nxs_test::synth_ticket(seeded(40), nxs_test::synth_encrypt_titlekey(11, seeded(41)), false)},
         {cid(5) + ".nca", dlc_nca(dlc_a, kDlcA)},   // the same DLC again
         {cid(6) + ".cnmt.nca", meta_nca(dlc_a, cnmt_bytes(dlc_a, 0, 0x82, kApp, {{cid(5), 2}}))},
         {cid(9) + ".nca", dlc_nca(dlc_b, kDlcB)},
         {cid(10) + ".cnmt.nca", meta_nca(dlc_b, cnmt_bytes(dlc_b, 0, 0x82, kApp, {{cid(9), 2}}))},
     };
     g.nsp = g.dir + "/update_dlc.nsp";
-    write_file(g.nsp, mprs_test::synth_nsp(nsp_entries));
+    write_file(g.nsp, nxs_test::synth_nsp(nsp_entries));
 
     g.base_only = g.dir + "/base.nsp";
-    write_file(g.base_only, mprs_test::synth_nsp({xci_entries[0], xci_entries[1]}));
+    write_file(g.base_only, nxs_test::synth_nsp({xci_entries[0], xci_entries[1]}));
     return g;
 }
 
@@ -225,14 +225,14 @@ void test_ticket_titlekey(const std::string& root) {
     sp.has_rights = true;
     sp.rights_id = rights;
     sp.titlekey = plain_key;
-    sp.sections = {SynthSection{1, 3, mprs_test::synth_exefs(kBaseBuild)}};
-    const mprs_test::SynthNcaBuild b = mprs_test::synth_nca_build(sp);
-    const std::string keys = mprs_test::write_synth_keys_file(root + "/tk");
+    sp.sections = {SynthSection{1, 3, nxs_test::synth_exefs(kBaseBuild)}};
+    const nxs_test::SynthNcaBuild b = nxs_test::synth_nca_build(sp);
+    const std::string keys = nxs_test::write_synth_keys_file(root + "/tk");
     const KeySet ks = load_keys(keys);
     const std::string rhex = hex_encode(rights.data(), 16);
 
-    write_file(root + "/tk/t.nsp", mprs_test::synth_nsp({{"p.nca", b.bytes},
-                                                         {rhex + ".tik", mprs_test::synth_ticket(rights, mprs_test::synth_encrypt_titlekey(11, plain_key), false)}}));
+    write_file(root + "/tk/t.nsp", nxs_test::synth_nsp({{"p.nca", b.bytes},
+                                                         {rhex + ".tik", nxs_test::synth_ticket(rights, nxs_test::synth_encrypt_titlekey(11, plain_key), false)}}));
     auto c = open_container(root + "/tk/t.nsp");
     CHECK_EQ(c->tickets.common.count(rhex), size_t(1));
     auto n = Nca::open(c->ncas[0].data, ks, c->tickets);
@@ -241,11 +241,11 @@ void test_ticket_titlekey(const std::string& root) {
     CHECK(read_all(*sec, 0, static_cast<size_t>(sec->size())) == b.plain[0]);
 
     // No ticket: title.keys is the fallback (the key as stored there is the encrypted one).
-    const std::string tk = mprs_test::write_synth_keys_file_with(root + "/tk2", mprs_test::SynthKeys::standard(), "title.keys",
-                                                                 {{rights, mprs_test::synth_encrypt_titlekey(11, plain_key)}});
+    const std::string tk = nxs_test::write_synth_keys_file_with(root + "/tk2", nxs_test::SynthKeys::standard(), "title.keys",
+                                                                 {{rights, nxs_test::synth_encrypt_titlekey(11, plain_key)}});
     KeySet ks2 = load_keys(keys);
     ks2.load_file(tk);
-    write_file(root + "/tk/n.nsp", mprs_test::synth_nsp({{"p.nca", b.bytes}}));
+    write_file(root + "/tk/n.nsp", nxs_test::synth_nsp({{"p.nca", b.bytes}}));
     auto c2 = open_container(root + "/tk/n.nsp");
     auto n2 = Nca::open(c2->ncas[0].data, ks2, c2->tickets);
     const StoragePtr sec2 = n2->open_section(0);
@@ -254,8 +254,8 @@ void test_ticket_titlekey(const std::string& root) {
     CHECK(has(error_of([&] { n3->open_section(0); }), "title key"));
 
     // A wrong ticket key decrypts to garbage, not to the section.
-    write_file(root + "/tk/w.nsp", mprs_test::synth_nsp({{"p.nca", b.bytes},
-                                                         {rhex + ".tik", mprs_test::synth_ticket(rights, plain_key, false)}}));
+    write_file(root + "/tk/w.nsp", nxs_test::synth_nsp({{"p.nca", b.bytes},
+                                                         {rhex + ".tik", nxs_test::synth_ticket(rights, plain_key, false)}}));
     auto c3 = open_container(root + "/tk/w.nsp");
     auto n4 = Nca::open(c3->ncas[0].data, ks, c3->tickets);
     const StoragePtr sec4 = n4->open_section(0);
@@ -318,8 +318,8 @@ void test_select(const Game& g) {
     // inputs in the other order pick the same
     DumpSet s2 = select_titles({n.get(), x.get()}, ks, kTitleId);
     CHECK_EQ(s2.patch_version, 0x20000u);
-    // the update alone is not enough (a profile without a builds list keeps its old message)
-    CHECK(has(error_of([&] { select_titles({n.get()}, ks, kTitleId); }), "updates are not supported"));
+    // the update alone is not enough: it is a change to the base game
+    CHECK(has(error_of([&] { select_titles({n.get()}, ks, kTitleId); }), "Setup needs the base game dump too"));
 }
 
 void test_storage_direct() {
@@ -357,8 +357,8 @@ void test_pipeline(const Game& g) {
     o.input_paths = {g.nsp, g.xci};   // any order
     o.key_files = {g.keys};
     o.out_dir = out;
-    o.expected_title_id = kTitleId;
-    o.expected_build_id = kNewBuild;
+    o.profile.title_id = kTitleId;
+    o.profile.builds = {{kNewBuild, "1.0.0"}};
     o.skip_textures = true;
     o.allow_no_shaders = true;
     o.verify_input = true;
@@ -376,7 +376,7 @@ void test_pipeline(const Game& g) {
     CHECK(err.empty());
     if (!err.empty()) std::printf("  run_setup: %s\n", err.c_str());
     log_close();
-    auto ex = Pfs::open(make_memory_storage(mprs_test::synth_exefs(kNewBuild)));
+    auto ex = Pfs::open(make_memory_storage(nxs_test::synth_exefs(kNewBuild)));
     for (const PfsEntry& e : ex->entries())
         CHECK(read_file(out + "/exefs/" + e.name) == read_all(*ex->open_file(e), 0, static_cast<size_t>(e.size)));
     for (const auto& [p, bytes] : kNewFiles) CHECK(read_file(out + "/romfs/" + p) == bytes);
@@ -400,9 +400,9 @@ void test_pipeline(const Game& g) {
     base_only.out_dir = g.dir + "/out2";
     InputSummary b = inspect_input(base_only);
     CHECK(!b.supported);
-    CHECK(has(b.problem, "This is not the v1.0.0 version") && has(b.problem, kNewBuild));   // the old message (no builds list)
+    CHECK(has(b.problem, "not supported: found the base game") && has(b.problem, kNewBuild));
     SetupOptions want_base = o;
-    want_base.expected_build_id = kBaseBuild;
+    want_base.profile.builds = {{kBaseBuild, "1.0.0"}};
     want_base.out_dir = g.dir + "/out3";
     b = inspect_input(want_base);
     CHECK(!b.supported);
@@ -414,16 +414,16 @@ void test_pipeline(const Game& g) {
     CHECK(b.update.empty());
     // a short build id is padded with zeros
     SetupOptions shortid = o;
-    shortid.expected_build_id = std::string(kNewBuild).substr(0, 32);
+    static const std::string short_build = std::string(kNewBuild).substr(0, 32);
+    shortid.profile.builds = {{short_build.c_str(), "1.0.0"}};
     shortid.out_dir = g.dir + "/out4";
     CHECK(inspect_input(shortid).supported);
 
     // A profile with a builds list: the list decides, messages name what was found and what is supported.
-    static const GameBuild only_new[] = {{kNewBuild, "2.0.0"}, {nullptr, nullptr}};
-    static const GameBuild both[] = {{kBaseBuild, "1.0.0"}, {kNewBuild, "2.0.0"}, {nullptr, nullptr}};
+    const std::vector<GameBuild> only_new = {{kNewBuild, "2.0.0"}};
+    const std::vector<GameBuild> both = {{kBaseBuild, "1.0.0"}, {kNewBuild, "2.0.0"}};
     SetupOptions listed = o;
-    listed.expected_build_id = SetupOptions().expected_build_id;   // the default, so the list is used
-    listed.builds = only_new;
+    listed.profile.builds = only_new;
     listed.out_dir = g.dir + "/out5";
     b = inspect_input(listed);
     CHECK(b.supported);
@@ -432,7 +432,7 @@ void test_pipeline(const Game& g) {
     b = inspect_input(listed);
     CHECK(!b.supported);
     CHECK(has(b.problem, "not supported: found the base game") && has(b.problem, "Supported: v2.0.0"));
-    listed.builds = both;
+    listed.profile.builds = both;
     b = inspect_input(listed);
     CHECK(b.supported);
     CHECK_EQ(b.version, std::string("1.0.0"));
@@ -440,7 +440,7 @@ void test_pipeline(const Game& g) {
     // Rebuild into the same folder: base only, then base + update again. No stale files, no stale meta.
     SetupOptions down = o;
     down.input_paths = {g.base_only};
-    down.expected_build_id = kBaseBuild;
+    down.profile.builds = {{kBaseBuild, "1.0.0"}};
     err = error_of([&] { run_setup(down, r); });
     log_close();
     CHECK(err.empty());
@@ -448,7 +448,7 @@ void test_pipeline(const Game& g) {
     CHECK(!fs::exists(out + "/romfs/data/c.bin"));
     CHECK(!fs::exists(out + "/aoc"));
     for (const auto& [p, bytes] : kBaseFiles) CHECK(read_file(out + "/romfs/" + p) == bytes);
-    auto bex = Pfs::open(make_memory_storage(mprs_test::synth_exefs(kBaseBuild)));
+    auto bex = Pfs::open(make_memory_storage(nxs_test::synth_exefs(kBaseBuild)));
     CHECK(read_file(out + "/exefs/main") == read_all(*bex->open_file(*bex->find("main")), 0, static_cast<size_t>(bex->find("main")->size)));
     {
         const std::vector<uint8_t> st2 = read_file(out + "/setup_state.tsv");
@@ -469,14 +469,14 @@ void test_notes_and_keys(const Game& g) {
     // An input for another game is named in the notes; a DLC whose title key is missing is a keys problem.
     const u64 other = 0x0100000000AAA000ull;
     write_file(g.dir + "/other_dlc.nsp",
-               mprs_test::synth_nsp({{cid(20) + ".nca", dlc_nca(other + 0x1001, kDlcB)},
+               nxs_test::synth_nsp({{cid(20) + ".nca", dlc_nca(other + 0x1001, kDlcB)},
                                      {cid(21) + ".cnmt.nca", meta_nca(other + 0x1001, cnmt_bytes(other + 0x1001, 0, 0x82, other, {{cid(20), 2}}))}}));
     SetupOptions o;
     o.input_paths = {g.base_only, g.dir + "/other_dlc.nsp"};
     o.key_files = {g.keys};
     o.out_dir = g.dir + "/out_notes";
-    o.expected_title_id = kTitleId;
-    o.expected_build_id = kBaseBuild;
+    o.profile.title_id = kTitleId;
+    o.profile.builds = {{kBaseBuild, "1.0.0"}};
     o.skip_textures = true;
     o.allow_no_shaders = true;
     InputSummary in = inspect_input(o);
@@ -490,9 +490,9 @@ void test_notes_and_keys(const Game& g) {
     sp.has_rights = true;
     sp.rights_id = seeded(70);
     sp.titlekey = seeded(71);
-    sp.sections = {SynthSection{0, 3, mprs_test::synth_romfs(kDlcB)}};
+    sp.sections = {SynthSection{0, 3, nxs_test::synth_romfs(kDlcB)}};
     write_file(g.dir + "/locked_dlc.nsp",
-               mprs_test::synth_nsp({{cid(22) + ".nca", mprs_test::synth_nca(sp)},
+               nxs_test::synth_nsp({{cid(22) + ".nca", nxs_test::synth_nca(sp)},
                                      {cid(23) + ".cnmt.nca", meta_nca(kApp + 0x1003, cnmt_bytes(kApp + 0x1003, 0, 0x82, kApp, {{cid(22), 2}}))}}));
     o.input_paths = {g.base_only, g.dir + "/locked_dlc.nsp"};
     NullReporter r;
@@ -516,8 +516,8 @@ void test_damaged_patch(const std::string& root) {
     o.input_paths = {g.xci, g.nsp};
     o.key_files = {g.keys};
     o.out_dir = g.dir + "/out";
-    o.expected_title_id = kTitleId;
-    o.expected_build_id = kNewBuild;
+    o.profile.title_id = kTitleId;
+    o.profile.builds = {{kNewBuild, "1.0.0"}};
     o.skip_textures = true;
     o.allow_no_shaders = true;
     NullReporter r;

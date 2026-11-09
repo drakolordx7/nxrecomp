@@ -6,7 +6,7 @@
 #include <cstring>
 #include <stdexcept>
 
-namespace mprs_test {
+namespace nxs_test {
 namespace {
 
 constexpr uint32_t kNone = 0xFFFFFFFF;
@@ -274,4 +274,4 @@ std::vector<uint8_t> synth_romfs(const SynthFiles& files) {
     return img;
 }
 
-}  // namespace mprs_test
+}  // namespace nxs_test

@@ -59,3 +59,8 @@ python base\tools\release\make_release.py --game games\<id> --exe NX\build\<id>\
 
 The setup tool is built for one game (CMake `NX_GAME_DIR`): its profile is generated from the manifest. The release takes every file
 name from the manifest's `files` and `release` sections.
+
+The manifest's optional `setup_hook` names a CMake file in the game folder (Metroid: `setup/hook.cmake`) that adds the game's part of the setup
+tool (texture list, shader program scan, ini lines); without it the tool only extracts. The file formats the runtime and the setup tool share
+(BC7 cache key, `programs.bin`, shader pack) are `formats/nx_formats.h` and its Python twin, checked by `python formats/test_formats.py`.
+

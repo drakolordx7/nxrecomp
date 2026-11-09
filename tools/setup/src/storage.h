@@ -8,7 +8,7 @@
 
 #include "common.h"
 
-namespace mprs {
+namespace nxs {
 
 class IStorage {
 public:
@@ -29,4 +29,4 @@ StoragePtr make_memory_storage(std::vector<u8> bytes);
 // Convenience: read into a vector.
 std::vector<u8> read_all(const IStorage& s, u64 off, size_t len);
 
-}  // namespace mprs
+}  // namespace nxs

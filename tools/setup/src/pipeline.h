@@ -5,9 +5,9 @@
 //   exefs/            the NSOs and main.npdm (rtld, main, sdk, subsdk0, main.npdm), byte-identical to the dump
 //   romfs/            the RomFS as loose files (with the update applied when one is given)
 //   aoc/<title id>/   the RomFS of each DLC (16 upper-case hex digits), for the runtime's add-on content service
-//   bc7_cache/        ASTC textures transcoded to BC7, one file per texture, in the runtime's cache format
+//   bc7_cache/        ASTC textures transcoded to BC7, one file per texture, in the runtime's cache format (only for a game whose hook lists textures)
 //   shader_cache/spirv/   translated shaders from the shader pack (setup stops without a pack, unless --no-shaders or an earlier run installed them)
-//   <game ini>        (game.h; <id>.ini) [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime
+//   <game ini>        (game.h; <id>.ini) [fs] romfs / [nvn] bc7_cache, bc7_quality, shader_cache for the runtime, then the hook's ini_lines
 //   setup_state.tsv   what was done, hashes of every output file, quality used; makes re-runs cheap and resumable
 //   setup.log         the log of every run (appended); run_setup opens it itself (log_open) as soon as out_dir exists
 #pragma once
@@ -16,10 +16,11 @@
 
 #include "common.h"
 #include "game.h"
+#include "game_setup.h"
 #include "keys.h"
 #include "log.h"
 
-namespace mprs {
+namespace nxs {
 
 enum class Stage { Inspect = 0, Space, Exefs, Romfs, Textures, ShaderCache, Finish, Count };
 const char* stage_name(Stage s);
@@ -31,16 +32,16 @@ struct SetupOptions {
     std::string out_dir;
     int bc7_quality = 3;                    // 0..6; the runtime reads [nvn] bc7_quality and its cache keys include it. Default = runtime default.
     int threads = 0;                        // 0 = all hardware threads for texture conversion (RomFS copy uses 3)
-    std::string shader_cache_src;           // shader pack file or folder with the translated shaders; empty = the game's shader pack (game.h; shader_cache.mprshc) or shader_cache\ next to the setup program
+    std::string shader_cache_src;           // shader pack file or folder with the translated shaders; empty = the game's shader pack (game.h, shader_pack) or shader_cache\ next to the setup program
     bool allow_no_shaders = false;          // developer escape hatch (--no-shaders): with no pack, install without shaders. The game then draws nothing.
     bool verify_input = true;               // check the dump's own hashes (PFS0 hash table, RomFS integrity tree) before writing
     bool verify_output = false;             // re-hash files that are already present instead of trusting their size
-    bool skip_textures = false;
+    bool skip_textures = false;             // developer option (--skip-textures): leave the texture cache out even when the game's hook has one
     bool inspect_only = false;              // open, validate and size up; write nothing
-    // Test hooks (the shipped tool always uses the defaults, those of the game it is built for: game.h).
-    std::string expected_title_id = game().title_id;
-    std::string expected_build_id = game().build_id ? game().build_id : "";   // main NSO build id, hex, first 20 bytes
-    const GameBuild* builds = game().builds;   // supported releases ({nullptr, nullptr} ends it); used while expected_build_id is the default
+    // The game: its title id, accepted builds and file names (the shipped tool always uses game(), the one it is built for; tests pass
+    // their own), and its setup hook (nullptr: extraction only, no texture cache, no program list).
+    GameProfile profile = game();
+    const GameSetup* hook = game_setup();
 };
 
 // input_path (if set) followed by input_paths.
@@ -93,4 +94,4 @@ InputSummary inspect_input(const SetupOptions& o);
 // returns quickly. Stops with Error(Fail::Cancelled) when the reporter asks; everything finished so far stays valid.
 SetupReport run_setup(const SetupOptions& o, Reporter& r);
 
-}  // namespace mprs
+}  // namespace nxs

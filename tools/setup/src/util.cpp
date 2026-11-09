@@ -12,7 +12,7 @@
 #endif
 #include <windows.h>
 
-namespace mprs {
+namespace nxs {
 
 void fail(Fail kind, const char* fmt, ...) {
     char buf[2048];
@@ -69,4 +69,4 @@ std::string narrow(std::wstring_view w) {
     return s;
 }
 
-}  // namespace mprs
+}  // namespace nxs

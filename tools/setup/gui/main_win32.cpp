@@ -38,12 +38,12 @@
 
 namespace {
 
-using mprs::Fail;
-using mprs::LogLevel;
-using mprs::narrow;
-using mprs::Stage;
-using mprs::u64;
-using mprs::widen;
+using nxs::Fail;
+using nxs::LogLevel;
+using nxs::narrow;
+using nxs::Stage;
+using nxs::u64;
+using nxs::widen;
 
 // Control ids. The close button uses IDCANCEL.
 enum ControlId : int {
@@ -75,8 +75,8 @@ constexpr COLORREF kRed = RGB(0xB3, 0x1B, 0x1B);
 constexpr COLORREF kGray = RGB(0x5F, 0x5F, 0x5F);
 
 constexpr wchar_t kClassName[] = L"MprSetupWindow";
-#ifndef MPRS_VERSION
-#define MPRS_VERSION "dev"
+#ifndef NXS_VERSION
+#define NXS_VERSION "dev"
 #endif
 constexpr wchar_t kDumpHint[] =
     L"Pick your own game dump (.nsp, .xci, .nsz or .xcz), or drag it onto this window. Pick the update and DLC files with it if you have them.";
@@ -99,14 +99,14 @@ struct StageEndMsg {
 };
 struct InspectMsg {
     std::string key;
-    mprs::InputSummary summary;
+    nxs::InputSummary summary;
 };
 struct RunMsg {
     bool ok = false;
     bool unexpected = false;
     Fail kind = Fail::Generic;
     std::string text;
-    mprs::SetupReport report;
+    nxs::SetupReport report;
 };
 
 // Progress values the worker writes and the window reads. Lives in the App, which outlives the worker thread.
@@ -355,14 +355,14 @@ std::wstring pick_path(HWND owner, bool folder, const wchar_t* title, const COMD
 }
 
 // Worker thread: opens the dump and reports the result. Never throws out of the thread.
-void inspect_worker(HWND hwnd, std::string key, mprs::SetupOptions o) {
+void inspect_worker(HWND hwnd, std::string key, nxs::SetupOptions o) {
     std::unique_ptr<InspectMsg> msg;
     try {
         msg = std::make_unique<InspectMsg>();
         msg->key = std::move(key);
         try {
-            msg->summary = mprs::inspect_input(o);
-        } catch (const mprs::Error& e) {
+            msg->summary = nxs::inspect_input(o);
+        } catch (const nxs::Error& e) {
             msg->summary.supported = false;
             msg->summary.problem = e.what();
         } catch (const std::exception& e) {
@@ -379,7 +379,7 @@ void inspect_worker(HWND hwnd, std::string key, mprs::SetupOptions o) {
 }
 
 // Reports pipeline progress. Only posts to the window; the progress numbers are read from RunShared.
-class GuiReporter final : public mprs::Reporter {
+class GuiReporter final : public nxs::Reporter {
 public:
     GuiReporter(HWND hwnd, RunShared& shared) : hwnd_(hwnd), shared_(shared) {}
 
@@ -411,14 +411,14 @@ private:
 };
 
 // Worker thread: runs the setup and posts the outcome. Never throws out of the thread.
-void run_worker(HWND hwnd, mprs::SetupOptions o, RunShared& shared) {
+void run_worker(HWND hwnd, nxs::SetupOptions o, RunShared& shared) {
     try {
         auto res = std::make_unique<RunMsg>();
         try {
             GuiReporter rep(hwnd, shared);
-            res->report = mprs::run_setup(o, rep);
+            res->report = nxs::run_setup(o, rep);
             res->ok = true;
-        } catch (const mprs::Error& e) {
+        } catch (const nxs::Error& e) {
             res->kind = e.kind;
             res->text = e.what();
         } catch (const std::exception& e) {
@@ -470,7 +470,7 @@ private:
     std::wstring out_text() const { return trim_path(get_text(out_edit_)); }
     std::vector<std::wstring> keys_for_run() const;
     std::string current_key() const;
-    mprs::SetupOptions make_options() const;
+    nxs::SetupOptions make_options() const;
     int quality_value() const;
     bool can_start() const;
 
@@ -525,7 +525,7 @@ private:
     bool inspect_running_ = false;
     bool inspect_again_ = false;
     std::string applied_key_;                // inputs the current result belongs to
-    mprs::InputSummary summary_;
+    nxs::InputSummary summary_;
     bool supported_ = false;
 
     // Run.
@@ -559,7 +559,7 @@ int App::run() {
 
     // Created at a placeholder size; WM_CREATE reads the window's own DPI, then the real size is set from that DPI.
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-    const std::wstring title = widen(mprs::game().product) + L" - Setup  " + (std::isdigit(static_cast<unsigned char>(MPRS_VERSION[0])) ? L"v" : L"") + widen(MPRS_VERSION);
+    const std::wstring title = widen(nxs::game().product) + L" - Setup  " + (std::isdigit(static_cast<unsigned char>(NXS_VERSION[0])) ? L"v" : L"") + widen(NXS_VERSION);
     CreateWindowExW(0, kClassName, title.c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, nullptr, nullptr, hinst_, this);
     if (!hwnd_) return static_cast<int>(Fail::Generic);
     // The DPI at WM_CREATE can still be the placeholder; the window's DPI is only settled once it is placed.
@@ -821,7 +821,7 @@ void App::on_create() {
     layout();
     DragAcceptFiles(hwnd_, TRUE);
     SetTimer(hwnd_, kTimerTick, 250, nullptr);
-    mprs::log_set_sink(
+    nxs::log_set_sink(
         [hwnd = hwnd_](LogLevel, const std::string& text) { post_owned(hwnd, kMsgLog, new std::wstring(widen(text))); },
         LogLevel::Info);
 
@@ -833,7 +833,7 @@ void App::on_create() {
         extra_keys_.assign(cli_.keys.begin() + 1, cli_.keys.end());
         update_keys_hint();
     } else {
-        const auto found = mprs::find_key_files();
+        const auto found = nxs::find_key_files();
         if (!found.empty()) set_keys(widen(found[0].path), widen(found[0].source));
     }
     if (cli_.quality >= 0) {
@@ -854,12 +854,12 @@ void App::on_create() {
 }
 
 void App::on_destroy() {
-    mprs::log_set_sink({}, LogLevel::Info);
+    nxs::log_set_sink({}, LogLevel::Info);
     KillTimer(hwnd_, kTimerTick);
     KillTimer(hwnd_, kTimerDebounce);
     join_thread(inspect_thread_);
     join_thread(run_thread_);
-    mprs::log_close();
+    nxs::log_close();
     if (font_) DeleteObject(font_);
     if (bold_font_) DeleteObject(bold_font_);
     font_ = bold_font_ = nullptr;
@@ -991,7 +991,7 @@ void App::on_run_done(RunMsg* raw) {
         SendMessageW(stage_bar_, PBM_SETPOS, 1000, 0);
         SendMessageW(overall_bar_, PBM_SETPOS, 1000, 0);
         set_text(overall_text_, std::format(L"Overall 100%     Elapsed {}", clock_text(elapsed_ms)));
-        MPRS_LOGI("Setup finished in %s", narrow(duration_text(secs)).c_str());
+        NXS_LOGI("Setup finished in %s", narrow(duration_text(secs)).c_str());
         if (!cli_.no_message_box && !cli_.exit_when_done) {
             const auto& rep = r->report;
             show_box(L"Setup finished",
@@ -1007,7 +1007,7 @@ void App::on_run_done(RunMsg* raw) {
         set_text(stage_title_, cancelled ? kStoppedTitle : L"Setup did not finish. See the log below.");
         set_text(stage_detail_, L"");
         const std::wstring text = widen(r->text);
-        MPRS_LOGE("Setup stopped: %s", r->text.c_str());
+        NXS_LOGE("Setup stopped: %s", r->text.c_str());
         if (!(cli_.no_message_box || (close_after_run_ && cancelled))) {
             show_box(r->unexpected ? L"Setup failed" : title_for(r->kind), text,
                      cancelled ? MB_ICONINFORMATION : MB_ICONERROR);
@@ -1128,7 +1128,7 @@ std::vector<std::wstring> App::keys_for_run() const {
     v.push_back(first);
     for (const auto& e : extra_keys_) v.push_back(e);
     if (extra_keys_.empty()) {
-        const std::string title = mprs::sibling_title_keys(narrow(first));
+        const std::string title = nxs::sibling_title_keys(narrow(first));
         if (!title.empty()) v.push_back(widen(title));
     }
     return v;
@@ -1141,8 +1141,8 @@ std::string App::current_key() const {
     return k;
 }
 
-mprs::SetupOptions App::make_options() const {
-    mprs::SetupOptions o;
+nxs::SetupOptions App::make_options() const {
+    nxs::SetupOptions o;
     for (const auto& p : split_dump_paths(dump_path_)) o.input_paths.push_back(narrow(p));
     for (const auto& k : keys_for_run()) o.key_files.push_back(narrow(k));
     o.out_dir = narrow(out_text());
@@ -1278,7 +1278,7 @@ void App::show_inspect_result() {
         std::wstring extra;
         if (!summary_.update.empty()) extra += L", update " + widen(summary_.update);
         if (summary_.dlc_count) extra += std::format(L", {} DLC ({})", summary_.dlc_count, size_text(summary_.dlc_bytes));
-        std::wstring text = std::format(L"{} found ({}{}). Needs {}, {} free.", widen(mprs::game().title), widen(summary_.container), extra,
+        std::wstring text = std::format(L"{} found ({}{}). Needs {}, {} free.", widen(nxs::game().title), widen(summary_.container), extra,
                                         size_text(summary_.disk_needed), size_text(summary_.disk_free));
         if (!summary_.notes.empty())
             text += L" Note: " + widen(summary_.notes[0]) + (summary_.notes.size() > 1 ? L" (more in the log)" : L"");
@@ -1302,9 +1302,9 @@ void App::start_run() {
         show_box(title_for(Fail::Disk), L"Can't create the install folder:\n" + out + L"\n" + widen(ec.message()), MB_ICONERROR);
         return;
     }
-    mprs::log_open(narrow(out) + "\\setup.log");
-    mprs::SetupOptions o = make_options();
-    MPRS_LOGI("Setup started: input %s, folder %s, texture quality %d", narrow(dump_path_).c_str(), o.out_dir.c_str(), o.bc7_quality);
+    nxs::log_open(narrow(out) + "\\setup.log");
+    nxs::SetupOptions o = make_options();
+    NXS_LOGI("Setup started: input %s, folder %s, texture quality %d", narrow(dump_path_).c_str(), o.out_dir.c_str(), o.bc7_quality);
 
     shared_.cancel = false;
     shared_.done = 0;

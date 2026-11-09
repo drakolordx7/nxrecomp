@@ -15,12 +15,13 @@
 #include "container.h"
 #include "crypto.h"
 #include "fileio.h"
+#include "game_setup.h"
 #include "nso.h"
-#include "programs.h"
+#include "nx_formats.h"
 #include "shadercache.h"
 #include "texcache.h"
 
-namespace mprs {
+namespace nxs {
 
 const char* stage_name(Stage s) {
     switch (s) {
@@ -40,15 +41,27 @@ namespace {
 using Clock = std::chrono::steady_clock;
 double secs_since(Clock::time_point t) { return std::chrono::duration<double>(Clock::now() - t).count(); }
 
+// What the hook says its stages write (nothing without a hook); the shader cache defaults to the size of the pack file.
+DiskEstimate disk_estimate_of(const SetupOptions& o, const std::string& shader_src) {
+    DiskEstimate e;
+    if (o.hook && o.hook->disk_estimate) e = o.hook->disk_estimate();
+    std::error_code ec;
+    if (!e.shader_cache && !shader_src.empty() && std::filesystem::is_regular_file(widen(shader_src), ec))
+        e.shader_cache = std::filesystem::file_size(widen(shader_src), ec);
+    return e;
+}
+
+bool textures_wanted(const SetupOptions& o) { return !o.skip_textures && o.hook && o.hook->texture_cache; }
+
 std::string gb(u64 b) {
     char s[32];
     std::snprintf(s, sizeof s, "%.1f GB", double(b) / 1e9);
     return s;
 }
 
-constexpr u64 kBc7Estimate = 4'500'000'000ull;       // measured 4.35 GB for the 4,369 ASTC textures of v1.0.0
-constexpr u64 kShaderEstimate = 1'100'000'000ull;    // 1,008 MB raw SPIR-V + results.tsv
 constexpr const char* kStateName = "setup_state.tsv";
+constexpr const char* kStateMagic = "nx_setup_state";          // first line of the state file: "<magic>\t<version>"
+constexpr const char* kStateMagicLegacy = "mprs_setup_state";  // what the first Metroid release wrote; read the same way
 
 struct FileRec {
     u64 size = 0;
@@ -97,7 +110,7 @@ public:
         {
             std::lock_guard lk(mu_);
             if (!dirty_ && !force) return;
-            text = "mprs_setup_state\t1\n";
+            text = std::string(kStateMagic) + "\t1\n";
             for (auto& [k, v] : meta) text += "meta\t" + k + "\t" + v + "\n";
             for (auto& [k, r] : files_) text += "file\t" + k + "\t" + std::to_string(r.size) + "\t" + r.sha256 + "\n";
             dirty_ = false;
@@ -126,7 +139,7 @@ private:
             }
             if (first) {
                 first = false;
-                if (f.size() < 2 || f[0] != "mprs_setup_state" || f[1] != "1") return;   // other version: start fresh
+                if (f.size() < 2 || (f[0] != kStateMagic && f[0] != kStateMagicLegacy) || f[1] != "1") return;   // other version: start fresh
                 continue;
             }
             if (f.size() >= 3 && f[0] == "meta") meta[f[1]] = f[2];
@@ -172,19 +185,12 @@ std::string norm_build(std::string b) {
     return b;
 }
 
-// The releases setup accepts: the test override, else the game's list, else its single build.
+// The releases setup accepts: the profile's builds, build ids padded to 40 digits.
 std::vector<Supported> supported_builds(const SetupOptions& o) {
-    const GameProfile& g = game();
-    const std::string def = g.build_id ? g.build_id : "";
     std::vector<Supported> v;
-    if (o.expected_build_id == def && o.builds)
-        for (const GameBuild* b = o.builds; b->build_id; ++b) v.push_back({norm_build(b->build_id), b->version ? b->version : ""});
-    if (v.empty()) v.push_back({norm_build(o.expected_build_id), g.version ? g.version : ""});
+    for (const GameBuild& b : o.profile.builds) v.push_back({norm_build(b.build_id), b.version ? b.version : ""});
     return v;
 }
-
-// The profile lists its releases (it may need an update). Without a list setup behaves as it did for a base-only game.
-bool lists_builds(const SetupOptions& o) { return o.builds && o.builds[0].build_id; }
 
 std::string supported_text(const std::vector<Supported>& v) {
     std::string s;
@@ -211,7 +217,7 @@ std::string display_version(const Nca* control) {
             return s;
         }
     } catch (const std::exception& e) {
-        MPRS_LOGW("Could not read the version from the dump: %s", e.what());
+        NXS_LOGW("Could not read the version from the dump: %s", e.what());
     }
     return "";
 }
@@ -230,12 +236,12 @@ void load_keys(const SetupOptions& o, KeySet& keys) {
             fail(Fail::Keys, "No Switch keys file was found. Pick your prod.keys file (dumped from your own Switch with "
                              "Lockpick_RCM), or put it next to this program.");
         files.push_back(found.front().path);
-        MPRS_LOGI("Using the keys found in the %s folder.", found.front().source.c_str());
+        NXS_LOGI("Using the keys found in the %s folder.", found.front().source.c_str());
         std::string tk = sibling_title_keys(found.front().path);
         if (!tk.empty()) files.push_back(tk);
     }
     for (const std::string& f : files) keys.load_file(f);
-    MPRS_LOGI("Keys loaded: %s", keys.describe().c_str());
+    NXS_LOGI("Keys loaded: %s", keys.describe().c_str());
 }
 
 std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
@@ -249,21 +255,17 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
         cs.push_back(d->c.back().get());
         if (!d->kinds.empty()) d->kinds += " + ";
         d->kinds += d->c.back()->kind;
-        MPRS_LOGI("Dump: %s, %s, %zu archives", in.c_str(), d->c.back()->kind.c_str(), d->c.back()->ncas.size());
+        NXS_LOGI("Dump: %s, %s, %zu archives", in.c_str(), d->c.back()->kind.c_str(), d->c.back()->ncas.size());
     }
-    d->t = select_titles(cs, d->keys, o.expected_title_id);
+    d->t = select_titles(cs, d->keys, o.profile.title_id, o.profile.title);
     const Nca* base = d->t.base.get();
     const Nca* patch = d->t.patch.get();
-    const bool listed = lists_builds(o);
-    if (!listed && d->t.have_version && d->t.base_version != 0)
-        fail(Fail::Input, "This is version %u of the game. Only the original v%s release is supported (updates change the "
-                          "game program).", d->t.base_version, game().version);
-    for (u32 v : d->t.other_patches) MPRS_LOGI("An older update (v%u) was also given; the newest one is used.", v);
+    for (u32 v : d->t.other_patches) NXS_LOGI("An older update (v%u) was also given; the newest one is used.", v);
     for (const std::string& m : d->t.skipped) d->notes.push_back(m);
     for (size_t i = 0; i < inputs.size(); ++i)
         if (!d->t.input_used[i]) {
             d->notes.push_back("Nothing in " + inputs[i] + " belongs to this game; the file was not used.");
-            MPRS_LOGW("%s", d->notes.back().c_str());
+            NXS_LOGW("%s", d->notes.back().c_str());
         }
     const std::string shown = display_version(d->t.control.get());
     if (patch) d->update = shown.empty() ? "v" + std::to_string(d->t.patch_version) : shown;
@@ -277,9 +279,6 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
     const Supported* match = nullptr;
     for (const Supported& x : sup)
         if (x.build_id == norm_build(d->build_id)) match = &x;
-    if (!match && !listed && !patch)
-        fail(Fail::Input, "This is not the v%s version of the game (its program has build id %s, expected %s). Only the original v%s "
-                          "release is supported.", game().version, d->build_id.c_str(), o.expected_build_id.c_str(), game().version);
     if (!match) {
         std::string found = !shown.empty() ? "v" + shown : patch ? "update v" + std::to_string(d->t.patch_version) : "the base game";
         std::string hint;
@@ -294,8 +293,7 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
         fail(Fail::Input, "This version of the game is not supported: found %s (program build id %s). Supported: %s.%s",
              found.c_str(), d->build_id.c_str(), supported_text(sup).c_str(), hint.c_str());
     }
-    if (!listed && !patch) d->version = d->t.have_version ? game().version : "";
-    else d->version = !shown.empty() ? shown : (d->t.have_version || patch) ? match->version : "";
+    d->version = !shown.empty() ? shown : (d->t.have_version || patch) ? match->version : "";
 
     const int rs = base->romfs_section();
     if (rs < 0) fail(Fail::Input, "The dump has no game data (RomFS) section.");
@@ -306,7 +304,7 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
     } else {
         d->rom = Romfs::open(base->open_romfs_image(rs));
     }
-    MPRS_LOGI("Game %s version %s%s%s, program %s, %zu files (%s)", o.expected_title_id.c_str(), d->version.c_str(),
+    NXS_LOGI("Game %s version %s%s%s, program %s, %zu files (%s)", o.profile.title_id, d->version.c_str(),
               patch ? ", update " : "", d->update.c_str(), d->build_id.c_str(), d->rom->files().size(),
               gb(d->rom->total_file_bytes()).c_str());
 
@@ -317,7 +315,7 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
             char dir[32];
             std::snprintf(dir, sizeof dir, "aoc/%016llX", (unsigned long long)a.title_id);
             OpenedAoc oa{a.title_id, a.version, dir, Romfs::open(a.data->open_romfs_image(ars))};
-            MPRS_LOGI("DLC %s v%u: %zu files (%s)", dir + 4, a.version, oa.rom->files().size(), gb(oa.rom->total_file_bytes()).c_str());
+            NXS_LOGI("DLC %s v%u: %zu files (%s)", dir + 4, a.version, oa.rom->files().size(), gb(oa.rom->total_file_bytes()).c_str());
             d->aoc.push_back(std::move(oa));
         } catch (const Error& e) {
             if (e.kind == Fail::Cancelled) throw;
@@ -326,7 +324,7 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
             char m[64];
             std::snprintf(m, sizeof m, "DLC %016llX cannot be read and is skipped: ", (unsigned long long)a.title_id);
             d->notes.push_back(m + std::string(e.what()));
-            MPRS_LOGW("%s", d->notes.back().c_str());
+            NXS_LOGW("%s", d->notes.back().c_str());
         }
     }
     return d;
@@ -426,8 +424,10 @@ std::string find_shader_source(const SetupOptions& o) {
     if (!o.shader_cache_src.empty()) return o.shader_cache_src;
     std::string d = path_join(exe_dir(), "shader_cache");
     if (path_exists(path_join(d, "results.tsv"))) return d;
-    std::string p = path_join(exe_dir(), game().shader_pack);
-    if (path_exists(p)) return p;
+    if (*o.profile.shader_pack) {
+        std::string p = path_join(exe_dir(), o.profile.shader_pack);
+        if (path_exists(p)) return p;
+    }
     return "";
 }
 
@@ -436,60 +436,74 @@ std::string find_shader_source(const SetupOptions& o) {
 bool shader_install_present(const SetupOptions& o, State& st) {
     if (o.out_dir.empty() || st.get_meta("finished") != "1") return false;
     std::string ini;
-    if (!read_text_file(path_join(o.out_dir, game().game_ini), ini) || ini.find("shader_cache = shader_cache/spirv") == std::string::npos)
+    if (!read_text_file(path_join(o.out_dir, o.profile.game_ini), ini) || ini.find("shader_cache = shader_cache/spirv") == std::string::npos)
         return false;
     return path_exists(path_join(path_join(o.out_dir, "shader_cache\\spirv"), "results.tsv"));
 }
 
-// The run can go on without a pack: a pack was found, an earlier run installed the shaders, or --no-shaders was given.
+// The game ships a shader pack (its manifest names one) or one was asked for with --shader-pack.
+bool shaders_wanted(const SetupOptions& o) { return *o.profile.shader_pack || !o.shader_cache_src.empty(); }
+
+// The run can go on without a pack: the game has none, a pack was found, an earlier run installed the shaders, or --no-shaders was given.
 bool shaders_available(const SetupOptions& o, State& st) {
-    return !find_shader_source(o).empty() || shader_install_present(o, st) || o.allow_no_shaders;
+    return !shaders_wanted(o) || !find_shader_source(o).empty() || shader_install_present(o, st) || o.allow_no_shaders;
 }
 
-std::string shader_pack_missing_text() {
-    return std::string("Shader pack not found. Put ") + game().shader_pack + " in the same folder as the setup program (" + exe_dir() +
+std::string shader_pack_missing_text(const SetupOptions& o) {
+    return std::string("Shader pack not found. Put ") + o.profile.shader_pack + " in the same folder as the setup program (" + exe_dir() +
            "), or give its path with --shader-pack. The game cannot draw anything without it.";
 }
 
-std::string make_ini(int quality, bool with_shaders) {
+std::string make_ini(const SetupOptions& o, int quality, bool with_shaders) {
     std::string s =
-        "; Written by " MPRS_EXE_NAME ". Setup rewrites this file only while this first line is present; delete the line to keep your edits.\n"
+        "; Written by " NXS_EXE_NAME ". Setup rewrites this file only while this first line is present; delete the line to keep your edits.\n"
         "[fs]\nromfs = romfs\n"
         "[nvn]\nbc7_cache = bc7_cache\nbc7_quality = " + std::to_string(quality) + "\n";
     if (with_shaders) s += "shader_cache = shader_cache/spirv\n";
+    if (o.hook && o.hook->ini_lines)
+        for (const std::string& l : o.hook->ini_lines()) s += l + "\n";
     return s;
 }
 
-// shader_cache/programs.bin: every shader program of the player's own game, scanned from the RomFS folder, for the runtime to compile
-// ahead of play. Called only after the shader cache was installed. A failed scan is logged and does not fail the setup; a cancel is
-// passed on. Skipped when a valid list with programs is already there (unless verify_output asks for a rescan).
+// Reads and checks programs.bin; false when it is missing or not valid.
+bool read_programs_file(const std::string& path, std::vector<nxfmt::ProgramHashes>& out) {
+    try {
+        StoragePtr f = open_file_storage(path);
+        const std::vector<u8> buf = read_all(*f, 0, static_cast<size_t>(f->size()));
+        return nxfmt::programs_decode(buf.data(), buf.size(), out) == nullptr;
+    } catch (const Error&) {
+        return false;
+    }
+}
+
+// The program list of the game's hook, as shader_cache/programs.bin: every shader program of the player's own game, for the runtime to
+// compile ahead of play. Called only after the shader cache was installed, and only for a game whose hook lists programs. A failed scan is
+// logged and does not fail the setup; a cancel is passed on. Skipped when a valid list with programs is already there (unless
+// verify_output asks for a rescan).
 void write_program_list(const SetupOptions& o, const std::function<bool()>& cancelled) {
+    if (!o.hook || !o.hook->program_list) return;
     const std::string path = to_win(path_join(o.out_dir, "shader_cache\\programs.bin"));
     if (!o.verify_output) {
-        try {
-            const size_t have = read_programs_file(path).size();
-            if (have > 0) {
-                MPRS_LOGI("Shader program list already present (%zu programs).", have);
-                return;
-            }
-        } catch (const Error&) {
-            // missing or damaged: scan again
+        std::vector<nxfmt::ProgramHashes> have;
+        if (read_programs_file(path, have) && !have.empty()) {
+            NXS_LOGI("Shader program list already present (%zu programs).", have.size());
+            return;
         }
+        // missing or damaged: scan again
     }
     const auto t0 = Clock::now();
     try {
-        ProgramScanStats st;
-        const std::vector<ProgramHashes> progs =
-            scan_shader_programs(path_join(o.out_dir, "romfs"), o.threads, [](u64, u64) {}, cancelled, &st);
-        write_programs_file(path, progs);
-        MPRS_LOGI("Shader programs: %zu listed (%u from MaterialArchive.arc, %u from paks, %u of them duplicates) in %.1f s.", progs.size(),
-                  st.arc.programs, st.pak.programs, st.arc.programs + st.pak.programs - static_cast<u32>(progs.size()),
-                  secs_since(t0));
+        const ProgramList pl = o.hook->program_list(path_join(o.out_dir, "romfs"), o.threads, cancelled);
+        const std::vector<u8> bytes = nxfmt::programs_encode(pl.programs);
+        AtomicFileWriter w(path);
+        w.write(bytes.data(), bytes.size());
+        w.finish();
+        NXS_LOGI("Shader programs: %zu listed (%s) in %.1f s.", pl.programs.size(), pl.summary.c_str(), secs_since(t0));
     } catch (const Error& e) {
         if (e.kind == Fail::Cancelled) throw;
-        MPRS_LOGW("Shader program list not written: %s", e.what());
+        NXS_LOGW("Shader program list not written: %s", e.what());
     } catch (const std::exception& e) {
-        MPRS_LOGW("Shader program list not written: %s", e.what());
+        NXS_LOGW("Shader program list not written: %s", e.what());
     }
 }
 
@@ -508,7 +522,7 @@ InputSummary inspect_input(const SetupOptions& o) {
     try {
         auto d = open_dump(o);
         s.container = d->kinds;
-        s.title_id = o.expected_title_id;
+        s.title_id = o.profile.title_id;
         s.version = d->version;
         s.build_id = d->build_id;
         s.update = d->update;
@@ -518,15 +532,19 @@ InputSummary inspect_input(const SetupOptions& o) {
         s.romfs_files = static_cast<u32>(d->rom->files().size());
         s.romfs_bytes = d->rom->total_file_bytes();
         for (auto& e : d->exefs->entries()) s.exefs_bytes += e.size;
-        s.bc7_bytes_estimate = kBc7Estimate;
+        s.bc7_bytes_estimate = disk_estimate_of(o, std::string()).texture_cache;
         State st(path_join(o.out_dir, kStateName));
         u64 need = 0;
         for (auto& e : d->exefs->entries()) need += bytes_missing(path_join(o.out_dir, "exefs"), e.name, e.size);
         for (auto& f : d->rom->files()) need += bytes_missing(path_join(o.out_dir, "romfs"), f.path, f.size);
         for (auto& a : d->aoc)
             for (auto& f : a.rom->files()) need += bytes_missing(path_join(o.out_dir, a.dir), f.path, f.size);
-        if (!o.skip_textures && st.get_meta("textures_done").empty()) need += kBc7Estimate;
-        if (!find_shader_source(o).empty()) need += kShaderEstimate;
+        {
+            const std::string pack = find_shader_source(o);
+            const DiskEstimate est = disk_estimate_of(o, pack);
+            if (textures_wanted(o) && st.get_meta("textures_done").empty()) need += est.texture_cache;
+            if (!pack.empty()) need += est.shader_cache;
+        }
         s.disk_needed = need + need / 50;
         s.disk_free = o.out_dir.empty() ? 0 : free_disk_bytes(o.out_dir);
         s.supported = true;
@@ -536,7 +554,7 @@ InputSummary inspect_input(const SetupOptions& o) {
                         " free.";
         } else if (!shaders_available(o, st)) {
             s.supported = false;
-            s.problem = shader_pack_missing_text();
+            s.problem = shader_pack_missing_text(o);
         }
     } catch (const Error& e) {
         if (e.kind == Fail::Cancelled) throw;
@@ -553,14 +571,14 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
     if (!create_dirs(o.out_dir)) fail(Fail::Disk, "Cannot create the install folder \"%s\".", o.out_dir.c_str());
     log_open(path_join(o.out_dir, "setup.log"));
     struct LogCloser { ~LogCloser() { log_close(); } } log_closer;
-    MPRS_LOGI("---- setup started (quality %d, threads %d) ----", o.bc7_quality, o.threads);
+    NXS_LOGI("---- setup started (quality %d, threads %d) ----", o.bc7_quality, o.threads);
     auto cancelled = [&] { return r.cancel_requested(); };
     auto check_cancel = [&] { if (cancelled()) fail(Fail::Cancelled, "Stopped by the user. Run setup again to continue where it left off."); };
     State st(path_join(o.out_dir, kStateName));
     for (const char* sub : {"exefs", "romfs", "aoc", "bc7_cache", "shader_cache"})
-        if (int n = remove_part_files(path_join(o.out_dir, sub))) MPRS_LOGI("Removed %d unfinished file(s) from an earlier run in %s.", n, sub);
+        if (int n = remove_part_files(path_join(o.out_dir, sub))) NXS_LOGI("Removed %d unfinished file(s) from an earlier run in %s.", n, sub);
     auto begin = [&](Stage s, u64 total, const char* unit) {
-        MPRS_LOGI("%s", stage_name(s));
+        NXS_LOGI("%s", stage_name(s));
         r.stage_begin(s, stage_name(s), total, unit);
         return Clock::now();
     };
@@ -575,7 +593,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         auto t0 = begin(Stage::Inspect, 0, "bytes");
         auto d = open_dump(o);
         if (o.verify_input) {
-            MPRS_LOGI("Checking the dump's own hashes (this reads the whole file once).");
+            NXS_LOGI("Checking the dump's own hashes (this reads the whole file once).");
             struct Check { const Nca* n; int sec; const Nca* base; };
             std::vector<Check> checks{{d->program, 0, nullptr}};
             if (d->t.patch) checks.push_back({d->t.patch.get(), d->t.patch->romfs_section(), d->t.base.get()});
@@ -596,7 +614,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                                     cancelled, c.base);
                 base += s->size;
             }
-            MPRS_LOGI("The dump's hashes are all correct.");
+            NXS_LOGI("The dump's hashes are all correct.");
         }
         end(Stage::Inspect, t0);
         if (o.inspect_only) { rep.total_seconds = secs_since(t_all); return rep; }
@@ -610,9 +628,9 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         {
             const std::string old_build = st.get_meta("build_id");
             if (!old_build.empty() &&
-                (old_build != d->build_id || st.get_meta("title_id") != o.expected_title_id || st.get_meta("update") != d->update ||
+                (old_build != d->build_id || st.get_meta("title_id") != o.profile.title_id || st.get_meta("update") != d->update ||
                  st.get_meta("aoc") != aoc_meta)) {
-                MPRS_LOGI("The folder holds another version of the game (build %s%s%s); every file is checked again and files the "
+                NXS_LOGI("The folder holds another version of the game (build %s%s%s); every file is checked again and files the "
                           "new version does not have are removed.", old_build.c_str(), st.get_meta("update").empty() ? "" : ", update ",
                           st.get_meta("update").c_str());
                 st.clear_files();
@@ -624,7 +642,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         }
         const bool rebuild = st.get_meta("rebuild") == "1";
         const bool verify_out = o.verify_output || rebuild;
-        st.set_meta("title_id", o.expected_title_id);
+        st.set_meta("title_id", o.profile.title_id);
         st.set_meta("build_id", d->build_id);
         st.set_meta("update", d->update);
         st.set_meta("aoc", aoc_meta);
@@ -633,18 +651,22 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         // ---- Space -----------------------------------------------------------------------------------------------------
         t0 = begin(Stage::Space, 0, "");
         {
-            if (!shaders_available(o, st)) fail(Fail::Input, "%s", shader_pack_missing_text().c_str());
+            if (!shaders_available(o, st)) fail(Fail::Input, "%s", shader_pack_missing_text(o).c_str());
             const std::string exedir = path_join(o.out_dir, "exefs"), romdir = path_join(o.out_dir, "romfs");
             u64 need = 0;
             for (auto& e : d->exefs->entries()) need += bytes_missing(exedir, e.name, e.size);
             for (auto& f : d->rom->files()) need += bytes_missing(romdir, f.path, f.size);
             for (auto& a : d->aoc)
                 for (auto& f : a.rom->files()) need += bytes_missing(path_join(o.out_dir, a.dir), f.path, f.size);
-            if (!o.skip_textures && st.get_meta("textures_done").empty()) need += kBc7Estimate;
-            if (!find_shader_source(o).empty()) need += kShaderEstimate;
+            {
+                const std::string pack = find_shader_source(o);
+                const DiskEstimate est = disk_estimate_of(o, pack);
+                if (textures_wanted(o) && st.get_meta("textures_done").empty()) need += est.texture_cache;
+                if (!pack.empty()) need += est.shader_cache;
+            }
             need += need / 50 + (64u << 20);
             u64 freeb = free_disk_bytes(o.out_dir);
-            MPRS_LOGI("Disk space: need about %s, free %s.", gb(need).c_str(), gb(freeb).c_str());
+            NXS_LOGI("Disk space: need about %s, free %s.", gb(need).c_str(), gb(freeb).c_str());
             if (freeb < need)
                 fail(Fail::Disk, "Not enough free space on the drive: setup needs about %s more and %s is free. Free some space or "
                                  "pick another folder.", gb(need).c_str(), gb(freeb).c_str());
@@ -745,19 +767,19 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             st.save();
             if (first_error) std::rethrow_exception(first_error);
             end(Stage::Romfs, t0);
-            MPRS_LOGI("RomFS: %llu files written, %llu already present.", (unsigned long long)wfiles.load(), (unsigned long long)sfiles.load());
+            NXS_LOGI("RomFS: %llu files written, %llu already present.", (unsigned long long)wfiles.load(), (unsigned long long)sfiles.load());
             if (rebuild) {
                 std::set<std::string> keep;
                 for (auto& e : d->exefs->entries()) keep.insert(lower_rel("exefs/" + e.name));
                 for (const Job& j : order) keep.insert(lower_rel(*j.dir + "/" + j.f->path));
                 const int n = remove_files_not_in(o.out_dir, {"exefs", "romfs", "aoc"}, keep);
-                if (n) MPRS_LOGI("Removed %d file(s) the new version does not have.", n);
+                if (n) NXS_LOGI("Removed %d file(s) the new version does not have.", n);
             }
         }
         check_cancel();
 
         // ---- Textures --------------------------------------------------------------------------------------------------
-        if (!o.skip_textures) {
+        if (textures_wanted(o)) {
             t0 = begin(Stage::Textures, 0, "textures");
             const std::string cache_dir = path_join(o.out_dir, "bc7_cache");
             std::string prev = st.get_meta("textures_done");   // "<quality>:<converted+skipped>"
@@ -768,7 +790,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                 std::string have;
                 read_text_file(marker, have);
                 if (have != want_marker && path_exists(cache_dir)) {
-                    MPRS_LOGI("The texture cache was made by an older converter: rebuilding it.");
+                    NXS_LOGI("The texture cache was made by an older converter: rebuilding it.");
                     std::error_code ec;
                     for (std::filesystem::directory_iterator it(widen(cache_dir), ec), end; !ec && it != end; it.increment(ec))
                         if (it->is_directory()) std::filesystem::remove_all(it->path(), ec);
@@ -778,11 +800,10 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             }
             const std::string want_prefix = std::to_string(o.bc7_quality) + ":";
             if (!o.verify_output && !prev.empty() && prev.compare(0, want_prefix.size(), want_prefix) == 0) {
-                MPRS_LOGI("Texture cache already built (%s textures at quality %d).", prev.substr(want_prefix.size()).c_str(), o.bc7_quality);
+                NXS_LOGI("Texture cache already built (%s textures at quality %d).", prev.substr(want_prefix.size()).c_str(), o.bc7_quality);
                 ++rep.textures_skipped;
             } else {
                 TexCacheOptions to;
-                to.romfs_dir = path_join(o.out_dir, "romfs");
                 to.cache_dir = cache_dir;
                 to.quality = o.bc7_quality;
                 to.threads = o.threads;
@@ -797,13 +818,15 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                     }
                     r.stage_progress(done_w / 1000000);
                 };
-                TexCacheStats ts = build_texture_cache(to, [](u64, u64) {}, cancelled);
+                TextureList list = o.hook->texture_cache(path_join(o.out_dir, "romfs"), cancelled);
+                TexCacheStats ts = build_texture_cache(to, std::move(list.textures), [](u64, u64) {}, cancelled);
+                ts.failed += list.failed;
                 rep.textures_total = ts.textures_total;
                 rep.textures_converted = ts.converted;
                 rep.textures_skipped = ts.skipped;
                 rep.textures_failed = ts.failed;
                 rep.bytes_written += ts.bytes_written;
-                MPRS_LOGI("Textures: %u total, %u converted, %u already done, %u failed, %s written, %.0f s.", ts.textures_total,
+                NXS_LOGI("Textures: %u total, %u converted, %u already done, %u failed, %s written, %.0f s.", ts.textures_total,
                           ts.converted, ts.skipped, ts.failed, gb(ts.bytes_written).c_str(), ts.seconds);
                 if (ts.failed)
                     fail(Fail::Generic, "%u textures could not be converted (see setup.log). Run setup again; if it keeps failing "
@@ -822,11 +845,13 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             const std::string src = find_shader_source(o);
             t0 = begin(Stage::ShaderCache, 0, "files");
             if (src.empty() && shader_install_present(o, st)) {
-                MPRS_LOGI("No shader pack given; keeping the shaders already installed in shader_cache\\spirv.");
+                NXS_LOGI("No shader pack given; keeping the shaders already installed in shader_cache\\spirv.");
                 shaders = true;
+            } else if (src.empty() && !shaders_wanted(o)) {
+                NXS_LOGI("This game ships no shader pack; no shaders to install.");
             } else if (src.empty()) {
-                if (!o.allow_no_shaders) fail(Fail::Input, "%s", shader_pack_missing_text().c_str());
-                MPRS_LOGW("Skipping the shader pack (--no-shaders). The game will not draw anything until shaders are installed.");
+                if (!o.allow_no_shaders) fail(Fail::Input, "%s", shader_pack_missing_text(o).c_str());
+                NXS_LOGW("Skipping the shader pack (--no-shaders). The game will not draw anything until shaders are installed.");
             } else {
                 bool announced = false;
                 ShaderInstallResult sr = install_shader_cache(
@@ -838,7 +863,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                     cancelled);
                 shaders = true;
                 rep.bytes_written += sr.bytes_written;
-                MPRS_LOGI("Shaders: %u files, %u installed, %u already present.", sr.files_total, sr.files_installed, sr.files_skipped);
+                NXS_LOGI("Shaders: %u files, %u installed, %u already present.", sr.files_total, sr.files_installed, sr.files_skipped);
             }
             if (shaders) write_program_list(o, cancelled);
             end(Stage::ShaderCache, t0);
@@ -847,11 +872,11 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         // ---- Finish ----------------------------------------------------------------------------------------------------
         t0 = begin(Stage::Finish, 0, "");
         {
-            const std::string ini_path = path_join(o.out_dir, game().game_ini);
+            const std::string ini_path = path_join(o.out_dir, o.profile.game_ini);
             std::string existing;
-            bool ours = !read_text_file(ini_path, existing) || existing.rfind("; Written by " MPRS_EXE_NAME, 0) == 0;
-            if (ours) write_text_file_atomic(ini_path, make_ini(o.bc7_quality, shaders));
-            else MPRS_LOGW("%s was edited by hand; left alone. It must contain bc7_quality = %d.", game().game_ini, o.bc7_quality);
+            bool ours = !read_text_file(ini_path, existing) || existing.rfind("; Written by " NXS_EXE_NAME, 0) == 0;
+            if (ours) write_text_file_atomic(ini_path, make_ini(o, o.bc7_quality, shaders));
+            else NXS_LOGW("%s was edited by hand; left alone. It must contain bc7_quality = %d.", o.profile.game_ini, o.bc7_quality);
             st.set_meta("bc7_quality", std::to_string(o.bc7_quality));
             st.set_meta("finished", "1");
             st.set_meta("rebuild", "");
@@ -859,17 +884,17 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
         }
         end(Stage::Finish, t0);
         rep.total_seconds = secs_since(t_all);
-        MPRS_LOGI("---- setup finished in %.0f s ----", rep.total_seconds);
+        NXS_LOGI("---- setup finished in %.0f s ----", rep.total_seconds);
         return rep;
     } catch (const Error& e) {
         st.save();
-        MPRS_LOGE("Setup stopped: %s", e.what());
+        NXS_LOGE("Setup stopped: %s", e.what());
         throw;
     } catch (const std::exception& e) {
         st.save();
-        MPRS_LOGE("Setup failed: %s", e.what());
+        NXS_LOGE("Setup failed: %s", e.what());
         throw Error(Fail::Generic, e.what());
     }
 }
 
-}  // namespace mprs
+}  // namespace nxs

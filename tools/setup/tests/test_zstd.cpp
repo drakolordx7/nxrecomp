@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-using namespace mprs;
+using namespace nxs;
 
 namespace {
 
@@ -394,8 +394,8 @@ void run(const char* name, F fn) {
     try {
         fn();
     } catch (const std::exception& e) {
-        ++mprs_test::checks();
-        ++mprs_test::failures();
+        ++nxs_test::checks();
+        ++nxs_test::failures();
         std::printf("FAIL %s: unexpected exception: %s\n", name, e.what());
     }
 }

@@ -43,7 +43,7 @@ void backend_trace_next_frame();
 void backend_set_gpu_path_defaults(bool pool_mirror, bool tracked_barriers);
 
 // Shader preparation (S24): compiles the shader parts of every program in a list before the game runs, so the driver already has them when the
-// game asks. The list is written by the setup tool from the player's own game files (<shader cache folder>/../programs.bin, "MPRPRG01").
+// game asks. The list is written by the setup tool from the player's own game files (<shader cache folder>/../programs.bin, formats/nx_formats.h).
 // Needs the back end installed (any mode; `register_entry_points = false` is enough) and an open shader cache.
 struct ShaderPrepareOptions {
     std::string programs_file;                                    // empty: programs.bin next to the shader cache folder

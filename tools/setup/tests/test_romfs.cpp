@@ -11,9 +11,9 @@
 #include "romfs.h"
 #include "synth.h"
 
-using namespace mprs;
-using mprs_test::SynthFiles;
-using mprs_test::synth_romfs;
+using namespace nxs;
+using nxs_test::SynthFiles;
+using nxs_test::synth_romfs;
 
 namespace {
 

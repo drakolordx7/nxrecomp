@@ -6,7 +6,7 @@
 
 #include "crypto.h"
 
-namespace mprs {
+namespace nxs {
 namespace {
 
 u32 rd32(const u8* p) { return u32(p[0]) | u32(p[1]) << 8 | u32(p[2]) << 16 | u32(p[3]) << 24; }
@@ -194,4 +194,4 @@ StoragePtr make_indirect_storage(std::vector<IndirectEntry> entries, u64 size, S
     return std::make_shared<IndirectStorage>(std::move(entries), size, std::move(base), std::move(patch));
 }
 
-}  // namespace mprs
+}  // namespace nxs

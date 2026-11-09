@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-using namespace mprs;
+using namespace nxs;
 
 namespace {
 
@@ -20,7 +20,7 @@ std::vector<u8> from_hex(const std::string& s) {
     std::vector<u8> out(s.size() / 2);
     if (!hex_decode(s, out.data(), out.size())) {
         std::printf("FAIL test data: bad hex\n");
-        ++mprs_test::failures();
+        ++nxs_test::failures();
     }
     return out;
 }
@@ -55,8 +55,8 @@ void run(const char* name, F f) {
     try {
         f();
     } catch (const std::exception& e) {
-        ++mprs_test::checks();
-        ++mprs_test::failures();
+        ++nxs_test::checks();
+        ++nxs_test::failures();
         std::printf("FAIL %s: unexpected exception: %s\n", name, e.what());
     }
 }
