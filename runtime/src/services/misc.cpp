@@ -23,8 +23,8 @@
 #include <utility>
 #include <vector>
 
+#include "nxrt/kernel.h"
 #include "nxrt/log.h"
-#include "nxrt/tt.h"
 #include "services_internal.h"
 
 #include <windows.h>
@@ -106,10 +106,7 @@ std::shared_ptr<Service> make_csrng() {
         s.add_cmd(0, "GenerateRandomBytes", [](Request& req, Response&) -> uint32_t {
             const ipc::Buffer b = req.out_buf(0);
             uint64_t off = 0;
-            if (tt::deterministic()) {                       // test tooling: a seeded stream, so replays see the same random numbers
-                tt::rng_fill(buf_mut(b), static_cast<size_t>(b.size));
-                return 0;
-            }
+            if (kernel::rng_provided_fill(buf_mut(b), static_cast<size_t>(b.size))) return 0;      // a provider's stream (test tooling: seeded, so replays see the same numbers)
             while (off < b.size) {
                 const uint64_t n = std::min<uint64_t>(b.size - off, 0x10000000ull);
                 const NTSTATUS st = BCryptGenRandom(nullptr, buf_mut(b) + off, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);

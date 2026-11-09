@@ -146,7 +146,7 @@ The `[nvn]` keys are read in two places: the player and tuning settings by `src/
 | `title` | `main_thread_stack` | `1048576` (0x100000) | `NXRT_TITLE_MAIN_THREAD_STACK` | `src/services/common.cpp` | Main thread stack size, in bytes (main.npdm). |
 | `title` | `main_thread_priority` | `44` | `NXRT_TITLE_MAIN_THREAD_PRIORITY` | `src/services/common.cpp` | Main thread priority (main.npdm). |
 | `title` | `main_thread_core` | `0` | `NXRT_TITLE_MAIN_THREAD_CORE` | `src/services/common.cpp` | Main thread processor number (main.npdm). |
-| `system` | `language` | `auto` | `NXRT_SYSTEM_LANGUAGE` | `src/services/common.cpp` | Console language by name, e.g. `Japanese`. `auto` or empty: the player's pick in controls.ini (`[tweaks] language`, set in the launcher), else the Windows display language. A language the title lacks falls to its nearest sibling (British for American English, and so on), else American English. The log says which language was used and where it came from. |
+| `system` | `language` | `auto` | `NXRT_SYSTEM_LANGUAGE` | `src/services/common.cpp` | Console language by name, e.g. `Japanese`. `auto` or empty: the player's pick in controls.ini (`[tweaks] language`, set in the launcher; the file named by `[play] controls`, read with the config layer's own ini parser by `config_file_get_str`), else the Windows display language. A language the title lacks falls to its nearest sibling (British for American English, and so on), else American English. The log says which language was used and where it came from. |
 | `system` | `region` | empty (USA, 1) | `NXRT_SYSTEM_REGION` | `src/services/common.cpp` | Region by name (`Japan`, `USA`, `Europe`, `Australia`, `HongKongTaiwanKorea`, `China`) or number (Japan 0 to China 5). Empty: USA. |
 | `system` | `firmware` | `12.1.0` | `NXRT_SYSTEM_FIRMWARE` | `src/services/common.cpp` | Firmware version that `set:sys` GetFirmwareVersion reports. |
 | `system` | `nickname` | `nxrt` | `NXRT_SYSTEM_NICKNAME` | `src/services/common.cpp` | Console nickname. |
@@ -345,8 +345,9 @@ These variables are read with `getenv`, outside the key lookup.
 | Variable | Read by | Meaning |
 |---|---|---|
 | `NXRT_INI` | `src/core/runtime.cpp` | Ini file path. Used only when `InitOptions.ini_path` is null. |
-| `NXRT_LOG` | `src/diag/log.cpp` | Log file path. Overrides `[log] path`, `NXRT_LOG_PATH` and the path set in code. |
-| `NXRT_LOG_LEVEL` | `src/diag/log.cpp` | Log level. Overrides `[log] level`. It is also the variable for that key, listed above. |
+| `NXRT_LOG` | `src/diag/log.cpp` | Short alias of `NXRT_LOG_PATH`: the log file path. Wins over `NXRT_LOG_PATH`, `[log] path` and the path set in code. |
+
+`NXRT_LOG_LEVEL` is not read separately: it is the ordinary variable of `[log] level` (see the table above).
 
 ## Sample nxrt.ini
 

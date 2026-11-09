@@ -18,8 +18,9 @@ struct LogOptions {
     bool keep_previous = true;       // rename an existing log to <path>.prev first
 };
 
-// Initialise (or re-initialise: closes the old file). Reads NXRT_LOG (path) and NXRT_LOG_LEVEL (error|warn|info|debug|trace
-// or 0..4) from the environment over `opt`, then the [log] level/path keys of the config (see config.h) if loaded before.
+// Initialise (or re-initialise: closes the old file). Settings come from `opt`, overridden by the [log] path/level keys of the
+// config (see config.h: ini, or the generic env names NXRT_LOG_PATH / NXRT_LOG_LEVEL; level is error|warn|info|debug|trace or 0..4).
+// NXRT_LOG is a short alias of NXRT_LOG_PATH and wins over it.
 // Calling logf before log_init initialises with defaults.
 void log_init(const LogOptions& opt = {});
 void log_shutdown();                   // flush and close the file

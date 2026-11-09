@@ -171,6 +171,24 @@ void sched_reset_for_tests();            // forget the slot and re-read the conf
 uint64_t system_tick();                  // 19.2 MHz, from QueryPerformanceCounter
 constexpr uint64_t kTickHz = 19200000;
 void sleep_ns(int64_t ns);               // high-resolution sleep; <= 0 yields
+uint64_t wall_filetime();                // 100 ns units since 1601-01-01: the host clock, or the provider's (time.cpp)
+
+// ---- provider hooks ----------------------------------------------------------------------------------------------------------
+// The kernel and the services never name the test tooling. Anything that wants to replace the clock, the random source or watch
+// SVCs (the test tooling in deterministic mode, for one) installs a provider; with none installed the host behaviour runs.
+// Each clock function returns false when it does not handle the call (the host clock then answers). Install/clear at startup or
+// shutdown, not while guest threads run; the providers must outlive their installation. nullptr clears.
+struct ClockProvider {
+    bool (*tick)(uint64_t* ticks) = nullptr;           // system_tick(): the 19.2 MHz counter
+    bool (*sleep)(int64_t ns) = nullptr;               // sleep_ns(): handled = the host does not wait
+    bool (*wall_filetime)(uint64_t* ft) = nullptr;     // wall_filetime()
+};
+void set_clock_provider(const ClockProvider* p);
+using RngFillFn = bool (*)(void* p, size_t n);         // fills n bytes and returns true, or false to leave it to the OS CSPRNG
+void set_rng_provider(RngFillFn fn);
+bool rng_provided_fill(void* p, size_t n);             // csrng: true when the provider filled the buffer
+using SvcObserverFn = void (*)(::Ctx* c);              // called on every SVC dispatch while installed (svc.cpp)
+void set_svc_observer(SvcObserverFn fn);
 
 // ---- kernel-level synchronisation (the SVC semantics; kernel_sync.cpp) -------------------------------------------------------
 // ArbitrateLock / WaitProcessWideKeyAtomic / WaitForAddress ... operate on guest memory words. Exposed for tests and for HLE code.
