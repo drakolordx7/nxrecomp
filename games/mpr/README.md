@@ -1,10 +1,12 @@
 # Metroid Prime Remastered for Windows (unofficial PC port)
 
-A native Windows port of Metroid Prime Remastered, made by recompiling the Nintendo Switch release (version 1.0.0) into a normal Windows program. It is not an emulator. The game's code is translated to C++ ahead of time, a runtime stands in for the Switch's system services, and the game's graphics API (NVN) runs on Vulkan. It has a launcher, a setup tool, mouse and keyboard controls, any resolution and aspect ratio, and high refresh rates.
+A native Windows port of Metroid Prime Remastered, made by recompiling the Nintendo Switch release (version 1.0.0) into a normal Windows program. It is not an emulator. It has a launcher, a setup tool, mouse and keyboard controls, any resolution and aspect ratio, and high refresh rates.
 
-[Download the latest release](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/releases/latest)
+[Download the latest release](https://github.com/drakolordx7/nxrecomp/releases/latest). Versions up to [v0.1.5](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/releases/tag/v0.1.5) are in the old repository.
 
 The release has no game files. You need your own dump of Metroid Prime Remastered version 1.0.0 and the keys from your own Switch. Not affiliated with Nintendo or Retro Studios.
+
+This folder holds what is specific to this game: its manifest `game.json`, lift config and hook sites (`recomp/`), runtime module (`runtime/`), setup hook (`setup/`), release data (`release/`) and docs. The recompiler, runtime and tools it builds with are in [`base/`](../../base). The project README, with the build steps, credits and licence, is [at the repository root](../../README.md).
 
 ## Requirements
 
@@ -21,50 +23,12 @@ The release has no game files. You need your own dump of Metroid Prime Remastere
 
 Settings are in the launcher (display, mouse, keyboard, controller, button icons) and on the F1 page in the game, and are saved to `controls.ini` in the game folder. Saves are in `%APPDATA%\MPRRecomp\save`. Logs (`mpr.log`, `setup.log`) are in the game folder. To update, unzip a new release over the old folder. To uninstall, delete the folder and the save folder.
 
-Defaults: WASD move, mouse aims, left button fires, right button or Q locks on, middle button or F fires missiles, Space jumps, Ctrl or C is the morph ball, Tab or M opens the map, Escape pauses, 1 to 4 pick the beam and 5 to 8 the visor. Xbox, PlayStation and Switch controllers work. Alt+Enter toggles fullscreen and F2 shows the frame rate. `HELP.txt` in the release lists every key, every setting and the fixes for common problems.
+Defaults: WASD move, mouse aims, left button fires, right button or Q locks on, middle button or F fires missiles, Space jumps, Ctrl or C is the morph ball, Tab or M opens the map, Escape pauses, 1 to 4 pick the beam and 5 to 8 the visor. Xbox, PlayStation and Switch controllers work. Alt+Enter toggles fullscreen and F2 shows the frame rate. `HELP.txt` in the release lists every key, every setting and the fixes for common problems. Known problems are in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## Reporting problems
 
-[Open an issue](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/issues/new/choose) and attach `mpr.log` from the run where it happened (the next run keeps the old one as `mpr.log.prev`). The top right of the launcher and the "mpr 0.1.0" line near the top of the log show your version. For a crash, also attach `mpr_crash.txt` or `mpr_fatal.txt`. Never attach game files, your dump or your keys.
-
-## Contributing
-
-- Open pull requests against `main`. Say what you changed and what you ran. Keep unrelated clean-ups out, and write commit subjects as one plain sentence.
-- Code in `recomp/`, `runtime/` and `tools/` lives in [nxrecomp](https://github.com/drakolordx7/nxrecomp), included here as the `base` submodule. Game bugs, `game-build/` and the docs belong here.
-- Never put game data, keys or anything extracted from the game in a pull request.
-- Build (Visual Studio Build Tools with the C++ workload, LLVM 23 with clang-cl, CMake, Ninja, sccache, Vulkan SDK, Python 3.13 with uv, .NET 10; run from `cmd` or PowerShell, not Git Bash):
-
-```
-git clone --recurse-submodules https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp
-uv venv base\tools\.venv --python 3.13
-uv pip install --python base\tools\.venv -r base\recomp\requirements.txt numpy pillow
-pwsh -File base\tools\textures\scripts\fetch_third_party.ps1
-pwsh -File base\tools\setup\scripts\fetch_zstd.ps1
-pwsh -File base\tools\setup\scripts\build.ps1 -Game .
-base\tools\setup\build\mpr\bin\mpr_setup_cli --input "Metroid Prime Remastered.nsp" --out game
-base\recomp\scripts\build_game.cmd .
-pwsh -File base\tools\textures\scripts\build.ps1
-pwsh game-build\scripts\build.ps1
-```
-
-`build_game.cmd` lifts the game's code into `work\build\mpr` and takes a while the first time. The program ends up in `game-build\build\release\mpr.exe`. Add `-Release -Version 0.1.0` to the last command for the package build that `base\tools\release\make_release.py --game .` zips. The tests are `pwsh base\runtime\scripts\build.ps1 -Test` (runtime) and `pwsh -File base\tools\setup\scripts\build.ps1 -Game . -Test` (setup tool). The exact commands are in `base\docs\BUILD.md`. Folders with an `oracle\LOCKED` file are checks that must not be edited. More detail is in the READMEs of each folder in nxrecomp.
-
-## Credits
-
-Maintained by [drakolordx7](https://github.com/drakolordx7).
-
-Built on the work of others:
-
-- Recompiler and runtime design: [smo-recomp](https://github.com/Coz-0/smo-recomp) (the lifter this one started from), [SuperMarioWonderRecomp](https://github.com/BelmanteGu) by Projeto Belmante, [ssbu-recomp](https://github.com/OpenSmash-Ultimate/ssbu-recomp) (C++ exceptions), [ScarletNX](https://github.com/scarletnx/ScarletNX) (service layouts) and [LASRecomp](https://github.com/peiikai/LASRecomp)
-- [Ryujinx](https://ryujinx.app) (Ryubing): the Maxwell shader translator and the audio renderer port
-- [Eden](https://eden-emu.dev) and yuzu: file system, audio and display service layouts, and Eden as the reference for checking frames
-- [retrotool](https://github.com/PrimeDecomp/retrotool) and [PrimeRemasterStructs](https://github.com/PrimeDecomp/PrimeRemasterStructs) by PrimeDecomp: Metroid Prime Remastered file formats
-- Libraries: [SDL3](https://github.com/libsdl-org/SDL), [Dear ImGui](https://github.com/ocornut/imgui), [volk](https://github.com/zeux/volk), [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator), [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers), [astc-encoder](https://github.com/ARM-software/astc-encoder), [bc7enc_rdo](https://github.com/richgel999/bc7enc_rdo), [zstd](https://github.com/facebook/zstd), AMD FidelityFX FSR 1, DejaVu Sans, and the [Kenney Input Prompts](https://kenney.nl/assets/input-prompts) icons
-
-Contributors and testers: none yet. Everyone who sends a fix or a useful log goes here.
-
-Licences of the third-party parts are in the `licenses` folder and `THIRD_PARTY_NOTICES.txt` of the release.
+[Open an issue](https://github.com/drakolordx7/nxrecomp/issues/new/choose) and attach `mpr.log` from the run where it happened (the next run keeps the old one as `mpr.log.prev`). The top right of the launcher and the "mpr 0.1.0" line near the top of the log show your version. For a crash, also attach `mpr_crash.txt` or `mpr_fatal.txt`. Never attach game files, your dump or your keys.
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE). Third-party components keep their own licenses.
+GPL-3.0, see [LICENSE](LICENSE). Credits are in the [root README](../../README.md).
