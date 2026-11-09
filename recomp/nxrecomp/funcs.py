@@ -66,7 +66,6 @@ def analyse(img):
         if i >= 0 and a < ends[starts[i]]:
             return starts[i]
         return None
-    # tail calls: unconditional B whose target is outside the exact function holding the branch
     for i, w in enumerate(words):
         if (w & 0xfc000000) == 0x14000000:
             pc = ts + 4 * i
@@ -127,7 +126,6 @@ def analyse(img):
             a = b
     rows = sorted(rows + gap_rows, key=lambda r: r['start'])
 
-    # coverage of .text by exact functions
     covered = 0
     last = 0
     for s in starts:

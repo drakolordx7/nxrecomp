@@ -3,7 +3,7 @@
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
 """Scalar floating point: arithmetic, fused multiply-add, rounding, conversions, compares and moves. Mixed into
-emit.Emitter (split from emit.py, 700-line rule)."""
+Tier2."""
 
 from capstone import arm64_const as A
 
@@ -11,8 +11,6 @@ from .base import VAS, Unhandled, subst, u, s  # noqa: F401
 
 
 class FpOps:
-    # ---- scalar floating point ----------------------------------------------------------------------------
-
     def fr(self, r):
         """Read a scalar FP register as float/double."""
         if r.kind == "s":

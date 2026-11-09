@@ -16,7 +16,7 @@ def emit(env, m):
         cie = ehmod.parse_cie(rd, f.cie)
         try:
             frows = ehmod.cfi_rows(rd, f, cie)
-        except Exception:                                   # an unsupported CFA program: the function gets no rows
+        except Exception:
             frows = []
         row_first = len(rows)
         for pc, cfa_reg, cfa_off, sv in frows:

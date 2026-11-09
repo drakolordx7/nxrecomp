@@ -3,6 +3,4 @@
 #pragma once
 namespace nx {
 
-// (add helpers here)
-
 }  // namespace nx

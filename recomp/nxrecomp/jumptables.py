@@ -200,7 +200,7 @@ def _is_tail_br(img, f, br, depth=0):
     reg = _regno(f.insns[br][1])
     d = _find_def(f, br, reg)
     if not d:
-        return True                                        # parameter / caller-supplied register
+        return True
     a, mn, ops = d
     if mn == 'mov' and len(ops) == 2 and ops[1][:1] in ('x', 'w') and depth < 4:
         src = _regno(ops[1])
@@ -222,7 +222,7 @@ def _is_tail_br_def(img, f, d):
         return False                                       # same: `ldr x8, [sp, #n]` before `br x8` at -O0
     if mn.startswith('ldr') and len(ops) > 1 and '[' in ops[1]:
         m = re.match(r'\[(\w+), ([xw]\d+)(?:, lsl #(\d+))?\]', ops[1])
-        if m:                                               # indexed load: a static table of pointers?
+        if m:
             base = _const(f, a, _regno(m.group(1)))
             if base is not None and img.base <= base < img.base + len(img.mem):
                 for k in range(0, 256):

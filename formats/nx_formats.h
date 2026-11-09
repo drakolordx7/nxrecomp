@@ -127,7 +127,6 @@ inline std::string bc7_cache_rel_path(uint64_t key) {
     return std::string(name, 2) + "/" + name + ".bc7";
 }
 
-// Appends the header and the level table.
 inline void bc7_put_head(std::vector<uint8_t>& out, uint64_t key, uint32_t vk_format, uint32_t layers, const Bc7Level* levels, size_t count) {
     out.insert(out.end(), kBc7CacheMagic, kBc7CacheMagic + 4);
     put32(out, kBc7CacheVersion);

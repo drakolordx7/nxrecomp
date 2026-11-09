@@ -2,8 +2,7 @@
 # Ported from SuperMarioWonderRecomp recomp/emit_neon_wide.py (MIT License, Copyright (c) 2026 BelmanteGu; see
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
-"""AdvSIMD (NEON): widening and narrowing forms, permutes and reductions. Mixed into emit.Emitter (split from
-emit.py, 700-line rule)."""
+"""AdvSIMD (NEON): widening and narrowing forms, permutes and reductions. Mixed into Tier2."""
 
 from capstone import arm64_const as A
 

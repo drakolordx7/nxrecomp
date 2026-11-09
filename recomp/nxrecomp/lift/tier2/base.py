@@ -2,12 +2,7 @@
 # Ported from SuperMarioWonderRecomp recomp/emit.py (constants, Reg) (MIT License, Copyright (c) 2026 BelmanteGu; see
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
-"""AArch64 -> C++ instruction emitter.
-
-Each guest function becomes `void sub_XXXXXXXX(nx::CPU& c)`. Registers live in the context; intra-function
-branches are gotos, jump tables are switches over the computed target, calls are direct when the target is
-known and go through nx::call otherwise. Instructions we do not handle become nx::unimpl traps and are counted.
-"""
+"""Constants and operand helpers shared by the tier-2 emitters (lift/tier2/)."""
 import collections
 import re
 import struct

@@ -33,7 +33,6 @@ def mangle(name):
     return ''.join(ch if ch.isalnum() else '_' for ch in name)
 
 
-# ---------------------------------------------------------------------------------------------------- sites
 SITE_KINDS = ('patch', 'inline', 'midhook', 'dynimm', 'jtable', 'noinline', 'entryhook')
 
 
@@ -98,7 +97,6 @@ def dynimm_stmt(w, pc):
     raise Unimpl('dynimm: not an add/sub immediate, movz or movn')
 
 
-# ---------------------------------------------------------------------------------------------------- Env
 class Env:
     """Per-module lifting state: the image, function extents, imports (PLT), jump tables, landing pads."""
 
@@ -127,13 +125,11 @@ class Env:
         self.eh_starts = set()        # entries of functions that have an LSDA
         self._syms = None
 
-    # ---- words
     def word(self, addr):
         if self.patches and addr in self.patches:
             return self.patches[addr]
         return self.img.word(addr)
 
-    # ---- imports through the PLT
     def load_plt(self):
         self.plt_syms, self.plt_info = {}, {}
         syms = self.img.symbols()
@@ -167,7 +163,6 @@ class Env:
             return None
         return self.plt_info[self.plt_slot[target]]
 
-    # ---- direct calls
     def call(self, target):
         if target in self.overrides:
             return 'h_%s(c);' % self.overrides[target]
@@ -176,7 +171,6 @@ class Env:
         self.wanted.setdefault(target, None)
         return 'f_%x(c);' % target
 
-    # ---- function list
     def compute_starts(self, extra=()):
         """Function entries and exact ends: funcs.analyse(img), rtld's process entry and the config's extra entries
         (module offsets)."""
@@ -199,7 +193,6 @@ class Env:
         for a in added:
             i = bisect.bisect_right(self.starts, a)
             self.ends[a] = self.starts[i] if i < len(self.starts) else max(self.ends[a], self.text_hi)
-        # an extra entry splits the function it falls into: keep that function's end as is
         return self.starts
 
     def extent(self, entry):
@@ -208,7 +201,6 @@ class Env:
         i = bisect.bisect_right(self.starts, entry)
         return self.starts[i] if i < len(self.starts) else self.text_hi
 
-    # ---- exception data
     def load_eh(self):
         """Landing pads and the functions that need nx_catch_call, from the LSDAs."""
         rd = ehmod.Reader(self.img)
@@ -273,7 +265,6 @@ class Env:
         return self._syms.get(addr)
 
 
-# ---------------------------------------------------------------------------------------------------- one function
 TAILS = ('return;', 'goto', '{ jt', '{ f_', '{ h_', '{ call_indirect', 'switch (', '{ nx_')
 
 
@@ -282,7 +273,7 @@ def lift_function(env, entry):
     img = env.img
     if env.full and env.plt_entry(entry):
         sym, shndx, value = env.plt_entry(entry)
-        if shndx:                                    # symbol defined inside this module
+        if shndx:
             tgt = env.base + value
             env.wanted.setdefault(tgt, None)
             return 'void f_%x(Ctx *__restrict c) { f_%x(c); }' % (entry, tgt), 0, [], []
@@ -337,7 +328,7 @@ def lift_function(env, entry):
     ends_open = not last.startswith(TAILS)
     listed = env.ends
     if ends_open and end < env.text_hi and end in listed:
-        out.append('  f_%x(c); return;' % end)           # falls through into the next listed function
+        out.append('  f_%x(c); return;' % end)
         env.wanted.setdefault(end, None)
     elif ends_open:
         out.append('  guest_trap("fell off the end of a function", 0x%xULL); return;' % end)
@@ -353,7 +344,6 @@ def lift_function(env, entry):
     return '\n'.join(out), len(lines), bad, [(lp, entry) for lp in pads]
 
 
-# ---------------------------------------------------------------------------------------------------- whole module
 def build_env(spec):
     """The Env of the module described by `spec` (image, game config, module index, site list), before discovery. The main
     process and every worker start from this, so they lift with the same settings."""
@@ -453,7 +443,7 @@ def lift_module(spec, outdir, jobs=8, shards=16, log=print):
     env = build_env(spec)
     img = env.img
     env.compute_starts()
-    for a in sorted(env.sites['midhook']):                 # a mid-function hook makes its address a function of its own
+    for a in sorted(env.sites['midhook']):
         if a not in env.ends:
             env.ends[a] = env.extent(a)
     env.starts = sorted(env.ends)
@@ -501,7 +491,6 @@ def lift_module(spec, outdir, jobs=8, shards=16, log=print):
                     env.ends[a] = end
             pending = sorted(new | set(again))
         all_funcs.sort()
-        # workers must know the new entries too (their extents are by the next start): rebuild the spec
         if len(all_funcs) != len(starts):
             spec['ends'] = {a: env.ends.get(a, env.extent(a)) for a in all_funcs}
             if pool:
@@ -510,7 +499,6 @@ def lift_module(spec, outdir, jobs=8, shards=16, log=print):
                 mapper = pool.imap_unordered
             else:
                 _worker_init(spec)
-        # shard assignment
         sizes = {a: max(1, (spec['ends'][a] - a) // 4) for a in all_funcs}
         groups = collections.OrderedDict()
         target = sum(sizes.values()) / float(shards)
@@ -592,7 +580,7 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
         m.append('  { 0, 0 },')
     m.append('};')
     from . import ehtables
-    eh_name = ehtables.emit(env, m)          # the NxEh tables (unwind rows, call sites, actions, types)
+    eh_name = ehtables.emit(env, m)
     m.append('extern const NxModule nxmod_%s;' % name)
     m.append('extern const uint32_t nxmod_%s_abi;' % name)
     m.append('const uint32_t nxmod_%s_abi = NXRECOMP_ABI_VERSION;' % name)
@@ -603,7 +591,6 @@ def write_module_files(env, outdir, all_funcs, resume, catchers):
     _write_if_changed(os.path.join(outdir, 'module_%s.cpp' % name), '\n'.join(m))
 
 
-# ---------------------------------------------------------------------------------------------------- coverage
 def cover(img, cfg=None, log=print, limit_examples=3):
     """Per-instruction-word translation coverage of .text, with the reasons for what is not translated."""
     env = Env(img, cfg)
@@ -620,7 +607,7 @@ def cover(img, cfg=None, log=print, limit_examples=3):
                 r = ''
             except Unimpl as e:
                 r = str(e)
-            except Exception as e:                       # a decoder bug counts as not translated
+            except Exception as e:
                 r = 'error:%s' % type(e).__name__
             cache[w] = r
         if r:

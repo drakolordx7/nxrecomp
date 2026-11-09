@@ -23,8 +23,6 @@ ABD_ACC = "{o} + (" + ABD_WIDE + ")"
 
 
 class XNeon2:
-    # ---- absolute difference: accumulate, long ---------------------------------------------------------------
-
     def i_saba(self, f, i, ops):  # Vd += |Vn - Vm| (SABA: modulo the element size)
         return self.v_bin(i, ops, "o + (" + ABD + ")", signed=True)
 
@@ -57,8 +55,6 @@ class XNeon2:
 
     i_uabdl2 = i_uabdl
 
-    # ---- long reductions, pairwise accumulate ---------------------------------------------------------------
-
     def i_saddlv(self, f, i, ops):  # signed sum of all elements into one element of twice the width
         d, a = self.regop(i, ops[0]), self.regop(i, ops[1])
         bits, n = self.vinfo(ops[1])
@@ -82,8 +78,6 @@ class XNeon2:
 
     def i_uadalp(self, f, i, ops):
         return self.adalp(i, ops, False)
-
-    # ---- saturating ------------------------------------------------------------------------------------------
 
     def i_sqadd(self, f, i, ops):
         return self.v_bin(i, ops, f"::v_sat_s((__int128)a + (__int128)b, {_sz(self.vinfo(ops[0])[0])})", signed=True)
@@ -126,8 +120,6 @@ class XNeon2:
     def i_sqneg(self, f, i, ops):
         return self.v_un(i, ops, f"::v_sat_s(-(__int128)a, {_sz(self.vinfo(ops[0])[0])})", signed=True)
 
-    # ---- abs / neg / bit reverse ---------------------------------------------------------------------------
-
     def i_abs(self, f, i, ops):
         return self.v_un(i, ops, "a < 0 ? uint64_t(0) - uint64_t(a) : uint64_t(a)", signed=True)
 
@@ -144,15 +136,11 @@ class XNeon2:
             return self.v_un(i, ops, "nx::rbit8_(a)", lanes="bytes")
         return d.w(f"nx::rbit{d.bits}({self.regop(i, ops[1]).r()})")
 
-    # ---- reciprocal estimates (32-bit elements) ----------------------------------------------------------
-
     def i_urecpe(self, f, i, ops):
         return self.v_un(i, ops, "nx::urecpe_(a)")
 
     def i_ursqrte(self, f, i, ops):
         return self.v_un(i, ops, "nx::ursqrte_(a)")
-
-    # ---- polynomial multiply (8-bit) ---------------------------------------------------------------------
 
     def i_pmul(self, f, i, ops):
         return self.v_bin(i, ops, "nx::pmull8_(a, b)")
@@ -165,8 +153,6 @@ class XNeon2:
         return self.widen(i, ops, "nx::pmull8_({a}, {b})", False)
 
     i_pmull2 = i_pmull
-
-    # ---- table lookup ----------------------------------------------------------------------------------------
 
     def i_tbx(self, f, i, ops):  # like TBL, but an out-of-range index keeps the destination element
         bits, n = self.vinfo(ops[0])

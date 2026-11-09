@@ -36,7 +36,7 @@ Exit code: the exit code of the game exe (124 = deadline, 3/4 = crash).
 """
 import argparse, json, os, re, subprocess, sys, time, collections
 
-BASE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))      # the base checkout this script is in
+BASE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 CXXFILT = r'C:\Program Files\LLVM\bin\llvm-cxxfilt.exe'
 
 
@@ -87,7 +87,7 @@ class Game:
     def expand(self, s):
         out = (s.replace('{data}', self.data).replace('{game}', self.dir).replace('{run}', self.run)
                 .replace('{nx}', NX or '').replace('{id}', self.id))
-        return os.path.normpath(out) if out != s and re.fullmatch(r'\{[a-z]+\}[\/].*', s) else out   # a value that is one path: normalised
+        return os.path.normpath(out) if out != s and re.fullmatch(r'\{[a-z]+\}[\/].*', s) else out
 
 
 def load_addrname(game):
@@ -174,7 +174,7 @@ def run_plan(g, a):
         'NXRT_NVN_POOL_MIRROR': 'off',
         'NXRT_AUDIO_SINK': 'paced',             # muted: a silent sink with a real clock; --env NXRT_AUDIO_SINK=xaudio2 only for explicit audio tests
     }
-    for k in list(env):                         # what the caller already exported wins over these defaults
+    for k in list(env):
         if k in os.environ:
             env[k] = os.environ[k]
     exe_args, seconds = [], None
@@ -237,7 +237,6 @@ def summarise(g, a):
     lines = open(log, errors='replace').read().splitlines()
     text = '\n'.join(lines)
     print('\n== summary of %s (%d lines)' % (log, len(lines)))
-    # stop reason
     stop = [l for l in lines if re.search(r'HOST EXCEPTION|GUEST TRAP|svcBreak reason|svcExitProcess|uncaught C\+\+|max_seconds reached|returned \(x0|FREEZE|freeze', l)]
     print('-- stop:')
     for l in stop[:6]: print('  ' + annotate(l[:300]))
@@ -247,14 +246,12 @@ def summarise(g, a):
         print('-- guest call stack (innermost first):')
         for f in m.group(1).split()[:14]: print('  ' + annotate(f))
     for l in bt[:3]: print('  ' + annotate(l[:500]))
-    # unknown svc
     unk = collections.OrderedDict()
     for l in lines:
         mm = re.search(r'UNKNOWN SVC (0x[0-9A-Fa-f]+) \((\w+)\) #(\d+) (x0=.*?) caller', l)
         if mm: unk.setdefault((mm.group(1), mm.group(2)), [0, mm.group(4)])[0] = int(mm.group(3))
     print('-- unknown SVCs: %s' % ('none' if not unk else ''))
     for (n, nm), (c, args) in unk.items(): print('  %s %s x%d first %s' % (n, nm, c, args[:150]))
-    # stub services
     st = collections.OrderedDict()
     for l in lines:
         mm = re.search(r'STUB SERVICE (\S+) cmd (\d+) \((.*?)\)', l)
@@ -263,7 +260,6 @@ def summarise(g, a):
     print('-- services requested: %s' % (', '.join(collections.OrderedDict.fromkeys(sm)) or 'none'))
     print('-- stub service commands: %s' % ('none' if not st else ''))
     for (s, c), (n, d) in st.items(): print('  %s cmd %d (logged x%d) %s' % (s, c, n, d[:120]))
-    # nvn and hle stubs
     nvn = collections.OrderedDict()
     for l in lines:
         mm = re.search(r'nvn: STUB (\w+)\(|nvn: UNKNOWN NVN PROC (\w+)\(', l)

@@ -177,7 +177,6 @@ def all_fdes(img):
     return out, cies
 
 
-# ---------------------------------------------------------------------------------------------------- CFA program
 DW_CFA = {
     0x00: 'nop', 0x01: 'set_loc', 0x02: 'advance_loc1', 0x03: 'advance_loc2', 0x04: 'advance_loc4', 0x05: 'offset_extended',
     0x06: 'restore_extended', 0x07: 'undefined', 0x08: 'same_value', 0x09: 'register', 0x0a: 'remember_state',
@@ -301,7 +300,6 @@ def cfi_rows(rd, fde, cie):
     rows.clear()
     run(fde.insns[0], fde.insns[1], False)
     emit_row()
-    # merge rows at the same pc (keep the last), drop a trailing row at the function end
     out = []
     for r in rows:
         if out and out[-1][0] == r[0]:
@@ -311,7 +309,6 @@ def cfi_rows(rd, fde, cie):
     return [r for r in out if r[0] < fde.end or len(out) == 1]
 
 
-# ---------------------------------------------------------------------------------------------------- LSDA
 LsdaSite = namedtuple('LsdaSite', 'start len pad action')       # offsets; pad 0 = none; action 0 = cleanup only
 
 

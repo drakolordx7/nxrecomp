@@ -3,7 +3,7 @@
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
 """AdvSIMD (NEON): lane helpers, element-wise arithmetic and logic, compares, shifts by immediate. Mixed into
-emit.Emitter (split from emit.py, 700-line rule)."""
+Tier2."""
 
 from capstone import arm64_const as A
 
@@ -11,8 +11,6 @@ from .base import VAS, Unhandled, subst, u, s  # noqa: F401
 
 
 class NeonOps:
-    # ---- NEON ---------------------------------------------------------------------------------------------
-
     def vinfo(self, o):
         if not o.vas:
             # AdvSIMD scalar form (sqadd s0, s0, s1; sub d0, d0, d1): one lane of the register's size.

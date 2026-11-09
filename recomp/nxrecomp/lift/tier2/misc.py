@@ -79,8 +79,6 @@ class MiscOps:
             return a, f"c->x[{base.n}] = a;"
         return a, ""
 
-    # ---- function ---------------------------------------------------------------------------------------
-
     def i_nop(self, f, i, ops):
         return ";"
 

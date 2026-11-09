@@ -3,7 +3,7 @@
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
 """Integer data processing: moves, arithmetic and logic, shifts, bitfields, extends, conditional selects and compares,
-multiplies and divides, bit and byte reversal. Mixed into emit.Emitter (split from emit.py, 700-line rule)."""
+multiplies and divides, bit and byte reversal. Mixed into Tier2."""
 
 from capstone import arm64_const as A
 
@@ -11,8 +11,6 @@ from .base import B, Unhandled, u, s  # noqa: F401
 
 
 class IntOps:
-    # ---- integer data processing --------------------------------------------------------------------------
-
     def i_mov(self, f, i, ops):
         d = self.regop(i, ops[0])
         if not d.gp or (ops[1].type == A.ARM64_OP_REG and not self.regop(i, ops[1]).gp):

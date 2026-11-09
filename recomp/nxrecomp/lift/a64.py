@@ -27,7 +27,6 @@ class Unimpl(Exception):
     pass
 
 
-# ---------------------------------------------------------------- operands
 def X(n):
     return '0ULL' if n == 31 else 'c->x[%d]' % n
 
@@ -103,7 +102,6 @@ def extended(n, option, shift):
     return '(%s << %d)' % (e, shift) if shift else e
 
 
-# ---------------------------------------------------------------- lifter
 class Fn:
     """Lifting context for one guest function (address range [entry, end))."""
 
@@ -136,7 +134,6 @@ class Fn:
         # [from smo-recomp; checked against Unicorn by the difftest's trap tests]
         return 'guest_trap("undefined instruction", 0x%xULL);' % pc
 
-    # ---- data processing, immediate
     def dp_imm(self, w, pc):
         sf, rd, rn = bits(w, 31, 31), bits(w, 4, 0), bits(w, 9, 5)
         g = bits(w, 25, 23)
@@ -188,7 +185,6 @@ class Fn:
             return SET(rd, sf, '(%s >> %d) | (%s << %d)' % (R(rm, sf), lsb, R(rn, sf), size - lsb))
         raise Unimpl('dpimm%d' % g)
 
-    # ---- branches and system
     def branch(self, w, pc):
         if bits(w, 30, 26) == 5:
             target = pc + sext(bits(w, 25, 0), 26) * 4
@@ -221,7 +217,7 @@ class Fn:
                 return '{ uint64_t t = %s; c->x[30] = 0x%xULL; call_indirect(c, t); }' % (X(rn), pc + 4)
             if opc == 0:
                 tg = self.env.jt.get(pc)
-                if tg:                                   # a resolved jump table: a switch over exactly its targets
+                if tg:
                     return 'switch (%s) { %s default: call_indirect(c, %s); return; }' % (
                         X(rn), ' '.join('case 0x%xULL: %s' % (t, self.jump(t)) for t in tg), X(rn))
                 if pc in self.env.tailbr:                # an indirect tail call (vtable / function pointer): no dispatch
@@ -275,7 +271,6 @@ class Fn:
             return 'guest_msr(c, 0x%x, %s);' % (bits(w, 20, 5), X(rt))
         raise Unimpl('system')
 
-    # ---- loads and stores
     def addr_mode(self, w, scale):
         """Single-register addressing. Returns (pre, address, post)."""
         rn = bits(w, 9, 5)
@@ -470,7 +465,6 @@ class Fn:
             wb = '%s += %s;' % (XS(rn), ('%dULL' % (nb * nstruct)) if rm == 31 else X(rm))
         return '{ uint64_t a = %s; %s %s }' % (XS(rn), body, wb)
 
-    # ---- data processing, register
     def dp_reg(self, w, pc):
         sf, rd, rn, rm = bits(w, 31, 31), bits(w, 4, 0), bits(w, 9, 5), bits(w, 20, 16)
         size = 64 if sf else 32
@@ -562,7 +556,6 @@ class Fn:
             raise Unimpl('dp1')
         raise Unimpl('dpreg%d' % g)
 
-    # ---- scalar floating point (advanced SIMD is handled only where needed)
     def fpsimd(self, w, pc):
         rd, rn, rm = bits(w, 4, 0), bits(w, 9, 5), bits(w, 20, 16)
         if bits(w, 30, 24) == 0x1e and bits(w, 21, 21) == 0:     # fixed-point <-> fp: the value is scaled by 2^fbits

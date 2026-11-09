@@ -14,8 +14,6 @@ from .base import B, VAS, Reg, Unhandled, subst, u, s  # noqa: F401
 
 
 class XNeon1:
-    # ---- helpers --------------------------------------------------------------------------------------------------
-
     def n1_vec(self, i, ops, make, nsrc):
         """Lanewise op over the destination arrangement (or one scalar lane). make(bits, s, o) -> C++ lane expression,
         where s[k] is source k's lane and o the destination's current lane (the accumulator)."""
@@ -57,8 +55,6 @@ class XNeon1:
         return (f"{{ V128 A_ = c->v[{a.n}]; {b_pre}V128 O = c->v[{d.n}]; V128 r = nx::vzero(); "
                 f"for (int k = 0; k < {n}; k++) r.u{dbits}[k] = uint{dbits}_t({e}); c->v[{d.n}] = r; }}")
 
-    # ---- high-half narrowing: ADDHN / SUBHN / RADDHN / RSUBHN ----------------------------------------------------
-
     def i_addhn(self, f, i, ops):
         return self.n1_narrow2(i, ops, lambda a, b, db: f"nx::n1_hn<{db}>({a}, {b}, false, false)")
 
@@ -79,8 +75,6 @@ class XNeon1:
 
     i_rsubhn2 = i_rsubhn
 
-    # ---- saturating doubling multiply long -----------------------------------------------------------------------
-
     def i_sqdmull(self, f, i, ops):
         return self.n1_dmull(i, ops, 0)
 
@@ -95,8 +89,6 @@ class XNeon1:
         return self.n1_dmull(i, ops, 2)
 
     i_sqdmlsl2 = i_sqdmlsl
-
-    # ---- saturating / plain shifts by register or immediate ------------------------------------------------------
 
     def i_sqshl(self, f, i, ops):
         if ops[2].type == A.ARM64_OP_IMM:
@@ -136,8 +128,6 @@ class XNeon1:
             raise Unhandled("srshl has no immediate form")
         return self.n1_vec(i, ops, lambda b, s_, o: f"nx::n1_shl_reg<{b}, true, false, true>({s_[0]}, {s_[1]})", 2)
 
-    # ---- shift and insert ----------------------------------------------------------------------------------------
-
     def i_sli(self, f, i, ops):
         n = ops[2].imm
         return self.n1_vec(i, ops, lambda b, s_, o: f"nx::n1_sli<{b}>({s_[0]}, {o}, {n})", 1)
@@ -145,8 +135,6 @@ class XNeon1:
     def i_sri(self, f, i, ops):
         n = ops[2].imm
         return self.n1_vec(i, ops, lambda b, s_, o: f"nx::n1_sri<{b}>({s_[0]}, {o}, {n})", 1)
-
-    # ---- rounding and plain shifts right, with accumulate --------------------------------------------------------
 
     def i_srshr(self, f, i, ops):
         n = ops[2].imm

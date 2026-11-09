@@ -31,8 +31,6 @@ using ::adds64; using ::adds32; using ::logic64; using ::logic32; using ::set_nz
 #define NX_RESTRICT __restrict
 #endif
 
-// ---- memory -------------------------------------------------------------------------------------------------
-
 template <typename T>
 NX_INLINE T ld(uint64_t a) {
     T v;
@@ -121,8 +119,6 @@ NX_INLINE T amo_minmax(T* p, T v) {
 
 NX_INLINE void barrier() { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 
-// ---- flags --------------------------------------------------------------------------------------------------
-
 
 
 NX_INLINE uint64_t subs64(Ctx *c, uint64_t a, uint64_t b) { return adds64(c, a, ~b, 1); }
@@ -143,8 +139,6 @@ NX_INLINE void fcmp(Ctx *c, F a, F b) {
     else
         set_nzcv(c, 0b0010);
 }
-
-// ---- integer helpers ----------------------------------------------------------------------------------------
 
 inline uint16_t bswap(uint16_t v) { return __builtin_bswap16(v); }
 inline uint32_t bswap(uint32_t v) { return __builtin_bswap32(v); }
@@ -205,8 +199,6 @@ inline uint32_t rev16_32(uint32_t v) { return ((v >> 8) & 0x00FF00FFu) | ((v & 0
 inline uint64_t rev32_64(uint64_t v) {
     return uint64_t(nx::bswap(uint32_t(v))) | (uint64_t(nx::bswap(uint32_t(v >> 32))) << 32);
 }
-
-// ---- floating point -----------------------------------------------------------------------------------------
 
 inline float f16_to_f32(uint16_t h) { return half_to_f32(h); }   // exact (quietens NaNs), fpexact.h
 inline float f16_to_f32_ported(uint16_t h) {
@@ -330,8 +322,6 @@ inline F frecps(F a, F b) {
     if ((std::isinf(a) && b == 0) || (a == 0 && std::isinf(b))) return F(2);
     return std::fma(-a, b, F(2));  // fused on hardware
 }
-
-// ---- vector helpers -----------------------------------------------------------------------------------------
 
 inline V128 vzero() {
     V128 r;

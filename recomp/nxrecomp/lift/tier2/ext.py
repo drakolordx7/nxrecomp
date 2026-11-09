@@ -3,8 +3,8 @@
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
 """Instructions first needed by SDK 16 (Super Mario Bros. Wonder): AdvSIMD pairwise, reductions and rounding forms,
-exclusive pairs, ARMv8.1 LSE atomics and the crypto extension. Mixed into emit.Emitter; the helpers it calls
-(vinfo, v_bin, widen, narrow, vldst, mem_ops, regop) live there, the C++ side in runtime/include/nx/cpu.h."""
+exclusive pairs, ARMv8.1 LSE atomics and the crypto extension. Mixed into Tier2; the C++ side is in
+include/nxrecomp/cxx.h."""
 import re
 
 from capstone import arm64_const as A
@@ -131,7 +131,7 @@ class ExtOps:
 
     i_smlsl2 = i_smlsl
 
-    # crypto extension: helpers in nx/cpu.h
+    # crypto extension: C++ helpers in include/nxrecomp/cxx.h
 
     def crypto2(self, i, ops, fn):
         d, n = self.regop(i, ops[0]), self.regop(i, ops[1])

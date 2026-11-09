@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Ported from SuperMarioWonderRecomp recomp/emit_ext.py (MIT License, Copyright (c) 2026 BelmanteGu; see
 # recomp/THIRD_PARTY.md): the ARMv8.1 LSE atomics (ldadd/ldclr/ldeor/ldset/ldsmax/ldsmin/ldumax/ldumin, st* forms, swp, cas,
-# casp). Split into its own file so one owner can work on it.
+# casp).
 import re
 
 from capstone import arm64_const as A

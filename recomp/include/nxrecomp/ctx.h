@@ -191,10 +191,6 @@ static inline V128 rdv(uint64_t a, int n) { V128 v; v.d[0] = 0; v.d[1] = 0; memc
 static inline void wrv(uint64_t a, const V128 *v, int n) { memcpy((void *)(uintptr_t)a, v, (size_t)n); }
 static inline void vzero(V128 *v) { v->d[0] = 0; v->d[1] = 0; }
 
-/* ======================================================================================================== */
-/* flags and integer helpers                                                                                  */
-/* ======================================================================================================== */
-
 static inline uint64_t adds64(Ctx *c, uint64_t a, uint64_t b, uint32_t cin) {
     uint64_t r = a + b + cin;
     c->N = (uint32_t)(r >> 63);

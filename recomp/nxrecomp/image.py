@@ -41,7 +41,6 @@ class Image:
         self.abs_is_addr = False         # absolute pointers in unwind data are guest addresses (static ELF), not offsets
         self._rel = None
 
-    # ---- raw access ---------------------------------------------------------------------------------------
     @property
     def text_size(self):
         return self.text[1]
@@ -93,7 +92,6 @@ class Image:
         o = addr - self.base
         return self.text[0] <= o < self.text[0] + self.text[1]
 
-    # ---- symbols and relocations --------------------------------------------------------------------------
     def symbols(self):
         """[(name, type, bind, shndx, value, size)]; value is an OFFSET (module-relative) for NSO, an ADDRESS for
         static ELF (the callers use sym_value())."""
@@ -139,7 +137,6 @@ class Image:
         off, sz = self.dt[23], self.dt.get(2, 0)
         return [struct.unpack_from('<QQq', self.mem, off + i * 24) for i in range(sz // 24)]
 
-    # ---- unwind tables ------------------------------------------------------------------------------------
     def eh_frame_hdr(self):
         """(eh_frame offset, [(function start offset, FDE offset)]) from .eh_frame_hdr's binary-search table."""
         if not self.eh_hdr:
@@ -162,7 +159,6 @@ class Image:
             out.append((h + loc, h + fde_rel))
         return frame, out
 
-    # ---- loaders ------------------------------------------------------------------------------------------
     @classmethod
     def from_nso(cls, data, base, name='main'):
         from . import nso

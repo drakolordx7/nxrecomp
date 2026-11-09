@@ -83,13 +83,12 @@ class XLdst:
                     p.append(f"nx::vst_n<{dsz}>(a + {k * dsz}, c->v[{regn[k]}]);")
             elif mode == "il":
                 p.append(f"nx::vst_il<{n}, {es}, {cnt}>(a, {{{', '.join(f'c->v[{r}]' for r in regn)}}});")
-            else:  # lane
+            else:
                 for k in range(nr):
                     p.append(f"nx::vst_lane<{es}>(a + {k * es}, c->v[{regn[k]}], {lane});")
             if wb:
                 p.append(wb)
         else:
-            # Load everything into temporaries first, then write back the base, then the registers.
             p.append("V128 t_[4];")
             if mode == "seq":
                 for k in range(nr):
@@ -99,7 +98,7 @@ class XLdst:
             elif mode == "lane":
                 for k in range(nr):
                     p.append(f"t_[{k}] = c->v[{regn[k]}]; nx::vld_lane<{es}>(t_[{k}], a + {k * es}, {lane});")
-            else:  # repl
+            else:
                 for k in range(nr):
                     p.append(f"t_[{k}] = nx::vld_repl<{es}, {cnt}>(a + {k * es});")
             if wb:

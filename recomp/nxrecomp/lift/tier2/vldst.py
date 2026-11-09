@@ -3,7 +3,7 @@
 # recomp/THIRD_PARTY.md for the notice). Changes: the generated code uses nxrecomp's context (Ctx *c, c->x / c->v /
 # c->N Z C V) and C++ helpers (nxrecomp/cxx.h); absolute guest addresses instead of module offsets.
 """AdvSIMD structured loads and stores (ld1-ld4, st1-st4, single lanes, replicating ldNr). Mixed into
-emit.Emitter."""
+Tier2."""
 import re
 
 from .base import VAS, Reg
