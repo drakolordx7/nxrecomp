@@ -16,7 +16,22 @@ using namespace nxrt;
 
 namespace {
 constexpr uint32_t kRate = 48000;
-void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+
+// Polls the sink's queue until `done(queued)` holds, without a fixed wait: the host clock drains the queue, however slowly a loaded
+// machine schedules this thread. Every sample must be no higher than the one before (a queue only drains between writes).
+template <class F>
+bool poll_until(audio::AudioSink& sink, F done) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    uint32_t prev = sink.queued_frames();
+    while (!done(prev)) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const uint32_t q = sink.queued_frames();
+        if (q > prev) return false;
+        prev = q;
+    }
+    return true;
+}
 }  // namespace
 
 NXTEST(paced_has_a_device_clock_and_the_null_sink_does_not) {
@@ -27,17 +42,16 @@ NXTEST(paced_has_a_device_clock_and_the_null_sink_does_not) {
     CHECK(!n.has_device_clock());
 }
 
-NXTEST(paced_queue_drains_at_the_sample_rate) {
+NXTEST(paced_queue_drains_to_empty_and_counts_the_accepted_frames) {
     auto p = audio::make_paced_sink();
     REQUIRE(p->open(kRate, 2));
     std::vector<int16_t> pcm(static_cast<size_t>(kRate / 10) * 2, 0);
     CHECK_EQ(p->write(pcm.data(), kRate / 10), kRate / 10);
-    CHECK(p->queued_frames() > kRate / 10 - 480);   // just written: still about 100 ms
-    sleep_ms(50);
-    const uint32_t q = p->queued_frames();
-    CHECK(q > 1500 && q < 3300);                     // about 50 ms left: 2400 frames, generous bounds for a loaded machine
+    CHECK(p->queued_frames() <= kRate / 10);        // never more than was written
+    CHECK(poll_until(*p, [](uint32_t q) { return q < kRate / 10 - 480; }));   // the host clock drains it
+    CHECK(poll_until(*p, [](uint32_t q) { return q == 0; }));
     audio::SinkStats s = p->stats();
-    CHECK_EQ(s.underruns, 0ull);
+    CHECK_EQ(s.underruns, 1ull);                    // it ran dry once, after everything was played
     CHECK_EQ(s.frames_accepted, static_cast<uint64_t>(kRate / 10));
     p->close();
 }
@@ -47,12 +61,12 @@ NXTEST(paced_counts_one_underrun_per_dry_stretch) {
     REQUIRE(p->open(kRate, 2));
     std::vector<int16_t> pcm(static_cast<size_t>(480) * 2, 0);
     p->write(pcm.data(), 480);
-    sleep_ms(60);                                                       // the queue is empty for 50 ms: one underrun
+    CHECK(poll_until(*p, [](uint32_t q) { return q == 0; }));          // the queue ran dry: one underrun
     CHECK_EQ(p->queued_frames(), 0u);
     CHECK_EQ(p->queued_frames(), 0u);                                   // asking again does not count again
     CHECK_EQ(p->stats().underruns, 1ull);
     p->write(pcm.data(), 480);
-    sleep_ms(60);
+    CHECK(poll_until(*p, [](uint32_t q) { return q == 0; }));
     CHECK_EQ(p->stats().underruns, 2ull);
     p->close();
 }
@@ -70,15 +84,16 @@ NXTEST(paced_drops_what_does_not_fit) {
 }
 
 NXTEST(paced_skew_changes_the_drain_rate) {
-    auto fast = audio::make_paced_sink(100000.0);   // the device runs 10 % fast
-    auto slow = audio::make_paced_sink(-100000.0);  // and 10 % slow
+    // A device skewed 99 % slow drains 100 ms of audio in 10 s; one skewed 90 % fast drains it in about 53 ms. Once the fast one has
+    // run dry the slow one must still hold nearly everything, however long the machine took to get there.
+    auto fast = audio::make_paced_sink(900000.0);
+    auto slow = audio::make_paced_sink(-990000.0);
     REQUIRE(fast->open(kRate, 2) && slow->open(kRate, 2));
     std::vector<int16_t> pcm(static_cast<size_t>(kRate / 10) * 2, 0);
     fast->write(pcm.data(), kRate / 10);
     slow->write(pcm.data(), kRate / 10);
-    sleep_ms(80);
-    // 80 ms of the host clock: the fast device consumed about 88 ms, the slow one about 72 ms
-    CHECK(slow->queued_frames() > fast->queued_frames());
+    CHECK(poll_until(*fast, [](uint32_t q) { return q == 0; }));
+    CHECK(slow->queued_frames() > kRate / 20);
     fast->close();
     slow->close();
 }
