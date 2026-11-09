@@ -45,7 +45,6 @@ void usage() {
         "  --threads <n>                       worker threads (default: all)\n"
         "  --shader-pack <file|folder>         the translated shaders to install (default: shader_cache.mprshc, or a shader_cache folder, next to\n"
         "                                      this program). Setup stops without them.\n"
-        "  --shader-cache <file|folder>        same as --shader-pack (older name)\n"
         "  --no-shaders                        developer option: install without shaders. The game will not draw anything until they are installed.\n"
         "  --skip-textures                     do not build the texture cache\n"
         "  --no-verify                         skip checking the dump's own hashes (faster, less safe)\n"
@@ -150,7 +149,7 @@ int wmain(int argc, wchar_t** wargv) {
         else if (a == "--keys") o.key_files = split_commas(val());
         else if (a == "--quality") o.bc7_quality = std::atoi(val().c_str());
         else if (a == "--threads") o.threads = std::atoi(val().c_str());
-        else if (a == "--shader-pack" || a == "--shader-cache") o.shader_cache_src = val();
+        else if (a == "--shader-pack") o.shader_cache_src = val();
         else if (a == "--no-shaders") o.allow_no_shaders = true;
         else if (a == "--skip-textures") o.skip_textures = true;
         else if (a == "--no-verify") o.verify_input = false;

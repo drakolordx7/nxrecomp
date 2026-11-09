@@ -229,7 +229,7 @@ CmdLine parse_command_line() {
             c.exit_when_done = true;
         } else if (a == L"--no-message-box") {
             c.no_message_box = true;
-        } else if (a == L"--shader-pack" || a == L"--shader-cache") {
+        } else if (a == L"--shader-pack") {
             c.shader_pack = trim_path(value());
         } else if (a == L"--no-shaders") {
             c.no_shaders = true;
@@ -401,12 +401,6 @@ public:
 
     void stage_end(Stage stage, double seconds) override {
         post_owned(hwnd_, kMsgStageEnd, new StageEndMsg{stage, seconds});
-    }
-
-    void note(LogLevel level, const std::string& text) override {
-        std::wstring line = (level == LogLevel::Warn || level == LogLevel::Error) ? L"Warning: " : L"";
-        line += widen(text);
-        post_owned(hwnd_, kMsgLog, new std::wstring(std::move(line)));
     }
 
     bool cancel_requested() override { return shared_.cancel.load(); }

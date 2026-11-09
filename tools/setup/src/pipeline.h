@@ -74,7 +74,6 @@ public:
     virtual void stage_begin(Stage, const std::string& title, u64 total, const char* unit) {}
     virtual void stage_progress(u64 done) {}               // done of total in the current stage (may be called from any thread)
     virtual void stage_end(Stage, double seconds) {}
-    virtual void note(LogLevel, const std::string&) {}     // unused by run_setup: every message goes through logf() (log file + log_set_sink)
     virtual bool cancel_requested() { return false; }      // polled often; true = stop soon, keep progress
 };
 
