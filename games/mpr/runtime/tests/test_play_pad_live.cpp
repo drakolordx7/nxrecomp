@@ -18,6 +18,7 @@
 #include "nxrt/config.h"
 #include "nxrt/hooks.h"
 #include "nxrt/input.h"
+#include "nxrt/memory.h"
 #include "nxrt/input_source.h"
 #include "nxrt/platform.h"
 #include "nxrt/play.h"
@@ -34,7 +35,7 @@ namespace hid = nxrt::hid;
 namespace platform = nxrt::platform;
 namespace play = nxrt::play;
 
-constexpr uint64_t kBase = 0x5B00000000ull;
+constexpr uint64_t kBase = nxrt::mem::kMainBase;
 constexpr uint64_t kUpdate = 0x3c81c8;
 
 struct Rumble {
@@ -63,7 +64,6 @@ bool setup() {
     const auto dir = std::filesystem::temp_directory_path() / "nxrt_play_pad_live_test";
     std::filesystem::create_directories(dir);
     nxrt::config_set("play", "controls", (dir / "controls.ini").string().c_str());
-    nxrt::config_set("play", "game_base", "0x5B00000000");
     if (!platform::init()) return false;
     play::load();
     play::StartOptions o;

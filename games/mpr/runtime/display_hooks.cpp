@@ -3,6 +3,7 @@
 // and post-effect functions (display_hooks.h). The arithmetic they use is the base's (src/gfx/play/play_display.h).
 #include "display_hooks.h"
 #include "nxrt/extras.h"
+#include "hud_math.h"
 
 #include <algorithm>
 #include <atomic>
@@ -194,17 +195,21 @@ int hook_chromatic(::Ctx* c, uint64_t, void*) {
 
 void display_set_scene_scale(int percent) { st().scene_scale.store(percent, std::memory_order_relaxed); }
 
-void display_apply(const DisplaySettings& d) {
+void display_apply(const Settings& settings) {
     State& s = st();
+    const DisplaySettings& d = settings.display;
+    const MprSettings& ms = mpr_settings(settings);
     s.aspect.store(d.aspect > 0 ? std::clamp(d.aspect, kMinAspect, kMaxAspect) : 0.0);
     s.fov_offset.store(std::clamp(d.fov_offset, -30.0, 40.0));
-    s.dynres.store(d.dynamic_resolution);
-    s.bloom.store(d.bloom);
-    s.chroma.store(d.chromatic_aberration);
+    s.dynres.store(ms.dynamic_resolution);
+    s.bloom.store(ms.bloom);
+    s.chroma.store(ms.chromatic_aberration);
 }
 
-void display_install(uint64_t module_base, const DisplaySettings& d, int window_w, int window_h) {
+void display_install(uint64_t module_base, const Settings& settings, int window_w, int window_h) {
     State& s = st();
+    const DisplaySettings& d = settings.display;
+    const MprSettings& ms = mpr_settings(settings);
     std::lock_guard<std::mutex> lk(s.mu);
     if (s.installed) return;
     s.base = module_base;
@@ -212,7 +217,7 @@ void display_install(uint64_t module_base, const DisplaySettings& d, int window_
     internal_size(d, window_w, window_h, &w, &h);
     s.w.store(w);
     s.h.store(h);
-    display_apply(d);
+    display_apply(settings);
     const struct { uint64_t off; SiteHookFn fn; } table[] = {
         {kGetScreenWidth, hook_width},           {kGetScreenHeight, hook_height},       {kGetResolutionScale, hook_resolution_scale},
         {kUpdateCameraNodes, hook_camera_nodes}, {kGuiProjectionState, hook_gui_projection}, {kGetVerticalFov, hook_vertical_fov},
@@ -222,8 +227,8 @@ void display_install(uint64_t module_base, const DisplaySettings& d, int window_
     s.installed = true;
     NXLOG_I(kTag, "internal resolution %dx%d (window %dx%d, scale %d%%%s), aspect %s, FOV offset %.1f deg, dynamic resolution %s, anisotropy %d, LOD bias %.2f, bloom %s, chromatic aberration %s",
             w, h, window_w, window_h, d.render_scale, d.render_width > 0 && d.render_height > 0 ? ", fixed size" : "",
-            d.aspect > 0 ? std::to_string(d.aspect).c_str() : "auto", d.fov_offset, d.dynamic_resolution ? "on" : "off", d.anisotropy, d.lod_bias,
-            d.bloom ? "on" : "off", d.chromatic_aberration ? "on" : "off");
+            d.aspect > 0 ? std::to_string(d.aspect).c_str() : "auto", d.fov_offset, ms.dynamic_resolution ? "on" : "off", d.anisotropy, d.lod_bias,
+            ms.bloom ? "on" : "off", ms.chromatic_aberration ? "on" : "off");
 }
 
 void display_remove() {
@@ -241,9 +246,6 @@ DisplayLive display_live() {
     l.render_h = s.h.load();
     l.aspect = s.aspect.load();
     l.fov_offset = s.fov_offset.load();
-    l.dynamic_resolution = s.dynres.load();
-    l.bloom = s.bloom.load();
-    l.chromatic_aberration = s.chroma.load();
     return l;
 }
 

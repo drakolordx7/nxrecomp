@@ -22,15 +22,16 @@
 #include <cstdint>
 
 #include "nxrt/game/play_display.h"
+#include "mpr_settings.h"
 
 namespace nxrt::play {
 
 // Installs the hooks relative to the module base. Idempotent. `window_w/h`: client size in pixels at start-up (the internal size is derived
 // from it once, here).
-void display_install(uint64_t module_base, const DisplaySettings& d, int window_w, int window_h);
+void display_install(uint64_t module_base, const Settings& s, int window_w, int window_h);
 void display_remove();
 // Applies the live options (everything except the internal size, which only changes with a restart).
-void display_apply(const DisplaySettings& d);
+void display_apply(const Settings& s);
 DisplayLive display_live();
 // [upscale] scene_scale (percent of the output size, 25..100), told by the base through the render table (mpr_render.cpp). 100 = off.
 void display_set_scene_scale(int percent);

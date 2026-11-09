@@ -13,8 +13,10 @@
 
 #include "nxrt/config.h"
 #include "nxrt/hooks.h"
+#include "nxrt/memory.h"
 #include "nxrt/timestep.h"
-#include "mpr_sites.h"     // the sites the registered test game (Metroid Prime Remastered) lists
+#include "mpr_sites.h"
+#include "mpr_timestep.h"     // the sites the registered test game (Metroid Prime Remastered) lists
 
 NXTEST_GROUP(timestep)
 
@@ -81,18 +83,19 @@ float load_f32(const uint8_t* p) {
 
 void store_u32(uint8_t* p, uint32_t v) { std::memcpy(p, &v, 4); }
 
+constexpr uint64_t kBase = nxrt::mem::kMainBase;
+
 ts::Config base_cfg(ts::Mode m) {
     ts::Config c;
     c.mode = m;
-    c.game_base = 0x7100000000ull;
+    c.retail_step = mpr_site::kRetailStep;
     return c;
 }
 
-// Config whose render counter sits at buf: game_base + kRenderTimingCounter == buf (unsigned wrap-around is intended).
-ts::Config render_cfg(const uint8_t* buf) {
-    ts::Config c = base_cfg(ts::Mode::Real);
-    c.game_base = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(buf)) - mpr_site::kRenderTimingCounter;
-    return c;
+// Installs with the game's render counter at buf instead of its address in the guest image.
+void install_with_counter(const ts::Config& c, uint8_t* buf) {
+    ts::install(c);
+    nxrt::games::mpr::timestep_set_render_counter_for_tests(buf);
 }
 
 // Leaves the module as it was found, also when a CHECK fails: hooks removed, test clock and deterministic mode reset.
@@ -101,6 +104,7 @@ struct Guard {
     ~Guard() { reset(); }
     static void reset() {
         ts::remove();
+        nxrt::config_clear();
         ts::set_clock_for_tests(nullptr);
         ts::set_deterministic_for_tests(0);
     }
@@ -109,18 +113,18 @@ struct Guard {
 }
 
 NXTEST(scale60_exact) {
-    CHECK_EXACT(ts::scale60(ts::kGameStep), 1.0f);
-    CHECK_EXACT(ts::scale60(ts::kGameStep / 2), 0.5f);
-    CHECK_EXACT(ts::scale60(ts::kGameStep / 4), 0.25f);
+    CHECK_EXACT(ts::step_scale(mpr_site::kRetailStep), 1.0f);
+    CHECK_EXACT(ts::step_scale(mpr_site::kRetailStep / 2), 0.5f);
+    CHECK_EXACT(ts::step_scale(mpr_site::kRetailStep / 4), 0.25f);
 }
 
 NXTEST(stepper_off_and_first_frame) {
     ts::Stepper off(base_cfg(ts::Mode::Off));
-    CHECK_EXACT(off.step(0.001), static_cast<double>(ts::kGameStep));
+    CHECK_EXACT(off.step(0.001), static_cast<double>(mpr_site::kRetailStep));
     CHECK_EXACT(off.min_period(), 0.0);
 
     ts::Stepper real(base_cfg(ts::Mode::Real));
-    CHECK_EXACT(real.step(-1.0), static_cast<double>(ts::kGameStep));
+    CHECK_EXACT(real.step(-1.0), static_cast<double>(mpr_site::kRetailStep));
 }
 
 NXTEST(stepper_real_raw) {
@@ -176,33 +180,19 @@ NXTEST(config_defaults_and_keys) {
     CHECK_EXACT(d.max_rate, 480.0);
     CHECK_EXACT(d.min_rate, 30.0);
     CHECK(d.pace);
-    CHECK(d.fix_scaled_float);
-    CHECK(d.fix_frame_counter);
-    CHECK(d.fix_stream_step);
-    CHECK(d.fix_scaled_reg);
     CHECK(d.movie_real);
+    CHECK_EXACT(d.retail_step, mpr_site::kRetailStep);
 
     nxrt::config_load_string(
-        "[time]\nmode = fixed\nrate = 120\nsmooth = 8\npace = 0\nfix_friction = 0\nmax_rate = 240\nmin_rate = 20\n");
+        "[time]\nmode = fixed\nrate = 120\nsmooth = 8\npace = 0\nmax_rate = 240\nmin_rate = 20\n");
     ts::Config f = ts::load_config();
     CHECK(f.mode == ts::Mode::Fixed);
     CHECK_EXACT(f.rate, 120.0);
     CHECK_EQ(f.smooth, 8);
     CHECK(!f.pace);
-    CHECK(!f.fix_scaled_float);
-    CHECK(f.fix_frame_counter);
-    CHECK(f.fix_stream_step);
-    CHECK(f.fix_scaled_reg);
     CHECK(f.movie_real);
     CHECK_EXACT(f.max_rate, 240.0);
     CHECK_EXACT(f.min_rate, 20.0);
-
-    // The mechanism names are the keys; the old names are aliases, and the new name wins when both are set.
-    nxrt::config_load_string("[time]\nfix_tick_sampler = 0\nfix_stuck_tracker = 1\nfix_budget = 0\n");
-    ts::Config a = ts::load_config();
-    CHECK(!a.fix_tick_sampler);
-    CHECK(!a.fix_scaled_reg);
-    CHECK(a.fix_scaled_float);
 
     nxrt::config_load_string("[time]\nmode = off\n");
     CHECK(ts::load_config().mode == ts::Mode::Off);
@@ -217,12 +207,12 @@ NXTEST(update_hook_real_mode) {
     c.smooth = 1;
     c.pace = true;
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     g_now = 100.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
-    CHECK_EXACT(ts::current_dt(), ts::kGameStep);
+    CHECK_EXACT(ts::current_dt(), mpr_site::kRetailStep);
 
     g_now = 100.0 + 1.0 / 120.0;
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
@@ -248,7 +238,7 @@ NXTEST(update_hook_real_mode) {
     for (uint64_t off : budgets) {
         ctx.x[8] = 0xdeadbeefcafeull;
         CHECK_EQ(nx_site_midhook(&ctx, b + off), 0);
-        CHECK_NEAR(lo_float(ctx.x[8]), 0.014f * ts::scale60(dt), 1e-7);
+        CHECK_NEAR(lo_float(ctx.x[8]), 0.014f * ts::step_scale(dt), 1e-7);
     }
 
     g_now += 1.0;
@@ -265,7 +255,7 @@ NXTEST(update_hook_deterministic) {
     ts::set_deterministic_for_tests(1.0 / 120.0);
     ts::Config c = base_cfg(ts::Mode::Real);
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     for (int i = 0; i < 3; i++) {
@@ -285,7 +275,7 @@ NXTEST(update_hook_fixed) {
     ts::Config c = base_cfg(ts::Mode::Fixed);
     c.rate = 144.0;
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     // The clock moves 1 ms per call, less than the 1/144 s period, so the pacing holds the frame.
@@ -307,7 +297,7 @@ NXTEST(update_hook_off) {
     ts::install(c);
     CHECK_EQ(nxrt::hook_count(), before);
 
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     ctx.x[27] = 0x1234ull;
@@ -322,7 +312,7 @@ NXTEST(friction_hook) {
     ts::Config c = base_cfg(ts::Mode::Real);
     c.smooth = 1;
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     g_now = 300.0;
@@ -332,10 +322,10 @@ NXTEST(friction_hook) {
 
     ctx.v[1].f32[0] = 3.5f;
     CHECK_EQ(nx_site_midhook(&ctx, b + mpr_site::kFriction), 0);
-    CHECK_NEAR(ctx.v[1].f32[0], 3.5f * ts::scale60(ts::current_dt()), 1e-6);
+    CHECK_NEAR(ctx.v[1].f32[0], 3.5f * ts::step_scale(ts::current_dt()), 1e-6);
 
     ts::remove();
-    c.fix_scaled_float = false;
+    nxrt::config_load_string("[time]\nfix_friction = 0\n");
     ts::install(c);
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 120.0;
@@ -350,7 +340,7 @@ NXTEST(streaming_hooks) {
     ts::set_clock_for_tests(&fake_clock);
     ts::Config c = base_cfg(ts::Mode::Real);
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     g_now = 400.0;
@@ -377,7 +367,7 @@ NXTEST(streaming_hooks) {
     CHECK_EQ(lo32(ctx.x[9]), bits(2.0f * dt));
 
     ts::remove();
-    c.fix_stream_step = false;
+    nxrt::config_load_string("[time]\nfix_stream_step = 0\n");
     ts::install(c);
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
     g_now += 1.0 / 240.0;
@@ -401,10 +391,10 @@ NXTEST(render_timings_hook) {
 
     std::memset(buf, 0, sizeof buf);
     ts::set_deterministic_for_tests(1.0 / 60.0);
-    ts::Config c = render_cfg(buf);
-    ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
-    for (int i = 0; i < 3; i++) CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 1);
+    ts::Config c = base_cfg(ts::Mode::Real);
+    install_with_counter(c, buf);
+    CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kUpdate), 0);
+    for (int i = 0; i < 3; i++) CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kTickRenderTimings), 1);
     CHECK_EQ(load_u32(buf), 3u);
     CHECK_EXACT(load_f32(buf + 4), 3.0f / 60.0f);
     CHECK_EXACT(ctx.v[0].f32[0], 3.0f / 60.0f);
@@ -412,10 +402,9 @@ NXTEST(render_timings_hook) {
     ts::remove();
     std::memset(buf, 0, sizeof buf);
     ts::set_deterministic_for_tests(1.0 / 240.0);
-    c = render_cfg(buf);
-    ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
-    for (int i = 0; i < 4; i++) CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 1);
+    install_with_counter(c, buf);
+    CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kUpdate), 0);
+    for (int i = 0; i < 4; i++) CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kTickRenderTimings), 1);
     CHECK_EQ(load_u32(buf), 1u);
     CHECK_NEAR(load_f32(buf + 4), 1.0f / 60.0f, 1e-6);
 
@@ -423,10 +412,9 @@ NXTEST(render_timings_hook) {
     std::memset(buf, 0, sizeof buf);
     store_u32(buf, 52999);
     ts::set_deterministic_for_tests(1.0 / 60.0);
-    c = render_cfg(buf);
-    ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 1);
+    install_with_counter(c, buf);
+    CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kTickRenderTimings), 1);
     CHECK_EQ(load_u32(buf), 0u);
     CHECK_EXACT(load_f32(buf + 4), 0.0f);
 
@@ -435,11 +423,10 @@ NXTEST(render_timings_hook) {
     uint8_t snap[16];
     std::memcpy(snap, buf, sizeof buf);
     ts::set_deterministic_for_tests(1.0 / 60.0);
-    c = render_cfg(buf);
-    c.fix_frame_counter = false;
-    ts::install(c);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kUpdate), 0);
-    CHECK_EQ(nx_hook_entry(&ctx, c.game_base + mpr_site::kTickRenderTimings), 0);
+    nxrt::config_load_string("[time]\nfix_render_timings = 0\n");
+    install_with_counter(c, buf);
+    CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kUpdate), 0);
+    CHECK_EQ(nx_hook_entry(&ctx, kBase + mpr_site::kTickRenderTimings), 0);
     CHECK(std::memcmp(buf, snap, sizeof buf) == 0);
 }
 
@@ -451,7 +438,7 @@ NXTEST(movie_hook) {
     c.movie_real = true;
     c.movie_max = 0.5;
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     g_now = 50.0;
@@ -494,7 +481,7 @@ NXTEST(pacing_real_mode_waits) {
     c.pace = true;
     c.max_rate = 480.0;
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     g_now = 10.0;
@@ -512,7 +499,7 @@ NXTEST(retail_off_rate_paces_without_touching_the_step) {
     c.off_rate = 100.0;          // 10 ms per frame
     c.pace = true;
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     // The Update hook runs (frames are counted and paced) but the game keeps its own 1/60: active() is false and no register is touched.
@@ -543,7 +530,7 @@ NXTEST(update_loop_runs_one_tick_per_frame) {
         c.smooth = 1;
         c.pace = false;
         ts::install(c);
-        const uint64_t b = c.game_base;
+        const uint64_t b = kBase;
         ::Ctx ctx{};
         double elapsed_in_game = 0, accum = 0;     // Update's accumulator (this+0xa0)
         int ticks = 0;
@@ -583,7 +570,7 @@ NXTEST(stuck_tracker_samples_once_per_tick_at_240hz) {
     ts::set_deterministic_for_tests(1.0 / 240.0);
     ts::Config c = base_cfg(ts::Mode::Real);
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
@@ -605,7 +592,7 @@ NXTEST(stuck_tracker_samples_every_call_at_60hz) {
     ts::set_deterministic_for_tests(1.0 / 60.0);
     ts::Config c = base_cfg(ts::Mode::Real);
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
@@ -619,7 +606,7 @@ NXTEST(stuck_tracker_samples_60_of_144) {
     ts::set_deterministic_for_tests(1.0 / 144.0);
     ts::Config c = base_cfg(ts::Mode::Real);
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);
@@ -635,10 +622,9 @@ NXTEST(stuck_tracker_off_by_config) {
     ts::set_clock_for_tests(&fake_clock);
     nxrt::config_load_string("[time]\nfix_stuck_tracker = 0\n");
     ts::Config c = ts::load_config();
-    CHECK(!c.fix_tick_sampler);
     ts::set_deterministic_for_tests(1.0 / 240.0);
     ts::install(c);
-    const uint64_t b = c.game_base;
+    const uint64_t b = kBase;
     ::Ctx ctx{};
 
     CHECK_EQ(nx_hook_entry(&ctx, b + mpr_site::kUpdate), 0);

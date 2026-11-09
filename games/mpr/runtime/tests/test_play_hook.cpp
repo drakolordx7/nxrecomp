@@ -18,6 +18,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/input.h"
+#include "nxrt/memory.h"
 #include "nxrt/play.h"
 #include "play_aim.h"
 
@@ -28,7 +29,7 @@ namespace {
 namespace play = nxrt::play;
 namespace input = nxrt::input;
 
-constexpr uint64_t kBase = 0x5A00000000ull;
+constexpr uint64_t kBase = nxrt::mem::kMainBase;
 constexpr uint64_t kUpdate = 0x3c81c8, kProcessInput = 0xc70334, kSetTransform = 0xc4d588, kGyroFreelook = 0xc3af10;
 constexpr double kYaw = 0.000767945;     // the factory sensitivity, radians per count
 
@@ -91,7 +92,6 @@ void setup() {
     const auto dir = std::filesystem::temp_directory_path() / "nxrt_play_hook_test";
     std::filesystem::create_directories(dir);
     nxrt::config_set("play", "controls", (dir / "controls.ini").string().c_str());
-    nxrt::config_set("play", "game_base", "0x5A00000000");
     nxrt::fn_register(kBase + kProcessInput, &fake_process_input);
     nxrt::fn_register(kBase + kSetTransform, &fake_set_transform);
     nxrt::fn_register(kBase + kGyroFreelook, &fake_gyro_freelook);

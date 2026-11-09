@@ -14,6 +14,8 @@
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/hooks.h"
 #include "display_hooks.h"
+#include "hud_math.h"
+#include "mpr_settings.h"
 #include "nxrt/game/play_display.h"
 
 NXTEST_GROUP(play_display)
@@ -41,9 +43,26 @@ void commit_globals() {
     CHECK(VirtualAlloc(reinterpret_cast<void*>(kBase + 0x20e7000), 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != nullptr);
 }
 
-void install(const play::DisplaySettings& d, int window_w = 1280, int window_h = 720) {
+// The display settings plus the options Metroid Prime Remastered adds to them (mpr_settings.h), as one value the tests fill in.
+struct Disp : play::DisplaySettings {
+    bool dynamic_resolution = false, bloom = true, chromatic_aberration = true;
+};
+
+play::Settings to_settings(const Disp& d) {
+    play::Settings s;
+    static_cast<play::DisplaySettings&>(s.display) = d;
+    play::MprSettings& m = play::mpr_settings(s);
+    m.dynamic_resolution = d.dynamic_resolution;
+    m.bloom = d.bloom;
+    m.chromatic_aberration = d.chromatic_aberration;
+    return s;
+}
+
+void apply_disp(const Disp& d) { play::display_apply(to_settings(d)); }
+
+void install(const Disp& d, int window_w = 1280, int window_h = 720) {
     commit_globals();
-    play::display_install(kBase, d, window_w, window_h);
+    play::display_install(kBase, to_settings(d), window_w, window_h);
 }
 
 int call(uint64_t off, ::Ctx* c) { return nx_hook_entry(c, kBase + off); }
@@ -59,7 +78,7 @@ void write_f(void* p, float v) { std::memcpy(p, &v, sizeof v); }
 }
 
 NXTEST(internal_size_scales_the_window) {
-    play::DisplaySettings d;
+    Disp d;
     int w = 0, h = 0;
     play::internal_size(d, 1280, 720, &w, &h);            // default scale is 100 percent
     CHECK_EQ(w, 1280);
@@ -75,7 +94,7 @@ NXTEST(internal_size_scales_the_window) {
 }
 
 NXTEST(internal_size_fixed_size_wins_and_a_single_side_is_ignored) {
-    play::DisplaySettings d;
+    Disp d;
     int w = 0, h = 0;
     d.render_width = 3840;
     d.render_height = 1600;
@@ -98,7 +117,7 @@ NXTEST(internal_size_fixed_size_wins_and_a_single_side_is_ignored) {
 }
 
 NXTEST(internal_size_rounds_odd_results_down_to_even) {
-    play::DisplaySettings d;
+    Disp d;
     int w = 0, h = 0;
     play::internal_size(d, 1281, 721, &w, &h);
     CHECK_EQ(w, 1280);
@@ -106,7 +125,7 @@ NXTEST(internal_size_rounds_odd_results_down_to_even) {
 }
 
 NXTEST(internal_size_caps_the_area_and_keeps_the_aspect) {
-    play::DisplaySettings d;
+    Disp d;
     d.render_width = 16384;
     d.render_height = 16384;
     int w = 0, h = 0;
@@ -118,7 +137,7 @@ NXTEST(internal_size_caps_the_area_and_keeps_the_aspect) {
 }
 
 NXTEST(internal_size_raises_a_tiny_window_to_the_minimum) {
-    play::DisplaySettings d;
+    Disp d;
     d.render_scale = 25;
     int w = 0, h = 0;
     play::internal_size(d, 100, 50, &w, &h);             // 25 x 12.5 before the clamp
@@ -127,7 +146,7 @@ NXTEST(internal_size_raises_a_tiny_window_to_the_minimum) {
 }
 
 NXTEST(display_aspect_follows_the_resolution_unless_forced) {
-    play::DisplaySettings d;
+    Disp d;
     CHECK(close_to(play::display_aspect(d, 3440, 1440), 3440.0 / 1440.0, 1e-3));
     d.aspect = kAspect16x9;
     CHECK(close_to(play::display_aspect(d, 3440, 1440), kAspect16x9));          // forced 16:9 wins
@@ -242,7 +261,7 @@ NXTEST(fov_offset_is_added_in_degrees_and_clamped) {
 }
 
 NXTEST(hook_resolution_reports_the_internal_size) {
-    play::DisplaySettings d;
+    Disp d;
     d.render_scale = 200;
     install(d, 1280, 720);
     ::Ctx w{};
@@ -258,16 +277,16 @@ NXTEST(hook_resolution_reports_the_internal_size) {
 }
 
 NXTEST(hook_dynamic_resolution_is_off_unless_the_game_controller_is_allowed) {
-    play::DisplaySettings d;
+    Disp d;
     d.dynamic_resolution = false;
     install(d);
     ::Ctx on{};
     on.v[0].f32[0] = 0.5f;
     CHECK_EQ(call(kResolutionScale, &on), 1);
     CHECK(on.v[0].f32[0] == 1.0f);                                              // scale 1.0: dynamic resolution off
-    play::DisplaySettings live = d;
+    Disp live = d;
     live.dynamic_resolution = true;
-    play::display_apply(live);
+    apply_disp(live);
     ::Ctx game{};
     game.v[0].f32[0] = 0.5f;
     CHECK_EQ(call(kResolutionScale, &game), 0);                                 // the game's own controller runs
@@ -279,10 +298,10 @@ NXTEST(hook_camera_nodes_write_the_display_aspect) {
     std::vector<uint8_t> mgr(32, 0), proxy(160, 0);
     const uint64_t proxy_addr = reinterpret_cast<uint64_t>(proxy.data());
     std::memcpy(mgr.data() + 16, &proxy_addr, sizeof proxy_addr);              // [manager + 16] = the scene node proxy
-    play::DisplaySettings d;
+    Disp d;
     d.aspect = kAspect21x9;
     install(d);
-    play::display_apply(d);
+    apply_disp(d);
     ::Ctx c{};
     c.x[0] = reinterpret_cast<uint64_t>(mgr.data());
     CHECK_EQ(call(kCameraNodes, &c), 0);                                        // not handled: the game's function runs with the aspect in place
@@ -290,11 +309,11 @@ NXTEST(hook_camera_nodes_write_the_display_aspect) {
     CHECK(close_to(*reinterpret_cast<const float*>(kBase + kDefaultAspect), kAspect21x9));
     // automatic aspect at a fixed 1920x1080 internal size: 16:9
     play::display_remove();
-    play::DisplaySettings a;
+    Disp a;
     a.render_width = 1920;
     a.render_height = 1080;
     install(a);
-    play::display_apply(a);
+    apply_disp(a);
     std::memset(proxy.data(), 0, proxy.size());
     ::Ctx c2{};
     c2.x[0] = reinterpret_cast<uint64_t>(mgr.data());
@@ -310,10 +329,10 @@ NXTEST(hook_gui_perspective_camera_takes_the_display_aspect) {
     write_f(cam.data() + 272, 1.7778f);
     write_f(cam.data() + 276, 0.1f);
     write_f(cam.data() + 280, 1000.0f);
-    play::DisplaySettings d;
+    Disp d;
     d.aspect = kAspect21x9;
     install(d);
-    play::display_apply(d);
+    apply_disp(d);
     ::Ctx c{};
     c.x[0] = reinterpret_cast<uint64_t>(cam.data());
     CHECK_EQ(call(kGuiProjection, &c), 0);
@@ -331,10 +350,10 @@ NXTEST(hook_gui_orthographic_camera_widens_the_horizontal_extents) {
     write_f(cam.data() + 272, 8.0f);
     write_f(cam.data() + 276, -4.5f);
     write_f(cam.data() + 280, 4.5f);
-    play::DisplaySettings d;
+    Disp d;
     d.aspect = kAspect21x9;
     install(d);
-    play::display_apply(d);
+    apply_disp(d);
     ::Ctx c{};
     c.x[0] = reinterpret_cast<uint64_t>(cam.data());
     CHECK_EQ(call(kGuiProjection, &c), 0);
@@ -349,15 +368,15 @@ NXTEST(hook_gui_orthographic_camera_widens_the_horizontal_extents) {
 NXTEST(hook_vertical_fov_adds_the_offset) {
     std::vector<uint8_t> cam(0x500, 0);
     write_f(cam.data() + 1120, 1.0f);
-    play::DisplaySettings d;
+    Disp d;
     d.fov_offset = 0;
     install(d);
     ::Ctx none{};
     none.x[0] = reinterpret_cast<uint64_t>(cam.data());
     CHECK_EQ(call(kVerticalFov, &none), 0);                                     // no offset: the game's own value
-    play::DisplaySettings wide = d;
+    Disp wide = d;
     wide.fov_offset = 10;
-    play::display_apply(wide);
+    apply_disp(wide);
     ::Ctx c{};
     c.x[0] = reinterpret_cast<uint64_t>(cam.data());
     CHECK_EQ(call(kVerticalFov, &c), 1);
@@ -370,15 +389,15 @@ NXTEST(hook_vertical_fov_adds_the_offset) {
 }
 
 NXTEST(hook_bloom_is_skipped_when_off) {
-    play::DisplaySettings d;
+    Disp d;
     d.bloom = true;
     install(d);
     ::Ctx on{};
     on.x[0] = 5;
     CHECK_EQ(call(kBloom, &on), 0);                                             // on: the game's pass runs
-    play::DisplaySettings off = d;
+    Disp off = d;
     off.bloom = false;
-    play::display_apply(off);
+    apply_disp(off);
     ::Ctx skip{};
     skip.x[0] = 7;
     CHECK_EQ(call(kBloom, &skip), 1);
@@ -387,7 +406,7 @@ NXTEST(hook_bloom_is_skipped_when_off) {
 }
 
 NXTEST(hook_chromatic_aberration_zeroes_its_strength_when_off) {
-    play::DisplaySettings d;
+    Disp d;
     d.chromatic_aberration = true;
     install(d);
     float params[4] = {5.0f, 3.0f, 2.0f, 0.0f};
@@ -395,9 +414,9 @@ NXTEST(hook_chromatic_aberration_zeroes_its_strength_when_off) {
     on.x[2] = reinterpret_cast<uint64_t>(params);
     CHECK_EQ(call(kChromatic, &on), 0);
     CHECK(params[0] == 5.0f && params[1] == 3.0f && params[2] == 2.0f && params[3] == 0.0f);
-    play::DisplaySettings off = d;
+    Disp off = d;
     off.chromatic_aberration = false;
-    play::display_apply(off);
+    apply_disp(off);
     ::Ctx skip{};
     skip.x[2] = reinterpret_cast<uint64_t>(params);
     CHECK_EQ(call(kChromatic, &skip), 0);                                       // the game's pass still runs
@@ -407,7 +426,7 @@ NXTEST(hook_chromatic_aberration_zeroes_its_strength_when_off) {
 }
 
 NXTEST(display_tuning_sets_the_texture_filtering) {
-    play::DisplaySettings d;
+    Disp d;
     d.anisotropy = 8;
     d.lod_bias = -0.5;
     play::display_tuning(d);

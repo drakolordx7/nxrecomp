@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "display_hooks.h"
+#include "mpr_acts.h"
 #include "menu_mouse_game.h"
 #include "mpr_fastboot.h"
 #include "mpr_settings.h"
@@ -59,6 +60,11 @@ struct M {
     uint32_t ball_state = 0, ball_behaviour = 0;
     bool ball_free = false;
     uint32_t hook_input = 0, hook_fpcam = 0, hook_ballcam = 0;
+    uint64_t map_acts_seen = 0;           // the map action's activations when the context was last worked out
+    bool map_hint = false, was_in_game = false;
+    bool have_pointer = false;            // the pointer's last position, for the map drag
+    float pointer_x = 0, pointer_y = 0;
+    uint64_t pointer_ns = 0;
 };
 
 M& m() {
@@ -104,20 +110,21 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         uint32_t morph_word = 0;                       // 0 unmorphed, 2 and 3 transitions, 1 in the ball (the gate stops at "not first person" first)
         guest_read(player + 0x4d4, &morph_word, sizeof morph_word);
         if (morph_word == 1) {
-            if (ms.alt_camera) {
+            const BallCameraSettings& ball = mpr_settings(host.settings()).ball;
+            if (ball.on) {
                 LookParams lp;
-                lp.yaw_rad = ms.alt_yaw_rad;
-                lp.pitch_rad = ms.alt_pitch_rad;
+                lp.yaw_rad = ball.yaw_rad;
+                lp.pitch_rad = ball.pitch_rad;
                 lp.invert_x = ms.invert_x;
                 lp.invert_y = ms.invert_y;
                 lp.pitch_limit_rad = kBallMaxElevation;   // the real limit is the camera's height above the ball (cam_think_hook)
                 if (dx != 0 || dy != 0) st.ball.add_mouse(dx, dy, lp);
                 // the right stick turns the camera too, at a speed in radians per second (the game gives the stick no job in the ball)
                 float sx = 0, sy = 0, dt_in = 0;
-                if (host.settings().pad.alt_orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
+                if (ball.orbit > 0 && guest_read(c->x[1], &dt_in, sizeof dt_in) && dt_in > 1e-4f && dt_in < 0.25f) {
                     host.right_stick(&sx, &sy);
                     if (sx != 0 || sy != 0) {
-                        const double rate = host.settings().pad.alt_orbit * static_cast<double>(dt_in);
+                        const double rate = ball.orbit * static_cast<double>(dt_in);
                         st.ball.add_angles(-static_cast<double>(sx) * rate, static_cast<double>(sy) * rate, lp);
                     }
                 }
@@ -128,7 +135,7 @@ int process_input_hook(::Ctx* c, uint64_t addr, void*) {
         } else {
             st.ball.reset();
         }
-        if (gate == AimBlock::None && host.action_active(Act::LookHold, now)) {
+        if (gate == AimBlock::None && host.action_active(mact::LookHold, now)) {
             LookParams lp;
             lp.yaw_rad = ms.yaw_rad;
             lp.pitch_rad = ms.pitch_rad;
@@ -295,11 +302,11 @@ int cam_think_hook(::Ctx* c, uint64_t addr, void* user) {
     return 1;
 }
 
-void install_render(uint64_t base, const DisplaySettings& d, int window_w, int window_h) {
+void install_render(uint64_t base, const Settings& s, int window_w, int window_h) {
     M& st = m();
     st.base = base;
     st.aim = std::make_unique<AimDriver>(base);
-    display_install(base, d, window_w, window_h);
+    display_install(base, s, window_w, window_h);
     extras::tonemap_hook_install(base);
 }
 
@@ -341,7 +348,7 @@ void remove() {
 }
 
 void settings_changed(const Settings& s) {
-    display_apply(s.display);
+    display_apply(s);
     lockcam_set(s);
     fastboot_set(s);
     glow_set(mpr_settings(s).tweaks);
@@ -354,16 +361,28 @@ void frame_begin() {
     tint_frame();
 }
 
-void frame(bool in_game, double step, GameFrame* out) {
+void map_pointer_sticks(const GameFrameIn& in, GameFrame* out);
+
+void frame(const GameFrameIn& in, const GameHost& host, GameFrame* out) {
     M& st = m();
+    const bool in_game = in.in_game;
+    const double step = in.step_seconds;
     // The gyro's rate is added to the pitch target once per call, with no time step (play_lookrate.h): the game gets the rate times (step * 60), so a step of
     // 1/120 s adds half as much, twice as often. Menus and the map get the gyro as it is. The stick needs no such thing: its pitch code runs once per 1/60 s
     // (the hook on ComputeFreeLook).
     out->look_scale = in_game ? static_cast<float>(look_rate_scale(step)) : 1.f;
+    // The map is not a game state this module reads: it is where the player is after pressing the map action and before the game is in play again.
+    const uint64_t map_acts = host.activations(Act::Map);
+    if (in_game && map_acts != st.map_acts_seen) st.map_hint = true;
+    st.map_acts_seen = map_acts;
+    if (in_game && !st.was_in_game) st.map_hint = false;
+    st.was_in_game = in_game;
+    if (!in_game) out->ctx = st.map_hint ? Ctx::Map : Ctx::Menu;
+    map_pointer_sticks(in, out);
     if (!st.aim) return;
     const GameHints hints = st.aim->hints(st.player.load());
     if (hints.valid) {
-        static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma
+        static const int game_to_mine[4] = {0, 2, 1, 3};      // game: power ice wave plasma; bindings: power wave ice plasma (mact::Beam1..4)
         unsigned mask = 0;
         for (int i = 0; i < 4; ++i)
             if (hints.owned_beams & (1u << i)) mask |= 1u << game_to_mine[i];
@@ -371,9 +390,33 @@ void frame(bool in_game, double step, GameFrame* out) {
         out->cycle_index = hints.beam >= 0 ? game_to_mine[hints.beam] : -1;     // set A = the beams
         out->cycle_mask = mask;
     }
-    if (hints.morphed) out->play_ctx = Ctx::Alt;
-    else if (hints.visor == 2) out->play_ctx = Ctx::Inspect;
-    else out->play_ctx = Ctx::Play;
+    if (in_game) out->ctx = hints.morphed ? mctx::Alt : hints.visor == 2 ? mctx::Inspect : Ctx::Play;
+}
+
+// The map: a held left button on the pointer turns the map (left stick), a held middle button moves it (right stick); the drag speed is the pointer's
+// travel as a fraction of the window height per second.
+void map_pointer_sticks(const GameFrameIn& in, GameFrame* out) {
+    M& st = m();
+    mm::Pointer& pp = mm::pointer();
+    const bool on_map = out->ctx == Ctx::Map && in.pointer_live;
+    if (on_map && st.have_pointer && (pp.held() || pp.mid_held())) {
+        const float dt = std::max(1e-3f, static_cast<float>(in.now_ns - st.pointer_ns) / 1e9f);
+        const float k = 1.f / (0.8f * static_cast<float>(std::max(1, in.win_h)) * dt);
+        const float dx = std::max(-1.f, std::min(1.f, (pp.x() - st.pointer_x) * k)), dy = std::max(-1.f, std::min(1.f, (pp.y() - st.pointer_y) * k));
+        if (pp.held()) { out->aux[0] = dx; out->aux[1] = -dy; }
+        else { out->aux[2] = dx; out->aux[3] = -dy; }
+    }
+    st.pointer_x = pp.x();
+    st.pointer_y = pp.y();
+    st.pointer_ns = in.now_ns;
+    st.have_pointer = true;
+}
+
+bool menu_wheel(Ctx ctx, float dy, Act* act, int* ms) {
+    if (ctx != Ctx::Map || dy == 0) return false;
+    *act = dy > 0 ? Act::BtnR : Act::BtnL;     // the map's zoom, a longer pulse than a button tap so one notch is a visible step
+    *ms = 160;
+    return true;
 }
 
 Act menu_frame(bool menu_up, const mm::Geometry& g) { return mm::game_frame(menu_up, g); }
@@ -402,12 +445,9 @@ void status_text(char* buf, size_t n) {
 
 }
 
-bool mpr_mouse_tab(int where, Settings& edit);
-
 const GamePlay& mpr_game_play() {
     static const GamePlay t = [] {
         GamePlay p;
-        p.frame_update = games::mpr::site::kUpdate;     // CGameArchitectureSupport::Update(float*): once per rendered frame
         p.install_render = &install_render;
         p.install = &install;
         p.remove = &remove;
@@ -418,10 +458,10 @@ const GamePlay& mpr_game_play() {
         p.display_hook_calls = &display_hook_calls;
         p.menu_frame = &menu_frame;
         p.menu_over_value = &menu_over_value;
+        p.menu_wheel = &menu_wheel;
         p.menu_active = &menu_active;
         p.status = &status;
         p.status_text = &status_text;
-        p.mouse_tab = &mpr_mouse_tab;
         return p;
     }();
     return t;
