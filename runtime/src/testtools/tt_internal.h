@@ -17,7 +17,16 @@ bool read_mem(uint64_t addr, void* out, size_t n);      // ReadProcessMemory on 
 bool write_mem(uint64_t addr, const void* in, size_t n);
 
 // ---- tt_core.cpp ----
+// A screenshot is asked for (shot_request, never waits) and then polled once per frame until its file is complete. take_shot does both, waiting: for a
+// caller that is not the frame thread.
+enum class ShotStatus { Pending, Done, Failed };
+bool shot_request(const std::string& name, std::string* why_not);
+ShotStatus shot_poll(std::string* why_not);
 bool take_shot(const std::string& name, std::string* why_not);
+// @waitlog: a regex is registered when a script is loaded and counts every log line since; -1 when it is not a valid regex.
+int log_watch_add(const std::string& regex);
+bool log_watch_seen(int id);
+void log_watch_clear();
 void add_checkpoint(const std::string& label);
 const RegionTable* regions();
 const std::string& script_path();
@@ -33,6 +42,7 @@ bool key_event(const std::string& name, bool down);
 class Runner {
 public:
     bool load(const std::string& script_file, const RegionTable* regions, std::string* err);
+    bool load_text(const std::string& text, const std::string& name, const RegionTable* regions, std::string* err);   // a script without a file; the process goes on after its last step
     // Executes steps for the frame that just began (frame number k, state s, valid when s_valid). Calls end_run on pass/fail.
     void frame(uint64_t k, const GameState& s, bool s_valid, ::Ctx* c);
     PadFrame pad() const;
@@ -49,8 +59,6 @@ private:
     int64_t remaining_ = 0;
     uint64_t start_frame_ = 0;
     uint64_t start_ms_ = 0;
-    double start_igt_ = -1;
-    uint64_t next_mash_ms_ = 0, mash_release_ms_ = 0;
     int64_t default_timeout_ = 3600;
     uint64_t held_ = 0, pressing_ = 0;
     int16_t stick_[2][2] = {{0, 0}, {0, 0}};
@@ -59,13 +67,15 @@ private:
     int stick_tmp_which_ = 0;
     float mouse_x_ = 0, mouse_y_ = 0;
     int fail_line_ = 0;
-    double igt_base_ = -1;                               // @run: the play time at the first readable frame of the step
+    bool keep_running_ = false;                          // a script from text ends quietly: the run goes on
     // live mode ([test] live = file, env NXRT_TEST_LIVE): when the script runs out of steps the runner waits for more lines appended to that
     // file (so a person or a driver can play the game step by step), writing <file>.status (JSON, one line) each time it goes idle.
     std::string live_path_;
     const RegionTable* regions_ = nullptr;
     size_t live_off_ = 0;
     int live_lines_ = 0;
+    void reset(const RegionTable* regions);
+    void register_watches(size_t from);
     bool poll_live(uint64_t k, const GameState& s, bool valid);       // true when new steps were appended
     bool write_live_status(uint64_t k, const GameState& s, bool valid, const char* note);
     void advance() { idx_++; started_ = false; remaining_ = 0; }

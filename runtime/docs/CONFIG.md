@@ -211,10 +211,10 @@ The `[nvn]` keys are read in two places: the player and tuning settings by `src/
 | `boot` | `gfx` | `window` (`headless` when `[gfx] headless` is set) | `NXRT_BOOT_GFX` | `apps/game/game_main.cpp` | `window`, `headless` or `none`. |
 | `boot` | `nvn` | `true` | `NXRT_BOOT_NVN` | `apps/game/game_main.cpp` | `true`: the NVN front end and the graphics device are created. `false` (or `--no-nvn`): neither is. |
 | `boot` | `link` | `rtld` | `NXRT_BOOT_LINK` | `apps/game/game_main.cpp` | `rtld`: the game's own loader relocates every module, as on the console. `host`: the runtime's linker does it instead, as a cross-check. |
-| `boot` | `press` | empty | `NXRT_BOOT_PRESS` | `apps/game/game_main.cpp` | Scripted button presses for player 1, a comma list such as `A@12,A@20:500,PLUS@30,A#1500`. `NAME@seconds` counts from start, `NAME#frame` counts presented frames of the NVN back end, and `:ms` sets the hold (default 300). Names: A, B, X, Y, PLUS, MINUS, UP, DOWN, LEFT, RIGHT, L, R, ZL, ZR. |
-| `boot` | `screenshot_at` | `0` | `NXRT_BOOT_SCREENSHOT_AT` | `apps/game/game_main.cpp` | Seconds after start to write `shot_<n>.png` of the presented frame, in the working directory. `0`: off. |
-| `boot` | `screenshot_every` | `0` | `NXRT_BOOT_SCREENSHOT_EVERY` | `apps/game/game_main.cpp` | Repeats `screenshot_at` every N seconds. `0`: once only. |
-| `boot` | `max_seconds` | `0` | `NXRT_BOOT_MAX_SECONDS` | `apps/game/game_main.cpp` | After this many seconds the process logs a state summary and ends with exit code 124, even if the game is still running. `0`: no limit. `--max-seconds` sets it. |
+| `boot` | `press` | empty | `NXRT_BOOT_PRESS` | `src/testtools/tt_core.cpp` | Scripted button presses for player 1, a comma list such as `A@12,A@20:500,PLUS@30,A#1500`. It is turned into a script of the test tooling (`hold`, `@sleep`, `release`; frame source `tick`). `NAME@seconds` counts from start, `NAME#frame` counts frames of that source, and `:ms` sets the hold (default 300). Names: A, B, X, Y, PLUS, MINUS, UP, DOWN, LEFT, RIGHT, L, R, ZL, ZR. |
+| `boot` | `screenshot_at` | `0` | `NXRT_BOOT_SCREENSHOT_AT` | `src/testtools/tt_core.cpp` (`tt::start_timed_shots`) | Seconds after start to write `shot_<n>.png` of the presented frame, in the working directory. `0`: off. |
+| `boot` | `screenshot_every` | `0` | `NXRT_BOOT_SCREENSHOT_EVERY` | `src/testtools/tt_core.cpp` (`tt::start_timed_shots`) | Repeats `screenshot_at` every N seconds. `0`: once only. |
+| `boot` | `max_seconds` | `0` | `NXRT_BOOT_MAX_SECONDS` | `src/testtools/tt_core.cpp` (`tt::start_wall_deadline`, the same deadline as `[test] wall_timeout_s`) | After this many seconds the process logs a state summary and ends with exit code 124, even if the game is still running. `0`: no limit. `--max-seconds` sets it. |
 | `boot` | `main_stack_kb` | `1024` | `NXRT_BOOT_MAIN_STACK_KB` | `apps/game/game_main.cpp` | Stack of the game's main thread, in KiB. |
 | `time` | `zone` | `host` | `NXRT_TIME_ZONE` | `src/services/time.cpp` | `utc` (any case) sets UTC. Any other value uses the host time zone. |
 
@@ -378,7 +378,7 @@ All off by default; details in `include/nxrt/tt.h` and `games/mpr/docs/work/S5.m
 |---|---|---|
 | `script` | empty | Scripted run (`.nxs`, grammar in `include/nxrt/tt_script.h`). Exit code 0 pass, 1 fail, 2 usage/parse error, 4 crash, 5 freeze, 6 process ended early, 124 wall timeout. |
 | `enabled` | `false` | Turns the test tools on by themselves, without a script, record, replay, deterministic or trace key set. |
-| `regions` | `regions.tsv` next to the script | Name table for `@area` / `@world` and the game steps that take a region (`name<TAB>world guid<TAB>area guid`). |
+| `regions` | `regions.tsv` next to the script | Name table for the game's steps and id state keys that take a region name (`name<TAB>world guid<TAB>area guid`). |
 | `out` | `testout` | Output folder: `result.json`, `trace.jsonl`, `shots/`. |
 | `deterministic` | `false` | Virtual clock (one frame = `clock_step_ticks`), seeded RNG, fixed wall-clock epoch. |
 | `seed` | `0x5EED5EED` | RNG seed of deterministic mode. |
@@ -391,7 +391,7 @@ All off by default; details in `include/nxrt/tt.h` and `games/mpr/docs/work/S5.m
 | `max_frames` | `0` | Fail the run after this many frames. |
 | `wall_timeout_s` | `900` with a script | End the run with exit code 124 after this long. |
 | `freeze_exit` | `true` with a script | A watchdog fire ends the run with exit code 5. |
-| `shot_dir` / `require_shots` | `<out>/shots` / `false` | Where `@shot` writes; a missing screenshot provider fails the run when set. |
+| `shot_dir` / `require_shots` / `shot_timeout_ms` | `<out>/shots` / `false` / `30000` | Where `@shot` writes (it goes on when the file is on disk); a screenshot that is not written within the timeout, or a missing provider, fails the run when `require_shots` is set. |
 | `game_base` | `0x7100000000` | Read by the game's probes (Metroid Prime Remastered: `games/mpr/runtime/mpr_tt_probe.cpp`), not by the base: base of the game's main module for its probe and hook addresses. |
 | `warp_wait_loader` | `true` | Read by the game's `@warp` step (`games/mpr/runtime/mpr_tt_steps.cpp`): it waits until the game's resource loader thread has been idle for 10 frames in a row before it starts the warp. Warping while the loader still builds assets for the old game instance crashed it in `CParticleStaticRenderState` (S42). `false` warps at once, as before. |
 | `warp_loader_max_ms` | `30000` | How long `@warp` waits for the idle loader, in host milliseconds, before it warps anyway with a warning. |

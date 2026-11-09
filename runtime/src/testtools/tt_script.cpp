@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <regex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -158,23 +159,19 @@ bool keys_mask(const std::string& keys, uint64_t* mask, std::string& msg) {
     return true;
 }
 
-struct FieldName {
-    const char* name;
-    AssertField field;
-};
-
-constexpr FieldName kFields[] = {
-    {"area", AssertField::Area},   {"world", AssertField::World},  {"frame", AssertField::Frame},
-    {"igt", AssertField::Igt},     {"health", AssertField::Health}, {"px", AssertField::PosX},
-    {"py", AssertField::PosY},     {"pz", AssertField::PosZ},      {"vx", AssertField::VelX},
-    {"vy", AssertField::VelY},     {"vz", AssertField::VelZ},      {"speed", AssertField::Speed},
-};
-
 const char* game_state_key(const std::string& name) {
     const game::Info& g = game::info();
     if (!g.probes || !g.probes->state_keys) return nullptr;
     for (const char* const* k = g.probes->state_keys; *k; k++)
         if (lower(*k) == name) return *k;
+    return nullptr;
+}
+
+const IdKeyDef* game_id_key(const std::string& name) {
+    const game::Info& g = game::info();
+    if (!g.probes || !g.probes->id_keys) return nullptr;
+    for (const IdKeyDef* k = g.probes->id_keys; k->name; k++)
+        if (lower(k->name) == name) return k;
     return nullptr;
 }
 
@@ -227,16 +224,11 @@ bool take_timeout(const std::vector<std::string>& t, std::size_t from, std::vect
 
 bool parse_condition(const std::vector<std::string>& t, std::size_t i, const RegionTable* rt, Step* sp, std::string& msg) {
     Step& s = *sp;
-    std::string field_name = lower(t[i]);
-    const FieldName* field = nullptr;
-    for (const FieldName& f : kFields) {
-        if (field_name == f.name) {
-            field = &f;
-            break;
-        }
-    }
-    const char* game_key = field ? nullptr : game_state_key(field_name);
-    if (!field && !game_key) return fail_with(msg, "unknown assert field '" + t[i] + "'");
+    const std::string field_name = lower(t[i]);
+    const bool frame = field_name == "frame";
+    const char* game_key = frame ? nullptr : game_state_key(field_name);
+    const IdKeyDef* id_key = frame || game_key ? nullptr : game_id_key(field_name);
+    if (!frame && !game_key && !id_key) return fail_with(msg, "unknown assert field '" + t[i] + "'");
     const OpName* op = nullptr;
     for (const OpName& o : kOps) {
         if (t[i + 1] == o.text) {
@@ -245,23 +237,24 @@ bool parse_condition(const std::vector<std::string>& t, std::size_t i, const Reg
         }
     }
     if (!op) return fail_with(msg, "unknown operator '" + t[i + 1] + "'");
-    s.field = field ? field->field : AssertField::Game;
     s.op = op->op;
     s.text = t[i + 2];
-    if (game_key) {
-        s.name2 = game_key;
-        if (!real_arg(t[i + 2], &s.x, msg)) return false;
-    } else if (s.field == AssertField::Area || s.field == AssertField::World) {
+    if (id_key) {
+        s.field = AssertField::GameId;
+        s.name2 = id_key->name;
         if (s.op != AssertOp::Eq && s.op != AssertOp::Ne)
             return fail_with(msg, "@assert " + t[i] + " allows only == and !=");
-        if (!resolve_id(t[i + 2], rt, s.field == AssertField::Area, s.id, msg)) return false;
+        if (!resolve_id(t[i + 2], rt, id_key->region_area, s.id, msg)) return false;
         s.name1 = t[i + 2];
-    } else if (s.field == AssertField::Frame) {
-        int64_t frame = 0;
-        if (!count_arg(t[i + 2], &frame, msg)) return false;
-        s.x = static_cast<double>(frame);
-    } else {
+    } else if (game_key) {
+        s.field = AssertField::Game;
+        s.name2 = game_key;
         if (!real_arg(t[i + 2], &s.x, msg)) return false;
+    } else {
+        s.field = AssertField::Frame;
+        int64_t frame_no = 0;
+        if (!count_arg(t[i + 2], &frame_no, msg)) return false;
+        s.x = static_cast<double>(frame_no);
     }
     return true;
 }
@@ -408,50 +401,6 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         return true;
     }
 
-    if (kw == "@area" || kw == "@world") {
-        const bool area = kw == "@area";
-        std::vector<std::string> pos;
-        int64_t timeout = -1;
-        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
-        if (pos.size() != 1) return usage(msg, area ? "@area <id> [timeout=<n>]" : "@world <id> [timeout=<n>]");
-        Step s = make(area ? StepKind::WaitArea : StepKind::WaitWorld);
-        if (!resolve_id(pos[0], rt, area, s.id, msg)) return false;
-        s.name1 = pos[0];
-        s.timeout = timeout;
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@pos") {
-        std::vector<std::string> pos;
-        int64_t timeout = -1;
-        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
-        if (pos.size() != 3 && pos.size() != 4) return usage(msg, "@pos <x> <y> <z> [<r>] [timeout=<n>]");
-        Step s = make(StepKind::WaitPos);
-        if (!real_arg(pos[0], &s.x, msg) || !real_arg(pos[1], &s.y, msg) || !real_arg(pos[2], &s.z, msg)) return false;
-        s.r = 1.0;
-        if (pos.size() == 4) {
-            if (!real_arg(pos[3], &s.r, msg)) return false;
-            if (s.r < 0.0) return fail_with(msg, "@pos radius must be >= 0, got '" + pos[3] + "'");
-        }
-        s.timeout = timeout;
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@igt") {
-        std::vector<std::string> pos;
-        int64_t timeout = -1;
-        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
-        if (pos.size() != 1) return usage(msg, "@igt <seconds> [timeout=<n>]");
-        Step s = make(StepKind::WaitIgt);
-        if (!real_arg(pos[0], &s.x, msg)) return false;
-        if (s.x < 0.0) return fail_with(msg, "@igt seconds must be >= 0, got '" + pos[0] + "'");
-        s.timeout = timeout;
-        out.push_back(s);
-        return true;
-    }
-
     if (kw == "@poke") {
         if (n != 2) return usage(msg, "@poke <in-file>");
         Step s = make(StepKind::Poke);
@@ -464,40 +413,6 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         if (n != 3) return usage(msg, "@peek <in-file> <out-file>");
         Step s = make(StepKind::Peek);
         s.text = rest_after_first_word(body);
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@run") {
-        std::vector<std::string> pos;
-        int64_t timeout = -1;
-        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
-        bool soft = false;
-        if (pos.size() == 2 && lower(pos[1]) == "soft") { soft = true; pos.pop_back(); }
-        if (pos.size() != 1) return usage(msg, "@run <seconds> [timeout=<n>] [soft]");
-        Step s = make(StepKind::WaitRun);
-        s.soft = soft;
-        if (!real_arg(pos[0], &s.x, msg)) return false;
-        if (s.x < 0.0) return fail_with(msg, "@run seconds must be >= 0, got '" + pos[0] + "'");
-        s.timeout = timeout;
-        out.push_back(s);
-        return true;
-    }
-
-    if (kw == "@mash") {
-        std::vector<std::string> pos;
-        int64_t timeout = -1;
-        if (!take_timeout(t, 1, pos, &timeout, msg)) return false;
-        if (pos.size() != 4) return usage(msg, "@mash <keys> <period_ms> area|world <id> [timeout=<ms>]");
-        Step s = make(StepKind::Mash);
-        if (!keys_mask(pos[0], &s.buttons, msg)) return false;
-        if (!real_arg(pos[1], &s.x, msg)) return false;
-        const std::string what = lower(pos[2]);
-        if (what != "area" && what != "world") return usage(msg, "@mash <keys> <period_ms> area|world <id> [timeout=<ms>]");
-        s.text = what;
-        if (!resolve_id(pos[3], rt, what == "area", s.id, msg)) return false;
-        s.name1 = pos[3];
-        s.timeout = timeout;
         out.push_back(s);
         return true;
     }
@@ -524,6 +439,29 @@ bool parse_stmt(const std::string& body, const std::vector<std::string>& t, cons
         if (n != 2) return usage(msg, "@shot <name>");
         Step s = make(StepKind::Shot);
         s.text = t[1];
+        out.push_back(s);
+        return true;
+    }
+
+    if (kw == "@waitlog") {
+        // @waitlog <regex> [<seconds>]: the regex is the rest of the line, less a trailing number
+        std::string rx = rest_after_first_word(body);
+        double secs = 120;
+        if (n >= 3 && parse_real(t[n - 1], &secs)) {
+            if (secs <= 0) return fail_with(msg, "@waitlog seconds must be > 0, got '" + t[n - 1] + "'");
+            rx = trim(rx.substr(0, rx.size() - t[n - 1].size()));
+        } else {
+            secs = 120;
+        }
+        if (rx.empty()) return usage(msg, "@waitlog <regex> [<seconds>]");
+        try {
+            std::regex check(rx);
+        } catch (const std::regex_error& e) {
+            return fail_with(msg, "@waitlog: bad regex '" + rx + "': " + e.what());
+        }
+        Step s = make(StepKind::WaitLog);
+        s.text = rx;
+        s.x = secs;
         out.push_back(s);
         return true;
     }
@@ -629,6 +567,18 @@ bool StepLine::real(const std::string& tok, double* v, std::string* err) const {
 bool StepLine::id(const std::string& tok, bool want_area, uint8_t out[16], std::string* err) const {
     std::string m;
     const bool ok = resolve_id(tok, regions, want_area, out, m);
+    if (!ok && err) *err = m;
+    return ok;
+}
+bool StepLine::take_timeout(std::vector<std::string>* positional, int64_t* timeout, std::string* err) const {
+    std::string m;
+    const bool ok = tt::take_timeout(t, 1, *positional, timeout, m);
+    if (!ok && err) *err = m;
+    return ok;
+}
+bool StepLine::keys(const std::string& tok, uint64_t* mask, std::string* err) const {
+    std::string m;
+    const bool ok = keys_mask(tok, mask, m);
     if (!ok && err) *err = m;
     return ok;
 }

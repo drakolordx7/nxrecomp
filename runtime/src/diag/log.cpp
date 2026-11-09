@@ -30,6 +30,8 @@ std::FILE* g_file = nullptr;
 std::string g_path;
 LogSink g_sink = nullptr;
 void* g_sink_user = nullptr;
+LogSink g_tap = nullptr;
+void* g_tap_user = nullptr;
 bool g_to_stderr = true;
 bool g_stderr_all = false;
 uint64_t g_counts[kLevelCount] = {};
@@ -199,6 +201,12 @@ void log_set_sink(LogSink sink, void* user) {
     g_sink_user = user;
 }
 
+void log_set_tap(LogSink tap, void* user) {
+    std::lock_guard<std::recursive_mutex> g(g_mu);
+    g_tap = tap;
+    g_tap_user = user;
+}
+
 void logv(LogLevel l, const char* tag, const char* fmt, va_list ap) {
     if (!g_inited.load(std::memory_order_acquire)) {
         Resolved r = resolve(LogOptions{});
@@ -243,6 +251,7 @@ void logv(LogLevel l, const char* tag, const char* fmt, va_list ap) {
         std::fprintf(stderr, "%s\n", line.c_str());
     }
     if (g_sink) g_sink(l, line.c_str(), g_sink_user);
+    if (g_tap) g_tap(l, line.c_str(), g_tap_user);
 }
 
 void logf(LogLevel l, const char* tag, const char* fmt, ...) {

@@ -41,7 +41,6 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/game.h"
 #include "nxrt/gfx.h"
-#include "nxrt/input_source.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
@@ -53,6 +52,7 @@
 #include "nxrt/play.h"
 #include "nxrt/runtime.h"
 #include "nxrt/sdk_hle.h"
+#include "nxrt/tt.h"
 
 // The game's module register function (cmake/game_exe.cmake: nxrt_register_game_<id>, the whole game module).
 void NXRT_GAME_REGISTER();
@@ -139,85 +139,15 @@ std::string absolute_utf8(const std::string& p) {
     return narrow(buf);
 }
 
-// [boot] press = "A@12,A@20:500,PLUS@30,A#1500": scripted controller presses on player 1 (button@seconds-after-start[:hold ms, default 300]).
-// "A#1500:300" is keyed to the NVN back end's presented-frame count instead of seconds: a loaded machine plays the same sequence.
-struct ScriptedPress { uint64_t bit; double at; int hold_ms; bool by_frame = false; };
-std::shared_ptr<nxrt::hid::ManualInputSource> g_pad;
-std::vector<ScriptedPress> g_presses;
-DWORD WINAPI press_thread(LPVOID) {
-    const ULONGLONG t0 = GetTickCount64();
-    for (const ScriptedPress& p : g_presses) {
-        if (p.by_frame) {
-            while (!nxrt::nvn::backend_installed() || nxrt::nvn::backend_stats().presents < static_cast<uint64_t>(p.at)) Sleep(20);
-            NXLOG_I("boot", "scripted press at present %.0f (%.1f s)", p.at, (GetTickCount64() - t0) / 1000.0);
-        } else {
-            const ULONGLONG due = t0 + static_cast<ULONGLONG>(p.at * 1000);
-            for (ULONGLONG now = GetTickCount64(); now < due; now = GetTickCount64()) Sleep(static_cast<DWORD>(due - now > 50 ? 50 : due - now));
-            NXLOG_I("boot", "scripted press at %.1f s", p.at);
-        }
-        g_pad->press(0, p.bit);
-        Sleep(p.hold_ms);
-        g_pad->release(0, p.bit);
-    }
-    return 0;
-}
-void parse_presses(const std::string& spec) {
-    using namespace nxrt::hid;
-    static const struct { const char* n; NpadButtonBit b; } names[] = {{"A", kBtnA}, {"B", kBtnB}, {"X", kBtnX}, {"Y", kBtnY}, {"PLUS", kBtnPlus},
-        {"MINUS", kBtnMinus}, {"UP", kBtnUp}, {"DOWN", kBtnDown}, {"LEFT", kBtnLeft}, {"RIGHT", kBtnRight}, {"L", kBtnL}, {"R", kBtnR}, {"ZL", kBtnZL}, {"ZR", kBtnZR}};
-    size_t i = 0;
-    while (i < spec.size()) {
-        size_t j = spec.find(',', i);
-        if (j == std::string::npos) j = spec.size();
-        const std::string item = spec.substr(i, j - i);
-        i = j + 1;
-        size_t at = item.find('@');
-        const bool by_frame = at == std::string::npos && item.find('#') != std::string::npos;
-        if (by_frame) at = item.find('#');
-        if (at == std::string::npos) continue;
-        const std::string name = item.substr(0, at);
-        const size_t colon = item.find(':', at);
-        ScriptedPress sp{0, std::atof(item.c_str() + at + 1), colon == std::string::npos ? 300 : std::atoi(item.c_str() + colon + 1), by_frame};
-        for (const auto& e : names) if (name == e.n) sp.bit = btn(e.b);
-        if (sp.bit) g_presses.push_back(sp);
-    }
-}
-
-// [boot] screenshot_at = N (seconds after start, repeatable through screenshot_every): the renderer writes work/run/shot_<n>.png of the presented frame.
-DWORD WINAPI shot_thread(LPVOID) {
-    const int64_t first = nxrt::config_get_int("boot", "screenshot_at", 0), every = nxrt::config_get_int("boot", "screenshot_every", 0);
-    int n = 0;
-    Sleep(static_cast<DWORD>(first * 1000));
-    for (;;) {
-        if (g_gfx_renderer) {
-            char path[64];
-            std::snprintf(path, sizeof path, "shot_%d.png", n++);
-            g_gfx_renderer->request_screenshot(path);
-            NXLOG_I("boot", "screenshot requested: %s", path);
-        }
-        if (every <= 0) break;
-        Sleep(static_cast<DWORD>(every * 1000));
-    }
-    return 0;
-}
-
-DWORD WINAPI deadline_thread(LPVOID p) {
-    const DWORD ms = static_cast<DWORD>(reinterpret_cast<uintptr_t>(p));
-    Sleep(ms);
-    NXLOG_W("boot", "max_seconds reached: the guest is still running; ending the process");
-    nxrt::log_flush();
-    if (nxrt::nvn::backend_installed()) {
-        const nxrt::nvn::BackendStats b = nxrt::nvn::backend_stats();
-        NXLOG_I("boot", "nvn back end at the deadline: submits %llu lists %llu draws %llu (skipped %llu) presents %llu pipelines %llu textures %llu (failed %llu) unsupported %llu",
-                (unsigned long long)b.submits, (unsigned long long)b.lists_replayed, (unsigned long long)b.draws, (unsigned long long)b.draws_skipped,
-                (unsigned long long)b.presents, (unsigned long long)b.pipelines_created, (unsigned long long)b.textures_created,
-                (unsigned long long)b.textures_failed, (unsigned long long)b.unsupported_ops);
-        NXLOG_I("boot", "nvn unsupported operations: %s", nxrt::nvn::backend_unsupported_report().c_str());
-    }
-    NXLOG_I("boot", "state at the deadline:\n%s", nxrt::summary().c_str());
-    nxrt::log_flush();
-    TerminateProcess(GetCurrentProcess(), 124);
-    return 0;
+// The game side of the wall deadline: what the NVN back end had done when it hit.
+void deadline_report() {
+    if (!nxrt::nvn::backend_installed()) return;
+    const nxrt::nvn::BackendStats b = nxrt::nvn::backend_stats();
+    NXLOG_I("boot", "nvn back end at the deadline: submits %llu lists %llu draws %llu (skipped %llu) presents %llu pipelines %llu textures %llu (failed %llu) unsupported %llu",
+            (unsigned long long)b.submits, (unsigned long long)b.lists_replayed, (unsigned long long)b.draws, (unsigned long long)b.draws_skipped,
+            (unsigned long long)b.presents, (unsigned long long)b.pipelines_created, (unsigned long long)b.textures_created,
+            (unsigned long long)b.textures_failed, (unsigned long long)b.unsupported_ops);
+    NXLOG_I("boot", "nvn unsupported operations: %s", nxrt::nvn::backend_unsupported_report().c_str());
 }
 
 // --prepare-shaders: no game, no window. A headless Vulkan device and the NVN back end's pipeline code compile the shader parts of every program the
@@ -435,16 +365,9 @@ int main(int argc, char** argv) {
         nxrt::module_protect_all();
     }
 
-    if (const std::string spec = nxrt::config_get_str("boot", "press", ""); !spec.empty()) {
-        parse_presses(spec);
-        g_pad = std::make_shared<nxrt::hid::ManualInputSource>();
-        g_pad->connect(0, nxrt::hid::NpadStyle::FullKey);
-        nxrt::hid::set_input_source(g_pad);
-        CreateThread(nullptr, 0, press_thread, nullptr, 0, nullptr);
-    }
-    if (nxrt::config_get_int("boot", "screenshot_at", 0) > 0) CreateThread(nullptr, 0, shot_thread, nullptr, 0, nullptr);
-    if (const int64_t s = nxrt::config_get_int("boot", "max_seconds", 0); s > 0)
-        CreateThread(nullptr, 0, deadline_thread, reinterpret_cast<void*>(static_cast<uintptr_t>(s * 1000)), 0, nullptr);
+    // The scripted-run tooling (nxrt/tt.h) does the timed work of the older start keys: [boot] press is read by tt::init, these two start its timers.
+    nxrt::tt::start_timed_shots(static_cast<double>(nxrt::config_get_int("boot", "screenshot_at", 0)), static_cast<double>(nxrt::config_get_int("boot", "screenshot_every", 0)));
+    nxrt::tt::start_wall_deadline(static_cast<double>(nxrt::config_get_int("boot", "max_seconds", 0)), deadline_report);
 
     // 4. the main thread: [boot] main_stack_kb (1 MiB by default, the npdm's usual stack)
     const uint64_t stack = static_cast<uint64_t>(nxrt::config_get_int("boot", "main_stack_kb", 1024)) << 10;

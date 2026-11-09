@@ -31,7 +31,7 @@ int16_t to_stick(double v) {
 }
 }  // namespace
 
-bool Runner::load(const std::string& script_file, const RegionTable* regions, std::string* err) {
+void Runner::reset(const RegionTable* regions) {
     script_ = Script();
     idx_ = 0; started_ = false; done_ = false; remaining_ = 0;
     default_timeout_ = 3600;
@@ -40,17 +40,37 @@ bool Runner::load(const std::string& script_file, const RegionTable* regions, st
     stick_override_ = false;
     mouse_x_ = mouse_y_ = 0;
     fail_line_ = 0;
-    igt_base_ = -1;
+    keep_running_ = false;
     has_keys_ = false;
     regions_ = regions;
     live_path_ = config_get_str("test", "live", "");
     live_off_ = 0;
     live_lines_ = 0;
+}
+
+bool Runner::load(const std::string& script_file, const RegionTable* regions, std::string* err) {
+    reset(regions);
     const bool ok = parse_script_file(script_file, regions, &script_, err);
     for (const Step& st : script_.steps) {
         if (st.kind == StepKind::Key || st.kind == StepKind::KeyDown || st.kind == StepKind::KeyUp) has_keys_ = true;
     }
+    register_watches(0);
     return ok;
+}
+
+bool Runner::load_text(const std::string& text, const std::string& name, const RegionTable* regions, std::string* err) {
+    reset(regions);
+    live_path_.clear();
+    script_.path = name;
+    const bool ok = parse_script(text, name, regions, &script_, err);
+    keep_running_ = true;
+    register_watches(0);
+    return ok;
+}
+
+void Runner::register_watches(size_t from) {
+    for (size_t i = from; i < script_.steps.size(); i++)
+        if (script_.steps[i].kind == StepKind::WaitLog) script_.steps[i].count = log_watch_add(script_.steps[i].text);
 }
 
 PadFrame Runner::pad() const {
@@ -76,36 +96,21 @@ void Runner::fail(const Step& st, const std::string& msg) {
 }
 
 bool Runner::eval_assert(const Step& st, const GameState& s, bool valid, std::string* detail) {
-    auto num = [&](double* v) -> bool {
-        switch (st.field) {
-            case AssertField::Frame: *v = static_cast<double>(main_frame_count() ? main_frame_count() - 1 : 0); return true;
-            case AssertField::Igt: *v = s.igt; return valid && s.have_igt;
-            case AssertField::Health: *v = s.hp; return valid && s.have_hp;
-            case AssertField::PosX: *v = s.pos[0]; return valid && s.have_player;
-            case AssertField::PosY: *v = s.pos[1]; return valid && s.have_player;
-            case AssertField::PosZ: *v = s.pos[2]; return valid && s.have_player;
-            case AssertField::VelX: *v = s.vel[0]; return valid && s.have_player;
-            case AssertField::VelY: *v = s.vel[1]; return valid && s.have_player;
-            case AssertField::VelZ: *v = s.vel[2]; return valid && s.have_player;
-            case AssertField::Speed: *v = std::sqrt(double(s.vel[0]) * s.vel[0] + double(s.vel[1]) * s.vel[1] + double(s.vel[2]) * s.vel[2]); return valid && s.have_player;
-            case AssertField::Game: {
-                const StateField* f = s.field(st.name2);
-                if (!f || !f->shown) return false;
-                *v = f->value;
-                return valid;
-            }
-            default: return false;
-        }
-    };
-    if (st.field == AssertField::Area || st.field == AssertField::World) {
-        const uint8_t* have = st.field == AssertField::Area ? s.area : s.world;
-        if (!valid || !s.have_world) { *detail = "the id is not readable (no game state)"; return false; }
-        const bool eq = std::memcmp(have, st.id, 16) == 0;
-        *detail = "have " + tt_guid_hex(have) + ", want " + tt_guid_hex(st.id);
+    if (st.field == AssertField::GameId) {
+        const StateField* f = s.field(st.name2);
+        if (!valid || !f || !f->shown) { *detail = "the id is not readable (no game state)"; return false; }
+        const bool eq = std::memcmp(f->id, st.id, 16) == 0;
+        *detail = "have " + tt_guid_hex(f->id) + ", want " + tt_guid_hex(st.id);
         return st.op == AssertOp::Eq ? eq : !eq;
     }
     double v = 0;
-    if (!num(&v)) { *detail = "the value is not readable (no game state)"; return false; }
+    if (st.field == AssertField::Frame) {
+        v = static_cast<double>(main_frame_count() ? main_frame_count() - 1 : 0);
+    } else {
+        const StateField* f = s.field(st.name2);
+        if (!valid || !f || !f->shown) { *detail = "the value is not readable (no game state)"; return false; }
+        v = f->value;
+    }
     char b[96];
     std::snprintf(b, sizeof b, "have %.6g, want %.6g", v, st.x);
     *detail = b;
@@ -124,16 +129,17 @@ bool Runner::write_live_status(uint64_t k, const GameState& s, bool valid, const
     std::string note_s(note_in);
     for (char& ch : note_s) if (ch == 92 || ch == 34 || static_cast<unsigned char>(ch) < 32) ch = 32;       // keep the JSON line valid (paths have backslashes)
     char b[1024];
-    std::snprintf(b, sizeof b,
-                  "{\"lines\":%d,\"frame\":%llu,\"valid\":%d,\"world\":\"%s\",\"area\":\"%s\",\"igt\":%.3f,\"hp\":%.1f,\"pos\":[%.3f,%.3f,%.3f],\"vel\":[%.3f,%.3f,%.3f],\"yaw\":%.4f",
-                  live_lines_, static_cast<unsigned long long>(k), valid ? 1 : 0, tt_guid_text_safe(s.world, s.have_world).c_str(), tt_guid_text_safe(s.area, s.have_world).c_str(),
-                  s.igt, s.hp, s.pos[0], s.pos[1], s.pos[2], s.vel[0], s.vel[1], s.vel[2], s.yaw);
+    std::snprintf(b, sizeof b, "{\"lines\":%d,\"frame\":%llu,\"valid\":%d", live_lines_, static_cast<unsigned long long>(k), valid ? 1 : 0);
     std::string out = b;
     for (const StateField& f : s.fields) {               // the game's own values, readable or not (a missing group shows its defaults)
-        if (!f.key[0]) continue;
+        if (!f.key[0] || f.quiet) continue;
         const char* key = f.status_key ? f.status_key : f.key;
-        if (f.is_float) std::snprintf(b, sizeof b, ",\"%s\":%.4f", key, f.value);
-        else std::snprintf(b, sizeof b, ",\"%s\":%lld", key, static_cast<long long>(f.value));
+        switch (f.kind) {
+            case StateField::Kind::Float: std::snprintf(b, sizeof b, ",\"%s\":%.4f", key, f.value); break;
+            case StateField::Kind::Int: std::snprintf(b, sizeof b, ",\"%s\":%lld", key, static_cast<long long>(f.value)); break;
+            case StateField::Kind::Id: std::snprintf(b, sizeof b, ",\"%s\":\"%s\"", key, tt_guid_text_safe(f.id, f.shown).c_str()); break;
+            case StateField::Kind::Vec3: std::snprintf(b, sizeof b, ",\"%s\":[%.3f,%.3f,%.3f]", key, f.vec[0], f.vec[1], f.vec[2]); break;
+        }
         out += b;
     }
     out += ",\"note\":\"" + note_s + "\"}\n";
@@ -177,10 +183,9 @@ bool Runner::poll_live(uint64_t k, const GameState& s, bool valid) {
                 continue;
             }
             live_lines_ += n;
-            for (Step& st : add.steps) {
-                st.line += 0;
-                script_.steps.push_back(st);
-            }
+            const size_t from = script_.steps.size();
+            for (Step& st : add.steps) script_.steps.push_back(st);
+            register_watches(from);
             if (!add.steps.empty()) return true;       // the status is written when these have run and the runner is idle again
             wrote = write_live_status(k, s, valid, "ok");        // comments and blank lines only
             continue;
@@ -223,6 +228,7 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             if (done_) return;
         }
         if (idx_ >= script_.steps.size()) {
+            if (keep_running_) return;
             done_ = true;
             end_run(0, "pass", "script finished");
             return;
@@ -270,57 +276,17 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 remaining_--;
                 return;
             case StepKind::WaitFrame: r = wait_cond(k >= static_cast<uint64_t>(st.count), "the frame"); break;
-            case StepKind::WaitArea: r = wait_cond(valid && s.have_world && std::memcmp(s.area, st.id, 16) == 0, ("area " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1)).c_str()); break;
-            case StepKind::WaitWorld: r = wait_cond(valid && s.have_world && std::memcmp(s.world, st.id, 16) == 0, ("world " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1)).c_str()); break;
-            case StepKind::WaitPos: {
-                bool met = false;
-                if (valid && s.have_player) {
-                    const double dx = s.pos[0] - st.x, dy = s.pos[1] - st.y, dz = s.pos[2] - st.z;
-                    met = std::sqrt(dx * dx + dy * dy + dz * dz) <= st.r;
-                }
-                char b[96];
-                std::snprintf(b, sizeof b, "position (%.2f, %.2f, %.2f) within %.2f", st.x, st.y, st.z, st.r);
-                r = wait_cond(met, b);
-                break;
-            }
-            case StepKind::WaitIgt: r = wait_cond(valid && s.have_igt && s.igt >= st.x, "the in-game time"); break;
-            case StepKind::WaitRun: {
-                if (first) igt_base_ = -1;
-                bool met = false;
-                if (valid && s.have_igt) {
-                    if (igt_base_ < 0 || s.igt < igt_base_) igt_base_ = s.igt;
-                    met = s.igt - igt_base_ >= st.x;
-                }
-                char b[64];
-                std::snprintf(b, sizeof b, "%.1f s of play time", st.x);
-                if (st.soft && !met) {
-                    const int64_t to = timeout_of();
-                    if (to > 0 && static_cast<int64_t>(k - start_frame_) >= to) {
-                        NXLOG_W("script", "SOFT-TIMEOUT line %d: no %s within %lld frames, going on", st.line, b, static_cast<long long>(to));
-                        advance();
-                        continue;
-                    }
-                    return;
-                }
-                r = wait_cond(met, b);
-                break;
-            }
-            case StepKind::Mash: {
-                const uint64_t now_ms = GetTickCount64();
-                if (first) { start_ms_ = now_ms; next_mash_ms_ = now_ms; remaining_ = 0; }
-                const bool met = valid && s.have_world && std::memcmp(st.text == "area" ? s.area : s.world, st.id, 16) == 0;
-                if (met) { pressing_ = 0; advance(); continue; }
-                const int64_t to_ms = st.timeout < 0 ? 600000 : st.timeout;
-                if (to_ms > 0 && static_cast<int64_t>(now_ms - start_ms_) >= to_ms) { pressing_ = 0; fail(st, "timeout waiting for " + st.text + " " + (st.name1.empty() ? tt_guid_to_text(st.id) : st.name1)); return; }
-                // The press lasts 250 ms of host time: in deterministic mode a frame is a tiny slice of host time and the front end runs on the host clock.
-                if (remaining_ > 0) { if (now_ms >= mash_release_ms_) { remaining_ = 0; pressing_ = 0; } }
-                else if (now_ms >= next_mash_ms_) { pressing_ = st.buttons; remaining_ = 1; mash_release_ms_ = now_ms + 250; next_mash_ms_ = now_ms + static_cast<uint64_t>(st.x); }
-                return;
-            }
             case StepKind::Rate:
                 set_clock_rate(st.x);
                 advance();
                 continue;
+            case StepKind::WaitLog: {
+                const uint64_t now_ms = GetTickCount64();
+                if (first) start_ms_ = now_ms;
+                if (log_watch_seen(static_cast<int>(st.count))) { advance(); continue; }
+                if (static_cast<double>(now_ms - start_ms_) >= st.x * 1000.0) { fail(st, "timeout after " + std::to_string(static_cast<int64_t>(st.x)) + " s waiting for a log line matching " + st.text); return; }
+                return;
+            }
             case StepKind::WaitMs: {
                 const uint64_t now_ms = GetTickCount64();
                 if (first) start_ms_ = now_ms;
@@ -342,7 +308,7 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             }
             case StepKind::Game: {
                 std::string why;
-                StepRun run{st, c, k, first, s, valid, timeout_of(), &start_frame_, &why};
+                StepRun run{st, c, k, first, s, valid, timeout_of(), &start_frame_, &pressing_, &why};
                 switch (st.game->run(run)) {
                     case StepStatus::Done: advance(); continue;
                     case StepStatus::Wait: return;
@@ -364,7 +330,14 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             }
             case StepKind::Shot: {
                 std::string why;
-                if (!take_shot(st.text, &why) && require_shots()) { fail(st, "@shot " + st.text + ": " + why); return; }
+                if (first && !shot_request(st.text, &why)) {
+                    if (require_shots()) { fail(st, "@shot " + st.text + ": " + why); return; }
+                    advance();
+                    continue;
+                }
+                const ShotStatus r2 = shot_poll(&why);
+                if (r2 == ShotStatus::Pending) return;
+                if (r2 == ShotStatus::Failed && require_shots()) { fail(st, "@shot " + st.text + ": " + why); return; }
                 advance();
                 continue;
             }
