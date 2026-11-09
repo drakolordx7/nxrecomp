@@ -74,7 +74,7 @@ The converter keeps the alpha of opaque textures exactly at 255 (see `tools/text
 not stored as BC7: two-channel normal maps (a linear texture that is fully opaque with a blue channel of at most 2) are stored as
 BC5, which keeps red and green in two 8-value ramps per block and is sampled as (R, G, 0, 1); and a texture BC7 cannot hold
 (its BC7 result is under 28 dB, today only the white-noise lookup texture at 19 dB) is stored as plain RGBA8. The file name and
-key do not change; the entry's header names the format and the game builds its image in that format (`runtime/docs/S4f.md`).
+key do not change; the entry's header names the format and the game builds its image in that format (`games/mpr/docs/work/S4f.md`).
 The block height of small textures follows the console's rule (the runtime's `console_block_height`), which changes the key and
 the untiling of the textures where it differs from the smallest covering height. If a `bc7_cache` was made by an older converter (it carries
 `bc7_cache\encoder.txt` with the converter revision, `kTextureEncoderRev` in `src/texcache.h`), setup throws it away and
