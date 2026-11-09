@@ -29,10 +29,10 @@ if(TARGET nxrt_gfx)
     target_compile_features(nxrt_mprpak PUBLIC cxx_std_20)
 
     add_library(nxrt_game_mpr STATIC
-        "${_mpr}/mpr_game.cpp" "${_mpr}/mpr_boot.cpp" "${_mpr}/mpr_play.cpp" "${_mpr}/mpr_ui.cpp" "${_mpr}/mpr_prompts.cpp" "${_mpr}/mpr_tonemap.cpp"
+        "${_mpr}/mpr_game.cpp" "${_mpr}/mpr_boot.cpp" "${_mpr}/mpr_play.cpp" "${_mpr}/mpr_ui.cpp" "${_mpr}/mpr_prompts.cpp" "${_mpr}/mpr_tonemap.cpp" "${_mpr}/mpr_render.cpp" "${_mpr}/mpr_tonemap_patch.cpp"
         "${_mpr}/display_hooks.cpp" "${_mpr}/menu_mouse_game.cpp" "${_mpr}/play_aim.cpp" "${_mpr}/play_ballcam.cpp" "${_mpr}/play_lockcam.cpp" "${_mpr}/play_lookrate.cpp"
         "${_mpr}/play_scenefix.cpp" "${_mpr}/play_jump.cpp" "${_mpr}/play_glow.cpp" "${_mpr}/play_glow_ui.cpp" "${_mpr}/mpr_fastboot.cpp"
-        "${_mpr}/mpr_tint.cpp" "${_mpr}/mpr_texedit.cpp")
+        "${_mpr}/mpr_tint.cpp")
     target_link_libraries(nxrt_game_mpr PUBLIC nxrt_game_mpr_core nxrt_gfx nxrt_mprpak)
 endif()
 
@@ -45,11 +45,23 @@ if(NXRT_BUILD_TESTS)
                       INCLUDES "${_mpr}/tests" DEFINES NXRT_TEST_DATA_DIR="${_rt}/tests/data"
                       LINK_OPTIONS /MAP /STACK:67108864 /HIGHENTROPYVA:NO /DEBUG)
     if(TARGET nxrt_game_mpr)
+        # The tests that need this game's translated shaders (games/mpr/work/shader_cache; they skip without it) and name its shader hashes: the NVN draw
+        # path scenes, the pipeline caches, the SPIR-V patches, the tone-map patch. The harness (tests/gfx/nvn_app.h) is the base's.
         file(GLOB _mpr_gfx_tests CONFIGURE_DEPENDS "${_mpr}/tests/*.cpp")
+        set(_mpr_gfx_incs "${_mpr}/tests" "${_rt}/tests/gfx" "${_rt}/src/gfx" "${_rt}/src/gfx/nvn")
+        set(_mpr_gfx_defs NXRT_GFX_TEST_DATA_DIR="${_rt}/tests/data/gfx")
+        if(DEFINED NXRT_BC7_REF_DIR AND EXISTS "${NXRT_BC7_REF_DIR}/bc7decomp_ref.cpp")   # the ASTC scene's reference decoder (base cmake/gfx.cmake)
+            list(APPEND _mpr_gfx_tests "${NXRT_BC7_REF_DIR}/bc7decomp_ref.cpp")
+            list(APPEND _mpr_gfx_incs "${NXRT_BC7_REF_DIR}")
+            list(APPEND _mpr_gfx_defs NXRT_HAVE_BC7_REF=1)
+        endif()
+        get_filename_component(NXRT_TEST_DATA_GAME_DIR "${_mpr}/.." ABSOLUTE)   # (this folder only) work/shader_cache, game/romfs of this game
         nxrt_add_test_exe(mpr_gfx_tests SOURCES ${_mpr_gfx_tests} LINK nxrt_game_mpr REGISTER nxrt_register_game_mpr
-                          INCLUDES "${_mpr}/tests" "${_rt}/tests/gfx" "${_rt}/src/gfx" "${_rt}/src/gfx/nvn"
-                          DEFINES NXRT_GFX_TEST_DATA_DIR="${_rt}/tests/data/gfx" TIMEOUT 300 ENVIRONMENT "NXRT_GFX_HIDDEN=1"
+                          INCLUDES ${_mpr_gfx_incs} DEFINES ${_mpr_gfx_defs} TIMEOUT 300 ENVIRONMENT "NXRT_GFX_HIDDEN=1"
                           LINK_OPTIONS /MAP /STACK:8388608 /DEBUG)
+        foreach(dll ${NXRT_A2B_DLLS})
+            add_custom_command(TARGET mpr_gfx_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:mpr_gfx_tests>")
+        endforeach()
     endif()
     file(GLOB _mpr_launcher_tests CONFIGURE_DEPENDS "${_mpr}/tests/launcher/*.cpp")
     if(_mpr_launcher_tests AND TARGET nxrt_launcher_core)
