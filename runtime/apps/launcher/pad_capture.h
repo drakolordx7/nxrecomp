@@ -7,7 +7,7 @@
 
 struct SDL_Gamepad;
 
-namespace mprl {
+namespace nxl {
 
 // The row index (nxrt::play::PadSrc order, the order of the Controller tab) of an SDL_GamepadButton value, or -1 for a button that has no
 // row (guide, misc, paddles, touchpad). Same mapping as nxrt::play's map_pad (src/gfx/play/pad_map.cpp).
@@ -40,4 +40,4 @@ private:
     std::vector<SDL_Gamepad*> pads_;
 };
 
-}  // namespace mprl
+}  // namespace nxl

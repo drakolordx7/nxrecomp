@@ -11,7 +11,7 @@
 #include "game_info.h"
 #include "pages.h"
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -181,4 +181,4 @@ private:
 
 std::unique_ptr<Page> make_controls_page() { return std::make_unique<ControlsPage>(); }
 
-}  // namespace mprl
+}  // namespace nxl

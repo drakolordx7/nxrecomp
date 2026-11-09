@@ -14,9 +14,9 @@ NXTEST_GROUP(launcher_pad_capture)
 
 namespace {
 
-using mprl::PadCapture;
-using mprl::pad_source_for_gamepad_button;
-using mprl::pad_source_for_trigger;
+using nxl::PadCapture;
+using nxl::pad_source_for_gamepad_button;
+using nxl::pad_source_for_trigger;
 
 constexpr int kRows = 16;   // the Controller tab's rows (nxrt::play::kPadSrcCount)
 

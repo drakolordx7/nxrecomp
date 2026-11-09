@@ -9,7 +9,7 @@
 
 #include "pages.h"
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -252,4 +252,4 @@ private:
 std::unique_ptr<Page> make_display_page() { return std::make_unique<DisplayPage>(); }
 std::unique_ptr<Page> make_extras_page() { return std::make_unique<ExtrasPage>(); }
 
-}  // namespace mprl
+}  // namespace nxl

@@ -22,6 +22,7 @@
 #include "nxrt/nxmodule.h"
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
+#include "nxrt/game.h"
 #include "nxrt/symbols.h"
 #include "nxrt/timestep.h"
 #include "nxrt/tt.h"
@@ -35,6 +36,8 @@ bool g_up = false;
 bool init(const InitOptions& opt) {
     std::lock_guard<std::mutex> lk(g_lock);
     if (g_up) return true;
+    // The registered game's settings defaults sit below the ini and survive its loading (nxrt/game.h Info::config_defaults).
+    if (const char* d = game::info().config_defaults; d && *d) config_set_defaults(d);
     const char* ini = opt.ini_path ? opt.ini_path : std::getenv("NXRT_INI");
     config_load_file(ini && *ini ? ini : "nxrt.ini");
     LogOptions lo;

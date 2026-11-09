@@ -8,7 +8,7 @@
 
 #include "pages.h"
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -81,4 +81,4 @@ void add_fastboot_rows(Form& f) {
            L"slots (used only with Faster menus on). Everything here is off by default.", 2, true);
 }
 
-}  // namespace mprl
+}  // namespace nxl

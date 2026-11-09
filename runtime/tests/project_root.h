@@ -1,32 +1,45 @@
-// Where the optional local test data lives (work/shader_cache, work/nvn_refs, game/romfs, refs/ ...) when the checkout sits inside the
-// author's project folder. NXRT_ROOT names that folder; without it the nearest parent of the working directory that holds both a
-// runtime/ and a work/ folder is used. Outside such a folder the paths stay relative and the tests that need the data skip.
+// Where the optional local test data lives. Two roots, each from the environment first, then from the build (cmake/tests.cmake):
+//   nx_root()     the NX folder (NX_ROOT; build: the nearest parent of the base checkout with a games/ folder): refs/ ...
+//   project_root() the folder of the game whose data the data-driven tests read (NXRT_TEST_DATA_GAME_DIR; build: the cache variable of
+//                 the same name, empty by default): work/shader_cache, work/nvn_refs, game/romfs ...
+// An empty root leaves the paths relative, so the tests that need the data skip.
 #pragma once
 
 #include <cstdlib>
 #include <filesystem>
 #include <string>
-#include <system_error>
+
+#ifndef NXRT_NX_ROOT
+#define NXRT_NX_ROOT ""
+#endif
+#ifndef NXRT_TEST_DATA_GAME_DIR
+#define NXRT_TEST_DATA_GAME_DIR ""
+#endif
 
 namespace nxtest {
 
-inline const std::filesystem::path& project_root() {
-    static const std::filesystem::path root = [] {
-        namespace fs = std::filesystem;
-        if (const char* e = std::getenv("NXRT_ROOT"); e && *e) return fs::path(e);
-        std::error_code ec;
-        for (fs::path p = fs::current_path(ec); !p.empty(); p = p.parent_path()) {
-            if (fs::is_directory(p / "runtime", ec) && fs::is_directory(p / "work", ec)) return p;
-            if (p == p.parent_path()) break;
-        }
-        return fs::path();
-    }();
+inline std::filesystem::path root_from(const char* env, const char* built) {
+    if (const char* e = std::getenv(env); e && *e) return std::filesystem::path(e);
+    return std::filesystem::path(built);
+}
+
+inline const std::filesystem::path& nx_root() {
+    static const std::filesystem::path root = root_from("NX_ROOT", NXRT_NX_ROOT);
     return root;
 }
 
-// `rel` below the project root, with '/' separators (a trailing '/' is kept).
+inline const std::filesystem::path& project_root() {
+    static const std::filesystem::path root = root_from("NXRT_TEST_DATA_GAME_DIR", NXRT_TEST_DATA_GAME_DIR);
+    return root;
+}
+
+// `rel` below the game data folder, with '/' separators (a trailing '/' is kept).
 inline std::string project_path(const std::string& rel) {
     return (project_root() / rel).generic_string();
+}
+// `rel` below the NX folder.
+inline std::string nx_path(const std::string& rel) {
+    return (nx_root() / rel).generic_string();
 }
 
 }  // namespace nxtest

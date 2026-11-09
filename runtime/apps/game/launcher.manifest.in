@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="MetroidPrimeRemastered.Launcher" version="1.0.0.0" processorArchitecture="amd64"/>
-  <description>Metroid Prime Remastered PC - Launcher</description>
+  <assemblyIdentity type="win32" name="@NXG_ASSEMBLY@.Launcher" version="1.0.0.0" processorArchitecture="amd64"/>
+  <description>@NXG_PRODUCT@ - Launcher</description>
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>

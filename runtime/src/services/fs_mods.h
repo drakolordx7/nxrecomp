@@ -120,7 +120,8 @@ private:
 // ---- the hook for game modules -----------------------------------------------------------------------------------------------------
 // Some games keep data that must agree with the files that are served; ACNH's resource size table (System/Resource/ResourceSizeTable.
 // srsizetable) lists the size of every resource, and a modded file of another size without a matching entry can crash the game. The
-// base knows nothing about such tables. A game module registers a hook (set_mods_index_hook, from its own registration code); load_mods
+// base knows nothing about such tables. A game module names its hook in its Info (nxrt/game.h mods_index_hook; set_mods_index_hook sets
+// one that takes precedence, for tests); load_mods
 // calls it once, after the merged index is complete and before it is served, with the list of files the mods change (old and new
 // size) and the means to read the merged view and to put a generated file in place of a served one (in memory, never on disk).
 // The hook is not called when no mod provides anything, so the no-mods path is untouched.
@@ -159,7 +160,7 @@ private:
 };
 
 using ModsIndexHook = std::function<void(ModsIndexEdit&)>;
-// Registers the hook (one per process; an empty function removes it). Call before the game first opens its RomFS (the mods are loaded then).
+// Registers a hook that takes precedence over the game's Info::mods_index_hook (one per process; an empty function removes it). Call before the game first opens its RomFS (the mods are loaded then).
 void set_mods_index_hook(ModsIndexHook hook);
 
 // Finds and loads the mods. `base_romfs_dir` is the game's extracted RomFS folder: it is listed (one directory listing per folder the

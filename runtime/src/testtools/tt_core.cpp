@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "nxrt/config.h"
+#include "nxrt/memory.h"
 #include "nxrt/diag.h"
 #include "nxrt/game.h"
 #include "nxrt/log.h"
@@ -375,7 +376,7 @@ bool init() {
     s.replay_exit = config_get_bool("test", "replay_exit", false);
     s.shot_dir = config_get_str("test", "shot_dir", "");
     if (s.shot_dir.empty()) s.shot_dir = join(s.out, "shots");
-    detail::set_game_base(static_cast<uint64_t>(config_get_int("test", "game_base", static_cast<int64_t>(game::info().main_base))));
+    detail::set_game_base(static_cast<uint64_t>(config_get_int("test", "game_base", static_cast<int64_t>(mem::kMainBase))));
     parse_regions(s, config_get_str("test", "hash_regions", ""));
     if (src == "tick") s.src = Source::Tick;
     else if (src == "manual") s.src = Source::Manual;
@@ -501,7 +502,7 @@ void reset_for_tests() {
     s.key_sink = keep_k;
     s.shot_fn = sf;
     s.shot_user = su;
-    detail::set_game_base(game::info().main_base);
+    detail::set_game_base(mem::kMainBase);
     set_probe_layout(ProbeLayout{});
 }
 

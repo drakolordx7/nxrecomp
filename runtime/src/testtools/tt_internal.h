@@ -7,11 +7,10 @@
 #include <string>
 #include <vector>
 
+#include "nxrt/memory.h"
 #include "nxrt/tt.h"
 
 namespace nxrt::tt::detail {
-
-constexpr uint64_t kDefaultGameBase = 0x7100000000ull;
 
 // ---- tt_game.cpp (memory helpers; the rest forwards to the game's tt::GameProbes) ----
 uint64_t game_base();

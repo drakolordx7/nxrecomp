@@ -5,9 +5,9 @@
 #   EXPECT unicorn  Unicorn executing the original AArch64 code (S1's reference, recomp/oracle/e2e/unicorn_side.py)
 #   EXPECT native   the same program text compiled for the host (tests/lift/native/rt2.h) and run with the host's C++ exceptions
 # Needs ../recomp (lifter, ABI header, oracle helpers), ../tools/.venv (Python with unicorn) and LLVM clang for the AArch64 target.
-set(NXRT_RECOMP_ROOT "${CMAKE_SOURCE_DIR}/../recomp")
+set(NXRT_RECOMP_ROOT "${NX_BASE_DIR}/recomp")
 include("${NXRT_RECOMP_ROOT}/cmake/NxRecomp.cmake")
-set(NXRT_LIFT_TOOLS "${CMAKE_SOURCE_DIR}/tests/tools")
+set(NXRT_LIFT_TOOLS "${CMAKE_CURRENT_SOURCE_DIR}/../tools")
 set(NXRT_LIFT_GUEST "${CMAKE_CURRENT_SOURCE_DIR}/guest")
 file(GLOB NXRT_LIFT_HEADERS CONFIGURE_DEPENDS "${NXRT_LIFT_GUEST}/*.h" "${NXRT_RECOMP_ROOT}/oracle/e2e/progs/*.h")
 

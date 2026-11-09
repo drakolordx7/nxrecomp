@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# nxrt: game-independent runtime skeleton (OS/HLE layer) for the Metroid Prime Remastered static recompilation.
+# nxrt: the game-independent runtime (HLE kernel and services, NVN on Vulkan, play mode, launcher) of the NX static recompilations.
 # Build: scripts\build.ps1   (clang-cl + Ninja, Release)   Test: ctest --test-dir build\release
 cmake_minimum_required(VERSION 3.25)
 # Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
@@ -20,13 +20,11 @@ endif()
 
 option(NXRT_BUILD_TESTS "Build the nxrt_tests executable and register its CTest entries" ON)
 
-# The generated-code ABI header (Ctx, call_indirect, ...) lives in the recompiler (recomp/include/nxrecomp/).
-# Found next to the checkout (../recomp) or, for a git worktree under runtime-wt/<name>, two levels up (../../recomp).
-set(NXRT_RECOMP_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../recomp/include" CACHE PATH "Directory that holds nxrecomp/")
-if(NOT EXISTS "${NXRT_RECOMP_INCLUDE}/nxrecomp/ctx.h" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/include/nxrecomp/ctx.h")
-    get_filename_component(_nxrt_ri "${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/include" ABSOLUTE)
-    set(NXRT_RECOMP_INCLUDE "${_nxrt_ri}" CACHE PATH "Directory that holds nxrecomp/" FORCE)
-endif()
+# The base checkout (base/: recomp, runtime, tools in one repository) and the NX layout around it (cmake/nx_game.cmake: NX_ROOT, game manifests).
+get_filename_component(NX_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+include("${NX_BASE_DIR}/cmake/nx_game.cmake")
+# The generated-code ABI header (Ctx, call_indirect, ...) lives in the recompiler of the same checkout (recomp/include/nxrecomp/).
+set(NXRT_RECOMP_INCLUDE "${NX_BASE_DIR}/recomp/include" CACHE PATH "Directory that holds nxrecomp/")
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(/W3 -Wno-unused-parameter -Wno-missing-field-initializers -Wno-cast-function-type-mismatch
@@ -35,13 +33,21 @@ endif()
 add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS _WIN32_WINNT=0x0A00)
 
 option(NXRT_BUILD_GFX "Build the graphics shell (SDL3 + Vulkan + NVN front end, src/gfx, cmake/gfx.cmake)" ON)
-# Game modules (games/<id>/, docs/GAME_BOUNDARY.md): the title-specific code a game exe links. The test executables register one of them, so
-# the tests of the base run against that game's tables (title facts, sites, probes, hooks) as the game exe does.
-option(NXRT_BUILD_GAMES "Build the game modules in games/" ON)
-set(NXRT_GAMES "mpr" CACHE STRING "ids of the game modules to build (games/<id>/), a list")
-set(NXRT_TEST_GAME "mpr" CACHE STRING "id of the game module the test executables register (empty: none)")
-if(NOT NXRT_BUILD_GAMES OR NOT NXRT_TEST_GAME IN_LIST NXRT_GAMES)
-    set(NXRT_TEST_GAME "")      # the test game must be one of the modules built
+# Game folders (games/<id>/, each with game.json and runtime/CMakeLists.txt; docs/GAME_BOUNDARY.md): the title-specific modules a game exe links.
+# Empty (the default) is the neutral base build. Each game's own tests (games/<id>/runtime/tests) are built with it when tests are on.
+set(NXRT_GAME_DIRS "" CACHE STRING "game folders to build the runtime modules of (absolute paths, a list)")
+# Package builds (game exes as release binaries): no local source paths in the binaries (-ffile-prefix-map of the base and game folders).
+option(NXRT_RELEASE "build for a release package (no build paths in the binaries)" OFF)
+# __FILE__ (the assert strings of the audio renderer) never carries the build folder, in any build: paths are written relative to the checkout.
+add_compile_options("-clang:-fmacro-prefix-map=${NX_BASE_DIR}=.")
+foreach(_gd ${NXRT_GAME_DIRS})
+    add_compile_options("-clang:-fmacro-prefix-map=${_gd}=.")
+endforeach()
+if(NXRT_RELEASE)
+    add_compile_options("-clang:-ffile-prefix-map=${NX_BASE_DIR}=.")
+    foreach(_gd ${NXRT_GAME_DIRS})
+        add_compile_options("-clang:-ffile-prefix-map=${_gd}=.")
+    endforeach()
 endif()
 
 file(GLOB_RECURSE NXRT_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
@@ -55,43 +61,28 @@ target_link_libraries(nxrt PUBLIC psapi)
 
 if(NXRT_BUILD_TESTS)
     enable_testing()
+    include(cmake/tests.cmake)
+    # The folder of the game whose local test data (work/shader_cache, work/nvn_refs, game/romfs) the data-driven tests read
+    # (tests/project_root.h); empty: those tests skip. The NXRT_TEST_DATA_GAME_DIR environment variable overrides it at run time.
+    set(NXRT_TEST_DATA_GAME_DIR "" CACHE PATH "game folder with the optional test data (games/<id>)")
+    # The neutral fixture game the base tests register (tests/fixture_game): small fake tables, no title.
+    add_library(nxrt_fixture_game STATIC tests/fixture_game/fixture_game.cpp)
+    target_include_directories(nxrt_fixture_game PUBLIC include tests/fixture_game)
+    target_compile_features(nxrt_fixture_game PUBLIC cxx_std_20)
     file(GLOB NXRT_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
-    # The tests of the test game's own runtime-side code (games/<id>/tests/core) run in the same executable.
-    if(NXRT_TEST_GAME)
-        file(GLOB NXRT_GAME_CORE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/games/${NXRT_TEST_GAME}/tests/core/*.cpp")
-        list(APPEND NXRT_TEST_SOURCES ${NXRT_GAME_CORE_TEST_SOURCES})
-    endif()
-    add_executable(nxrt_tests ${NXRT_TEST_SOURCES})
-    target_include_directories(nxrt_tests PRIVATE tests)
-    target_link_libraries(nxrt_tests PRIVATE nxrt)
-    target_compile_definitions(nxrt_tests PRIVATE NXRT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+    list(FILTER NXRT_TEST_SOURCES EXCLUDE REGEX "/tests/test_main[.]cpp$")
     # A linker map next to the exe: the crash handler and the watchdog name host code from it. Keep host allocations low
     # (HIGHENTROPYVA:NO) so the guest ranges at 0x71_0000_0000 and up are free; a 64 MiB main stack.
-    target_link_options(nxrt_tests PRIVATE /MAP /STACK:67108864 /HIGHENTROPYVA:NO /DEBUG)
-
-    # One CTest entry per test group; the group names are listed by `nxrt_tests --list`. The list is read at configure
-    # time from the NXTEST_GROUP lines of the test sources so that CMake needs no edit when a group is added.
-    set(NXRT_GROUPS "")
-    foreach(src ${NXRT_TEST_SOURCES})
-        file(STRINGS "${src}" lines REGEX "^NXTEST_GROUP\\(")
-        foreach(l ${lines})
-            string(REGEX REPLACE "^NXTEST_GROUP\\(([a-z0-9_]+)\\).*$" "\\1" g "${l}")
-            list(APPEND NXRT_GROUPS ${g})
-        endforeach()
-    endforeach()
-    list(REMOVE_DUPLICATES NXRT_GROUPS)
-    foreach(g ${NXRT_GROUPS})
-        add_test(NAME ${g} COMMAND nxrt_tests ${g} WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-        set_tests_properties(${g} PROPERTIES TIMEOUT 120)
-    endforeach()
-    message(STATUS "nxrt test groups: ${NXRT_GROUPS}")
+    nxrt_add_test_exe(nxrt_tests SOURCES ${NXRT_TEST_SOURCES} LINK nxrt nxrt_fixture_game REGISTER nxrt_register_fixture_game
+                      DEFINES NXRT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+                      LINK_OPTIONS /MAP /STACK:67108864 /HIGHENTROPYVA:NO /DEBUG)
 
     # Lifted-code integration tests (tests/lift): need the recompiler, its Python environment and the AArch64 clang.
     option(NXRT_BUILD_LIFT_TESTS "Lift test programs with nxrecomp and run them on the runtime (CTest entries lift_*)" ON)
-    if(NXRT_BUILD_LIFT_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../recomp/cmake/NxRecomp.cmake" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../tools/.venv/Scripts/python.exe")
+    if(NXRT_BUILD_LIFT_TESTS AND EXISTS "${NX_BASE_DIR}/tools/.venv/Scripts/python.exe")
         add_subdirectory(tests/lift)
     else()
-        message(STATUS "nxrt: lifted-code integration tests (tests/lift) are off: ../recomp or ../tools/.venv not found")
+        message(STATUS "nxrt: lifted-code integration tests (tests/lift) are off: tools/.venv not found")
     endif()
 endif()
 
@@ -99,31 +90,13 @@ if(NXRT_BUILD_GFX)
     include(cmake/gfx.cmake)
 endif()
 
-if(NXRT_BUILD_GAMES)
-    foreach(_game ${NXRT_GAMES})
-        add_subdirectory(games/${_game})
-    endforeach()
-endif()
-# The launcher's branding and factory settings: the data part of one game module and its launcher.rc (version info, manifest). Without that
-# module the launcher builds unbranded, with no resources.
-if(TARGET mpr_launcher AND TARGET nxrt_game_${NXRT_LAUNCHER_GAME}_data)
-    target_sources(mpr_launcher PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/games/${NXRT_LAUNCHER_GAME}/launcher.rc")
-    target_link_libraries(mpr_launcher PRIVATE nxrt_game_${NXRT_LAUNCHER_GAME}_data)
-    target_compile_definitions(mpr_launcher PRIVATE NXRT_LAUNCHER_GAME_REGISTER=nxrt_register_game_${NXRT_LAUNCHER_GAME}_data)
-    target_link_options(mpr_launcher PRIVATE /MANIFEST:NO)   # launcher.rc carries the manifest
-endif()
-# Each test executable registers the most of the test game it links: the data part (launcher tests), the core part (runtime tests), the whole
-# module (graphics tests). tests/test_main.cpp calls NXRT_TEST_GAME_REGISTER before the first test.
-if(NXRT_BUILD_TESTS AND NXRT_TEST_GAME)
-    set(_g "${NXRT_TEST_GAME}")
-    foreach(pair "nxrt_tests;nxrt_game_${_g}_core;nxrt_register_game_${_g}_core" "nxrt_gfx_tests;nxrt_game_${_g};nxrt_register_game_${_g}"
-                 "mpr_launcher_tests;nxrt_game_${_g}_data;nxrt_register_game_${_g}_data")
-        list(GET pair 0 exe)
-        list(GET pair 1 lib)
-        list(GET pair 2 fn)
-        if(TARGET ${exe} AND TARGET ${lib})
-            target_link_libraries(${exe} PRIVATE ${lib})
-            target_compile_definitions(${exe} PRIVATE NXRT_TEST_GAME_REGISTER=${fn})
-        endif()
-    endforeach()
-endif()
+# The game modules: games/<id>/runtime/CMakeLists.txt, configured with the game's manifest read (NX_GAME_*) and its generated header
+# (nx_game.h, NXGAME_* macros) in NX_GAME_GENERATED_DIR. NXRT_SOURCE_DIR is this folder.
+set(NXRT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL "the runtime source folder")
+foreach(_gd ${NXRT_GAME_DIRS})
+    nx_game_read("${_gd}" NX_GAME)
+    set(NX_GAME_GENERATED_DIR "${CMAKE_BINARY_DIR}/games/${NX_GAME_ID}/generated")
+    nx_game_header(NX_GAME "${NX_GAME_GENERATED_DIR}/nx_game.h")
+    add_subdirectory("${NX_GAME_DIR}/runtime" "${CMAKE_BINARY_DIR}/games/${NX_GAME_ID}")
+endforeach()
+include(cmake/game_exe.cmake)

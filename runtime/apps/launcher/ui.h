@@ -13,7 +13,7 @@
 
 #include "play/play_types.h"
 
-namespace mprl {
+namespace nxl {
 
 using nxrt::play::Settings;
 
@@ -169,4 +169,4 @@ public:
     static HWND create(Page& page, HWND parent, Host& host, int id_base, const RECT& area);
 };
 
-}  // namespace mprl
+}  // namespace nxl

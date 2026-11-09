@@ -8,7 +8,7 @@
 
 #include "play/play_types.h"
 
-namespace mprl {
+namespace nxl {
 
 // One row of the keyboard list: the action, its name on the list and the group heading it sits under.
 struct KeyRow {
@@ -40,4 +40,4 @@ void reset_shown_bindings(nxrt::play::Settings& s);
 // The name of the action on the list, or an empty string for an action without a row.
 std::wstring act_label(nxrt::play::Act a);
 
-}  // namespace mprl
+}  // namespace nxl

@@ -10,7 +10,7 @@
 
 #include "pages.h"
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -190,4 +190,4 @@ private:
 
 std::unique_ptr<Page> make_tweaks_page() { return std::make_unique<TweaksPage>(); }
 
-}  // namespace mprl
+}  // namespace nxl

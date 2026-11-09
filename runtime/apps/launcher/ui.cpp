@@ -9,7 +9,7 @@
 #include "keymap_win.h"
 #include "pad_capture.h"
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -588,4 +588,4 @@ bool capture_pad_button(HWND owner, const Env& env, int* out_source) {
     return true;
 }
 
-}  // namespace mprl
+}  // namespace nxl

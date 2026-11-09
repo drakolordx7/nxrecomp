@@ -23,7 +23,7 @@ LPARAM make_lparam(unsigned scan, bool extended) {
 }
 
 int key(unsigned scan, bool extended = false, WPARAM vk = 0) {
-    return mprl::sdl_scancode_from_key_message(vk, make_lparam(scan, extended));
+    return nxl::sdl_scancode_from_key_message(vk, make_lparam(scan, extended));
 }
 
 // wparam of WM_MOUSEWHEEL: the wheel delta is the high word.
@@ -111,21 +111,21 @@ NXTEST(unknown_keys_give_zero) {
 }
 
 NXTEST(mouse_buttons) {
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_LBUTTONDOWN, 0), 1);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_MBUTTONDOWN, 0), 2);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_RBUTTONDOWN, 0), 3);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_XBUTTONDOWN, MAKEWPARAM(0, XBUTTON1)), 4);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_XBUTTONDOWN, MAKEWPARAM(0, XBUTTON2)), 5);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_LBUTTONUP, 0), 0);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_RBUTTONUP, 0), 0);
-    CHECK_EQ(mprl::sdl_mouse_button_from_message(WM_MOUSEMOVE, 0), 0);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_LBUTTONDOWN, 0), 1);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_MBUTTONDOWN, 0), 2);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_RBUTTONDOWN, 0), 3);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_XBUTTONDOWN, MAKEWPARAM(0, XBUTTON1)), 4);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_XBUTTONDOWN, MAKEWPARAM(0, XBUTTON2)), 5);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_LBUTTONUP, 0), 0);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_RBUTTONUP, 0), 0);
+    CHECK_EQ(nxl::sdl_mouse_button_from_message(WM_MOUSEMOVE, 0), 0);
 }
 
 NXTEST(wheel_notches) {
-    CHECK_EQ(mprl::wheel_notch_from_message(wheel(WHEEL_DELTA)), 1);
-    CHECK_EQ(mprl::wheel_notch_from_message(wheel(-WHEEL_DELTA)), -1);
-    CHECK_EQ(mprl::wheel_notch_from_message(wheel(0)), 0);
-    CHECK_EQ(mprl::wheel_notch_from_message(wheel(2 * WHEEL_DELTA)), 1);  // high-resolution wheels send multiples of 120
+    CHECK_EQ(nxl::wheel_notch_from_message(wheel(WHEEL_DELTA)), 1);
+    CHECK_EQ(nxl::wheel_notch_from_message(wheel(-WHEEL_DELTA)), -1);
+    CHECK_EQ(nxl::wheel_notch_from_message(wheel(0)), 0);
+    CHECK_EQ(nxl::wheel_notch_from_message(wheel(2 * WHEEL_DELTA)), 1);  // high-resolution wheels send multiples of 120
 }
 
 // Every plain scan code the translation returns must have a name that parses back to the same code, since controls.ini stores names.

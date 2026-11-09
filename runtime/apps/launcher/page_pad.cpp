@@ -11,7 +11,7 @@
 #include "nxrt/input_source.h"
 #include "pages.h"
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -185,4 +185,4 @@ private:
 
 std::unique_ptr<Page> make_pad_page() { return std::make_unique<PadPage>(); }
 
-}  // namespace mprl
+}  // namespace nxl

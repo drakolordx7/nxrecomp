@@ -10,7 +10,7 @@
 #include <system_error>
 #include <vector>
 
-namespace mprl {
+namespace nxl {
 
 namespace fs = std::filesystem;
 
@@ -594,4 +594,4 @@ void PrepareRun::worker() {
     if (notify_) PostMessageW(notify_, msg_finished_, 0, 0);
 }
 
-}  // namespace mprl
+}  // namespace nxl

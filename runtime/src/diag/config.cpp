@@ -29,6 +29,8 @@ struct Seen {
 std::mutex g_mu;
 // canonical id ("section" 0x1F "key", lower-case) -> value. config_set values live here too (source "ini").
 std::unordered_map<std::string, std::string> g_ini;
+// The game's defaults (config_set_defaults): below the ini, kept when the ini is loaded or cleared.
+std::unordered_map<std::string, std::string> g_defaults;
 // every key read so far, keyed by canonical id, ordered for a stable dump.
 std::map<std::string, Seen> g_seen;
 
@@ -69,6 +71,8 @@ Found lookup(const std::string& section, const std::string& key) {
     std::lock_guard<std::mutex> g(g_mu);
     auto it = g_ini.find(canon_id(section, key));
     if (it != g_ini.end()) return {true, it->second, "ini"};
+    auto d = g_defaults.find(canon_id(section, key));
+    if (d != g_defaults.end()) return {true, d->second, "game"};
     return {false, std::string(), "default"};
 }
 
@@ -227,6 +231,22 @@ void config_load_string(const char* text) { replace_ini(S(text)); }
 void config_clear() {
     std::lock_guard<std::mutex> g(g_mu);
     g_ini.clear();
+}
+
+void config_set_defaults(const char* ini_text) {
+    auto parsed = parse_ini(S(ini_text));
+    std::lock_guard<std::mutex> g(g_mu);
+    for (auto& kv : parsed) g_defaults[kv.first] = std::move(kv.second);
+}
+
+void config_set_default(const char* section, const char* key, const char* value) {
+    std::lock_guard<std::mutex> g(g_mu);
+    g_defaults[canon_id(S(section), S(key))] = S(value);
+}
+
+void config_clear_defaults() {
+    std::lock_guard<std::mutex> g(g_mu);
+    g_defaults.clear();
 }
 
 void config_set(const char* section, const char* key, const char* value) {

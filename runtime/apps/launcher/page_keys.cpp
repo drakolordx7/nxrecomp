@@ -15,7 +15,7 @@
 
 #pragma comment(lib, "uxtheme.lib")
 
-namespace mprl {
+namespace nxl {
 
 namespace {
 
@@ -226,4 +226,4 @@ private:
 
 std::unique_ptr<Page> make_keys_page() { return std::make_unique<KeysPage>(); }
 
-}  // namespace mprl
+}  // namespace nxl

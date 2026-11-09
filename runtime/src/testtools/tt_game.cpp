@@ -21,7 +21,7 @@
 namespace nxrt::tt {
 namespace detail {
 namespace {
-std::atomic<uint64_t> g_base{kDefaultGameBase};
+std::atomic<uint64_t> g_base{mem::kMainBase};
 }
 uint64_t game_base() { return g_base.load(); }
 void set_game_base(uint64_t b) { g_base.store(b); }

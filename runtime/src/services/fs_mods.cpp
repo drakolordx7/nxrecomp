@@ -19,6 +19,7 @@
 #include <sstream>
 
 #include "nxrt/config.h"
+#include "nxrt/game.h"
 #include "nxrt/log.h"
 #include "nxrt/services.h"
 
@@ -1200,6 +1201,7 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
         std::lock_guard<std::mutex> lk(g_hook_mu);
         hook = g_hook;
     }
+    if (!hook && game::info().mods_index_hook) hook = game::info().mods_index_hook;   // the registered game's (nxrt/game.h)
     if (hook) {   // the game module may fix up tables that depend on the files served (ModsIndexEdit)
         ModsIndexEdit edit(ov.get(), &b, base_romfs_dir, b.take_changes());
         try {

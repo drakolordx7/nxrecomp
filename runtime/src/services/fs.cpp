@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // fsp-srv (S3c): the file system service of the application.
 //   * RomFS: OpenDataStorageByCurrentProcess returns an IStorage over a RomFS image synthesised from the loose game folder
-//     ([fs] romfs, default game/romfs; fs_romfs.h). The SDK parses the RomFS itself (nn::fs::MountRom), so the storage is byte addressed.
+//     ([fs] romfs, default: the game exe sets it to its game folder's romfs; fs_romfs.h). The SDK parses the RomFS itself (nn::fs::MountRom), so the storage is byte addressed.
 //     OpenDataFileSystemByCurrentProcess serves the same folder as a read-only IFileSystem.
 //     Mods (fs_mods.h, docs/MODS.md): the mods folder next to the exe is merged over that folder, in both views, once at start-up.
 //   * Save data: account, device and cache saves live in folders under [fs] save_dir (default %APPDATA%\<game save_folder>\save, nxrt/game.h; MPRRecomp for Metroid Prime Remastered) with the journal

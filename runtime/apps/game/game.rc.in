@@ -1,0 +1,33 @@
+// Resources of @NXG_EXE@ (generated from runtime/apps/game/game.rc.in by cmake/game_exe.cmake): the manifest (UTF-8 code page, long paths,
+// asInvoker) and the version information.
+#include <winres.h>
+
+1 24 "@NXG_MANIFEST@"
+
+1 VERSIONINFO
+FILEVERSION     @NXG_VER_MAJOR@, @NXG_VER_MINOR@, @NXG_VER_PATCH@, 0
+PRODUCTVERSION  @NXG_VER_MAJOR@, @NXG_VER_MINOR@, @NXG_VER_PATCH@, 0
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          0x40004L
+FILETYPE        0x1L
+FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", ""
+            VALUE "FileDescription", "@NXG_DESCRIPTION@"
+            VALUE "FileVersion", "@NXG_VERSION@"
+            VALUE "InternalName", "@NXG_INTERNAL@"
+            VALUE "OriginalFilename", "@NXG_EXE@"
+            VALUE "ProductName", "@NXG_DESCRIPTION@"
+            VALUE "ProductVersion", "@NXG_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

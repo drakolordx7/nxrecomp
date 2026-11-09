@@ -13,12 +13,12 @@ NXTEST_GROUP(launcher_bindings_edit)
 
 namespace {
 
-using mprl::act_label;
-using mprl::bind_slot;
-using mprl::clear_slot;
-using mprl::inputs_for;
-using mprl::key_rows;
-using mprl::reset_shown_bindings;
+using nxl::act_label;
+using nxl::bind_slot;
+using nxl::clear_slot;
+using nxl::inputs_for;
+using nxl::key_rows;
+using nxl::reset_shown_bindings;
 using nxrt::play::Act;
 using nxrt::play::Binding;
 using nxrt::play::Ctx;
@@ -71,7 +71,7 @@ Binding binding(const char* key_name, Ctx ctx, Act act) {
 
 NXTEST(every_row_has_an_action_name) {
     CHECK_EQ(key_rows().size(), 26u);
-    for (const mprl::KeyRow& r : key_rows()) {
+    for (const nxl::KeyRow& r : key_rows()) {
         CHECK(r.label != nullptr && r.label[0] != L'\0');
         CHECK(r.group != nullptr && r.group[0] != L'\0');
         const char* name = nxrt::play::act_info(r.act).name;

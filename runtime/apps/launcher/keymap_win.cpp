@@ -11,7 +11,7 @@
 #define MAPVK_VK_TO_VSC_EX 4
 #endif
 
-namespace mprl {
+namespace nxl {
 namespace {
 
 // Plain keys, indexed by scan code 0x00..0x7F. SDL_SCANCODE_UNKNOWN where Windows sends no SDL key.
@@ -157,4 +157,4 @@ int wheel_notch_from_message(WPARAM wparam) {
     return 0;
 }
 
-}  // namespace mprl
+}  // namespace nxl

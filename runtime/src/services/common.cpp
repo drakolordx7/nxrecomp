@@ -364,7 +364,7 @@ uint64_t language_code_u64(Language l) {
     return v;
 }
 
-std::string romfs_dir() { return config_get_str("fs", "romfs", "game/romfs"); }
+std::string romfs_dir() { return config_get_str("fs", "romfs", "romfs"); }   // the game exe sets the default for its layout
 
 std::string save_dir() {
     std::string d = config_get_str("fs", "save_dir", "");

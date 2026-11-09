@@ -149,7 +149,7 @@ Rules:
 | `system` | `nickname` | `nxrt` | `NXRT_SYSTEM_NICKNAME` | `src/services/common.cpp` | Console nickname. |
 | `account` | `nickname` | `Samus` | `NXRT_ACCOUNT_NICKNAME` | `src/services/common.cpp` | Nickname of the local user. |
 | `account` | `uid` | empty (`00000000000000014d50525265636f6d`) | `NXRT_ACCOUNT_UID` | `src/services/common.cpp` | Local user id as 32 hex digits. Anything that is not 32 hex digits keeps the default. |
-| `fs` | `romfs` | `game/romfs` | `NXRT_FS_ROMFS` | `src/services/common.cpp` | Host folder served as the game's RomFS, relative to the working directory. |
+| `fs` | `romfs` | `romfs` (the game exe: `<game dir>/game/romfs` in development builds, `romfs` installed) | `NXRT_FS_ROMFS` | `src/services/common.cpp` | Host folder served as the game's RomFS, relative to the working directory. |
 | `fs` | `save_dir` | empty (`%APPDATA%\MPRRecomp\save`) | `NXRT_FS_SAVE_DIR` | `src/services/common.cpp` | Folder for save data. Empty: the APPDATA default. |
 | `mods` | `enabled` | `true` | `NXRT_MODS_ENABLED` | `src/services/fs_mods.cpp` | `false` loads no mods: the game's RomFS is served as it is. See `docs/MODS.md`. |
 | `mods` | `dir` | empty (`mods` next to the exe) | `NXRT_MODS_DIR` | `src/services/fs_mods.cpp` | Folder with the mods (RomFS overrides, LayeredFS style: `<mod>/romfs/...` and the Atmosphère, Ryujinx and Eden layouts). A relative path is taken from the exe's folder. A missing folder means no mods. |

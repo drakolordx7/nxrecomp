@@ -36,6 +36,7 @@
 #include "nxrt/kernel.h"
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
+#include "nxrt/memory.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/input.h"
@@ -184,7 +185,7 @@ struct G {
     bool window = false;
 
     std::thread::id pump_thread;
-    uint64_t base = 0;                   // set by load: [play] game_base, default the game's Info::main_base
+    uint64_t base = 0;                   // set by load: [play] game_base, default mem::kMainBase
     uint32_t hook_update = 0;            // the frame boundary (the game's GamePlay::frame_update)
     bool capture_mouse = true, quit_on_close = true, log_status = false;
     bool pointer_draw = false;         // [play] pointer_draw: the menu pointer is also drawn into the frame (screenshots show it); a test aid
@@ -1049,7 +1050,7 @@ bool load() {
     st.log_status = config_get_bool("play", "log_status", false);
     st.pointer_draw = config_get_bool("play", "pointer_draw", false);
     st.pitch_limit_deg = config_get_double("play", "pitch_limit_deg", 0.0);
-    st.base = static_cast<uint64_t>(config_get_int("play", "game_base", static_cast<int64_t>(game::info().main_base)));
+    st.base = static_cast<uint64_t>(config_get_int("play", "game_base", static_cast<int64_t>(mem::kMainBase)));
     apply_frame_cap(st.settings);
     return st.load_ok;
 }

@@ -27,16 +27,16 @@
 #include "pages.h"
 #include "ui.h"
 
-namespace mprl {
+namespace nxl {
 namespace {
 
 using nxrt::play::default_settings;
 using nxrt::play::load_settings;
 using nxrt::play::save_settings;
 
-constexpr wchar_t kClassName[] = L"MprLauncherWindow";
-#ifndef MPR_VERSION
-#define MPR_VERSION "dev"
+constexpr wchar_t kClassName[] = L"NxLauncherWindow";
+#ifndef NXRT_VERSION
+#define NXRT_VERSION "dev"
 #endif
 constexpr int kLogicalW = 680;
 constexpr int kLogicalH = 650;
@@ -52,7 +52,7 @@ enum ControlId : int {
 
 // "v0.1.0" for a release build, "dev build" for a local one.
 std::wstring version_text() {
-    const char* v = MPR_VERSION;
+    const char* v = NXRT_VERSION;
     std::wstring w(v, v + std::strlen(v));
     return (v[0] >= '0' && v[0] <= '9') ? L"v" + w : L"dev build";
 }
@@ -794,7 +794,7 @@ int App::run() {
 }
 
 }  // namespace
-}  // namespace mprl
+}  // namespace nxl
 
 #ifdef NXRT_LAUNCHER_GAME_REGISTER
 void NXRT_LAUNCHER_GAME_REGISTER();     // the data part of the game module the launcher is built for (cmake/launcher.cmake)
@@ -805,7 +805,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     NXRT_LAUNCHER_GAME_REGISTER();
 #endif
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    mprl::App app(inst, mprl::parse_cmdline());
+    nxl::App app(inst, nxl::parse_cmdline());
     const int rc = app.run();
     CoUninitialize();
     return rc;

@@ -7,7 +7,7 @@
 
 #include "play/play_types.h"
 
-namespace mprl {
+namespace nxl {
 namespace {
 
 using nxrt::play::PadSrc;
@@ -109,4 +109,4 @@ void PadCapture::remove_pad(uint32_t id) {
     pads_.erase(it);
 }
 
-}  // namespace mprl
+}  // namespace nxl

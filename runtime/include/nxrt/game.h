@@ -16,9 +16,10 @@
 // The registry is header-only, so programs that do not link the runtime library (the launcher) use it too.
 #pragma once
 #include <cstdint>
+#include <string>
 
 namespace nxrt {
-namespace services { struct TitleProfile; }
+namespace services { struct TitleProfile; namespace fs { class ModsIndexEdit; } }
 namespace timestep { struct Sites; }
 namespace tt { struct GameProbes; }
 namespace play { struct GamePlay; struct GameDefaults; struct PromptGame; }
@@ -34,7 +35,6 @@ struct Info {
     const char* short_title = "";           // a short name for file headers (the launcher's ini comment): "Metroid Prime" (empty: product)
     uint64_t program_id = 0;                // the Switch title id
     const char* version = "";               // the game version the hooks were found in: "1.0.0"
-    uint64_t main_base = 0x7100000000ull;   // where main is mapped (the lifter's base for it): hook offsets are relative to this
     uint32_t languages = 0;                 // control.nacp SupportedLanguage: bit n = services::Language n (0: American English only)
 
     // ---- files and branding ----
@@ -52,6 +52,17 @@ struct Info {
     const play::GameDefaults* play_defaults = nullptr;
     const play::GamePlay* play = nullptr;
     const play::PromptGame* prompts = nullptr;
+    // Called once the RomFS mods are merged, before they are served: fixes up game tables that depend on the served files
+    // (src/services/fs_mods.h ModsIndexEdit). Not called when no mod provides anything.
+    void (*mods_index_hook)(services::fs::ModsIndexEdit& edit) = nullptr;
+
+    // ---- start-up (the generic game exe, runtime/apps/game) ----
+    // Settings defaults as ini text, layered below the game ini and the environment (config.h config_set_defaults). nxrt::init() applies
+    // them, and they stay across later ini loads. For per-title service switches ([net], [acc], ...).
+    const char* config_defaults = nullptr;
+    // Called once the game's modules are mapped and their lifted tables registered, before they are linked and before the first guest
+    // instruction: hooks, patches of guest data, diagnostics. Returns false with a message in `error` to stop the start.
+    bool (*boot)(std::string& error) = nullptr;
 };
 
 // The registered game, or nullptr. One slot per program (the function-local static is shared by every translation unit that inlines it).

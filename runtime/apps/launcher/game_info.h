@@ -11,7 +11,7 @@
 #include <string>
 #include <thread>
 
-namespace mprl {
+namespace nxl {
 
 // ---- Branding: the registered game's names (nxrt/game.h Info) ---------------------------------------------------------------------
 std::wstring product_name();      // the window title and the dialogs: "Metroid Prime Remastered PC"
@@ -130,4 +130,4 @@ private:
     DWORD exit_code_ = 0xFFFFFFFFu;                 // written by the worker, read after join
 };
 
-}  // namespace mprl
+}  // namespace nxl

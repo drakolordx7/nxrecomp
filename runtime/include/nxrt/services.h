@@ -119,7 +119,7 @@ void profile_reload();                   // tests: re-read the config
 const char* language_code(Language l);   // "en-US", "ja", ... (the 8-byte LanguageCode string)
 uint64_t language_code_u64(Language l);  // the same string as the little-endian u64 the settings services return
 
-// The host folder game data is served from ([fs] romfs, default "game/romfs" relative to the working directory, resolved at first
+// The host folder game data is served from ([fs] romfs, default "romfs" relative to the working directory; the game exe sets <game dir>/game/romfs for development runs, resolved at first
 // use) and the folder save data lives in ([fs] save_dir, default %APPDATA%\<game save folder>\save, nxrt/game.h).
 std::string romfs_dir();
 std::string save_dir();

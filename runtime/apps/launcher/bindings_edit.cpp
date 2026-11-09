@@ -8,7 +8,7 @@
 
 #include "game_info.h"
 
-namespace mprl {
+namespace nxl {
 
 using nxrt::play::Act;
 using nxrt::play::Binding;
@@ -144,4 +144,4 @@ std::wstring act_label(Act a) {
     return L"";
 }
 
-}  // namespace mprl
+}  // namespace nxl
