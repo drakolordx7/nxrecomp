@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Background preparation of texture upload data. See nvn_texprep.h for the design and the correctness argument.
 #include "nvn_texprep.h"
+#include "nvn_settings.h"
 
 #include <windows.h>
 
@@ -315,19 +316,20 @@ void init_once() {
             std::lock_guard<std::mutex> lk(S().mu);
             return static_cast<int64_t>(S().waiting.size());
         });
-        const bool on = config_get_bool("nvn", "tex_prep", true);
+        const NvnSettings& cfg = nvn_settings();
+        const bool on = cfg.tex_prep;
         if (!on) {
             g_enabled.store(0);
             NXLOG_I(kTag, "background texture preparation is off");
             return;
         }
-        s.budget = static_cast<uint64_t>(std::max<int64_t>(16, config_get_int("nvn", "tex_prep_mb", 512))) << 20;
-        s.min_bytes = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("nvn", "tex_prep_min_kb", 8))) << 10;
-        s.early_bytes = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("nvn", "tex_prep_early_kb", 1024))) << 10;
-        s.stage_bytes = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("nvn", "tex_prep_stage_kb", 1024))) << 10;
-        s.verify = config_get_bool("nvn", "tex_prep_verify", false);
+        s.budget = static_cast<uint64_t>(std::max<int64_t>(16, cfg.tex_prep_mb)) << 20;
+        s.min_bytes = static_cast<uint64_t>(std::max<int64_t>(0, cfg.tex_prep_min_kb)) << 10;
+        s.early_bytes = static_cast<uint64_t>(std::max<int64_t>(0, cfg.tex_prep_early_kb)) << 10;
+        s.stage_bytes = static_cast<uint64_t>(std::max<int64_t>(0, cfg.tex_prep_stage_kb)) << 10;
+        s.verify = cfg.tex_prep_verify;
         const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
-        int n = static_cast<int>(config_get_int("nvn", "tex_prep_threads", 0));
+        int n = static_cast<int>(cfg.tex_prep_threads);
         if (n <= 0) n = static_cast<int>(std::clamp<unsigned>(hw / 3, 2, 8));
         for (int i = 0; i < n; ++i) std::thread(worker_main).detach();
         g_enabled.store(1);

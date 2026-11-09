@@ -19,6 +19,7 @@
 
 #include <nxrt/config.h>
 
+#include "nvn_settings.h"
 #include "nvn_core.h"
 #include "nvn_enums.h"
 #include "nvn_format.h"
@@ -57,10 +58,13 @@ uint32_t g_next_id = 100;
 void no_cache() {
 #ifdef _WIN32
     _putenv_s("NXRT_NVN_BC7_CACHE", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 #else
     unsetenv("NXRT_NVN_BC7_CACHE");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 #endif
     config_set("nvn", "bc7_cache", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 }
 
 TextureBuilderInfo info(int target, int w, int h, int depth, int levels, int format, int flags = 0) {
@@ -933,8 +937,10 @@ fs::path new_cache_dir(const char* tag) {
     fs::create_directories(dir, ec);
 #ifdef _WIN32
     _putenv_s("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 #else
     setenv("NXRT_NVN_BC7_CACHE", dir.string().c_str(), 1);
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 #endif
     return dir;
 }

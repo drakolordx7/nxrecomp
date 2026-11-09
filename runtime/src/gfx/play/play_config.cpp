@@ -106,12 +106,13 @@ bool pick_word(const std::string& k, const std::string& v, const std::vector<con
 // The words the file uses for the display extras enums, indexed by the enum value (the first word of each list is the default's).
 const std::vector<const char*> kHdrModeWords = {"off", "auto", "on"};
 const std::vector<const char*> kHdrFormatWords = {"auto", "hdr10", "scrgb"};
-const std::vector<const char*> kUpscaleWords = {"off", "fsr1", "fsr3", "dlss", "xess"};
+const std::vector<const char*> kUpscaleWords = {"off", "fsr1"};
 const std::vector<const char*> kLatencyWords = {"off", "auto", "on", "boost"};
-// The upscale words accepted when reading (spatial is an alias of fsr1) and the enum value each one means.
+// The upscale words accepted when reading (spatial is an alias of fsr1) and the enum value each one means. fsr3, dlss and xess were offered
+// but never implemented: an older file that holds one reads as off.
 const std::vector<const char*> kUpscaleReadWords = {"off", "fsr1", "spatial", "fsr3", "dlss", "xess"};
 const extras::UpscaleMode kUpscaleFromWord[] = {extras::UpscaleMode::Off, extras::UpscaleMode::Fsr1, extras::UpscaleMode::Fsr1,
-                                                extras::UpscaleMode::Fsr3, extras::UpscaleMode::Dlss, extras::UpscaleMode::Xess};
+                                                extras::UpscaleMode::Off, extras::UpscaleMode::Off, extras::UpscaleMode::Off};
 
 // Splits on '\n'. Line i of the result is line i+1 of the file (for error messages).
 std::vector<std::string> split_lines(const std::string& text) {
@@ -455,20 +456,9 @@ bool apply_fixed(Sec sec, const std::string& k, const std::string& v, Settings* 
                 return true;
             }
             if (k == "sharpness") return set_real(0.0, 1.0, &u.sharpness);
-            if (k == "fsr_dll") {   // a path: kept as written
-                u.fsr_dll = v;
-                return true;
-            }
-            if (k == "dlss_dll") {
-                u.dlss_dll = v;
-                return true;
-            }
-            if (k == "xess_dll") {
-                u.xess_dll = v;
-                return true;
-            }
             if (k == "scene_scale") return set_int(25, 100, &u.scene_scale);
-            if (k == "frame_generation") return set_bool(&u.frame_generation);
+            // retired keys of the never-implemented FSR 3 / DLSS / XeSS modes: still accepted in older files, and ignored
+            if (k == "fsr_dll" || k == "dlss_dll" || k == "xess_dll" || k == "frame_generation") return true;
             break;
         }
         case Sec::Latency: {
@@ -854,10 +844,6 @@ std::string format_settings(const Settings& s) {
     kv("mode", kUpscaleWords[static_cast<int>(s.extras.upscale.mode)]);
     kv("sharpness", num_exact(s.extras.upscale.sharpness));
     kv("scene_scale", std::to_string(s.extras.upscale.scene_scale));
-    kv("fsr_dll", s.extras.upscale.fsr_dll);
-    kv("dlss_dll", s.extras.upscale.dlss_dll);
-    kv("xess_dll", s.extras.upscale.xess_dll);
-    kv("frame_generation", flag(s.extras.upscale.frame_generation));
 
     o += "\n[latency]\n";
     kv("mode", kLatencyWords[static_cast<int>(s.extras.latency.mode)]);

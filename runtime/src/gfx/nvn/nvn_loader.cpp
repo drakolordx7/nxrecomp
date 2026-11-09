@@ -3,6 +3,7 @@
 // every entry point of the generated table. The stub/logging layout follows the idea in smo-recomp runtime/gfx/nvn_stub.c
 // (log the first calls with x0..x3 and the caller, count the rest); the argument decoding by signature class is new.
 #include "nxrt/nvn.h"
+#include "nvn_settings.h"
 
 #include <algorithm>
 #include <atomic>
@@ -54,15 +55,13 @@ const std::unordered_map<std::string, int>& index_map() {
 }
 
 int64_t log_first_calls() {
-    static const int64_t n = config_get_int("nvn", "log_first_calls", 3);
-    return n;
+    return be::nvn_settings().log_first_calls;
 }
 
 UnknownPolicy unknown_policy() {
     int p = g_unknown_policy.load();
     if (p < 0) {
-        const std::string v = config_get_str("nvn", "unknown", "stub");
-        p = (v == "null" || v == "NULL") ? static_cast<int>(UnknownPolicy::Null) : static_cast<int>(UnknownPolicy::Stub);
+        p = be::nvn_settings().unknown_null ? static_cast<int>(UnknownPolicy::Null) : static_cast<int>(UnknownPolicy::Stub);
         g_unknown_policy.store(p);
     }
     return static_cast<UnknownPolicy>(p);

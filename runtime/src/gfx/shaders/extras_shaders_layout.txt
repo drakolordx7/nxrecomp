@@ -1,0 +1,63 @@
+// SPIR-V for the output pass, compiled with glslc -O --target-env=vulkan1.3 from src/gfx/shaders/{fullscreen.vert, out_encode.frag,
+// overlay_composite.frag, fsr_easu.comp, fsr_rcas.comp} and checked with spirv-val --target-env vulkan1.3. FSR 1 headers: third_party/ffx_fsr1 (AMD FidelityFX SDK v1.1.4, MIT).
+// All shaders use descriptor set 0. Push constants are std430 (vec4/uvec4 blocks, 16-byte aligned; offsets are in bytes).
+//
+// kOutVert: vertex shader, full-screen triangle, drawn with 3 vertices and no vertex input. No descriptors, no push
+//   constants. Output location 0: vec2 v_dst (destination position in [0,1]^2, row 0 at the top). Used with kOutEncodeFrag and
+//   kOverlayCompositeFrag.
+//
+// kOutEncodeFrag: fragment shader for a graphics pipeline that writes the swapchain (or the frame image).
+//   Descriptors: set 0, binding 0, COMBINED_IMAGE_SAMPLER (sampler2D u_src), fragment stage. The source is a linear-filtered
+//     game picture (nearest for an exact 1:1 copy).
+//   Push constants: 64 bytes, VK_SHADER_STAGE_FRAGMENT_BIT.
+//     offset 0   vec4 pic   picture rectangle in destination UV: x, y, w, h (0, 0, 1, 1 when the picture fills the target)
+//     offset 16  vec4 crop  source crop in texels: x, y, w, h
+//     offset 32  vec4 src   x, y: whole source size in texels; z: 1 = flip the picture vertically, 0 = no flip
+//     offset 48  vec4 p     x: mode, read as int(x + 0.5):
+//                             0 = copy, the texel unchanged (the SDR present)
+//                             1 = scene-linear to sRGB (IEC 61966-2-1 OETF of clamp(rgb, 0, 1)), for an 8-bit UNORM swapchain
+//                             2 = scene-linear to HDR10: 1.0 = paper white, BT.709 to BT.2020, nits = min(rgb * y, z) per
+//                                 channel (negatives to 0), ST 2084 PQ signal, for an A2B10G10R10 swapchain
+//                             3 = scene-linear to scRGB: min(rgb * y, z) / 80 (z = peak nits), for a float16 swapchain with
+//                                 VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT
+//                             any other value = copy
+//                           y: paper white in nits (used by modes 2 and 3); z: peak luminance in nits (mode 2 limit)
+//   Output: location 0, vec4, alpha always 1. Letterbox bars are (0, 0, 0, 1) in every mode.
+//
+// kOverlayCompositeFrag: fragment shader that draws the ImGui overlay on an HDR swapchain image. Used with kOutVert.
+//   The overlay was rendered into an RGBA8 UNORM image (cleared to 0), so its texels are premultiplied: (rgb * a, a).
+//   Descriptors: set 0, binding 0, COMBINED_IMAGE_SAMPLER (sampler2D u_ui), fragment stage. The image has the swapchain's size
+//     and is read at v_dst with a linear sampler, clamp to edge (the texel centres, so no scaling).
+//   Push constants: 16 bytes, VK_SHADER_STAGE_FRAGMENT_BIT.
+//     offset 0   vec4 p     x: mode, read as int(x + 0.5): 2 = HDR10 (BT.709 to BT.2020, nits = min(rgb * y, z), ST 2084 PQ),
+//                             3 = scRGB (rgb * y / 80, no clamp), any other value = scene-linear, unencoded.
+//                           y: paper white nits (UI white, the sRGB value 1.0, maps to this); z: peak nits (mode 2 limit); w: unused.
+//   Output: location 0, vec4 (encoded rgb of the un-premultiplied colour, a = the overlay's alpha). Texels with alpha 0 output
+//     (0, 0, 0, 0). Blended with SRC_ALPHA / ONE_MINUS_SRC_ALPHA on the swapchain.
+//
+// kFsrEasuComp: compute shader, FSR 1 EASU (FP32 path). Local size 64 x 1 x 1. Each 16 x 16 output tile is one workgroup:
+//   the 64 invocations each write four output pixels. Dispatch: ceil(out_w / 16) x ceil(out_h / 16) x 1. Pixels at or past
+//   out_w / out_h are skipped inside the shader, so the dispatch may overshoot.
+//   Descriptors: set 0, binding 0, COMBINED_IMAGE_SAMPLER (sampler2D u_src), compute stage. Use clamp-to-edge addressing.
+//     textureGather returns the four texels around each point, so the filter setting does not affect the result.
+//   set 0, binding 1, STORAGE_IMAGE (image2D u_dst, rgba16f, writeonly), compute stage. The output, out_w x out_h.
+//   Push constants: 80 bytes, VK_SHADER_STAGE_COMPUTE_BIT.
+//     offset 0   uvec4 con0   } the four words of fsr1_easu_consts() (src/gfx/extras/fsr1_consts.h), in this order
+//     offset 16  uvec4 con1   }
+//     offset 32  uvec4 con2   }
+//     offset 48  uvec4 con3   }
+//     offset 64  vec4 opt     x: perceptual flag. 0 = input is an sRGB-style [0,1] picture, used as is.
+//                               1 = input is scene-linear HDR (1.0 = paper white, may exceed 1): each fetched texel is
+//                               compressed c = x / (1 + x) (x clamped to >= 0) before EASU, and each result is expanded
+//                               x = c / (1 - c) (c clamped to [0, 0.999]) after it. The output image then holds linear HDR.
+//                             y: output width in pixels; z: output height in pixels; w: pre-scale k of the compression (0 = 1).
+//
+// kFsrRcasComp: compute shader, FSR 1 RCAS (FP32, sharpening without denoise). Local size 64 x 1 x 1, same tile and dispatch
+//   as EASU. It reads the EASU output (the intermediate image, out_w x out_h) and writes the final image.
+//   Descriptors: set 0, binding 0, SAMPLED_IMAGE (texture2D u_src), compute stage. Read with texelFetch, so no sampler is
+//     bound for it. Reads outside the image are clamped to the edge.
+//   set 0, binding 1, STORAGE_IMAGE (image2D u_dst, rgba16f, writeonly), compute stage.
+//   Push constants: 32 bytes, VK_SHADER_STAGE_COMPUTE_BIT.
+//     offset 0   uvec4 con  the four words of fsr1_rcas_consts() (src/gfx/extras/fsr1_consts.h)
+//     offset 16  vec4 opt   x: perceptual flag, same meaning as EASU's (1 = scene-linear: compress before RCAS, expand after);
+//                           y: output width; z: output height; w: pre-scale k (0 = 1).

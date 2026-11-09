@@ -25,8 +25,8 @@
 #include "nvn_gpu_internal.h"
 #include "nvn_impl.h"
 #include "nvn_pipeline.h"
-#include "nvn_present_pass.h"
 #include "extras/output_pass.h"
+#include "nvn_settings.h"
 
 namespace nxrt::nvn::be::gpu {
 namespace {
@@ -93,9 +93,7 @@ struct Gpu {
     std::vector<std::function<void()>> pending_destroy;   // from any thread, assigned a serial by the render thread
     std::deque<Deferred> deferred;                        // render thread
 
-    PresentPass present;
-    bool present_ok = false;
-    extras::OutputPass output;                 // HDR encode and FSR 1 (S14); used instead of `present` when the extras are on
+    extras::OutputPass output;                 // the one present path: SDR copy, HDR encode and FSR 1 (S14)
     bool output_ok = false;
     std::mutex unsupported_mu;
     std::map<std::string, uint64_t> unsupported;
@@ -680,7 +678,6 @@ int window_origin_mode() { return g_origin.load(); }
 int depth_mode() { return g_depth_mode.load(); }
 gfx::Renderer* renderer() { return g ? g->rend : nullptr; }
 FrameLimiter* limiter() { return g ? g->limiter : nullptr; }
-PresentPass* present_pass() { return g && g->present_ok ? &g->present : nullptr; }
 extras::OutputPass* output_pass() { return g && g->output_ok ? &g->output : nullptr; }
 bool keep_aspect() { return g && g->keep_aspect; }
 
@@ -705,6 +702,7 @@ void register_counter_gauges();
 bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool keep_aspect) {
     std::lock_guard<std::mutex> lk(g_install_mu);
     if (g) return g->dev == &dev;
+    nvn_settings_reload();   // the [nvn] settings are read again at each bring-up (tests change them between back ends)
     auto* gp = new Gpu();
     gp->dev = &dev;
     gp->rend = rend;
@@ -761,10 +759,8 @@ bool bring_up(gfx::Device& dev, gfx::Renderer* rend, FrameLimiter* limiter, bool
     // wait for the thread id to be published
     for (int i = 0; i < 1000 && gp->tid == std::thread::id(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     if (rend) {
-        run_on_render_thread([&] { gp->present_ok = gp->present.init(dev, rend->format()); });
-        if (!gp->present_ok) NXLOG_E(kTag, "present pass failed to initialise: frames will not be shown");
         run_on_render_thread([&] { gp->output_ok = gp->output.init(dev); });
-        if (!gp->output_ok) NXLOG_W(kTag, "output pass (HDR, FSR 1) failed to initialise: those extras are off");
+        if (!gp->output_ok) NXLOG_E(kTag, "output pass failed to initialise: frames will not be shown");
     }
     NXLOG_I(kTag, "NVN back end up on %s (%u submission slots, timeline semaphore, host-memory import %s)", dev.properties().deviceName, kSlots,
             dev.features().external_memory_host ? "available" : "NOT available");
@@ -808,7 +804,6 @@ void tear_down() {
         drain_pending_destroy();
         for (auto& d : gp->deferred) { d.fn(); g_gauge_deferred.sub(1); }
         gp->deferred.clear();
-        gp->present.shutdown();
         gp->output.shutdown();
     });
     {

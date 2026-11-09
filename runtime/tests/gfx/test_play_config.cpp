@@ -114,9 +114,7 @@ bool same_settings(const Settings& a, const Settings& b) {
     if (!(ea.hdr.mode == eb.hdr.mode && ea.hdr.format == eb.hdr.format && ea.hdr.peak_nits == eb.hdr.peak_nits &&
           ea.hdr.paper_white_nits == eb.hdr.paper_white_nits && ea.hdr.highlight_boost == eb.hdr.highlight_boost))
         return false;
-    if (!(ea.upscale.mode == eb.upscale.mode && ea.upscale.sharpness == eb.upscale.sharpness && ea.upscale.fsr_dll == eb.upscale.fsr_dll &&
-          ea.upscale.dlss_dll == eb.upscale.dlss_dll && ea.upscale.xess_dll == eb.upscale.xess_dll &&
-          ea.upscale.frame_generation == eb.upscale.frame_generation))
+    if (!(ea.upscale.mode == eb.upscale.mode && ea.upscale.sharpness == eb.upscale.sharpness && ea.upscale.scene_scale == eb.upscale.scene_scale))
         return false;
     if (!(ea.latency.mode == eb.latency.mode && ea.latency.log_timings == eb.latency.log_timings && ea.latency.frames_ahead == eb.latency.frames_ahead)) return false;
     if (a.prompts.style != b.prompts.style) return false;
@@ -954,7 +952,7 @@ using nxrt::extras::LatencyMode;
 using nxrt::extras::UpscaleMode;
 
 namespace {
-// Every key of the three sections, with values that differ from the defaults.
+// Every key of the three sections, with values that differ from the defaults (and the retired upscaler keys an older file still holds).
 const char* const kExtrasFile =
     "[hdr]\n"
     "mode = on\n"
@@ -984,10 +982,6 @@ NXTEST(extras_defaults) {
     CHECK(d.extras.hdr.highlight_boost == 1.0);
     CHECK(d.extras.upscale.mode == UpscaleMode::Off);
     CHECK(d.extras.upscale.sharpness == 0.8);
-    CHECK(d.extras.upscale.fsr_dll.empty());
-    CHECK(d.extras.upscale.dlss_dll.empty());
-    CHECK(d.extras.upscale.xess_dll.empty());
-    CHECK(!d.extras.upscale.frame_generation);
     CHECK(d.extras.latency.mode == LatencyMode::Off);
     CHECK(!d.extras.latency.log_timings);
 
@@ -1012,10 +1006,6 @@ NXTEST(extras_full_file_every_key) {
     CHECK(s.extras.hdr.highlight_boost == 1.5);
     CHECK(s.extras.upscale.mode == UpscaleMode::Fsr1);
     CHECK(s.extras.upscale.sharpness == 0.5);
-    CHECK_EQ(s.extras.upscale.fsr_dll, std::string("C:\\Tools\\amd_fidelityfx_vk.dll"));
-    CHECK_EQ(s.extras.upscale.dlss_dll, std::string("D:\\dlss\\nvngx_dlss.dll"));
-    CHECK(s.extras.upscale.xess_dll.empty());
-    CHECK(s.extras.upscale.frame_generation);
     CHECK(s.extras.latency.mode == LatencyMode::Boost);
     CHECK(s.extras.latency.log_timings);
     CHECK_EQ(s.extras.latency.frames_ahead, 2);
@@ -1074,7 +1064,6 @@ NXTEST(extras_bad_enum_words_name_the_allowed_ones) {
         {"[upscale]\nmode = taa\n", "line 2: mode must be off, fsr1, spatial, fsr3, dlss or xess, got 'taa'"},
         {"[latency]\nmode = fast\n", "line 2: mode must be off, auto, on or boost, got 'fast'"},
         {"[latency]\nlog_timings = maybe\n", "line 2: log_timings must be 1/0"},
-        {"[upscale]\nframe_generation = x\n", "line 2: frame_generation must be 1/0"},
     };
     for (const Case& c : bad) {
         Settings s;
@@ -1092,7 +1081,7 @@ NXTEST(extras_upscale_modes_round_trip) {
     };
     const Case cases[] = {
         {"off", UpscaleMode::Off, "off"},   {"fsr1", UpscaleMode::Fsr1, "fsr1"}, {"spatial", UpscaleMode::Fsr1, "fsr1"},
-        {"fsr3", UpscaleMode::Fsr3, "fsr3"}, {"dlss", UpscaleMode::Dlss, "dlss"}, {"xess", UpscaleMode::Xess, "xess"},
+        {"fsr3", UpscaleMode::Off, "off"},   {"dlss", UpscaleMode::Off, "off"},   {"xess", UpscaleMode::Off, "off"},   // retired: read as off
     };
     for (const Case& c : cases) {
         Settings s;
@@ -1136,7 +1125,6 @@ NXTEST(extras_keys_and_words_case_insensitive) {
     CHECK(s.extras.hdr.highlight_boost == 0.5);
     CHECK(s.extras.upscale.mode == UpscaleMode::Fsr1);
     CHECK(s.extras.upscale.sharpness == 0.25);
-    CHECK(s.extras.upscale.frame_generation);
     CHECK(s.extras.latency.mode == LatencyMode::Boost);
     CHECK(s.extras.latency.log_timings);
 }
@@ -1144,8 +1132,7 @@ NXTEST(extras_keys_and_words_case_insensitive) {
 NXTEST(extras_defaults_are_written) {
     const std::string text = format_settings(default_settings());
     CHECK(text.find("[hdr]\nmode = auto\nformat = auto\npeak_nits = 0\npaper_white_nits = 0\nhighlight_boost = 1\n") != std::string::npos);
-    CHECK(text.find("[upscale]\nmode = off\nsharpness = 0.8\nscene_scale = 100\nfsr_dll = \ndlss_dll = \nxess_dll = \nframe_generation = 0\n") !=
-          std::string::npos);
+    CHECK(text.find("[upscale]\nmode = off\nsharpness = 0.8\nscene_scale = 100\n\n[latency]") != std::string::npos);
     CHECK(text.find("[latency]\nmode = off\nframes_ahead = 1\nlog_timings = 0\n") != std::string::npos);
 }
 
@@ -1156,8 +1143,7 @@ NXTEST(extras_full_file_round_trip) {
     const std::string text = format_settings(s);
     CHECK(text.find("[hdr]\nmode = on\nformat = hdr10\npeak_nits = 1000\npaper_white_nits = 250\nhighlight_boost = 1.5\n") !=
           std::string::npos);
-    CHECK(text.find("[upscale]\nmode = fsr1\nsharpness = 0.5\nscene_scale = 100\nfsr_dll = C:\\Tools\\amd_fidelityfx_vk.dll\n") != std::string::npos);
-    CHECK(text.find("xess_dll = \nframe_generation = 1\n") != std::string::npos);
+    CHECK(text.find("[upscale]\nmode = fsr1\nsharpness = 0.5\nscene_scale = 100\n\n[latency]") != std::string::npos);   // the retired keys are not written back
     CHECK(text.find("[latency]\nmode = boost\nframes_ahead = 2\nlog_timings = 1\n") != std::string::npos);
 
     Settings r;
@@ -1166,20 +1152,14 @@ NXTEST(extras_full_file_round_trip) {
     CHECK_EQ(format_settings(r), text);
 }
 
-NXTEST(extras_fsr3_and_dlss_paths_survive_a_save) {
-    Settings s = default_settings();
-    s.extras.upscale.mode = UpscaleMode::Fsr3;
-    s.extras.upscale.frame_generation = true;
-    s.extras.upscale.fsr_dll = "C:\\Program Files\\AMD Tools\\amd_fidelityfx_vk.dll";
-    s.extras.upscale.dlss_dll = "D:\\games\\dlss = 3\\nvngx_dlss.dll";   // an '=' in a path: the key ends at the first '='
-    Settings r;
+NXTEST(extras_retired_upscaler_keys_are_ignored) {
+    Settings s;
     std::string err;
-    REQUIRE_MSG(parse_settings(format_settings(s), &r, &err), err);
-    CHECK(r.extras.upscale.mode == UpscaleMode::Fsr3);
-    CHECK(r.extras.upscale.frame_generation);
-    CHECK_EQ(r.extras.upscale.fsr_dll, std::string("C:\\Program Files\\AMD Tools\\amd_fidelityfx_vk.dll"));
-    CHECK_EQ(r.extras.upscale.dlss_dll, std::string("D:\\games\\dlss = 3\\nvngx_dlss.dll"));
-    CHECK(same_settings(s, r));
+    std::vector<std::string> w;
+    REQUIRE_MSG(parse_settings("[upscale]\nmode = fsr3\nframe_generation = 1\nfsr_dll = C:\\x = y\\a.dll\ndlss_dll = \n", &s, &err, &w), err);
+    CHECK(w.empty());
+    CHECK(s.extras.upscale.mode == UpscaleMode::Off);
+    CHECK(format_settings(s).find("fsr_dll") == std::string::npos);
 }
 
 NXTEST(extras_numbers_round_trip_exactly) {

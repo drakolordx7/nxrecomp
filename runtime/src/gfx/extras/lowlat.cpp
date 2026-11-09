@@ -14,6 +14,8 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
+#include "ab_windows.h"
+#include "nvn/nvn_debug.h"
 
 namespace nxrt::extras {
 namespace {
@@ -75,8 +77,8 @@ struct LowLatency::Impl {
     bool backend_reflex() const { return reflex; }
     bool reflex = false, antilag = false;
     bool live_on = true;                      // [latency] ab_toggle_s: the mode is switched on and off while running, to compare both states in one run
-    double ab_period_s = 0;
-    uint64_t ab_next_ns = 0, ab_since_ns = 0;
+    gfx::AbWindows ab;                        // windows of [latency] ab_toggle_s (nvn_debug.h): on in even windows, off in odd ones
+    uint64_t ab_since_ns = 0;
     bool paced = false;                       // the mode is on: the frames_ahead wait runs (also on GPUs with neither extension)
     bool active = false;                      // markers and the host measurement run (enabled, or log_timings asks for the numbers)
     bool running() const { return active || ft::on(); }     // the frame trace (S18 latency probe) also keeps the frame ids
@@ -177,8 +179,12 @@ LowLatency::LowLatency(gfx::Device& dev) : impl_(new Impl) {
     // Boost is a Reflex setting; with Anti-Lag it behaves as On. Auto and On both use whichever backend exists.
     enabled_ = backend_ != Backend::None;
     s.paced = s.cfg.mode != LatencyMode::Off || pace_in_main();
-    s.ab_period_s = config_get_double("latency", "ab_toggle_s", 0.0);     // test aid, not a user setting
-    if (s.ab_period_s > 0) s.ab_next_ns = FrameLimiter::now_ns() + static_cast<uint64_t>(s.ab_period_s * 1e9);
+    {   // test aid, not a user setting
+        const double ab_s = nvn::be::nvn_debug().latency_ab_toggle_s;
+        const uint64_t now = FrameLimiter::now_ns();
+        s.ab.reset(ab_s > 0 ? static_cast<uint64_t>(ab_s * 1e9) : 0, now);
+        s.ab.entered(now);   // window 0 (on) is the current one
+    }
     s.active = enabled_ || s.paced || s.cfg.log_timings;
     NXLOG_I(kTag, "frame pacing: %s (frames_ahead %d)", pace_in_main() ? "limiter at the frame boundary" : "limiter in the present call", s.cfg.frames_ahead);
     if (enabled_) {
@@ -283,11 +289,11 @@ void LowLatency::sim_begin() {
     Impl& s = *impl_;
     const uint64_t id = s.sim_id.fetch_add(1) + 1;
     const uint64_t t0 = FrameLimiter::now_ns();
-    if (s.ab_period_s > 0 && t0 >= s.ab_next_ns) {       // A/B test mode: flip the mode, forget the averages
+    uint64_t ab_w = 0;
+    if (s.ab.active() && s.ab.entered(t0, &ab_w)) {       // A/B test mode: a new window flips the mode, forget the averages
         std::lock_guard<std::mutex> ql(s.dev->queue_mutex());
         std::lock_guard<std::mutex> lk(s.mu);
-        s.live_on = !s.live_on;
-        s.ab_next_ns = t0 + static_cast<uint64_t>(s.ab_period_s * 1e9);
+        s.live_on = (ab_w & 1) == 0;
         s.ab_since_ns = t0;
         s.have_ema = s.have_gpu_ema = false;
         s.set_mode_locked();

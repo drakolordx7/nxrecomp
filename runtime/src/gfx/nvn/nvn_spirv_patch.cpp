@@ -5,33 +5,16 @@
 #include <cstring>
 #include <map>
 
+#include "spirv_module.h"
+
+using namespace nxrt::spirv;   // the shared walker, opcodes and enumerants
+
 namespace nxrt::nvn::be::gpu {
-namespace {
-
-enum : uint32_t {
-    OpEntryPoint = 15, OpTypeVoid = 19, OpTypeInt = 21, OpTypeFloat = 22, OpTypeVector = 23, OpTypePointer = 32, OpTypeForwardPointer = 39,
-    OpFunction = 54, OpVariable = 59, OpDecorate = 71,
-    DecorationLocation = 30, StorageOutput = 3,
-};
-
-struct Inst {
-    size_t at;
-    uint32_t op, len;
-};
-
-bool is_type_or_constant(uint32_t op) { return (op >= OpTypeVoid && op <= OpTypeForwardPointer) || (op >= 41 && op <= 52); }
-
-}  // namespace
 
 bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOutputSlot>& slots, std::vector<uint32_t>& out) {
     if (slots.empty() || in.size() < 5) return false;
     std::vector<Inst> insts;
-    for (size_t i = 5; i < in.size();) {
-        const uint32_t len = in[i] >> 16;
-        if (!len || i + len > in.size()) return false;
-        insts.push_back({i, in[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(in, insts)) return false;
 
     uint32_t bound = in[3];
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> ints;    // (width, signed) -> id
@@ -50,11 +33,11 @@ bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOut
         else if (n.op == OpTypeFloat && n.len >= 3 && w[2] == 32) f32 = w[1];
         else if (n.op == OpTypeVector && n.len == 4) vecs[{w[2], w[3]}] = w[1];
         else if (n.op == OpTypePointer && n.len == 4) ptrs[{w[2], w[3]}] = w[1];
-        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecorationLocation) output_location[w[1]] = w[3];
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecLocation) output_location[w[1]] = w[3];
     }
     if (!first_type || !first_function || !entry_at || !f32) return false;
     for (const Inst& n : insts)
-        if (n.op == OpVariable && n.len >= 4 && in[n.at + 3] == StorageOutput) output_vars[in[n.at + 2]] = in[n.at + 1];
+        if (n.op == OpVariable && n.len >= 4 && in[n.at + 3] == ScOutput) output_vars[in[n.at + 2]] = in[n.at + 1];
     for (const SpvOutputSlot& s : slots)
         for (const auto& kv : output_location)
             if (output_vars.count(kv.first) && kv.second == s.location) return false;   // already declared (as a single variable)
@@ -80,19 +63,19 @@ bool spirv_add_outputs(const std::vector<uint32_t>& in, const std::vector<SpvOut
         return id;
     };
     auto out_ptr_id = [&](uint32_t pointee) -> uint32_t {
-        const std::pair<uint32_t, uint32_t> k = {StorageOutput, pointee};
+        const std::pair<uint32_t, uint32_t> k = {ScOutput, pointee};
         auto it = ptrs.find(k);
         if (it != ptrs.end()) return it->second;
         const uint32_t id = bound++;
-        decls.insert(decls.end(), {(4u << 16) | OpTypePointer, id, StorageOutput, pointee});
+        decls.insert(decls.end(), {(4u << 16) | OpTypePointer, id, ScOutput, pointee});
         ptrs[k] = id;
         return id;
     };
     for (const SpvOutputSlot& s : slots) {
         const uint32_t ptr = out_ptr_id(vec4_id(scalar_id(s.type)));
         const uint32_t var = bound++;
-        decls.insert(decls.end(), {(4u << 16) | OpVariable, ptr, var, StorageOutput});
-        decos.insert(decos.end(), {(4u << 16) | OpDecorate, var, DecorationLocation, s.location});
+        decls.insert(decls.end(), {(4u << 16) | OpVariable, ptr, var, ScOutput});
+        decos.insert(decos.end(), {(4u << 16) | OpDecorate, var, DecLocation, s.location});
         new_vars.push_back(var);
     }
 
@@ -125,23 +108,18 @@ namespace nxrt::nvn::be::gpu {
 bool spirv_dual_source_output(const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
     if (in.size() < 5) return false;
     std::vector<Inst> insts;
-    for (size_t i = 5; i < in.size();) {
-        const uint32_t len = in[i] >> 16;
-        if (!len || i + len > in.size()) return false;
-        insts.push_back({i, in[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(in, insts)) return false;
     std::map<uint32_t, bool> is_output;
     for (const Inst& n : insts)
-        if (n.op == OpVariable && n.len >= 4 && in[n.at + 3] == StorageOutput) is_output[in[n.at + 2]] = true;
+        if (n.op == OpVariable && n.len >= 4 && in[n.at + 3] == ScOutput) is_output[in[n.at + 2]] = true;
     std::vector<uint32_t> result;
     result.reserve(in.size() + 4);
     result.insert(result.end(), in.begin(), in.begin() + 5);
     bool changed = false;
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if (n.op == OpDecorate && n.len == 4 && w[2] == DecorationLocation && w[3] == 1 && is_output.count(w[1])) {
-            result.insert(result.end(), {(4u << 16) | OpDecorate, w[1], DecorationLocation, 0u});
+        if (n.op == OpDecorate && n.len == 4 && w[2] == DecLocation && w[3] == 1 && is_output.count(w[1])) {
+            result.insert(result.end(), {(4u << 16) | OpDecorate, w[1], DecLocation, 0u});
             result.insert(result.end(), {(4u << 16) | OpDecorate, w[1], 32u /* Index */, 1u});
             changed = true;
             continue;
@@ -156,20 +134,11 @@ bool spirv_dual_source_output(const std::vector<uint32_t>& in, std::vector<uint3
 }  // namespace nxrt::nvn::be::gpu
 
 namespace nxrt::nvn::be::gpu {
-namespace {
-enum : uint32_t { OpCapability = 17, OpExecutionMode = 16, OpConstant = 43, OpStore = 62, OpLoad = 61, OpCopyObject = 83, OpAccessChain = 65, OpInBoundsAccessChain = 66,
-                  DecOffset = 35, DecXfbBuffer = 36, DecXfbStride = 37, CapTransformFeedback = 53, ExecXfb = 11 };
-}  // namespace
 
 bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, std::vector<SpvXfbOutput>* layout, uint32_t* stride) {
     if (in.size() < 5) return false;
     std::vector<Inst> insts;
-    for (size_t i = 5; i < in.size();) {
-        const uint32_t len = in[i] >> 16;
-        if (!len || i + len > in.size()) return false;
-        insts.push_back({i, in[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(in, insts)) return false;
     uint32_t bound = in[3];
     uint32_t f32 = 0, entry_id = 0;
     size_t first_type = 0, after_entry = 0, first_cap_end = 0;
@@ -189,8 +158,8 @@ bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, 
         else if (n.op == OpTypeVector && n.len == 4) vecs[{w[2], w[3]}] = w[1];
         else if (n.op == OpTypePointer && n.len == 4) ptrs[{w[2], w[3]}] = w[1];
         else if (n.op == OpConstant && n.len >= 4) constants[w[2]] = w[3];
-        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
-        else if (n.op == OpVariable && n.len >= 4 && w[3] == StorageOutput) output_ptr_type[w[2]] = w[1];
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariable && n.len >= 4 && w[3] == ScOutput) output_ptr_type[w[2]] = w[1];
     }
     if (!first_type || !first_cap_end || !after_entry || !f32 || !entry_id) return false;
     auto is_captured = [&](uint32_t v) { return location.count(v) && output_ptr_type.count(v); };
@@ -233,14 +202,14 @@ bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, 
                 decls.insert(decls.end(), {(4u << 16) | OpTypeVector, vid, f32, ncomp});
                 vecs[vk] = vid;
             }
-            const std::pair<uint32_t, uint32_t> pk = {StorageOutput, vid};
+            const std::pair<uint32_t, uint32_t> pk = {ScOutput, vid};
             uint32_t pid;
             auto pit = ptrs.find(pk);
             if (pit != ptrs.end()) {
                 pid = pit->second;
             } else {
                 pid = bound++;
-                decls.insert(decls.end(), {(4u << 16) | OpTypePointer, pid, StorageOutput, vid});
+                decls.insert(decls.end(), {(4u << 16) | OpTypePointer, pid, ScOutput, vid});
                 ptrs[pk] = pid;
             }
             new_ptr[var] = pid;
@@ -262,12 +231,12 @@ bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, 
     for (const Inst& n : insts) {
         if (n.at == first_type) res.insert(res.end(), decos.begin(), decos.end());
         // the new vector and pointer types go in front of the first variable that uses one (every type precedes its users)
-        if (!decls_done && ((n.op == OpVariable && n.len >= 4 && in[n.at + 3] == StorageOutput && new_ptr.count(in[n.at + 2])) || n.op == OpFunction)) {
+        if (!decls_done && ((n.op == OpVariable && n.len >= 4 && in[n.at + 3] == ScOutput && new_ptr.count(in[n.at + 2])) || n.op == OpFunction)) {
             res.insert(res.end(), decls.begin(), decls.end());
             decls_done = true;
         }
         std::vector<uint32_t> copy(in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
-        if (n.op == OpVariable && copy.size() >= 4 && copy[3] == StorageOutput) {
+        if (n.op == OpVariable && copy.size() >= 4 && copy[3] == ScOutput) {
             auto it = new_ptr.find(copy[2]);
             if (it != new_ptr.end()) copy[1] = it->second;
         }
@@ -284,20 +253,14 @@ bool spirv_add_xfb(const std::vector<uint32_t>& in, std::vector<uint32_t>& out, 
 
 bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
     if (in.size() < 5) return false;
-    enum : uint32_t { OpVariableOp = 59, OpDecorateOp = 71, OpEntryPointOp = 15, StoragePrivate = 6, DecIndex = 32, DecComponent = 31, DecBuiltIn = 11 };
     std::vector<Inst> insts;
-    for (size_t i = 5; i < in.size();) {
-        const uint32_t len = in[i] >> 16;
-        if (!len || i + len > in.size()) return false;
-        insts.push_back({i, in[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(in, insts)) return false;
     std::map<uint32_t, bool> out_var, has_location, builtin;
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if (n.op == OpVariableOp && n.len >= 4 && w[3] == StorageOutput) out_var[w[2]] = true;
-        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) has_location[w[1]] = true;
-        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecBuiltIn) builtin[w[1]] = true;
+        if (n.op == OpVariable && n.len >= 4 && w[3] == ScOutput) out_var[w[2]] = true;
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecLocation) has_location[w[1]] = true;
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecBuiltIn) builtin[w[1]] = true;
     }
     if (out_var.empty()) return false;
     for (const auto& kv : out_var)
@@ -307,10 +270,10 @@ bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint3
     res.reserve(in.size());
     for (const Inst& n : insts) {
         std::vector<uint32_t> c(in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
-        if (n.op == OpTypePointer && n.len == 4 && c[2] == StorageOutput) c[2] = StoragePrivate;
-        else if (n.op == OpVariableOp && n.len >= 4 && c[3] == StorageOutput) c[3] = StoragePrivate;
-        else if (n.op == OpDecorateOp && n.len >= 4 && out_var.count(c[1]) && (c[2] == DecorationLocation || c[2] == DecIndex || c[2] == DecComponent)) continue;
-        else if (n.op == OpEntryPointOp && before_14) {
+        if (n.op == OpTypePointer && n.len == 4 && c[2] == ScOutput) c[2] = ScPrivate;
+        else if (n.op == OpVariable && n.len >= 4 && c[3] == ScOutput) c[3] = ScPrivate;
+        else if (n.op == OpDecorate && n.len >= 4 && out_var.count(c[1]) && (c[2] == DecLocation || c[2] == DecIndex || c[2] == DecComponent)) continue;
+        else if (n.op == OpEntryPoint && before_14) {
             // OpEntryPoint model id name... interface ids: drop the output variables from the interface
             size_t name_words = 0;
             const char* nm = reinterpret_cast<const char*>(&c[3]);
@@ -322,7 +285,7 @@ bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint3
             std::vector<uint32_t> d(c.begin(), c.begin() + static_cast<std::ptrdiff_t>(std::min(iface, c.size())));
             for (size_t i = iface; i < c.size(); ++i)
                 if (!out_var.count(c[i])) d.push_back(c[i]);
-            d[0] = (static_cast<uint32_t>(d.size()) << 16) | OpEntryPointOp;
+            d[0] = (static_cast<uint32_t>(d.size()) << 16) | OpEntryPoint;
             c = d;
         }
         res.insert(res.end(), c.begin(), c.end());
@@ -336,20 +299,13 @@ bool spirv_outputs_to_private(const std::vector<uint32_t>& in, std::vector<uint3
 namespace nxrt::nvn::be::gpu {
 
 bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<SpvOutputSlot>& slots, std::vector<uint32_t>& out) {
-    enum : uint32_t { OpExecutionModeOp = 16, OpConstantOp = 43, OpLoadOp = 61, OpStoreOp = 62, OpAccessChainOp = 65, OpEmitVertexOp = 218,
-                      OpTypeArrayOp = 28, StorageInput = 1, ExecInputTriangles = 22 };
     for (const SpvOutputSlot& s : slots)
         if (s.type != SpvScalar::Float) return false;
     std::vector<uint32_t> tmp;
     if (!spirv_add_outputs(in, slots, tmp)) return false;       // the outputs (never written yet) and the interface entries
 
     std::vector<Inst> insts;
-    for (size_t i = 5; i < tmp.size();) {
-        const uint32_t len = tmp[i] >> 16;
-        if (!len || i + len > tmp.size()) return false;
-        insts.push_back({i, tmp[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(tmp, insts)) return false;
     uint32_t bound = tmp[3];
     uint32_t f32 = 0, int32 = 0, v4 = 0, ptr_in_v4 = 0, first_function = 0, input_triangles = 0;
     std::map<uint32_t, uint32_t> location, var_type, array_elem, array_len_id, int_const;   // var -> Location / pointer type; array type -> element / length id; value -> id
@@ -358,21 +314,21 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
     for (const Inst& n : insts) {
         const uint32_t* w = &tmp[n.at];
         if (!first_function && n.op == OpFunction) first_function = static_cast<uint32_t>(n.at);
-        if (n.op == OpExecutionModeOp && n.len >= 3 && w[2] == ExecInputTriangles) input_triangles = 1;
+        if (n.op == OpExecutionMode && n.len >= 3 && w[2] == ExecInputTriangles) input_triangles = 1;
         if (n.op == OpTypeFloat && n.len >= 3 && w[2] == 32) f32 = w[1];
         else if (n.op == OpTypeInt && n.len == 4 && w[2] == 32 && w[3] == 1) int32 = w[1];
         else if (n.op == OpTypeVector && n.len == 4 && w[3] == 4 && f32 && w[2] == f32) v4 = w[1];
-        else if (n.op == OpTypePointer && n.len == 4) { ptr_pointee[w[1]] = w[3]; if (w[2] == StorageInput && w[3] == v4) ptr_in_v4 = w[1]; }
-        else if (n.op == OpTypeArrayOp && n.len == 4) { array_elem[w[1]] = w[2]; array_len_id[w[1]] = w[3]; }
-        else if (n.op == OpConstantOp && n.len == 4) { const_value[w[2]] = w[3]; if (w[1] == int32) int_const[w[3]] = w[2]; }
-        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
+        else if (n.op == OpTypePointer && n.len == 4) { ptr_pointee[w[1]] = w[3]; if (w[2] == ScInput && w[3] == v4) ptr_in_v4 = w[1]; }
+        else if (n.op == OpTypeArray && n.len == 4) { array_elem[w[1]] = w[2]; array_len_id[w[1]] = w[3]; }
+        else if (n.op == OpConstant && n.len == 4) { const_value[w[2]] = w[3]; if (w[1] == int32) int_const[w[3]] = w[2]; }
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecLocation) location[w[1]] = w[3];
         else if (n.op == OpVariable && n.len >= 4) var_type[w[2]] = w[1];
     }
     if (!input_triangles || !f32 || !v4 || !int32 || !first_function) return false;
     for (const Inst& n : insts) {
         const uint32_t* w = &tmp[n.at];
         if (n.op != OpVariable || n.len < 4 || !location.count(w[2])) continue;
-        (w[3] == StorageInput ? input_var : output_var)[location[w[2]]] = w[2];
+        (w[3] == ScInput ? input_var : output_var)[location[w[2]]] = w[2];
     }
     // every slot: an Input array [3] of vec4 and the Output variable spirv_add_outputs made
     std::vector<std::pair<uint32_t, uint32_t>> copies;   // (input var, output var)
@@ -384,13 +340,13 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
         copies.emplace_back(input_var[s.location], output_var[s.location]);
     }
     uint32_t emits = 0;
-    for (const Inst& n : insts) emits += n.op == OpEmitVertexOp;
+    for (const Inst& n : insts) emits += n.op == OpEmitVertex;
     if (emits != 3) return false;
 
     std::vector<uint32_t> decls;
-    if (!ptr_in_v4) { ptr_in_v4 = bound++; decls.insert(decls.end(), {(4u << 16) | OpTypePointer, ptr_in_v4, StorageInput, v4}); }
+    if (!ptr_in_v4) { ptr_in_v4 = bound++; decls.insert(decls.end(), {(4u << 16) | OpTypePointer, ptr_in_v4, ScInput, v4}); }
     for (uint32_t k = 0; k < 3; ++k)
-        if (!int_const.count(k)) { const uint32_t id = bound++; int_const[k] = id; decls.insert(decls.end(), {(4u << 16) | OpConstantOp, int32, id, k}); }
+        if (!int_const.count(k)) { const uint32_t id = bound++; int_const[k] = id; decls.insert(decls.end(), {(4u << 16) | OpConstant, int32, id, k}); }
 
     out.clear();
     out.reserve(tmp.size() + decls.size() + 12 * copies.size() + 8);
@@ -398,12 +354,12 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
     uint32_t emit_index = 0;
     for (const Inst& n : insts) {
         if (n.at == first_function) out.insert(out.end(), decls.begin(), decls.end());
-        if (n.op == OpEmitVertexOp) {
+        if (n.op == OpEmitVertex) {
             for (const auto& c : copies) {
                 const uint32_t chain = bound++, val = bound++;
-                out.insert(out.end(), {(5u << 16) | OpAccessChainOp, ptr_in_v4, chain, c.first, int_const[emit_index]});
-                out.insert(out.end(), {(4u << 16) | OpLoadOp, v4, val, chain});
-                out.insert(out.end(), {(3u << 16) | OpStoreOp, c.second, val});
+                out.insert(out.end(), {(5u << 16) | OpAccessChain, ptr_in_v4, chain, c.first, int_const[emit_index]});
+                out.insert(out.end(), {(4u << 16) | OpLoad, v4, val, chain});
+                out.insert(out.end(), {(3u << 16) | OpStore, c.second, val});
             }
             ++emit_index;
         }
@@ -418,17 +374,9 @@ bool spirv_gs_passthrough(const std::vector<uint32_t>& in, const std::vector<Spv
 namespace nxrt::nvn::be::gpu {
 
 bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<SpvIntSlot>& slots, std::vector<uint32_t>& out) {
-    enum : uint32_t { OpTypeIntOp = 21, OpTypeFloatOp = 22, OpTypeVectorOp = 23, OpTypeArrayOp = 28, OpTypePointerOp = 32, OpConstantOp = 43, OpVariableOp = 59,
-                      OpLoadOp = 61, OpStoreOp = 62, OpAccessChainOp = 65, OpInBoundsAccessChainOp = 66, OpDecorateOp = 71, OpCompositeConstructOp = 80,
-                      OpBitcastOp = 124, OpEntryPointOp = 15, OpFunctionOp = 54, DecComponent = 31, StorageInputC = 1, StoragePrivateC = 6 };
     if (slots.empty() || in.size() < 5) return false;
     std::vector<Inst> insts;
-    for (size_t i = 5; i < in.size();) {
-        const uint32_t len = in[i] >> 16;
-        if (!len || i + len > in.size()) return false;
-        insts.push_back({i, in[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(in, insts)) return false;
     uint32_t bound = in[3];
     uint32_t f32 = 0, v4 = 0, u32 = 0, s32 = 0, entry_id = 0;
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> ptrs;      // (storage, pointee) -> pointer type id
@@ -438,15 +386,15 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     std::map<uint32_t, uint32_t> array_elem, array_len_id, const_value;   // array type -> element type / length constant; constant -> value
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if (n.op == OpTypeFloatOp && n.len >= 3 && w[2] == 32) { f32 = w[1]; type_at[w[1]] = n.at; }
-        else if (n.op == OpTypeIntOp && n.len == 4 && w[2] == 32) { (w[3] ? s32 : u32) = w[1]; type_at[w[1]] = n.at; }
-        else if (n.op == OpTypeVectorOp && n.len == 4 && w[3] == 4) { vec4_of[w[2]] = w[1]; type_at[w[1]] = n.at; }
-        else if (n.op == OpTypeArrayOp && n.len == 4) { array_elem[w[1]] = w[2]; array_len_id[w[1]] = w[3]; type_at[w[1]] = n.at; }
-        else if (n.op == OpConstantOp && n.len == 4) const_value[w[2]] = w[3];
-        else if (n.op == OpTypePointerOp && n.len == 4) { ptrs[{w[2], w[3]}] = w[1]; ptr_pointee[w[1]] = w[3]; type_at[w[1]] = n.at; }
-        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
-        else if (n.op == OpVariableOp && n.len >= 4) var_type[w[2]] = w[1];
-        else if (n.op == OpEntryPointOp && !entry_id) entry_id = w[2];
+        if (n.op == OpTypeFloat && n.len >= 3 && w[2] == 32) { f32 = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypeInt && n.len == 4 && w[2] == 32) { (w[3] ? s32 : u32) = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypeVector && n.len == 4 && w[3] == 4) { vec4_of[w[2]] = w[1]; type_at[w[1]] = n.at; }
+        else if (n.op == OpTypeArray && n.len == 4) { array_elem[w[1]] = w[2]; array_len_id[w[1]] = w[3]; type_at[w[1]] = n.at; }
+        else if (n.op == OpConstant && n.len == 4) const_value[w[2]] = w[3];
+        else if (n.op == OpTypePointer && n.len == 4) { ptrs[{w[2], w[3]}] = w[1]; ptr_pointee[w[1]] = w[3]; type_at[w[1]] = n.at; }
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariable && n.len >= 4) var_type[w[2]] = w[1];
+        else if (n.op == OpEntryPoint && !entry_id) entry_id = w[2];
     }
     if (!f32 || !vec4_of.count(f32) || !entry_id) return false;
     v4 = vec4_of[f32];
@@ -465,7 +413,7 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
         uint32_t array_type = 0, base = 0, len = 0;
         for (const Inst& n : insts) {
             const uint32_t* w = &in[n.at];
-            if (n.op != OpVariableOp || n.len < 4 || w[3] != StorageInputC || !location.count(w[2])) continue;
+            if (n.op != OpVariable || n.len < 4 || w[3] != ScInput || !location.count(w[2])) continue;
             const uint32_t loc = location[w[2]], ptr = w[1];
             if (loc == sl.location && ptr_pointee.count(ptr) && ptr_pointee[ptr] == v4) { var = w[2]; at = n.at; array_type = 0; }
             else if (ptr_pointee.count(ptr) && array_elem.count(ptr_pointee[ptr]) && array_elem[ptr_pointee[ptr]] == v4 &&
@@ -496,7 +444,7 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
         auto it = vec4_of.find(scalar);
         if (it != vec4_of.end() && type_at[it->second] < first_var_at) return it->second;
         const uint32_t id = bound++;
-        types.insert(types.end(), {(4u << 16) | OpTypeVectorOp, id, scalar, 4u});
+        types.insert(types.end(), {(4u << 16) | OpTypeVector, id, scalar, 4u});
         vec4_of[scalar] = id;
         type_at[id] = 0;
         return id;
@@ -505,7 +453,7 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
         auto it = ptrs.find({storage, pointee});
         if (it != ptrs.end() && type_at[it->second] < first_var_at) return it->second;
         const uint32_t id = bound++;
-        types.insert(types.end(), {(4u << 16) | OpTypePointerOp, id, storage, pointee});
+        types.insert(types.end(), {(4u << 16) | OpTypePointer, id, storage, pointee});
         ptrs[{storage, pointee}] = id;
         ptr_pointee[id] = pointee;
         type_at[id] = 0;
@@ -515,7 +463,7 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     auto private_of = [&](uint32_t old_ptr) -> uint32_t {
         auto it = priv_ptr_of.find(old_ptr);
         if (it != priv_ptr_of.end()) return it->second;
-        return priv_ptr_of[old_ptr] = ptr_for(StoragePrivateC, ptr_pointee[old_ptr]);
+        return priv_ptr_of[old_ptr] = ptr_for(ScPrivate, ptr_pointee[old_ptr]);
     };
     std::map<uint32_t, uint32_t> old_to_work;    // old var -> index in work
     std::vector<uint32_t> decls_after_types, decos;
@@ -531,10 +479,10 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
                 if (!vv) vv = vec4_for(sc);
                 vec = vv;
             }
-            const uint32_t in_ptr = ptr_for(StorageInputC, vec);
+            const uint32_t in_ptr = ptr_for(ScInput, vec);
             el.new_var = bound++;
-            decls_after_types.insert(decls_after_types.end(), {(4u << 16) | OpVariableOp, in_ptr, el.new_var, StorageInputC});
-            decos.insert(decos.end(), {(4u << 16) | OpDecorateOp, el.new_var, DecorationLocation, el.location});
+            decls_after_types.insert(decls_after_types.end(), {(4u << 16) | OpVariable, in_ptr, el.new_var, ScInput});
+            decos.insert(decos.end(), {(4u << 16) | OpDecorate, el.new_var, DecLocation, el.location});
         }
         private_of(wk.old_ptr);
         old_to_work[wk.old_var] = static_cast<uint32_t>(i);
@@ -543,7 +491,7 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     // the pointer types the access chains into the old inputs get (declared before the first changed variable)
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && old_to_work.count(w[3])) {
+        if ((n.op == OpAccessChain || n.op == OpInBoundsAccessChain) && n.len >= 5 && old_to_work.count(w[3])) {
             if (!ptr_pointee.count(w[1])) return false;
             private_of(w[1]);
         }
@@ -552,14 +500,14 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     // the entry function: the new instructions go behind its leading OpVariable run
     uint32_t entry_func = 0;
     for (const Inst& n : insts)
-        if (n.op == OpEntryPointOp) { entry_func = in[n.at + 2]; break; }
+        if (n.op == OpEntryPoint) { entry_func = in[n.at + 2]; break; }
     size_t insert_at = 0;
     for (size_t k = 0; k < insts.size() && !insert_at; ++k) {
-        if (insts[k].op == OpFunctionOp && in[insts[k].at + 2] == entry_func) {
+        if (insts[k].op == OpFunction && in[insts[k].at + 2] == entry_func) {
             size_t j = k + 1;
-            while (j < insts.size() && insts[j].op != 248 /* OpLabel */) ++j;
+            while (j < insts.size() && insts[j].op != OpLabel) ++j;
             ++j;
-            while (j < insts.size() && insts[j].op == OpVariableOp) ++j;
+            while (j < insts.size() && insts[j].op == OpVariable) ++j;
             if (j < insts.size()) insert_at = insts[j].at;
         }
     }
@@ -570,25 +518,25 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
         for (const Elem& el : wk.elems) {
             if (!el.kind) {                                        // a float element: the new input holds the same value
                 const uint32_t loaded = bound++;
-                init.insert(init.end(), {(4u << 16) | OpLoadOp, v4, loaded, el.new_var});
+                init.insert(init.end(), {(4u << 16) | OpLoad, v4, loaded, el.new_var});
                 values.push_back(loaded);
                 continue;
             }
             const uint32_t vec = el.kind == 2 ? v4i : v4u;
             const uint32_t loaded = bound++, cast = bound++;
-            init.insert(init.end(), {(4u << 16) | OpLoadOp, vec, loaded, el.new_var});
-            init.insert(init.end(), {(4u << 16) | OpBitcastOp, v4, cast, loaded});
+            init.insert(init.end(), {(4u << 16) | OpLoad, vec, loaded, el.new_var});
+            init.insert(init.end(), {(4u << 16) | OpBitcast, v4, cast, loaded});
             values.push_back(cast);
         }
         if (!wk.array_type) {
-            init.insert(init.end(), {(3u << 16) | OpStoreOp, wk.old_var, values[0]});
+            init.insert(init.end(), {(3u << 16) | OpStore, wk.old_var, values[0]});
         } else {
             const uint32_t whole = bound++;
-            init.push_back(((3u + static_cast<uint32_t>(values.size())) << 16) | OpCompositeConstructOp);
+            init.push_back(((3u + static_cast<uint32_t>(values.size())) << 16) | OpCompositeConstruct);
             init.push_back(wk.array_type);
             init.push_back(whole);
             init.insert(init.end(), values.begin(), values.end());
-            init.insert(init.end(), {(3u << 16) | OpStoreOp, wk.old_var, whole});
+            init.insert(init.end(), {(3u << 16) | OpStore, wk.old_var, whole});
         }
     }
 
@@ -597,7 +545,7 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
     out.insert(out.end(), in.begin(), in.begin() + 5);
     size_t first_function = 0;
     for (const Inst& n : insts)
-        if (n.op == OpFunctionOp) { first_function = n.at; break; }
+        if (n.op == OpFunction) { first_function = n.at; break; }
     bool deco_done = false;
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
@@ -606,14 +554,14 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
         if (n.at == first_function) out.insert(out.end(), decls_after_types.begin(), decls_after_types.end());
         if (n.at == insert_at) out.insert(out.end(), init.begin(), init.end());
         std::vector<uint32_t> c(in.begin() + static_cast<std::ptrdiff_t>(n.at), in.begin() + static_cast<std::ptrdiff_t>(n.at + n.len));
-        if (n.op == OpVariableOp && n.len >= 4 && old_to_work.count(w[2])) {            // the old input becomes a private variable
+        if (n.op == OpVariable && n.len >= 4 && old_to_work.count(w[2])) {            // the old input becomes a private variable
             c[1] = private_of(work[old_to_work[w[2]]].old_ptr);
-            c[3] = StoragePrivateC;
-        } else if (n.op == OpDecorateOp && n.len >= 4 && old_to_work.count(w[1]) && (w[2] == DecorationLocation || w[2] == DecComponent)) {
+            c[3] = ScPrivate;
+        } else if (n.op == OpDecorate && n.len >= 4 && old_to_work.count(w[1]) && (w[2] == DecLocation || w[2] == DecComponent)) {
             continue;
-        } else if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && old_to_work.count(w[3])) {
+        } else if ((n.op == OpAccessChain || n.op == OpInBoundsAccessChain) && n.len >= 5 && old_to_work.count(w[3])) {
             c[1] = private_of(w[1]);                                                       // a pointer into the old input is a Private pointer now
-        } else if (n.op == OpEntryPointOp) {
+        } else if (n.op == OpEntryPoint) {
             // OpEntryPoint model id name... interface ids: the name is a literal string. The old input leaves the interface and its new
             // inputs join it.
             const char* nm = reinterpret_cast<const char*>(&c[3]);
@@ -639,8 +587,6 @@ bool spirv_int_attributes(const std::vector<uint32_t>& in, const std::vector<Spv
 
 
 std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in) {
-    enum : uint32_t { OpTypeIntOp = 21, OpTypeFloatOp = 22, OpTypeVectorOp = 23, OpTypeArrayOp = 28, OpTypePointerOp = 32, OpConstantOp = 43, OpVariableOp = 59,
-                      OpLoadOp = 61, OpStoreOp = 62, OpAccessChainOp = 65, OpInBoundsAccessChainOp = 66, OpDecorateOp = 71, OpBitcastOp = 124, StorageInputC = 1 };
     std::vector<SpvIntSlot> result;
     if (in.size() < 5) return result;
     uint32_t f32 = 0, v4 = 0;
@@ -648,22 +594,17 @@ std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in
     std::map<uint32_t, uint32_t> ptr_pointee, array_elem, array_len, const_value, location, var_ptr;
     std::map<uint32_t, uint32_t> var_elems;                          // candidate Input variable -> number of vec4 elements (1 for a plain vec4)
     std::vector<Inst> insts;
-    for (size_t i = 5; i < in.size();) {
-        const uint32_t len = in[i] >> 16;
-        if (!len || i + len > in.size()) return result;
-        insts.push_back({i, in[i] & 0xffff, len});
-        i += len;
-    }
+    if (!split(in, insts)) return result;
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if (n.op == OpTypeFloatOp && n.len >= 3 && w[2] == 32) f32 = w[1];
-        else if (n.op == OpTypeIntOp && n.len == 4 && w[2] == 32) is_int32[w[1]] = true;
-        else if (n.op == OpTypeVectorOp && n.len == 4 && w[3] == 4 && w[2] == f32 && f32) v4 = w[1];
-        else if (n.op == OpTypeArrayOp && n.len == 4) { array_elem[w[1]] = w[2]; array_len[w[1]] = w[3]; }
-        else if (n.op == OpConstantOp && n.len == 4) const_value[w[2]] = w[3];
-        else if (n.op == OpTypePointerOp && n.len == 4 && w[2] == StorageInputC) ptr_pointee[w[1]] = w[3];
-        else if (n.op == OpDecorateOp && n.len >= 4 && w[2] == DecorationLocation) location[w[1]] = w[3];
-        else if (n.op == OpVariableOp && n.len >= 4 && w[3] == StorageInputC) var_ptr[w[2]] = w[1];
+        if (n.op == OpTypeFloat && n.len >= 3 && w[2] == 32) f32 = w[1];
+        else if (n.op == OpTypeInt && n.len == 4 && w[2] == 32) is_int32[w[1]] = true;
+        else if (n.op == OpTypeVector && n.len == 4 && w[3] == 4 && w[2] == f32 && f32) v4 = w[1];
+        else if (n.op == OpTypeArray && n.len == 4) { array_elem[w[1]] = w[2]; array_len[w[1]] = w[3]; }
+        else if (n.op == OpConstant && n.len == 4) const_value[w[2]] = w[3];
+        else if (n.op == OpTypePointer && n.len == 4 && w[2] == ScInput) ptr_pointee[w[1]] = w[3];
+        else if (n.op == OpDecorate && n.len >= 4 && w[2] == DecLocation) location[w[1]] = w[3];
+        else if (n.op == OpVariable && n.len >= 4 && w[3] == ScInput) var_ptr[w[2]] = w[1];
     }
     if (!f32 || !v4) return result;
     for (const auto& [var, ptr] : var_ptr) {
@@ -681,7 +622,7 @@ std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in
     auto spoil_var = [&](uint32_t var) { for (uint32_t e = 0; e < var_elems[var]; ++e) ++uses[location[var] + e].second; };
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if ((n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) && n.len >= 5 && var_elems.count(w[3])) {
+        if ((n.op == OpAccessChain || n.op == OpInBoundsAccessChain) && n.len >= 5 && var_elems.count(w[3])) {
             const uint32_t var = w[3];
             const uint32_t indices = n.len - 4;
             const bool array = var_elems[var] > 1 || indices == 2;
@@ -691,11 +632,11 @@ std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in
             const uint32_t elem = array ? const_value[w[4]] : 0;
             if (elem >= var_elems[var]) continue;
             chain_loc[w[2]] = location[var] + elem;
-        } else if (n.op == OpLoadOp && n.len >= 4) {
+        } else if (n.op == OpLoad && n.len >= 4) {
             if (chain_loc.count(w[3])) load_loc[w[2]] = chain_loc[w[3]];
             else if (pvar_loc.count(w[3])) load_loc[w[2]] = pvar_loc[w[3]];          // the value came back out of a local variable
             else if (var_elems.count(w[3])) spoil_var(w[3]);
-        } else if (n.op == OpStoreOp && n.len >= 3 && load_loc.count(w[2]) && !chain_loc.count(w[1]) && !var_elems.count(w[1])) {
+        } else if (n.op == OpStore && n.len >= 3 && load_loc.count(w[2]) && !chain_loc.count(w[1]) && !var_elems.count(w[1])) {
             auto it = pvar_loc.find(w[1]);                                            // stored into a local variable: later loads of it stand for the attribute
             if (it != pvar_loc.end() && it->second != load_loc[w[2]]) { ++uses[it->second].second; ++uses[load_loc[w[2]]].second; }
             else pvar_loc[w[1]] = load_loc[w[2]];
@@ -703,12 +644,12 @@ std::vector<SpvIntSlot> spirv_predict_int_inputs(const std::vector<uint32_t>& in
     }
     for (const Inst& n : insts) {
         const uint32_t* w = &in[n.at];
-        if (n.op == OpLoadOp || n.op == OpAccessChainOp || n.op == OpInBoundsAccessChainOp) continue;
-        if (n.op == OpStoreOp && n.len >= 3 && pvar_loc.count(w[1])) continue;          // the store into a local variable was followed above
+        if (n.op == OpLoad || n.op == OpAccessChain || n.op == OpInBoundsAccessChain) continue;
+        if (n.op == OpStore && n.len >= 3 && pvar_loc.count(w[1])) continue;          // the store into a local variable was followed above
         for (uint32_t k = 1; k < n.len; ++k) {
             auto it = load_loc.find(w[k]);
             if (it == load_loc.end()) continue;
-            if (n.op == OpBitcastOp && n.len == 4 && k == 3 && is_int32.count(w[1])) ++uses[it->second].first;
+            if (n.op == OpBitcast && n.len == 4 && k == 3 && is_int32.count(w[1])) ++uses[it->second].first;
             else ++uses[it->second].second;
         }
     }

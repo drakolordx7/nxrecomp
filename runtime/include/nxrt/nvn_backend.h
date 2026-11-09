@@ -38,6 +38,9 @@ void backend_flush_caches();
 
 // Traces the next whole presented frame like [nvn] trace_frame (the scripted `@shot nvntrace_<name>` calls this).
 void backend_trace_next_frame();
+// Play mode's choices for the two GPU paths of S38 (controls.ini [display] fast_gpu_memory, fewer_gpu_waits). They replace the built-in defaults of
+// [nvn] pool_mirror and pass_barriers; a value set in the ini or the environment still wins. Call before the back end comes up.
+void backend_set_gpu_path_defaults(bool pool_mirror, bool tracked_barriers);
 
 // Shader preparation (S24): compiles the shader parts of every program in a list before the game runs, so the driver already has them when the
 // game asks. The list is written by the setup tool from the player's own game files (<shader cache folder>/../programs.bin, "MPRPRG01").

@@ -25,7 +25,7 @@ Screenshots and short clips of a bug in a running build are fine. Logs are fine,
 | Media and timing | `runtime/src/media/`, `runtime/src/timestep/` | Movies on Windows Media Foundation. The frame step for high refresh rates. |
 | Tools | `tools/` | Offline tools: Maxwell shaders to SPIR-V (`shaders/`), ASTC to BC7 textures (`textures/`), Tegra block-linear tiling (`tiling/`), the setup tool (`setup/`), the release builder (`release/`), the boot loop (`boot/`), test tools (`test/`) and analysis scripts (`analysis/`). |
 
-Some docs are named `S3c.md`, `S4d.md` and so on. They are development logs, named after the project's work areas: S1 recompiler, S3 OS and services, S4 graphics, S5 test tooling, S6 boot, S8 play mode, S9 movies and audio, S10 display, S11 high refresh.
+Some docs are named `S3c.md`, `S4d.md` and so on. They are development logs, named after the project's work areas: S1 recompiler, S3 OS and services, S4 graphics, S5 test tooling, S6 boot, S8 play mode, S9 movies and audio, S10 display, S11 high refresh. The Metroid Prime Remastered session and debug logs of the graphics work (S10, S24, S29, S38, debug 121, 123, 140, 440 to 443) live in that game's repository; `runtime/docs/REFERENCES.md` says where.
 
 ## Building and testing
 

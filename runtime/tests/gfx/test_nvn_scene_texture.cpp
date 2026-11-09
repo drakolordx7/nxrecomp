@@ -17,6 +17,7 @@
 
 #include <nxrt/config.h>
 
+#include "nvn_settings.h"
 #include "astc2bc7.h"
 #ifdef NXRT_HAVE_BC7_REF
 #include "bc7decomp.h"
@@ -49,9 +50,11 @@ struct FreshBc7Cache {
         std::filesystem::create_directories(dir);
         if (const char* e = std::getenv("NXRT_NVN_BC7_CACHE")) { old = e; had_old = true; }
         _putenv_s("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     }
     ~FreshBc7Cache() {
         _putenv_s("NXRT_NVN_BC7_CACHE", had_old ? old.c_str() : "");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
     }

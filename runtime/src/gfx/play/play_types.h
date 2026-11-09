@@ -171,7 +171,7 @@ struct DisplaySettings {
     double lod_bias = 0;           // texture LOD bias added to every sampler (-2.0 .. 2.0; negative is sharper)
     bool bloom = true;
     bool chromatic_aberration = true;
-    // ---- S38 GPU paths, at the next start; [nvn] pool_mirror and pass_barriers in mpr.ini or the environment win over these.
+    // ---- S38 GPU paths, at the next start; [nvn] pool_mirror and pass_barriers in the game's ini or the environment win over these.
     bool fast_gpu_memory = true;   // device-local copies of the pools draws read ([nvn] pool_mirror = on); costs up to 2 GiB of video memory
     bool fewer_gpu_waits = true;   // no full barrier after passes that only wrote their attachments ([nvn] pass_barriers = tracked)
 };
@@ -318,8 +318,8 @@ const char* key_alt_sens();
 //              dynamic_resolution anisotropy lod_bias bloom chromatic_aberration fast_gpu_memory fewer_gpu_waits
 //   [hdr]      mode (off auto on) format (auto hdr10 scrgb) peak_nits (0 = auto, else 200..10000) paper_white_nits (0 = auto, else
 //              80..500) highlight_boost (0..2)
-//   [upscale]  mode (off fsr1 fsr3 dlss xess; spatial = fsr1) sharpness (0..1) fsr_dll dlss_dll xess_dll (paths, kept verbatim)
-//              frame_generation (1/0)
+//   [upscale]  mode (off fsr1; spatial = fsr1; the retired fsr3 dlss xess read as off) sharpness (0..1) scene_scale (25..100); the retired
+//              keys fsr_dll dlss_dll xess_dll frame_generation are accepted and ignored
 //   [latency]  mode (off auto on boost) log_timings (1/0)
 //   [prompts]  style = switch|xbox|playstation|keyboard|auto   (which button icons the game's prompts show; auto, the default, follows the last used input device)
 //   [tweaks]   skip_intro skip_boot_logos fast_menus (1/0) menu_speed (1..4)   (play_fastboot.h)

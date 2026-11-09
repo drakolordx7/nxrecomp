@@ -12,6 +12,7 @@
 #include <nxrt/config.h>
 #include <nxrt/tex_edit.h>
 
+#include "nvn_settings.h"
 #include "nvn_core.h"
 #include "nvn_format.h"
 #include "nvn_texdata.h"
@@ -109,7 +110,9 @@ size_t files_in(const fs::path& d) {
 
 NXTEST(edit_reaches_rgba8_output_and_is_reused) {
     set_env("NXRT_NVN_BC7_CACHE", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     config_set("nvn", "bc7_cache", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     Built bt;
     build(bt);
     TexCaps rgba;
@@ -171,6 +174,7 @@ NXTEST(edited_bc7_stays_out_of_the_disk_cache) {
     std::error_code ec;
     fs::create_directories(dir, ec);
     set_env("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     Built bt;
     build(bt);
 
@@ -209,5 +213,6 @@ NXTEST(edited_bc7_stays_out_of_the_disk_cache) {
     gfx::set_texture_edit(nullptr);
 
     set_env("NXRT_NVN_BC7_CACHE", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     fs::remove_all(dir, ec);
 }

@@ -16,6 +16,9 @@
 #include <unordered_map>
 
 #include "nxrt/config.h"
+#include "nvn_settings.h"
+#include "nvn_debug.h"
+#include "ab_windows.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
@@ -193,45 +196,15 @@ VkQueryPool g_xq_pool = VK_NULL_HANDLE;     // transform feedback stream queries
 bool g_trace = false;
 struct TraceSnap { int index; int draw; std::string name; std::string desc; };
 std::vector<TraceSnap> g_trace_snaps;
-std::vector<int> g_trace_snap_draws;   // [nvn] trace_snap: draw numbers after which the targets are copied
-bool g_trace_snap_read = false;
-std::vector<std::string> g_trace_snap_fs;
-bool g_trace_snap_sampled = false;           // [nvn] trace_snap_sampled = 1: a snapshot draw also copies the textures that draw samples
 std::vector<Texture*> g_trace_sampled;       // textures sampled by the last traced draw
 std::vector<Ref<Texture>> g_trace_targets;   // the colour and depth targets drawn to in the traced frame, in order of first use
 int64_t g_trace_frame = -2;
 std::vector<int64_t> g_trace_extra;   // more frames to trace
-// [nvn] trace_after_fs = "67d504": the frame after the first one that draws with a fragment shader of this hash prefix is traced
+// [nvn] trace_after_fs (nvn_debug.h): the frame after the first one that draws with a fragment shader of this hash prefix is traced
 // (a frame number is not stable from run to run: the load times differ).
-std::string g_trigger_fs;
 
-// Debug: [nvn] skip_fs_file = FILE (env NXRT_NVN_SKIP_FS_FILE). FILE holds fragment shader hash prefixes separated by blanks; draws whose fragment
-// shader starts with one of them are not drawn. The file is read again twice a second, so it can change while the game runs.
-std::vector<std::string> g_skip_fs;
-int g_draw_idx = 0;   // draws begun in this frame
-bool skip_fs_draw(const std::string& hash) {
-    static const std::string file = nxrt::config_get_str("nvn", "skip_fs_file", "");
-    if (file.empty()) return false;
-    static std::chrono::steady_clock::time_point last{};
-    const auto now = std::chrono::steady_clock::now();
-    if (last.time_since_epoch().count() == 0 || now - last > std::chrono::milliseconds(500)) {
-        last = now;
-        g_skip_fs.clear();
-        std::ifstream f(file);
-        std::string w;
-        while (f >> w) g_skip_fs.push_back(w);
-    }
-    for (const std::string& p : g_skip_fs) {
-        if (!p.empty() && p[0] == '#') {   // "#198" or "#198-210": the draw numbers of the frame (the first draw is #1, as in the trace)
-            const int a = std::atoi(p.c_str() + 1);
-            const size_t dash = p.find('-');
-            const int b = dash == std::string::npos ? a : std::atoi(p.c_str() + dash + 1);
-            if (g_draw_idx >= a && g_draw_idx <= b) return true;
-        } else if (hash.compare(0, p.size(), p) == 0) return true;
-    }
-    return false;
-}
-bool g_trigger_read = false, g_trigger_seen = false, g_trigger_done = false;
+int g_draw_idx = 0;   // draws begun in this frame (the "#N" numbers of [nvn] skip_fs_file and the trace)
+bool g_trigger_seen = false, g_trigger_done = false;
 int64_t g_trigger_present = -1;
 int g_trace_n = 0;
 std::atomic<bool> g_trace_req{false};   // backend_trace_next_frame(): trace the first whole frame after this flag is seen
@@ -1165,8 +1138,7 @@ void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, i
 // [nvn] trace_min_sec = 250: trace_after_fs only starts that many seconds after the first draw (the scene to look at comes late).
 bool trigger_time_ok() {
     static const auto start = std::chrono::steady_clock::now();
-    static const double min_sec = static_cast<double>(nxrt::config_get_int("nvn", "trace_min_sec", 0));
-    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= min_sec;
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count() >= nvn_debug().trace_min_sec;
 }
 
 // Scene upscaler (S14, src/gfx/extras/hdr_nvn.h): before a tone-map draw whose HDR scene input is smaller than its target, FSR 1 enlarges the scene
@@ -1210,12 +1182,13 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
     if (!vs) { log_once("draw-no-vs", "draw without a vertex shader skipped"); return false; }
     if (!S.render_enable) return false;
     ++g_draw_idx;
-    if (S.stage[kFragment] && skip_fs_draw(S.stage[kFragment]->hash)) return false;
+    if (debug_on() && S.stage[kFragment] && debug_skip_draw(S.stage[kFragment]->hash, g_draw_idx)) return false;
     if (g_dirty & (kPipe | kDesc)) {
         const ShaderInfo* stages[6] = {vs, S.stage[kFragment], S.stage[kGeometry], nullptr, nullptr, nullptr};
         g_pl = prog_layout(stages);
     }
-    if (!g_trigger_fs.empty() && !g_trigger_done && trigger_time_ok() && S.stage[kFragment] && S.stage[kFragment]->hash.compare(0, g_trigger_fs.size(), g_trigger_fs) == 0) {
+    if (debug_on() && !nvn_debug().trace_after_fs.empty() && !g_trigger_done && trigger_time_ok() && S.stage[kFragment] &&
+        S.stage[kFragment]->hash.compare(0, nvn_debug().trace_after_fs.size(), nvn_debug().trace_after_fs) == 0) {
         g_trigger_seen = true;
         g_trigger_present = static_cast<int64_t>(counters().presents.load());
     }
@@ -1227,7 +1200,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
         g_want_depth_ro = samples_depth_target(*pl);
         prepare_textures(*pl);
         if (g_trace) {   // [nvn] trace_dump_tex: also the block-compressed level 0 as the GPU holds it, to compare with the prepared data
-            static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
+            const std::string& dump_dir = nvn_debug().trace_dump_tex;
             static std::unordered_map<uint32_t, bool> raw_done;
             if (!dump_dir.empty()) {
                 for (const BindingDesc& d : pl->bindings) {
@@ -1301,8 +1274,7 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
             const TexResolved r = d.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ? resolve_image(d) : resolve_texture(d);
             if (r.tex) g_trace_sampled.push_back(r.tex);
             if (r.tex) {
-                static const std::string dump_dir = nxrt::config_get_str("nvn", "trace_dump_tex", "");
-                if (!dump_dir.empty()) trace_dump_prepared(r.tex, dump_dir);
+                if (!nvn_debug().trace_dump_tex.empty()) trace_dump_prepared(r.tex, nvn_debug().trace_dump_tex);
             }
             char smp[200] = "", vw[160] = "";
             if (r.has_sampler)
@@ -1394,32 +1366,11 @@ bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* top
 // copied (png after the frame: snap_d<draw>_t<id>_<format>.png).
 void trace_snap_after_draw() {
     if (!g_trace) return;
-    if (!g_trace_snap_read) {
-        g_trace_snap_read = true;
-        g_trace_snap_sampled = nxrt::config_get_int("nvn", "trace_snap_sampled", 0) != 0;
-        {   // [nvn] trace_snap_fs = "f77f9d,e72811": every draw whose fragment shader hash starts with one of these
-            const std::string fl = nxrt::config_get_str("nvn", "trace_snap_fs", "");
-            size_t k = 0;
-            while (k < fl.size()) {
-                size_t j = fl.find(',', k);
-                if (j == std::string::npos) j = fl.size();
-                if (j > k) g_trace_snap_fs.push_back(fl.substr(k, j - k));
-                k = j + 1;
-            }
-        }
-        const std::string list = nxrt::config_get_str("nvn", "trace_snap", "");
-        size_t i = 0;
-        while (i < list.size()) {
-            size_t j = list.find(',', i);
-            if (j == std::string::npos) j = list.size();
-            if (j > i) g_trace_snap_draws.push_back(std::atoi(list.substr(i, j - i).c_str()));
-            i = j + 1;
-        }
-    }
+    const NvnDebug& dbg = nvn_debug();
     bool hit = false;
-    for (int d : g_trace_snap_draws) hit |= d == g_trace_n;
-    if (!hit && S.stage[kFragment] && !g_trace_snap_fs.empty()) {
-        for (const std::string& pre : g_trace_snap_fs) hit |= S.stage[kFragment]->hash.compare(0, pre.size(), pre) == 0;
+    for (int d : dbg.trace_snap_draws) hit |= d == g_trace_n;
+    if (!hit && S.stage[kFragment] && !dbg.trace_snap_fs.empty()) {
+        for (const std::string& pre : dbg.trace_snap_fs) hit |= S.stage[kFragment]->hash.compare(0, pre.size(), pre) == 0;
     }
     if (!hit) return;
     end_pass();
@@ -1432,7 +1383,7 @@ void trace_snap_after_draw() {
     };
     for (uint32_t i = 0; i < S.ncolor; ++i) take(S.color_tex[i].get());
     take(S.depth_tex.get());
-    if (g_trace_snap_sampled) {
+    if (dbg.trace_snap_sampled) {
         for (Texture* t : g_trace_sampled) take(t);
     }
 }
@@ -2236,32 +2187,22 @@ void replay_begin_submit(Frame& f) {
     F = &f;
     tex_poll_cpu_writes();
     if (extras::LowLatency* ll = extras::lowlat()) ll->submit_begin();     // RENDERSUBMIT_START of the frame (S14)
-    if (g_trace_frame == -2) {
-        // [nvn] trace_frame = "6050" or "6050,9300": every listed presented frame is traced (the first one is the main one)
-        const std::string list = nxrt::config_get_str("nvn", "trace_frame", "");
-        g_trace_frame = -1;
-        size_t i = 0;
-        while (i < list.size()) {
-            size_t j = list.find(',', i);
-            if (j == std::string::npos) j = list.size();
-            const long long v = std::atoll(list.substr(i, j - i).c_str());
-            if (g_trace_frame < 0) g_trace_frame = v; else g_trace_extra.push_back(v);
-            i = j + 1;
+    if (debug_on()) {
+        const NvnDebug& dbg = nvn_debug();
+        if (g_trace_frame == -2) {   // [nvn] trace_frame = "6050" or "6050,9300": every listed presented frame is traced (the first one is the main one)
+            g_trace_frame = -1;
+            for (int64_t v : dbg.trace_frames) {
+                if (g_trace_frame < 0) g_trace_frame = v; else g_trace_extra.push_back(v);
+            }
         }
-    }
-    if (!g_trigger_read) {
-        g_trigger_read = true;
-        g_trigger_fs = nxrt::config_get_str("nvn", "trace_after_fs", "");
-    }
-    if (!g_trigger_fs.empty() && g_trigger_seen && !g_trigger_done && static_cast<int64_t>(counters().presents.load()) > g_trigger_present) {
-        g_trigger_done = true;
-        g_trace_frame = static_cast<int64_t>(counters().presents.load());
-    }
-    {   // [nvn] trace_sec = N (NXRT_NVN_TRACE_SEC): trace the first frame presented N seconds after the first draw (frame numbers differ between runs)
-        static const double trace_sec = static_cast<double>(nxrt::config_get_int("nvn", "trace_sec", 0));
+        if (!dbg.trace_after_fs.empty() && g_trigger_seen && !g_trigger_done && static_cast<int64_t>(counters().presents.load()) > g_trigger_present) {
+            g_trigger_done = true;
+            g_trace_frame = static_cast<int64_t>(counters().presents.load());
+        }
+        // [nvn] trace_sec = N (NXRT_NVN_TRACE_SEC): trace the first frame presented N seconds after the first draw (frame numbers differ between runs)
         static const auto t0 = std::chrono::steady_clock::now();
         static bool trace_sec_done = false;
-        if (trace_sec > 0 && !trace_sec_done && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() >= trace_sec) {
+        if (dbg.trace_sec > 0 && !trace_sec_done && std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() >= dbg.trace_sec) {
             trace_sec_done = true;
             g_trace_frame = static_cast<int64_t>(counters().presents.load());
         }
@@ -2270,18 +2211,13 @@ void replay_begin_submit(Frame& f) {
     g_trace = g_trace_frame >= 0 && static_cast<int64_t>(counters().presents.load()) == g_trace_frame;
     for (int64_t e : g_trace_extra) g_trace |= static_cast<int64_t>(counters().presents.load()) == e;
     if (g_trace) { g_trace_n = 0; NXLOG_I("nvn.trace", "---- frame %lld ----", static_cast<long long>(counters().presents.load())); }
-    {   // S38: device-local pool copies and tracked barriers. [nvn] gpuperf_ab = N: both are off in even windows of N presents and on in odd
-        // ones (the paired-window measurement of S29); without it they follow their own settings.
-        static const int64_t ab = config_get_int("nvn", "gpuperf_ab", 0);
-        static const bool tracked = config_get_str("nvn", "pass_barriers", "tracked") != "full";
-        static int last_on = -1;
-        bool on = true;
-        if (ab > 0) on = ((counters().presents.load() / static_cast<uint64_t>(ab)) & 1) != 0;
-        if (static_cast<int>(on) != last_on) {
-            last_on = on ? 1 : 0;
-            if (ab > 0) ft::mark(on ? "gpuperf.on" : "gpuperf.off", static_cast<uint32_t>(counters().presents.load()));
-        }
-        g_tracked = on && tracked;
+    {   // S38: device-local pool copies and tracked barriers. [nvn] gpuperf_ab = N (nvn_debug.h): both are off in even windows of N presents and
+        // on in odd ones (the paired-window measurement of S29); without it they follow their own settings.
+        static gfx::AbWindows ab(static_cast<uint64_t>(std::max<int64_t>(0, nvn_debug().gpuperf_ab)), 0);
+        const uint64_t presents = counters().presents.load();
+        const bool on = !ab.active() || ab.odd(presents);
+        if (ab.active() && ab.entered(presents)) ft::mark(on ? "gpuperf.on" : "gpuperf.off", static_cast<uint32_t>(presents));
+        g_tracked = on && nvn_settings().tracked_barriers;
         set_narrow_barriers(g_tracked);
         g_pending.clear();
         g_pass_unsafe = false;

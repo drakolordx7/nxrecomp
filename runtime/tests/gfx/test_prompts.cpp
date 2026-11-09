@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "nvn_settings.h"
 #include "nvn_core.h"
 #include "nvn_format.h"
 #include "nvn_texdata.h"
@@ -363,6 +364,7 @@ NXTEST(the_upload_path_asks_the_hook_and_replaces_the_pixels) {
     using namespace nxrt::nvn;
     using namespace nxrt::nvn::be;
     config_set("nvn", "bc7_cache", "");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     TextureBuilderInfo info;
     info.target = NVN_TEXTURE_TARGET_2D;
     info.width = 36;

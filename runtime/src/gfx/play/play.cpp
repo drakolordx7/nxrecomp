@@ -979,32 +979,6 @@ SelfTestHost* selftest_host() {
     return &h;
 }
 
-// mpr.ini and the environment override the settings file for the display extras. A key that is set there ([hdr] mode in mpr.ini, or NXRT_HDR_MODE)
-// replaces the file's value with the one extras::settings_from_config() reads; other keys keep the file's value (the F1 page edits the file).
-extras::Settings merge_env(const extras::Settings& from_file) {
-    const extras::Settings env = extras::settings_from_config();
-    extras::Settings r = from_file;
-    auto set = [](const char* name) {
-        const char* v = std::getenv(name);
-        return v != nullptr && v[0] != '\0';
-    };
-    if (config_has("hdr", "mode")) r.hdr.mode = env.hdr.mode;
-    if (config_has("hdr", "format")) r.hdr.format = env.hdr.format;
-    if (config_has("hdr", "peak_nits")) r.hdr.peak_nits = env.hdr.peak_nits;
-    if (config_has("hdr", "paper_white_nits")) r.hdr.paper_white_nits = env.hdr.paper_white_nits;
-    if (config_has("hdr", "highlight_boost")) r.hdr.highlight_boost = env.hdr.highlight_boost;
-    if (config_has("upscale", "mode")) r.upscale.mode = env.upscale.mode;
-    if (config_has("upscale", "sharpness")) r.upscale.sharpness = env.upscale.sharpness;
-    if (config_has("upscale", "scene_scale")) r.upscale.scene_scale = env.upscale.scene_scale;
-    if (config_has("upscale", "fsr_dll")) r.upscale.fsr_dll = env.upscale.fsr_dll;
-    if (config_has("upscale", "dlss_dll")) r.upscale.dlss_dll = env.upscale.dlss_dll;
-    if (config_has("upscale", "xess_dll")) r.upscale.xess_dll = env.upscale.xess_dll;
-    if (config_has("upscale", "frame_generation")) r.upscale.frame_generation = env.upscale.frame_generation;
-    if (config_has("latency", "mode")) r.latency.mode = env.latency.mode;
-    if (config_has("latency", "log_timings")) r.latency.log_timings = env.latency.log_timings;
-    return r;
-}
-
 }  // namespace
 
 // ---- public API ---------------------------------------------------------------------------------------------------------------------------
@@ -1036,13 +1010,12 @@ bool load() {
         else
             NXLOG_W(kTag, "cannot save the upgraded %s: %s", st.path.c_str(), e3.c_str());
     }
-    // Display extras: a value set in mpr.ini or in the environment (NXRT_HDR_MODE ...) overrides the file; the file overrides the built-in defaults.
-    st.settings.extras = merge_env(st.settings.extras);
+    // Display extras: a value set in the game's ini or in the environment (NXRT_HDR_MODE ...) overrides the file; the file overrides the built-in
+    // defaults. Keys not set there keep the file's value (the F1 page edits the file).
+    st.settings.extras = extras::settings_from_config(st.settings.extras);
     extras::set_settings(st.settings.extras);
-    // S38 GPU paths: the file's choice becomes [nvn] pool_mirror / pass_barriers unless mpr.ini or the environment set them. The replay
-    // reads both once, at its first pool and its first submission, after this.
-    if (!config_has("nvn", "pool_mirror")) config_set("nvn", "pool_mirror", st.settings.display.fast_gpu_memory ? "on" : "off");
-    if (!config_has("nvn", "pass_barriers")) config_set("nvn", "pass_barriers", st.settings.display.fewer_gpu_waits ? "tracked" : "full");
+    // S38 GPU paths: the file's choices are the defaults of [nvn] pool_mirror / pass_barriers (the game's ini or the environment still win).
+    nvn::backend_set_gpu_path_defaults(st.settings.display.fast_gpu_memory, st.settings.display.fewer_gpu_waits);
     st.capture_mouse = config_get_bool("play", "capture_mouse", true);
     st.late_sample = config_get_bool("play", "late_sample", true);
     st.quit_on_close = config_get_bool("play", "quit_on_close", true);

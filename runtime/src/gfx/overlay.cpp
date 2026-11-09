@@ -65,7 +65,9 @@ const double kFpsChoices[] = {0, 30, 60, 90, 120, 144, 165, 240, 360};
 
 namespace {
 std::atomic<int> g_shader_backlog{0};
+std::atomic<bool> g_compile_note{true};
 }
+void set_compile_note(bool on) { g_compile_note.store(on, std::memory_order_relaxed); }
 void set_shader_backlog(int pending) { g_shader_backlog.store(pending < 0 ? 0 : pending, std::memory_order_relaxed); }
 int shader_backlog() { return g_shader_backlog.load(std::memory_order_relaxed); }
 
@@ -116,8 +118,6 @@ struct Overlay::Impl {
     void refresh_counter_text(double now_s);
     void draw_counter(const FrameInfo& f, double now_s);
     // The "Preparing shaders" note: shown once the backlog has stood for a second and a half, gone a second after it is empty.
-    bool note_enabled = true;
-    bool note_read = false;
     double note_since_s = -1.0, note_empty_s = -1.0;
     int note_peak = 0;
     bool note_visible(double now_s);
@@ -479,12 +479,8 @@ void Overlay::Impl::draw_counter(const FrameInfo& f, double now_s) {
 }
 
 bool Overlay::Impl::note_visible(double now_s) {
-    if (!note_read) {
-        note_read = true;
-        note_enabled = nxrt::config_get_bool("nvn", "compile_note", true);
-    }
     const int pending = shader_backlog();
-    if (!note_enabled) return false;
+    if (!g_compile_note.load(std::memory_order_relaxed)) return false;
     if (pending > 0) {
         if (note_since_s < 0) { note_since_s = now_s; note_peak = 0; }
         note_empty_s = -1.0;

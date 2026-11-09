@@ -19,6 +19,7 @@
 #include <nxrt/tex_edit.h>
 
 #include "nvn_gpu.h"
+#include "nvn_settings.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_texdata.h"
 
@@ -243,8 +244,7 @@ void tex_edit_note(const Texture& t) {
 }
 
 int tex_edit_quality() {
-    static const int q = static_cast<int>(std::clamp<int64_t>(config_get_int("nvn", "tex_edit_quality", 1), 0, 6));
-    return q;
+    return static_cast<int>(nvn_settings().tex_edit_quality);
 }
 
 }  // namespace nxrt::nvn::be

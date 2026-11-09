@@ -16,6 +16,7 @@
 #include <unordered_set>
 
 #include "nxrt/config.h"
+#include "nvn_settings.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/log.h"
 #include "nxrt/gauge.h"
@@ -84,7 +85,7 @@ PoolGpu* import_pool(MemoryPool* p) {
 
     // Import through a small private view of the same section pages when the pool lies in the heap's primary view (see mem::heap_private_view).
     uint8_t* import_ptr = g->base;
-    static const bool use_view = config_get_bool("nvn", "pool_view", true);      // [nvn] pool_view = 0: import the pool's own address (slow)
+    const bool use_view = nvn_settings().pool_view;      // [nvn] pool_view = 0: import the pool's own address (slow)
     if (use_view && mem::heap_exists() && start >= mem::kHeapBase && end <= mem::kHeapBase + mem::heap_reserved()) {
         const uint64_t off = start - mem::kHeapBase;
         const uint64_t voff = off & ~(mem::kAllocGranularity - 1);
@@ -196,7 +197,7 @@ void make_dummy() {
 }  // namespace
 
 void prefetch_pool(MemoryPool* p) {
-    static const bool enabled = config_get_bool("nvn", "pool_prefetch", true);   // [nvn] pool_prefetch = false: import on first use only
+    const bool enabled = nvn_settings().pool_prefetch;   // [nvn] pool_prefetch = false: import on first use only
     if (!enabled || !p || p->is_virtual || !p->base || !p->size || !active()) return;
     std::lock_guard<std::mutex> lk(g_pf_mu);
     if (g_pf_stop) return;
@@ -364,12 +365,7 @@ int64_t g_use_dev[3] = {}, g_use_host[3] = {}, g_use_skip[3] = {};
 int64_t g_wr_pages[6] = {}, g_wr_calls[6] = {};
 
 MirrorMode mirror_mode() {
-    static const MirrorMode m = [] {
-        const std::string v = config_get_str("nvn", "pool_mirror", "on");
-        if (v == "on" || v == "1" || v == "true") return MirrorMode::On;
-        return MirrorMode::Off;
-    }();
-    return m;
+    return nvn_settings().pool_mirror ? MirrorMode::On : MirrorMode::Off;
 }
 
 // The cap of the copies ([nvn] pool_mirror_mb, or from the card's video memory when it is not set; nvn_mirror_cap.h), logged once.
@@ -385,7 +381,7 @@ uint64_t mirror_budget() {
         for (uint32_t h = 0; h < mp.memoryHeapCount; ++h)
             if (mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) vram = std::max<uint64_t>(vram, mp.memoryHeaps[h].size);
     }
-    const int64_t set_mb = config_has("nvn", "pool_mirror_mb") ? std::max<int64_t>(0, config_get_int("nvn", "pool_mirror_mb", 0)) : -1;
+    const int64_t set_mb = nvn_settings().pool_mirror_mb;
     const MirrorCap c = mirror_cap(vram, set_mb, shared);
     NXLOG_I(kTag, "pool copies: cap %llu MiB (%s; largest device-local heap %llu MiB)%s", static_cast<unsigned long long>(c.bytes >> 20), c.why,
             static_cast<unsigned long long>(vram >> 20), c.bytes ? "" : ": no device-local copies");

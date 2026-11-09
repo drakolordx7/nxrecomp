@@ -17,6 +17,7 @@
 #include <system_error>
 #include <vector>
 
+#include "nvn_settings.h"
 #include "nvn_app.h"
 #include "nvn_pipeline.h"
 #include "nvn_shaders.h"
@@ -63,16 +64,25 @@ struct PrepareConfig {
           gpl(nxrt::config_get_str("nvn", "gpl", "1")) {
         const std::string k = (dir / "pipeline_keys.bin").string(), c = (dir / "pipeline_cache.bin").string();
         nxrt::config_set("nvn", "pipeline_keys", k.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "pipeline_cache", c.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "prewarm", "0");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "gpl", "1");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "prepare_cache", "1");
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     }
     ~PrepareConfig() {
         nxrt::config_set("nvn", "pipeline_keys", keys.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "pipeline_cache", cache.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "prewarm", prewarm.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
         nxrt::config_set("nvn", "gpl", gpl.c_str());
+        nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     }
 };
 
@@ -290,6 +300,7 @@ NXTEST(keeps_cache_file_when_asked) {
         return;
     }
     nxrt::config_set("nvn", "prepare_cache", "1");
+    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     nxrt::nvn::ShaderPrepareOptions o;
     o.programs_file = file.string();
     o.threads = 2;
