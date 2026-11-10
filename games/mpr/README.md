@@ -1,12 +1,12 @@
 # Metroid Prime Remastered for Windows (unofficial PC port)
 
-A native Windows port of Metroid Prime Remastered, made by recompiling the Nintendo Switch release (version 1.0.0) into a normal Windows program. It is not an emulator. It has a launcher, a setup tool, mouse and keyboard controls, any resolution and aspect ratio, and high refresh rates.
+A Windows port of Metroid Prime Remastered, made by recompiling the Nintendo Switch release (version 1.0.0) into a native x64 program. It comes with a launcher and a setup tool, and supports mouse and keyboard, any resolution or aspect ratio, and high refresh rates.
 
-[Download the latest release](https://github.com/drakolordx7/nxrecomp/releases/latest). Versions up to [v0.1.5](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/releases/tag/v0.1.5) are in the old repository.
+[Download v0.1.5](https://github.com/drakolordx7/MetroidPrimeRemasteredRecomp/releases/tag/v0.1.5). Releases up to v0.1.5 are in the old repository; later ones will be on this repository's releases page.
 
 The release has no game files. You need your own dump of Metroid Prime Remastered version 1.0.0 and the keys from your own Switch. Not affiliated with Nintendo or Retro Studios.
 
-This folder holds what is specific to this game: its manifest `game.json`, lift config and hook sites (`recomp/`), runtime module (`runtime/`), setup hook (`setup/`), release data (`release/`) and docs. The recompiler, runtime and tools it builds with are in [`base/`](../../base). The project README, with the build steps, credits and licence, is [at the repository root](../../README.md).
+This folder has the game's manifest (`game.json`), hook sites (`recomp/`), runtime module (`runtime/`), setup hook (`setup/`), release data (`release/`) and docs. It builds on the shared [`base/`](../../base). Build steps and credits are in the [main README](../../README.md).
 
 ## Requirements
 
@@ -31,4 +31,4 @@ Defaults: WASD move, mouse aims, left button fires, right button or Q locks on, 
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE). Credits are in the [root README](../../README.md).
+GPL-3.0, see [LICENSE](../../LICENSE). Credits are in the [main README](../../README.md).
