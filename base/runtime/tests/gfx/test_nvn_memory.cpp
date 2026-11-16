@@ -2,7 +2,6 @@
 // NVNmemoryPool, NVNbuffer, NVNtexturePool and NVNsamplerPool through the typed thunks (the memory family, api_memory.cpp).
 // Every function is called through abi::proc, the way a game calls it. Pool storage is 4096 aligned host memory; textures are
 // host objects built by hand.
-#include <malloc.h>
 
 #include <algorithm>
 #include <cstring>
@@ -10,6 +9,7 @@
 
 #include "nvn_core.h"
 #include "nvn_impl.h"
+#include "nxrt/os/mem.h"
 #include "test_framework.h"
 NXTEST_GROUP(gfx_nvn_memory)
 
@@ -31,8 +31,8 @@ void setup() {
 
 struct Region {
     uint8_t* p;
-    explicit Region(size_t n) : p(static_cast<uint8_t*>(_aligned_malloc(n, 4096))) { std::memset(p, 0, n); }
-    ~Region() { _aligned_free(p); }
+    explicit Region(size_t n) : p(static_cast<uint8_t*>(nxrt::os::mem::alloc_aligned(n, 4096))) { std::memset(p, 0, n); }
+    ~Region() { nxrt::os::mem::free_aligned(p); }
     Region(const Region&) = delete;
     Region& operator=(const Region&) = delete;
 };

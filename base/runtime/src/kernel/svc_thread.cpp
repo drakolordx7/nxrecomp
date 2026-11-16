@@ -9,6 +9,7 @@
 
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/runtime.h"
@@ -197,8 +198,8 @@ void svc_break(::Ctx* c) {
     if (notify_only) return;
     NXLOG_I("runtime", "state at svcBreak:\n%s", summary().c_str());
     log_flush();
-    RaiseException(0xE0000003, EXCEPTION_NONCONTINUABLE, 0, nullptr);
-    TerminateProcess(GetCurrentProcess(), 2);
+    os::raise_guest_trap(os::kTrapBreak);
+    os::terminate(2);
 }
 
 void svc_output_debug_string(::Ctx* c) {       // x0 pointer, x1 length
@@ -214,7 +215,7 @@ void svc_output_debug_string(::Ctx* c) {       // x0 pointer, x1 length
 void svc_return_from_exception(::Ctx* c) {
     NXLOG_E("svc", "svcReturnFromException(0x%llx): guest exception handlers are not supported", (unsigned long long)X(c, 0));
     log_flush();
-    RaiseException(0xE0000003, EXCEPTION_NONCONTINUABLE, 0, nullptr);
+    os::raise_guest_trap(os::kTrapBreak);
 }
 
 }

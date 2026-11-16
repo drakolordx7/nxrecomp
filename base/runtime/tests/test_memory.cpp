@@ -2,8 +2,8 @@
 #include "test_framework.h"
 
 #include "nxrt/memory.h"
-
-#include <windows.h>
+#include "nxrt/os/fault.h"
+#include "nxrt/os/mem.h"
 
 #include <algorithm>
 #include <chrono>
@@ -30,43 +30,21 @@ constexpr uint32_t kFree = static_cast<uint32_t>(mem::kMemFree);
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 
-// The access itself lives in a non-inlined callee: clang-cl's SEH only models faults at call sites (without
-// -fasync-exceptions), so a plain store inside the __try block would not reliably reach the handler.
-__declspec(noinline) void access_byte(uint64_t addr, bool write) {
-    if (write) {
-        *reinterpret_cast<volatile uint8_t*>(addr) = 0x5A;
-    } else {
-        volatile uint8_t v = *reinterpret_cast<volatile uint8_t*>(addr);
-        (void)v;
-    }
-}
-
-// 1 when one byte at addr can be read (write = false) or written (write = true), 0 when it raises an access violation.
-// Kept free of C++ objects so that the __try block is legal.
-__declspec(noinline) int touch(uint64_t addr, bool write) {
-    int ok = 1;
-    __try {
-        access_byte(addr, write);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        ok = 0;
-    }
-    return ok;
+// 1 when one byte at addr can be read (write = false) or written (write = true), 0 when it faults. A write probe stores back the byte it read.
+int touch(uint64_t addr, bool write) {
+    uint8_t v = 0;
+    if (!nxrt::os::guard::read(reinterpret_cast<const void*>(addr), &v, 1)) return 0;
+    if (write && !nxrt::os::guard::write(reinterpret_cast<void*>(addr), &v, 1)) return 0;
+    return 1;
 }
 
 uint32_t* word_at(uint64_t addr) { return reinterpret_cast<uint32_t*>(addr); }
 
-// The host's answer for [addr, addr + size): VirtualQuery over the same page span that mem::is_mapped uses, with no page table.
+// The host's answer for [addr, addr + size): the os layer's page table, with none of memory.cpp's own.
 bool host_mapped(uint64_t addr, uint64_t size) {
     const uint64_t start = addr & ~(kPg - 1);
     const uint64_t end = (addr + size + kPg - 1) & ~(kPg - 1);
-    for (uint64_t cur = start; cur < end;) {
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi) != sizeof mbi || mbi.RegionSize == 0) return false;
-        if (mbi.State != MEM_COMMIT) return false;
-        if ((mbi.Protect & 0xFF) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD)) return false;
-        cur = std::min<uint64_t>(end, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize);
-    }
-    return true;
+    return nxrt::os::mem::is_accessible(start, end - start);
 }
 
 }  // namespace
@@ -239,7 +217,7 @@ NXTEST(alias_commit_through_alias_view_is_seen_by_primary) {
     CHECK(mem::heap_create(kHeapSmall));
     const uint64_t a = mem::heap_alias(0, kGr, 0, mem::Prot::RW);
     CHECK(a != 0);
-    CHECK(VirtualAlloc(reinterpret_cast<void*>(a), static_cast<SIZE_T>(kGr), MEM_COMMIT, PAGE_READWRITE) != nullptr);
+    CHECK(nxrt::os::mem::commit(a, kGr, mem::Prot::RW));
     word_at(a)[7] = 0xCAFE0001u;
     CHECK_EQ(word_at(mem::kHeapBase)[7], 0xCAFE0001u);  // visible through the primary view
     CHECK_EQ(mem::heap_committed(), 0ull);              // the module counter only counts heap_commit

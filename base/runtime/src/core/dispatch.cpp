@@ -2,8 +2,8 @@
 // Function table + HLE thunks. Pattern from smo-recomp runtime/core/hostrt.c (open-addressing hash, hostfn thunks) and
 // SuperMarioWonderRecomp runtime/src/loader.cpp (thunks, logging stub for unknown imports).
 #include "nxrt/dispatch.h"
+#include "nxrt/os/fault.h"
 
-#include <windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -271,8 +271,8 @@ void hle_restore_current(const char* name) { t_hle_name = name; }
 void trap(const char* what, uint64_t addr) {
     NXLOG_E("guest", "GUEST TRAP: %s (0x%llx)", what, static_cast<unsigned long long>(addr));
     log_flush();
-    RaiseException(0xE0000001, EXCEPTION_NONCONTINUABLE, 0, nullptr);
-    TerminateProcess(GetCurrentProcess(), 2);
+    os::raise_guest_trap(os::kTrapUnresolved);
+    os::terminate(2);
     for (;;) {}
 }
 

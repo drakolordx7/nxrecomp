@@ -150,7 +150,7 @@ bool keep_in_view(const double d[3], double* yaw, double* pitch, double tan_h, d
 double yaw_of_transform(const float xf[12]);                               // atan2(xf[2], xf[0]): heading about Y (the world is Y up, forward is +Z at 0, + = turn left)
 void rotate_transform_yaw(const float in[12], double dyaw, float out[12]); // Ry(dyaw) * rotation, translation kept
 
-// Guest memory access used by the driver and the probes (ReadProcessMemory on this process: a bad pointer gives false, never a fault).
+// Guest memory access used by the driver and the probes (nxrt::os::guard: a bad pointer gives false, never a fault).
 // Adds d to every sample of the game's CIIRFilter (the three history arrays: counts at +8, +76 and +120, samples from +12, +80 and +124). A filter with a
 // DC gain of 1 (this one has) then carries on exactly as if its whole past had been d higher: moving the pitch target by d from outside (the mouse) does
 // not get pulled back by the filter's memory. False when the memory does not look like that filter (a count over what its array holds: 16, 10 and 10 floats,

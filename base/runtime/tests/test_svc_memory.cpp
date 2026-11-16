@@ -5,9 +5,8 @@
 #include "nxrt/abi.h"
 #include "nxrt/kernel.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/svc.h"
-
-#include <windows.h>
 
 #include <cstdint>
 #include <cstring>
@@ -63,29 +62,13 @@ MemInfo query(uint64_t addr) {
     return mi;
 }
 
-// The access itself lives in a non-inlined callee: clang-cl's SEH only models faults at call sites (without
-// -fasync-exceptions), so a plain store inside the __try block would not reliably reach the handler.
+// 1 when one byte at addr can be read (write = false) or written (write = true), 0 when it faults.
 // A write probe stores back the byte it read, so the contents are unchanged.
-__declspec(noinline) void access_byte(uint64_t addr, bool write) {
-    if (write) {
-        volatile uint8_t* p = reinterpret_cast<volatile uint8_t*>(addr);
-        const uint8_t old = *p;
-        *p = old;
-    } else {
-        volatile uint8_t v = *reinterpret_cast<volatile uint8_t*>(addr);
-        (void)v;
-    }
-}
-
-// 1 when one byte at addr can be read (write = false) or written (write = true), 0 when it raises an access violation.
-__declspec(noinline) int touch(uint64_t addr, bool write) {
-    int ok = 1;
-    __try {
-        access_byte(addr, write);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        ok = 0;
-    }
-    return ok;
+int touch(uint64_t addr, bool write) {
+    uint8_t v = 0;
+    if (!nxrt::os::guard::read(reinterpret_cast<const void*>(addr), &v, 1)) return 0;
+    if (write && !nxrt::os::guard::write(reinterpret_cast<void*>(addr), &v, 1)) return 0;
+    return 1;
 }
 
 uint32_t* word_at(uint64_t addr) { return reinterpret_cast<uint32_t*>(addr); }

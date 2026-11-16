@@ -13,7 +13,7 @@
 namespace nxrt::tt::detail {
 
 // ---- tt_game.cpp (memory helpers; the game's own probes and steps are its tt::GameProbes) ----
-bool read_mem(uint64_t addr, void* out, size_t n);      // ReadProcessMemory on ourselves: false instead of a fault
+bool read_mem(uint64_t addr, void* out, size_t n);      // a guarded read (os::guard): false instead of a fault
 bool write_mem(uint64_t addr, const void* in, size_t n);
 
 // ---- tt_core.cpp ----

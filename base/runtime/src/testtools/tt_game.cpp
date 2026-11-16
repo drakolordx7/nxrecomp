@@ -3,8 +3,6 @@
 // @peek and @poke, and the entry points tt_core.cpp calls for the game's own probes, which go to the registered game's tt::GameProbes
 // (nxrt/game.h Info::probes). Without a table the frame source "hook" registers
 // nothing and read_state reads nothing; the game's script steps are in the table (tt_script.cpp finds them, tt_runner.cpp runs them).
-#include <windows.h>
-
 #include <atomic>
 #include <cctype>
 #include <cstdio>
@@ -16,25 +14,20 @@
 
 #include "nxrt/game.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fault.h"
 #include "tt_internal.h"
 
 namespace nxrt::tt {
 namespace detail {
 bool read_mem(uint64_t addr, void* out, size_t n) {
     if (addr < 0x10000) return false;
-    SIZE_T got = 0;
-    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(addr), out, n, &got) && got == n;
+    return os::guard::read(reinterpret_cast<const void*>(addr), out, n);
 }
 bool write_mem(uint64_t addr, const void* in, size_t n) {
     if (addr < 0x10000) return false;
     uint8_t probe[64];
     if (n > sizeof probe || !read_mem(addr, probe, n)) return false;
-    __try {          // a direct store: WriteProcessMemory costs tens of milliseconds for an address in the guest heap (see play_aim.cpp)
-        std::memcpy(reinterpret_cast<void*>(addr), in, n);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return os::guard::write(reinterpret_cast<void*>(addr), in, n);       // a direct store under a guard (a write through the host's process API costs tens of milliseconds in the guest heap)
 }
 }  // namespace detail
 }  // namespace nxrt::tt
@@ -102,7 +95,7 @@ bool peek_memory(const std::string& in_path, const std::string& out_path, std::s
 // ---- @poke: write guest memory (S26, development aid: restoring health after a death while a room is being worked out) ------------------------------
 // in: lines `addr [off ...] : hexbytes`. The pointers are followed like @peek; the bytes are stored with a read-back check of the page first.
 static void guarded_copy(uint64_t dst, const void* src, size_t n) {
-    __try { std::memcpy(reinterpret_cast<void*>(dst), src, n); } __except (EXCEPTION_EXECUTE_HANDLER) { }
+    os::guard::write(reinterpret_cast<void*>(dst), src, n);
 }
 
 bool poke_memory(const std::string& in_path, std::string* err) {

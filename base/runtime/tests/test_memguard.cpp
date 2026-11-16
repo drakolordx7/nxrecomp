@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_framework.h"
 
-#include <windows.h>
+
 
 #include <atomic>
 #include <chrono>
@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "nxrt/memguard.h"
+#include "nxrt/os/mem.h"
 
 NXTEST_GROUP(memguard)
 
@@ -27,7 +28,7 @@ void set_flag_cb(uint64_t, uint64_t, void*) { g_trip_flag.store(true); }
 void count_cb(uint64_t, uint64_t, void*) { g_calls.fetch_add(1); }
 
 void* commit_and_touch() {
-    void* p = VirtualAlloc(nullptr, kTouchBytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    void* p = nxrt::os::mem::alloc(kTouchBytes);
     if (p) std::memset(p, 0xA5, kTouchBytes);
     return p;
 }
@@ -42,7 +43,7 @@ NXTEST(footprint_tracks_private_commit) {
     CHECK(f0 > 0);
 
     const std::size_t kBlock = 4ull << 20;
-    void* p = VirtualAlloc(nullptr, kBlock, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    void* p = nxrt::os::mem::alloc(kBlock);
     REQUIRE(p != nullptr);
     std::memset(p, 0x5A, kBlock);
     const uint64_t f1 = nxrt::memguard_footprint();
@@ -50,7 +51,7 @@ NXTEST(footprint_tracks_private_commit) {
     CHECK(f1 >= f0 + (3ull << 20));
     CHECK(f1 > (1ull << 20));
 
-    VirtualFree(p, 0, MEM_RELEASE);
+    nxrt::os::mem::free(p, kBlock);
 }
 
 NXTEST(limit_gb_parsing) {
@@ -80,7 +81,7 @@ NXTEST(overrun_trips_callback_and_peak) {
     CHECK(nxrt::memguard_tripped());
     CHECK(nxrt::memguard_peak() >= limit);
 
-    VirtualFree(p, 0, MEM_RELEASE);
+    nxrt::os::mem::free(p, kTouchBytes);
     nxrt::memguard_stop();
     CHECK(!nxrt::memguard_running());
 }
@@ -134,7 +135,7 @@ NXTEST(on_exceed_called_exactly_once) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
     CHECK_EQ(g_calls.load(), 1);
 
-    VirtualFree(p, 0, MEM_RELEASE);
+    nxrt::os::mem::free(p, kTouchBytes);
     nxrt::memguard_stop();
     CHECK(!nxrt::memguard_running());
 }

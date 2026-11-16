@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Game-state probes of Metroid Prime Remastered (S5; tt::GameProbes, nxrt/tt.h): read the player transform, world/area ids, health and play time out of guest memory, install the two
 // entry hooks the tooling needs, and run the practice mod's warp sequence. The script steps built on them are in mpr_tt_steps.cpp. Guest pointers are host pointers (memory.h), so a probe is a
-// chain of reads; every read goes through ReadProcessMemory on this process so that a stale pointer gives "not available", not a fault.
+// chain of reads; every read goes through nxrt::os::guard (a fault-guarded copy) so that a stale pointer gives "not available", not a fault.
 //
 // Layout, all main-module offsets of the v1.0.0 binary, each read off the disassembly of the named function (work/elf/main.elf):
 //   gpGameState                   main+0x459cc70      pointer to CGameStateMP1 (symbol, verified)
@@ -38,6 +38,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/fault.h"
 #include "mpr_sites.h"
 #include "mpr_tt_probe.h"
 #include "nxrt/game/tt_probe.h"
@@ -384,8 +385,7 @@ LONG CALLBACK watch_veh(PEXCEPTION_POINTERS ep) {
         const uint64_t* sp = reinterpret_cast<const uint64_t*>(cx->Rsp);
         for (int k = 0; k < 512 && h.nstack < 10; k++) {
             uint64_t v = 0;
-            if (IsBadReadPtr(sp + k, 8)) break;
-            v = sp[k];
+            if (!nxrt::os::guard::read(sp + k, &v, 8)) break;
             if (v >= g_mod_lo && v < g_mod_hi) h.stack[h.nstack++] = v;
         }
     }
@@ -484,9 +484,10 @@ void watch_stop() {
 // ---- @rays: batch of static-collision ray casts through the game's own NCollisionMP1::RayStaticIntersection (S26) -------------------------------
 // Used by the route planner (nav.py, a local test script) to read the walkable geometry of the loaded areas without parsing any game file.
 // A host fault inside the guest call (a bad pointer) is caught here: the ray counts as a miss and the run goes on.
+struct GuestCall { ::Ctx* c; uint64_t addr; };
 bool seh_call(::Ctx* c, uint64_t addr) {
-    __try { dispatch_call(c, addr); return true; }
-    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    GuestCall gc{c, addr};
+    return nxrt::os::guard::call([](void* p) { auto* g = static_cast<GuestCall*>(p); dispatch_call(g->c, g->addr); }, &gc);
 }
                                                           // +0 t, +4 point xyz, +16 normal xyz, +28 f, +32 hit (byte)
 bool cast_rays(::Ctx* c, const std::string& in_path, const std::string& out_path, std::string* err) {
@@ -643,8 +644,8 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
             for (size_t off = 0; off < mbi.RegionSize; off += (64u << 20)) {
                 const size_t n = std::min<size_t>(64u << 20, mbi.RegionSize - off);
                 buf.resize(n);
-                SIZE_T got = 0;
-                if (!ReadProcessMemory(GetCurrentProcess(), static_cast<uint8_t*>(mbi.BaseAddress) + off, buf.data(), n, &got) || got < 8) continue;
+                size_t got = n;
+                if (!nxrt::os::guard::read(static_cast<uint8_t*>(mbi.BaseAddress) + off, buf.data(), n) || got < 8) continue;
                 for (size_t i = 0; i + 8 <= got; i += 8) {
                     uint64_t v;
                     std::memcpy(&v, &buf[i], 8);

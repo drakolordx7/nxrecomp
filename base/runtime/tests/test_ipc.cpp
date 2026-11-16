@@ -2,7 +2,6 @@
 // HIPC/CMIF service framework: sessions, sm:, stub services, domains, TIPC, control messages and the SVC entry points.
 #include "test_framework.h"
 
-#include <malloc.h>
 
 #include <algorithm>
 #include <atomic>
@@ -18,6 +17,7 @@
 #include "nxrt/hipc.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
+#include "nxrt/os/mem.h"
 #include "nxrt/svc.h"
 
 NXTEST_GROUP(ipc)
@@ -42,8 +42,8 @@ uint32_t g_copy_handle = 0;   // handed back as a copy handle by test:svc comman
 
 struct Buf {
     uint32_t* p;
-    Buf() : p(static_cast<uint32_t*>(_aligned_malloc(0x1000, 16))) { std::memset(p, 0, 0x1000); }
-    ~Buf() { _aligned_free(p); }
+    Buf() : p(static_cast<uint32_t*>(nxrt::os::mem::alloc_aligned(0x1000, 16))) { std::memset(p, 0, 0x1000); }
+    ~Buf() { nxrt::os::mem::free_aligned(p); }
     Buf(const Buf&) = delete;
     Buf& operator=(const Buf&) = delete;
     uint64_t addr() const { return reinterpret_cast<uint64_t>(p); }

@@ -10,7 +10,6 @@
 //   auto sub = fs.sub(r);                              // the interface returned as a move handle
 //   ... Args().u32(1).u64(2) packs inputs, Reply::get<uint32_t>(0) reads outputs ...
 #pragma once
-#include <malloc.h>
 
 #include <cstdint>
 #include <cstring>
@@ -21,6 +20,7 @@
 #include "nxrt/hipc.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
+#include "nxrt/os/mem.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/runtime.h"
@@ -91,8 +91,8 @@ struct Reply {
 // A 16-byte aligned 0x1000-byte message buffer, like the TLS region.
 struct MsgBuf {
     uint32_t* p;
-    MsgBuf() : p(static_cast<uint32_t*>(_aligned_malloc(0x1000, 16))) { std::memset(p, 0, 0x1000); }
-    ~MsgBuf() { _aligned_free(p); }
+    MsgBuf() : p(static_cast<uint32_t*>(nxrt::os::mem::alloc_aligned(0x1000, 16))) { std::memset(p, 0, 0x1000); }
+    ~MsgBuf() { nxrt::os::mem::free_aligned(p); }
     MsgBuf(const MsgBuf&) = delete;
     MsgBuf& operator=(const MsgBuf&) = delete;
 };

@@ -2,8 +2,6 @@
 // Semantics adapted from SuperMarioWonderRecomp runtime/src/kernel.cpp and svc_process.cpp (MIT, Copyright (c) 2026 BelmanteGu); see THIRD_PARTY_NOTICES.md.
 // Memory SVC group (include/nxrt/svc.h): heap, MapMemory/UnmapMemory, QueryMemory, permission and attribute calls, shared,
 // transfer and physical memory views in the alias region. The address space and the Horizon vm map are in include/nxrt/memory.h.
-#include <windows.h>
-
 #include <cstddef>
 #include <cstring>
 #include <functional>
@@ -17,6 +15,7 @@
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/mem.h"
 #include "nxrt/module.h"
 #include "nxrt/svc.h"
 
@@ -94,7 +93,8 @@ bool in_map_region(uint64_t addr, uint64_t size) {
     return within(addr, size, kMapRegionBase, mem::kMainBase - kMapRegionBase) || within(addr, size, mem::kAliasBase, mem::kAliasSize);
 }
 
-std::map<uint64_t, uint64_t> g_reserve_base;   // window address -> base of its host reservation (differs when addr is not 64 KiB aligned)
+struct HostReserve { uint64_t base, size; };
+std::map<uint64_t, HostReserve> g_reserve_base;   // window address -> its host reservation (starts below addr when addr is not 64 KiB aligned)
 
 // ---- gauges (include/nxrt/gauge.h): every callback takes g_mu, the lock of the state it reads ----
 struct GaugeHook {
@@ -136,27 +136,24 @@ GaugeHook gauge_alias_reservations("mem.alias_reservations", [] {
 bool alias_alloc(uint64_t addr, uint64_t size) {
     const uint64_t base = addr & ~(mem::kAllocGranularity - 1);
     const uint64_t end = (addr + size + mem::kAllocGranularity - 1) & ~(mem::kAllocGranularity - 1);
-    void* p = VirtualAlloc(reinterpret_cast<void*>(base), static_cast<SIZE_T>(end - base), MEM_RESERVE, PAGE_READWRITE);
-    if (!p) return false;
-    if (reinterpret_cast<uint64_t>(p) != base ||
-        !VirtualAlloc(reinterpret_cast<void*>(addr), static_cast<SIZE_T>(size), MEM_COMMIT, PAGE_READWRITE)) {
-        VirtualFree(p, 0, MEM_RELEASE);
+    if (!os::mem::reserve_fixed(base, end - base)) return false;
+    if (!os::mem::commit(addr, size, mem::Prot::RW)) {
+        os::mem::release(base, end - base);
         return false;
     }
-    g_reserve_base[addr] = base;
+    g_reserve_base[addr] = HostReserve{base, end - base};
     return true;
 }
 
 void alias_free(uint64_t addr) {
-    uint64_t base = addr;
     auto it = g_reserve_base.find(addr);
-    if (it != g_reserve_base.end()) {
-        base = it->second;
-        g_reserve_base.erase(it);
+    if (it == g_reserve_base.end()) {
+        NXLOG_E(kTag, "alias_free(%llx): no host reservation recorded", U(addr));
+        return;
     }
-    if (!VirtualFree(reinterpret_cast<void*>(base), 0, MEM_RELEASE)) {
-        NXLOG_E(kTag, "VirtualFree(%llx) failed, error %lu", U(base), static_cast<unsigned long>(GetLastError()));
-    }
+    const HostReserve r = it->second;
+    g_reserve_base.erase(it);
+    if (!os::mem::release(r.base, r.size)) NXLOG_E(kTag, "release of the host reservation %llx failed", U(r.base));
 }
 
 void fail(::Ctx* c, const char* what, uint32_t rc, uint64_t a, uint64_t b, uint64_t d) {
