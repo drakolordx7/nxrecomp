@@ -588,13 +588,23 @@ void ext_set_source(::Ctx* c) {              // SetDataSource(ClientStreamReader
     }
     std::unique_ptr<unsigned char[]> data(new (std::nothrow) unsigned char[static_cast<size_t>(size)]);
     if (!data) { gcall(c, rd64(vt + 0x20), reader, handle, 0, 0, 0); RET(ST_FAILED); return; }
+    // The game's reader fills the buffer through a file-system call whose message names the buffer with a 39-bit address (the Switch address
+    // space): a host heap block has one on Windows, not on Linux (ASLR). The reads go into a staging buffer inside the guest span (made once,
+    // one reader at a time) and are copied out.
+    constexpr uint64_t kStage = 8u << 20;
+    static std::mutex stage_m;
+    static uint64_t stage = 0;
+    std::lock_guard<std::mutex> stage_lk(stage_m);
+    if (!stage) stage = mem::alloc_kernel(kStage, mem::kPage);
+    if (!stage) { gcall(c, rd64(vt + 0x20), reader, handle, 0, 0, 0); RET(ST_FAILED); return; }
     const auto t0 = std::chrono::steady_clock::now();
     int64_t got = 0;
     while (got < size) {
-        const uint64_t chunk = std::min<uint64_t>(static_cast<uint64_t>(size - got), 8u << 20);
-        const int64_t n = static_cast<int64_t>(gcall(c, rd64(vt + 0x18), reader, handle, static_cast<uint64_t>(got), reinterpret_cast<uint64_t>(data.get() + got), chunk));
+        const uint64_t chunk = std::min<uint64_t>(static_cast<uint64_t>(size - got), kStage);
+        const int64_t n = static_cast<int64_t>(gcall(c, rd64(vt + 0x18), reader, handle, static_cast<uint64_t>(got), stage, chunk));
         if (n <= 0) break;
-        got += n;
+        std::memcpy(data.get() + got, reinterpret_cast<const void*>(stage), static_cast<size_t>(std::min<int64_t>(n, static_cast<int64_t>(chunk))));
+        got += std::min<int64_t>(n, static_cast<int64_t>(chunk));
     }
     gcall(c, rd64(vt + 0x20), reader, handle, 0, 0, 0);
     NXLOG_I("movie", "SetDataSource: read %lld of %lld bytes through the game's reader in %.2f s", static_cast<long long>(got), static_cast<long long>(size),

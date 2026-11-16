@@ -41,6 +41,7 @@ struct GpuInfo {
     uint32_t vendor_id = 0, device_id = 0;
     int type = 0;
     uint32_t api_version = 0, driver_version = 0;
+    int driver_id = 0;           // VkDriverId (VK_DRIVER_ID_*), 0 when the driver does not say
     uint64_t vram_bytes = 0;
     bool can_present = false;    // has a queue family that can draw and present to the window surface (true when headless)
 };
