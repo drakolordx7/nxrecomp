@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "hwaoc_game.h"
+#include "hwaoc_timestep.h"
 
 #include "nxrt/game/identity.h"
 #include "nxrt/services.h"
@@ -28,6 +29,7 @@ const game::Info& core_info() {
     static const game::Info info = [] {
         game::Info g = data_info();
         g.title_defaults = &title_defaults;
+        g.timestep = &timestep_sites();            // the real-time frame step (hwaoc_timestep.h)
         return g;
     }();
     return info;
