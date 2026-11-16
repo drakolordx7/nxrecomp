@@ -6,8 +6,6 @@
 // buffers. Scene tests build on it (tests/gfx/test_nvn_scene_*.cpp). Nothing here is game data: shaders and textures of the real
 // game are read at run time from work/ (shader_cache/corpus_code and survey/textures), never committed.
 #pragma once
-#include <windows.h>
-
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +18,8 @@
 #include "nxrt/log.h"
 #include "nxrt/nvn.h"
 #include "nxrt/nvn_backend.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/process.h"
 #include "nvn_abi.h"
 #include "nvn_gpu.h"
 #include "project_root.h"
@@ -67,21 +67,30 @@ inline bool real_data_available() {
 
 // Host memory for pools: a pagefile-backed section viewed twice, like the runtime's heap (the back end imports the second view).
 struct HostMem {
-    HANDLE section = nullptr;
+    nxrt::os::mem::Section section;
     uint8_t* view = nullptr;
     size_t size = 0;
+    size_t mapped = 0;   // the view's size: `size` rounded up to the placement granularity
     bool alloc(size_t n) {
+        namespace osmem = nxrt::os::mem;
         size = (n + 0xfff) & ~size_t(0xfff);
-        section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, static_cast<DWORD>(static_cast<uint64_t>(size) >> 32), static_cast<DWORD>(size), nullptr);
-        if (!section) return false;
-        view = static_cast<uint8_t*>(MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, size));
+        mapped = (size + osmem::kGranularity - 1) & ~static_cast<size_t>(osmem::kGranularity - 1);
+        if (!osmem::section_create(mapped, &section)) return false;
+        view = reinterpret_cast<uint8_t*>(osmem::section_map(section, 0, mapped, 0, osmem::Prot::RW));
+        if (view && !osmem::commit(reinterpret_cast<uint64_t>(view), mapped, osmem::Prot::RW)) {   // (Windows: the pages of a section start reserved)
+            osmem::section_unmap(reinterpret_cast<uint64_t>(view), mapped);
+            view = nullptr;
+        }
+        if (!view) osmem::section_close(&section);
         return view != nullptr;
     }
     void release() {
-        if (view) UnmapViewOfFile(view);
-        if (section) CloseHandle(section);
+        namespace osmem = nxrt::os::mem;
+        if (view) osmem::section_unmap(reinterpret_cast<uint64_t>(view), mapped);
+        osmem::section_close(&section);
         view = nullptr;
-        section = nullptr;
+        mapped = 0;
+        section = {};
     }
 };
 

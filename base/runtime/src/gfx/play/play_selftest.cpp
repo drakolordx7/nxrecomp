@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "play_selftest.h"
 
-#include <windows.h>
-
 #include <SDL3/SDL.h>
 
 #include <cmath>

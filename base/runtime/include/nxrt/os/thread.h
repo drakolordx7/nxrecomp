@@ -15,9 +15,10 @@ using ThreadHandle = void*;
 using ThreadId = uint32_t;                       // Windows: the thread id; Linux: the kernel tid
 constexpr uint32_t kWaitForever = 0xFFFFFFFFu;   // the timeout of thread_join that never ends
 
-// Six priority bands inside the normal scheduling class. The numbers are the Windows THREAD_PRIORITY_* values. Linux maps a band to a nice
+// Priority bands inside the normal scheduling class. The numbers are the Windows THREAD_PRIORITY_* values. Linux maps a band to a nice
 // offset (src/os/posix/thread.cpp).
 enum class PriorityBand : int {
+    Idle = -15,
     Lowest = -2,
     BelowNormal = -1,
     Normal = 0,
@@ -66,6 +67,10 @@ bool thread_place(ThreadHandle h, const ThreadPlacement& p);
 bool thread_set_band(ThreadHandle h, PriorityBand band);
 // The band last applied to the thread through this layer; Windows asks the system. Normal for a thread never given one.
 PriorityBand thread_get_band(ThreadHandle h);
+// Efficiency mode of a thread: eco = true asks the system to run it on the efficiency cores of a hybrid CPU and at a lower clock elsewhere
+// (Windows: EcoQoS, THREAD_POWER_THROTTLING_EXECUTION_SPEED), false turns that off explicitly. Linux has nothing of the kind (the band is all
+// there is): the call does nothing and returns false.
+bool thread_set_efficiency(ThreadHandle h, bool eco);
 uint64_t thread_get_affinity(ThreadHandle h);    // host CPU mask of the thread; 0 when it cannot be read or CPUs beyond the first 64 are involved
 void thread_set_name(const char* name);          // names the calling thread for debuggers (Linux keeps 15 characters)
 

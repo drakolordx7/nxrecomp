@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Shared helpers of the scene tests (gfx_scene, gfx_present, gfx_pacing).
 #pragma once
-#include <windows.h>
-#include <psapi.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -13,6 +10,9 @@
 #include "nxrt/gfx.h"
 #include "nxrt/input.h"
 #include "nxrt/log.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/platform.h"
 #include "scene/scene.h"
 #include "test_framework.h"
@@ -59,10 +59,7 @@ inline bool capture_scene(SceneRunDesc d, std::vector<uint8_t>* px, uint32_t* w,
     return load_png_rgba(tmp, px, w, h);
 }
 
-inline DWORD handle_count() {
-    DWORD n = 0;
-    GetProcessHandleCount(GetCurrentProcess(), &n);
-    return n;
-}
+// Open handles (Windows) or file descriptors (Linux) of this process; 0 when unknown.
+inline size_t handle_count() { return nxrt::os::process_handle_count(); }
 
 }  // namespace gfxtest

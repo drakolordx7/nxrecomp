@@ -2,10 +2,6 @@
 //
 // Pack file layout (scripts/build_prompt_pack.py), little endian: 24-byte header (magic "MPIP", version 1, count, width, height,
 // reserved), `count` directory entries of 48 bytes (char name[40], u32 offset, u32 size) sorted by name, then the RGBA8 pixel blocks.
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #include "prompts.h"
 
 #include <algorithm>
@@ -19,6 +15,7 @@
 #include "nxrt/config.h"
 #include "nxrt/game.h"
 #include "nxrt/log.h"
+#include "nxrt/os/process.h"
 #include "nxrt/services.h"
 #include "nxrt/tex_upload.h"
 
@@ -29,16 +26,7 @@ constexpr const char* kTag = "prompts";
 
 uint32_t get_u32(const uint8_t* p) { return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24); }
 
-std::filesystem::path exe_dir() {
-#ifdef _WIN32
-    char buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return {};
-    return std::filesystem::path(buf).parent_path();
-#else
-    return {};
-#endif
-}
+std::filesystem::path exe_dir() { return std::filesystem::path(os::process::exe_dir()); }
 
 bool read_file(const std::filesystem::path& p, std::vector<uint8_t>& out) {
     out.clear();

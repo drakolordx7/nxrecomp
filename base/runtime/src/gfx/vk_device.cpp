@@ -330,7 +330,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     const bool headless = desc.headless >= 0 ? desc.headless != 0 : config_get_bool("gfx", "headless", false);
     std::string gpu_want = !desc.gpu.empty() ? desc.gpu : config_get_str("gfx", "gpu", "");
 
-    if (volkInitialize() != VK_SUCCESS) return fail("no Vulkan loader found (vulkan-1.dll)");
+    if (volkInitialize() != VK_SUCCESS) return fail("no Vulkan loader found (vulkan-1.dll / libvulkan.so.1)");
     uint32_t inst_version = 0;
     vkEnumerateInstanceVersion(&inst_version);
     if (inst_version < VK_API_VERSION_1_3) return fail("Vulkan 1.3 is required; the loader offers less");

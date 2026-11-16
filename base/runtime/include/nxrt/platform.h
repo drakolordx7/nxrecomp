@@ -24,7 +24,6 @@ bool create_window(const WindowDesc& desc);   // Vulkan-capable window (SDL_WIND
 void destroy_window();
 bool has_window();
 void* native_window();                        // SDL_Window*
-void* native_hwnd();
 void set_window_title(const char* title);
 void pixel_size(int* w, int* h);              // client size in pixels (0, 0 while minimised)
 bool set_window_size(int w, int h);

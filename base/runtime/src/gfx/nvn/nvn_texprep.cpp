@@ -3,8 +3,6 @@
 #include "nvn_texprep.h"
 #include "nvn_settings.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -17,6 +15,7 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
@@ -75,25 +74,25 @@ nxrt::GaugeCounter g_staged_bytes_total("nvn.texprep.staged_bytes_total");   // 
 State& S() { return *g_state; }
 
 bool prepare_guarded(const Texture& t, const TexCaps& caps, PreparedTexture& out, bool& crashed) {
-    __try {
-        return prepare_texture(t, caps, out);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        crashed = true;
-        return false;
-    }
+    struct Args { const Texture* t; const TexCaps* caps; PreparedTexture* out; bool ok; } a{&t, &caps, &out, false};
+    if (nxrt::os::guard::call([](void* p) { auto* x = static_cast<Args*>(p); x->ok = prepare_texture(*x->t, *x->caps, *x->out); }, &a)) return a.ok;
+    crashed = true;
+    return false;
 }
 
-// Reads the storage under SEH: a page the game unmapped must not take the process down.
+// Reads the storage under the fault guard: a page the game unmapped must not take the process down.
 bool hash_guarded(const Texture& t, uint64_t& h) {
-    __try {
-        if (t.mem) {
-            h = hash_bytes(t.mem, static_cast<size_t>(t.storage_size));
-            return true;
+    struct Args { const Texture* t; uint64_t* h; bool ok; } a{&t, &h, false};
+    nxrt::os::guard::call([](void* p) {
+        auto* x = static_cast<Args*>(p);
+        if (x->t->mem) {
+            *x->h = hash_bytes(x->t->mem, static_cast<size_t>(x->t->storage_size));
+            x->ok = true;
+        } else {
+            x->ok = texture_hash_virtual(*x->t, *x->h);       // a sparse texture: the mapped tiles, hashed where they are
         }
-        return texture_hash_virtual(t, h);       // a sparse texture: the mapped tiles, hashed where they are
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    }, &a);
+    return a.ok;
 }
 
 uint64_t now_ns() { return ft::now_ns(); }
@@ -182,6 +181,7 @@ void debounce_locked(Texture* t) {
 
 void worker_main() {
     log_set_thread_name("nvn-texprep");
+    nxrt::os::fault_thread_init();
     State& s = S();
     std::unique_lock<std::mutex> lk(s.mu);
     for (;;) {

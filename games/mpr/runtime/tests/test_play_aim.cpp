@@ -3,14 +3,13 @@
 // the transform hook and the hints. The driver reads and writes guest memory with ReadProcessMemory, so a fake player built on the host
 // heap works: guest pointers are host pointers. Every offset is set through AimLayout.
 #include "test_framework.h"
+#include "nxrt/os/mem.h"
 
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
-
-#include <windows.h>
 
 #include "play_aim.h"
 
@@ -533,12 +532,12 @@ NXTEST(guest_write_rejects_low_addresses) {
 
 NXTEST(guest_write_fails_on_reserved_page) {
     // address space reserved but never committed: there is nothing to write into
-    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+    void* page = nxrt::os::mem::alloc(4096, nxrt::os::mem::Prot::None);
     REQUIRE(page != nullptr);
     CHECK(A(page) >= 0x10000);
     const uint8_t src[8] = {1, 2, 3, 4, 5, 6, 7, 8};
     CHECK(!play::guest_write(A(page), src, sizeof src));
-    CHECK(VirtualFree(page, 0, MEM_RELEASE));
+    CHECK(nxrt::os::mem::free(page, 4096));
 }
 
 NXTEST(mouse_only_overwrites_game_pitch) {

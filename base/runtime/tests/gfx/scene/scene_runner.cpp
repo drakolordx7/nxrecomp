@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The frame loop of the graphics shell (scene.h: run_scene). The order inside one frame is the low-latency design: wait for the
 // frame's scheduled start (FrameLimiter), THEN pump the platform and read input, then record and present.
-#include <windows.h>
-
 #include <algorithm>
 
 #include "nxrt/config.h"
 #include "nxrt/frame_limiter.h"
 #include "nxrt/input.h"
 #include "nxrt/log.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/overlay.h"
 #include "nxrt/platform.h"
 #include "scene.h"
@@ -91,13 +90,11 @@ SceneRunResult run_scene(const SceneRunDesc& desc) {
             overlay->install_on_renderer();
         }
 
-        DWORD old_class = 0;
-        int old_prio = 0;
+        os::PriorityBand old_band = os::PriorityBand::Normal;
         if (d.boost_priority) {
-            old_class = GetPriorityClass(GetCurrentProcess());
-            old_prio = GetThreadPriority(GetCurrentThread());
-            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+            old_band = os::thread_get_band(os::thread_current());
+            os::process_set_priority(os::ProcessPriority::High);   // (Linux: only with the privilege to lower the nice value)
+            os::thread_set_band(os::thread_current(), os::PriorityBand::TimeCritical);
         }
 
         input::queue_clear();
@@ -149,8 +146,8 @@ SceneRunResult run_scene(const SceneRunDesc& desc) {
         rend->wait_idle();
 
         if (d.boost_priority) {
-            SetThreadPriority(GetCurrentThread(), old_prio);
-            SetPriorityClass(GetCurrentProcess(), old_class);
+            os::thread_set_band(os::thread_current(), old_band);
+            os::process_set_priority(os::ProcessPriority::Normal);
         }
         res.frames = rendered;
         res.input_to_submit_mean_ms = lat_n ? lat_sum / static_cast<double>(lat_n) : 0;

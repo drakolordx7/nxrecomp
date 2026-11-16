@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Start-up and menu tweaks (S46, runtime/mpr_fastboot.cpp), hook level: the entry hooks driven the way lifted code drives them
 // (nx_hook_entry on the guest address) against stand-in guest functions and a fake game state in host memory, at a base of its own.
-#include <windows.h>
-
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
 #include "test_framework.h"
+#include "guest_pages.h"
+#include "nxrt/os/time.h"
 
 #include "nxrt/abi.h"
 #include "nxrt/dispatch.h"
@@ -39,7 +39,7 @@ struct Fake {
 Fake g_f;
 
 uint64_t addr(const std::vector<uint8_t>& b) { return reinterpret_cast<uint64_t>(b.data()); }
-void commit(uint64_t a, size_t n) { VirtualAlloc(reinterpret_cast<void*>(a), n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
+void commit(uint64_t a, size_t n) { nxtest::commit_pages(a, n); }
 
 void set_area(const char* world, const char* area) {
     uint8_t w[16], a[16];
@@ -237,7 +237,7 @@ NXTEST(title_intro_movie_skipped_once) {
 static bool think_until_skips(const std::vector<::Ctx*>& thinkers, int want) {
     for (int i = 0; i < 250 && g_f.skip_calls < want; ++i) {
         for (::Ctx* c : thinkers) nx_hook_entry(c, kBase + kMovieThink);
-        if (g_f.skip_calls < want) Sleep(20);
+        if (g_f.skip_calls < want) nxrt::os::sleep_ms(20);
     }
     return g_f.skip_calls >= want;
 }
@@ -269,7 +269,7 @@ NXTEST(fast_menus_cuts_transition_movies) {
     std::memcpy(g_f.movie.data() + 160, &h2, 4);
     for (int i = 0; i < 30; ++i) {
         nx_hook_entry(&c, kBase + kMovieThink);
-        Sleep(20);
+        nxrt::os::sleep_ms(20);
     }
     CHECK_EQ(g_f.skip_calls, before + 1);
 }

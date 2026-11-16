@@ -2,16 +2,7 @@
 # Pinned third-party sources for the graphics shell (S4b). Every archive is fetched by URL and checked against a
 # SHA256. The archives are cached in NXRT_DEPS_DIR (shared by checkouts and worktrees, survives a clean build); the
 # extracted sources and the SDL build live in the build directory. Licences and pins are listed in THIRD_PARTY_NOTICES.md and README.md.
-include(FetchContent)
-set(NXRT_DEPS_DIR "${NX_CACHE_DIR}/deps" CACHE PATH "Where the pinned third-party sources are downloaded to")
-set(FETCHCONTENT_QUIET OFF)
-set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)   # extracted files take the time of extraction
-
-# SDL 3.4.18 (zlib licence), released 2026-10-02. Built from source as a static library.
-FetchContent_Declare(sdl3
-    URL https://github.com/libsdl-org/SDL/releases/download/release-3.4.18/SDL3-3.4.18.tar.gz
-    DOWNLOAD_DIR "${NXRT_DEPS_DIR}"
-    URL_HASH SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3)
+include(${CMAKE_CURRENT_LIST_DIR}/sdl_dep.cmake)   # SDL3 (pinned there, also used by the audio output of nxrt)
 # Vulkan-Headers vulkan-sdk-1.4.363.0 (Apache-2.0 OR MIT)
 FetchContent_Declare(vulkan_headers
     URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-1.4.363.0.zip
@@ -37,16 +28,7 @@ FetchContent_Declare(imgui
     URL_HASH SHA256=e1c46d676c2bcb7ced847ba27f50553e33a19db97b3cadaec7f8be64449139f8
     SOURCE_SUBDIR none)
 
-set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-set(SDL_STATIC ON CACHE BOOL "" FORCE)
-set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
-set(SDL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-set(SDL_DISABLE_INSTALL_DOCS ON CACHE BOOL "" FORCE)
-set(SDL_VENDOR_INFO "nxrt" CACHE STRING "" FORCE)
-FetchContent_MakeAvailable(sdl3 vulkan_headers volk vma imgui)
+FetchContent_MakeAvailable(vulkan_headers volk vma imgui)
 
 # volk (loader) next to the Vulkan headers; the Vulkan headers come from the pin, not from the installed SDK.
 add_library(nxrt_volk STATIC "${volk_SOURCE_DIR}/volk.c")

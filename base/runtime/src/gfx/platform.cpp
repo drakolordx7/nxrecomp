@@ -21,6 +21,7 @@ constexpr Uint64 kFullscreenWaitMs = 2000;
 
 // All SDL state lives in this file. Everything runs on the thread that created the window.
 bool g_inited = false;
+SDL_InitFlags g_init_flags = 0;
 bool g_quit = false;
 SDL_Window* g_window = nullptr;
 
@@ -336,10 +337,11 @@ bool init(const InitOptions& opt) {
 
     SDL_InitFlags flags = SDL_INIT_VIDEO | SDL_INIT_EVENTS;
     if (opt.gamepads) flags |= SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD;
-    if (!SDL_Init(flags)) {
+    if (!SDL_Init(flags)) {   // (the subsystems are reference counted: SDL_Init(flags) adds to any the audio sink started)
         NXLOG_E(kTag, "SDL_Init failed: %s", SDL_GetError());
         return false;
     }
+    g_init_flags = flags;
     g_inited = true;
     g_quit = false;
     const int v = SDL_GetVersion();
@@ -356,7 +358,8 @@ void shutdown() {
         input::gamepad_remove_info(p.id);
     }
     g_pads.clear();
-    SDL_Quit();
+    SDL_QuitSubSystem(g_init_flags);   // not SDL_Quit: the audio sink holds the audio subsystem
+    g_init_flags = 0;
     g_inited = false;
     NXLOG_I(kTag, "shutdown");
 }
@@ -392,11 +395,6 @@ void destroy_window() {
 bool has_window() { return g_window != nullptr; }
 
 void* native_window() { return g_window; }
-
-void* native_hwnd() {
-    if (!g_window) return nullptr;
-    return SDL_GetPointerProperty(SDL_GetWindowProperties(g_window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
-}
 
 void set_window_title(const char* title) {
     if (g_window && title) SDL_SetWindowTitle(g_window, title);

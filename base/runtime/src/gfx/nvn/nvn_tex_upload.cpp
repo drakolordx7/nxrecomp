@@ -2,8 +2,6 @@
 // Texture upload hook (nxrt/tex_upload.h): the list of subscribers, the edited data kept in memory, the background rebuild after a change, and the
 // small BC7 textures a subscriber replaces whole. prepare_texture (nvn_texdata.cpp) does the decode, the subscriber's edit and the encode; this
 // file decides when.
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -17,6 +15,8 @@
 
 #include <nxrt/config.h>
 #include <nxrt/log.h>
+#include <nxrt/os/fault.h>
+#include <nxrt/os/thread.h>
 #include <nxrt/tex_upload.h>
 
 #include "astc2bc7.h"
@@ -78,17 +78,21 @@ std::vector<State::Sub> subs_copy() {
     return s.subs;
 }
 
-// The first subscriber that wants the texture: its id with its handle in the top byte, 0 when none. Under SEH (a page the game unmapped must not
-// take the process down).
+// The first subscriber that wants the texture: its id with its handle in the top byte, 0 when none. Under the fault guard (a page the game
+// unmapped must not take the process down).
 uint64_t match_subs(const std::vector<State::Sub>& subs, const gfx::TexUploadReq& r) {
-    __try {
-        for (const State::Sub& sub : subs) {
-            const uint64_t id = sub.hooks.match(r, sub.hooks.user);
-            if (id && id < (1ull << kSlotShift)) return id | (static_cast<uint64_t>(sub.handle) << kSlotShift);
+    struct Args { const std::vector<State::Sub>* subs; const gfx::TexUploadReq* r; uint64_t id; } a{&subs, &r, 0};
+    nxrt::os::guard::call([](void* p) {
+        auto* x = static_cast<Args*>(p);
+        for (const State::Sub& sub : *x->subs) {
+            const uint64_t id = sub.hooks.match(*x->r, sub.hooks.user);
+            if (id && id < (1ull << kSlotShift)) {
+                x->id = id | (static_cast<uint64_t>(sub.handle) << kSlotShift);
+                return;
+            }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-    }
-    return 0;
+    }, &a);
+    return a.id;
 }
 
 // The sum of the subscribers' generations: any subscriber's change is a new generation (each only grows).
@@ -100,11 +104,8 @@ uint64_t generation_of(const std::vector<State::Sub>& subs) {
 }
 
 bool prepare_guarded(const Texture& t, const TexCaps& caps, PreparedTexture& out) {
-    __try {
-        return prepare_texture(t, caps, out);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    struct Args { const Texture* t; const TexCaps* caps; PreparedTexture* out; bool ok; } a{&t, &caps, &out, false};
+    return nxrt::os::guard::call([](void* p) { auto* x = static_cast<Args*>(p); x->ok = prepare_texture(*x->t, *x->caps, *x->out); }, &a) && a.ok;
 }
 
 bool candidate(const Texture& t, void*) {
@@ -178,13 +179,14 @@ void rebuild_once() {
 
 void worker_main() {
     log_set_thread_name("nvn-texedit");
+    nxrt::os::fault_thread_init();
+    nxrt::os::thread_set_band(nxrt::os::thread_current(), nxrt::os::PriorityBand::BelowNormal);
     State& s = S();
     std::unique_lock<std::mutex> lk(s.mu);
     for (;;) {
         s.cv_work.wait(lk, [&] { return s.want_rebuild; });
         s.want_rebuild = false;
         lk.unlock();
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         rebuild_once();
         lk.lock();
     }
