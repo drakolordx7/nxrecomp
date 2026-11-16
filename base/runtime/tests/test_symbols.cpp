@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Tests for nxrt::symbols (linker-map symbolisation). Most cases build a fabricated map whose addresses are the runtime
-// addresses of functions in this exe; the real-map case reads <exe>.map as written by /MAP.
+// Tests for nxrt::symbols (host symbolisation). Windows: most cases build a fabricated linker map whose addresses are the runtime
+// addresses of functions in this exe, and the real-map case reads <exe>.map as written by /MAP. Linux has no map text: those cases skip, and
+// the real-table cases read the ELF symtab of the exe.
 #include "test_framework.h"
 
+#include "nxrt/os/symbols.h"
 #include "nxrt/symbols.h"
-
-#include <windows.h>
 
 #include <algorithm>
 #include <atomic>
@@ -19,7 +19,7 @@
 NXTEST_GROUP(symbols)
 
 // Marker resolved by the real-map case. extern "C" keeps its name undecorated in the map.
-extern "C" __declspec(noinline) int nxrt_symtest_marker(volatile int* p) {
+extern "C" __attribute__((noinline)) int nxrt_symtest_marker(volatile int* p) {
     *p += 1;
     return *p;
 }
@@ -27,11 +27,11 @@ extern "C" __declspec(noinline) int nxrt_symtest_marker(volatile int* p) {
 namespace {
 
 // Distinct bodies, so ICF cannot fold them into one address.
-__declspec(noinline) int symtest_f0(volatile int* p) { *p += 2; return *p; }
-__declspec(noinline) int symtest_f1(volatile int* p) { *p += 3; return *p; }
-__declspec(noinline) int symtest_f2(volatile int* p) { *p += 5; return *p; }
-__declspec(noinline) int symtest_f3(volatile int* p) { *p += 7; return *p; }
-__declspec(noinline) int symtest_f4(volatile int* p) { *p += 9; return *p; }
+__attribute__((noinline)) int symtest_f0(volatile int* p) { *p += 2; return *p; }
+__attribute__((noinline)) int symtest_f1(volatile int* p) { *p += 3; return *p; }
+__attribute__((noinline)) int symtest_f2(volatile int* p) { *p += 5; return *p; }
+__attribute__((noinline)) int symtest_f3(volatile int* p) { *p += 7; return *p; }
+__attribute__((noinline)) int symtest_f4(volatile int* p) { *p += 9; return *p; }
 
 constexpr uint64_t kPreferred = 0x140000000ull;
 constexpr const char* kFailMangled =
@@ -42,28 +42,14 @@ uint64_t fn_addr(F* f) {
     return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(f));
 }
 
-uint64_t exe_base() {
-    return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(GetModuleHandleA(nullptr)));
-}
+uint64_t exe_base() { return nxrt::os::symbols::main_base(); }
+std::string exe_name() { return nxrt::os::symbols::main_name(); }
 
-std::string exe_path() {
-    char b[1024];
-    DWORD n = GetModuleFileNameA(nullptr, b, sizeof b);
-    return std::string(b, n);
-}
-
-std::string exe_name() {
-    std::string p = exe_path();
-    size_t s = p.find_last_of("\\/");
-    return s == std::string::npos ? p : p.substr(s + 1);
-}
-
-std::string map_path() {
-    std::string p = exe_path();
-    size_t dot = p.find_last_of('.');
-    size_t slash = p.find_last_of("\\/");
-    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p.erase(dot);
-    return p + ".map";
+// The fabricated-map cases need the Windows map format.
+bool skip_without_map_text() {
+    if (nxrt::os::symbols::text_tables_supported()) return false;
+    nxtest::skip("map text tables are the Windows linker format");
+    return true;
 }
 
 std::string lower(std::string s) {
@@ -102,6 +88,7 @@ std::string make_map(const std::vector<Sym>& publics, const std::vector<Sym>& st
 }  // namespace
 
 NXTEST(fabricated_map_counts_and_exact_lookups) {
+    if (skip_without_map_text()) return;
     const uint64_t f0 = fn_addr(&symtest_f0), f1 = fn_addr(&symtest_f1), f2 = fn_addr(&symtest_f2);
     const uint64_t f3 = fn_addr(&symtest_f3), f4 = fn_addr(&symtest_f4);
     // Deliberately unsorted; symtest_f4 sits in the Static symbols table.
@@ -134,6 +121,7 @@ NXTEST(fabricated_map_counts_and_exact_lookups) {
 }
 
 NXTEST(undecorates_msvc_names) {
+    if (skip_without_map_text()) return;
     nxrt::symbols_load_map_text(make_map({{kFailMangled, fn_addr(&symtest_f0)}}));
     auto s = nxrt::symbols_lookup(fn_addr(&symtest_f0));
     CHECK(s.symbol.find("nxtest::fail") != std::string::npos);
@@ -141,11 +129,11 @@ NXTEST(undecorates_msvc_names) {
 }
 
 NXTEST(real_map_resolves_marker) {
-    if (GetFileAttributesA(map_path().c_str()) == INVALID_FILE_ATTRIBUTES) {
-        nxtest::skip("no map");
+    const size_t n = nxrt::symbols_load_map();     // Windows: <exe>.map; Linux: the ELF symtab of the exe
+    if (n == 0) {
+        nxtest::skip("no symbol table (no map next to the exe, or a stripped binary)");
         return;
     }
-    const size_t n = nxrt::symbols_load_map();
     CHECK(n > 100);
     std::printf("    symbols loaded from real map: %zu\n", n);
 
@@ -163,15 +151,18 @@ NXTEST(real_map_resolves_marker) {
     CHECK_EQ(in.sym_offset, 4u);
 }
 
-NXTEST(kernel32_address_reports_module_without_symbol) {
-    HMODULE k = GetModuleHandleA("kernel32.dll");
-    REQUIRE(k != nullptr);
-    FARPROC p = GetProcAddress(k, "Sleep");
-    REQUIRE(p != nullptr);
-    auto s = nxrt::symbols_lookup(fn_addr(p));
-    const std::string m = lower(s.module);
-    CHECK(m == "kernel32.dll" || m == "kernelbase.dll");
-    CHECK(s.symbol.empty());
+NXTEST(other_module_address_reports_module_not_the_exe_table) {
+    // Any loaded module but the exe (Windows: ntdll, kernel32; Linux: libc, the loader): named by file, never from the exe's table.
+    const auto mods = nxrt::os::symbols::modules();
+    REQUIRE(mods.size() >= 2);
+    CHECK(mods.front().base == exe_base());
+    const auto* other = &mods[1];
+    for (const auto& m : mods)
+        if (m.base != exe_base() && m.size >= 0x2000) other = &m;
+    const uint64_t a = other->base + 0x1010;
+    auto s = nxrt::symbols_lookup(a);
+    CHECK_EQ(lower(s.module), lower(other->name));
+    CHECK_EQ(s.offset, a - other->base);
     CHECK(!s.from_map);
 }
 
@@ -185,7 +176,7 @@ NXTEST(null_and_top_addresses_report_unknown_module) {
 }
 
 NXTEST(missing_map_file_gives_zero_and_module_offset_only) {
-    CHECK_EQ(nxrt::symbols_load_map("Z:\\nxrt-no-such-dir\\nope.map"), 0u);
+    CHECK_EQ(nxrt::symbols_load_map("/nxrt-no-such-dir/nope.map"), 0u);
     CHECK_EQ(nxrt::symbols_count(), 0u);
     const uint64_t a = fn_addr(&nxrt_symtest_marker);
     auto s = nxrt::symbols_lookup(a);
@@ -197,8 +188,13 @@ NXTEST(missing_map_file_gives_zero_and_module_offset_only) {
 
 NXTEST(concurrent_lookup_during_reload) {
     const uint64_t a = fn_addr(&nxrt_symtest_marker);
-    const std::string text = make_map({{"nxrt_symtest_marker", a}});
-    nxrt::symbols_load_map_text(text);
+    const bool text_tables = nxrt::os::symbols::text_tables_supported();
+    const std::string text = text_tables ? make_map({{"nxrt_symtest_marker", a}}) : std::string();
+    auto reload = [&] { return text_tables ? nxrt::symbols_load_map_text(text) : nxrt::symbols_load_map(); };
+    if (reload() == 0) {
+        nxtest::skip("no symbol table");
+        return;
+    }
 
     const std::string exe = exe_name();
     std::atomic<int> bad{0};
@@ -206,21 +202,22 @@ NXTEST(concurrent_lookup_during_reload) {
     for (int t = 0; t < 4; ++t) {
         threads.emplace_back([&] {
             for (int i = 0; i < 20000; ++i) {
-                auto s = nxrt::symbols_lookup(a + static_cast<uint64_t>(i & 63));
+                auto s = nxrt::symbols_lookup(a + static_cast<uint64_t>(i & 3));
                 if (s.symbol != "nxrt_symtest_marker" || s.module != exe) bad++;
             }
         });
     }
     threads.emplace_back([&] {
-        for (int i = 0; i < 50; ++i) nxrt::symbols_load_map_text(text);
+        for (int i = 0; i < (text_tables ? 50 : 8); ++i) reload();
     });
     for (auto& th : threads) th.join();
 
     CHECK_EQ(bad.load(), 0);
-    CHECK_EQ(nxrt::symbols_count(), 1u);
+    if (text_tables) CHECK_EQ(nxrt::symbols_count(), 1u);
 }
 
 NXTEST(describe_format) {
+    if (skip_without_map_text()) return;
     const uint64_t a = fn_addr(&nxrt_symtest_marker);
     nxrt::symbols_load_map_text(make_map({{"nxrt_symtest_marker", a}}));
     char want[256];
@@ -231,10 +228,27 @@ NXTEST(describe_format) {
 }
 
 NXTEST(describe_truncates_long_names) {
+    if (skip_without_map_text()) return;
     const std::string long_name = "nxrt_symtest_" + std::string(200, 'a');
     const uint64_t a = fn_addr(&nxrt_symtest_marker);
     nxrt::symbols_load_map_text(make_map({{long_name, a}}));
     const std::string d = nxrt::symbols_describe(a);
     CHECK(d.find("(" + long_name.substr(0, 120) + "+0x0)") != std::string::npos);
     CHECK(d.find(long_name.substr(0, 121)) == std::string::npos);
+}
+
+NXTEST(demangles_itanium_names_from_the_elf_table) {
+    if (nxrt::os::symbols::text_tables_supported()) {
+        nxtest::skip("the Windows map is undecorated with dbghelp (undecorates_msvc_names)");
+        return;
+    }
+    if (nxrt::symbols_load_map() == 0) {
+        nxtest::skip("no symbol table");
+        return;
+    }
+    volatile int v = 0;
+    CHECK_EQ(symtest_f0(&v), 2);
+    auto s = nxrt::symbols_lookup(fn_addr(&symtest_f0));
+    CHECK(s.symbol.find("symtest_f0") != std::string::npos);
+    CHECK(s.symbol.find("_ZN") == std::string::npos);
 }

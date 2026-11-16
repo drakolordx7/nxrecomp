@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Tests for nxrt::crash_* (crash report, handler install, real termination in child processes).
-// In-process cases build reports with crash_build_report() from __except filters; child modes (--child crash_av /
-// crash_trap / crash_stackoverflow) install the real handler, fault, and must exit with code 4 and write a report.
+// In-process cases build reports with crash_build_report() from a fault-chain handler (nxrt/os/fault.h) while the fault is live, inside an
+// os::guard that then catches it; child modes (--child crash_av / crash_trap / crash_stackoverflow) install the real handler, fault, and
+// must exit with code 4 and write a report.
 #include "test_framework.h"
 
 #include "nxrt/abi.h"
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/os/fault.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/spawn.h"
 #include "nxrt/symbols.h"
 
-#include <windows.h>
-
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -34,7 +38,7 @@ bool has(const std::string& s, const char* needle) { return s.find(needle) != st
 
 void ensure_symbols() {
     static const bool loaded = (nxrt::symbols_load_map() > 0);
-    CHECK_MSG(loaded, "nxrt_tests.map not loaded (symbols needed for the report)");
+    CHECK_MSG(loaded, "no symbol table loaded (nxrt_tests.map on Windows, the ELF symtab on Linux): symbols needed for the report");
 }
 
 struct GuestFixture {
@@ -63,7 +67,7 @@ struct GuestFixture {
 }  // namespace
 
 // The fake lifted function. extern "C" keeps the name undecorated in the map, so the report can name it.
-extern "C" __declspec(noinline) void crash_test_fake_guest_fn(::Ctx* c) {
+extern "C" __attribute__((noinline)) void crash_test_fake_guest_fn(::Ctx* c) {
     if (g_fake_mode == 1) {
         volatile uint64_t v = *g_null_ptr;
         c->x[5] = v;
@@ -72,31 +76,33 @@ extern "C" __declspec(noinline) void crash_test_fake_guest_fn(::Ctx* c) {
     }
 }
 
-// Filter-expression helper: the report is built while the exception context is still live.
-__declspec(noinline) void crash_test_capture(EXCEPTION_POINTERS* ep) { g_report = nxrt::crash_build_report(ep); }
-
-__declspec(noinline) void run_fake_guest_guarded(::Ctx* c) {
-    __try {
-        crash_test_fake_guest_fn(c);
-    } __except (crash_test_capture(GetExceptionInformation()), EXCEPTION_EXECUTE_HANDLER) {
-    }
+// A chain handler: the report is built while the fault context is live; it never handles the fault, so the guard around the faulting call catches it.
+nxrt::os::FaultResult crash_test_capture(const nxrt::os::FaultInfo& fi, void*) {
+    g_report = nxrt::crash_build_report(fi);
+    return nxrt::os::FaultResult::Continue;
 }
 
-__declspec(noinline) void raise_guarded(DWORD code) {
-    __try {
-        RaiseException(code, 0, 0, nullptr);
-    } __except (crash_test_capture(GetExceptionInformation()), EXCEPTION_EXECUTE_HANDLER) {
-    }
+struct Capturing {
+    int id;
+    Capturing() : id(nxrt::os::fault_register(crash_test_capture, nullptr, 0)) {}
+    ~Capturing() { nxrt::os::fault_unregister(id); }
+};
+
+__attribute__((noinline)) void run_fake_guest_guarded(::Ctx* c) {
+    Capturing cap;
+    nxrt::os::guard::call([](void* p) { crash_test_fake_guest_fn(static_cast<::Ctx*>(p)); }, c, true);
 }
 
-// The fault sits in a called function: without /EHa, clang-cl does not catch a fault in the __try body itself.
-__declspec(noinline) void crash_test_null_write() { *g_null_int = 1; }
+__attribute__((noinline)) void raise_guarded(uint32_t code) {
+    Capturing cap;
+    nxrt::os::guard::call([](void* p) { nxrt::os::raise_guest_trap(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(p))); }, reinterpret_cast<void*>(static_cast<uintptr_t>(code)), true);
+}
 
-__declspec(noinline) void null_write_guarded() {
-    __try {
-        crash_test_null_write();
-    } __except (crash_test_capture(GetExceptionInformation()), EXCEPTION_EXECUTE_HANDLER) {
-    }
+__attribute__((noinline)) void crash_test_null_write(void*) { *g_null_int = 1; }
+
+__attribute__((noinline)) void null_write_guarded() {
+    Capturing cap;
+    nxrt::os::guard::call(crash_test_null_write, nullptr, true);
 }
 
 static std::string run_guest_fault(int mode) {
@@ -165,7 +171,10 @@ NXTEST(untranslated_instruction_names_the_code) {
 NXTEST(thread_without_context_says_so) {
     ensure_symbols();
     g_report.clear();
-    std::thread t([] { null_write_guarded(); });
+    std::thread t([] {
+        nxrt::os::fault_thread_init();
+        null_write_guarded();
+    });
     t.join();
     CHECK_MSG(has(g_report, "guest registers: (no guest context on this thread)"), "no-context line missing");
     CHECK_MSG(has(g_report, "on thread unregistered"), "unregistered thread not named");
@@ -190,18 +199,16 @@ NXTEST(recent_files_keep_last_32) {
 }
 
 NXTEST(install_is_idempotent_and_uninstall_restores) {
-    LPTOP_LEVEL_EXCEPTION_FILTER before = SetUnhandledExceptionFilter(nullptr);
-    SetUnhandledExceptionFilter(before);
+    nxrt::crash_uninstall();
+    CHECK(!nxrt::crash_installed());
     nxrt::CrashOptions opt;
     opt.terminate = false;
     nxrt::crash_install(opt);
     nxrt::crash_install(opt);
-    LPTOP_LEVEL_EXCEPTION_FILTER ours = SetUnhandledExceptionFilter(nullptr);
-    CHECK_MSG(ours != before, "crash filter not installed");
-    SetUnhandledExceptionFilter(ours);
+    CHECK_MSG(nxrt::crash_installed(), "crash handler not installed");
     nxrt::crash_uninstall();
-    LPTOP_LEVEL_EXCEPTION_FILTER after = SetUnhandledExceptionFilter(before);
-    CHECK_MSG(after == before, "uninstall did not restore the previous filter");
+    CHECK_MSG(!nxrt::crash_installed(), "uninstall did not take the handler out");
+    nxrt::crash_uninstall();
 }
 
 NXTEST(exception_counter_counts_reports) {
@@ -218,7 +225,7 @@ namespace {
 constexpr int kChildExitCode = 4;
 
 // Unbounded on purpose; volatile pad keeps the call from being turned into a loop.
-__declspec(noinline) int crash_test_recurse(int n) {
+__attribute__((noinline)) int crash_test_recurse(int n) {
     volatile char pad[256];
     pad[0] = static_cast<char>(n);
     if (pad[0] == 123 && n < 0) return 0;  // never true in practice; keeps the function from being provably infinite
@@ -232,11 +239,8 @@ void child_options(int argc, char** argv, nxrt::CrashOptions& o) {
 }
 
 std::string temp_file(const char* prefix) {
-    char dir[MAX_PATH] = {};
-    char path[MAX_PATH] = {};
-    GetTempPathA(sizeof dir, dir);
-    GetTempFileNameA(dir, prefix, 0, path);
-    return path;
+    static std::atomic<int> counter{0};
+    return (std::filesystem::temp_directory_path() / (std::string(prefix) + std::to_string(nxrt::os::process::pid()) + "_" + std::to_string(counter++))).string();
 }
 
 std::string read_file(const std::string& path) {
@@ -246,30 +250,17 @@ std::string read_file(const std::string& path) {
     return ss.str();
 }
 
-bool run_child(const char* mode, const std::string& report, const std::string& log, DWORD& exit_code) {
-    char exe[MAX_PATH * 4] = {};
-    GetModuleFileNameA(nullptr, exe, sizeof exe);
-    std::string cmd = std::string("\"") + exe + "\" --child " + mode + " \"" + report + "\"";
-    std::vector<char> cmdline(cmd.begin(), cmd.end());
-    cmdline.push_back('\0');
-    SetEnvironmentVariableA("NXRT_LOG", log.c_str());
-    STARTUPINFOA si{};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi{};
-    BOOL ok = CreateProcessA(exe, cmdline.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi);
-    SetEnvironmentVariableA("NXRT_LOG", nullptr);
-    if (!ok) return false;
-    bool finished = WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0;
-    if (!finished) TerminateProcess(pi.hProcess, 1);
-    else GetExitCodeProcess(pi.hProcess, &exit_code);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    return finished;
+bool run_child(const char* mode, const std::string& report, const std::string& log, int& exit_code) {
+    const nxrt::os::process::RunResult r =
+        nxrt::os::process::run_and_wait(nxrt::os::process::exe_path(), {"--child", mode, report}, {{"NXRT_LOG", log}}, 30000);
+    exit_code = r.exit_code;
+    return r.started && !r.timed_out;
 }
 
 void remove_temp(const std::string& path) {
-    DeleteFileA(path.c_str());
-    DeleteFileA((path + ".prev").c_str());
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path + ".prev", ec);
 }
 
 void check_report_sections(const std::string& text) {
@@ -314,9 +305,9 @@ NXTEST_CHILD(crash_stackoverflow) {
 NXTEST(child_access_violation_terminates_with_report) {
     const std::string report = temp_file("nxr");
     const std::string log = temp_file("nxl");
-    DWORD code = 0;
+    int code = 0;
     CHECK_MSG(run_child("crash_av", report, log, code), "child did not finish within 30 s");
-    CHECK_EQ(code, static_cast<DWORD>(kChildExitCode));
+    CHECK_EQ(code, kChildExitCode);
     const std::string text = read_file(report);
     CHECK_MSG(!text.empty(), "no report file written");
     check_report_sections(text);
@@ -331,9 +322,9 @@ NXTEST(child_access_violation_terminates_with_report) {
 NXTEST(child_guest_trap_terminates_and_logs) {
     const std::string report = temp_file("nxr");
     const std::string log = temp_file("nxl");
-    DWORD code = 0;
+    int code = 0;
     CHECK_MSG(run_child("crash_trap", report, log, code), "child did not finish within 30 s");
-    CHECK_EQ(code, static_cast<DWORD>(kChildExitCode));
+    CHECK_EQ(code, kChildExitCode);
     const std::string text = read_file(report);
     CHECK_MSG(has(text, "GUEST TRAP"), "report does not name the guest trap");
     CHECK_MSG(has(text, "HOST EXCEPTION 0xE0000001"), "trap header missing");
@@ -345,9 +336,9 @@ NXTEST(child_guest_trap_terminates_and_logs) {
 NXTEST(child_stack_overflow_terminates_with_report) {
     const std::string report = temp_file("nxr");
     const std::string log = temp_file("nxl");
-    DWORD code = 0;
+    int code = 0;
     CHECK_MSG(run_child("crash_stackoverflow", report, log, code), "child did not finish within 30 s");
-    CHECK_EQ(code, static_cast<DWORD>(kChildExitCode));
+    CHECK_EQ(code, kChildExitCode);
     const std::string text = read_file(report);
     CHECK_MSG(has(text, "EXCEPTION 0xC00000FD"), "stack overflow header missing");
     CHECK_MSG(has(text, "host call stack"), "host call stack missing");

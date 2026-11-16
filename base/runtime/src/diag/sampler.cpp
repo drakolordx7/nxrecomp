@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // In-process sampling profiler (S34), for machines where no profiler can run without administrator rights.
-// `[prof] sample_hz` (env NXRT_PROF_SAMPLE_HZ, default 0 = off): a thread suspends every registered thread in turn, reads its context, walks
-// its host stack (the same allocation-free walk as the freeze watchdog) and resumes it. A thread whose instruction pointer sits right after a
-// `syscall` instruction is blocked in the kernel (a wait, a sleep, a yield); its sample gets the leaf frame `[wait]`. Every other sample is
+// `[prof] sample_hz` (env NXRT_PROF_SAMPLE_HZ, default 0 = off): a thread samples every registered thread in turn (os::thread_sample: the thread is
+// stopped for a moment, its host stack walked, then it runs on; the same allocation-free walk as the freeze watchdog). A thread whose instruction
+// pointer sits at or right after a `syscall` instruction is blocked in the kernel (a wait, a sleep, a yield); its sample gets the leaf frame `[wait]`. Every other sample is
 // the thread running user code. Samples are written as folded stacks, equal stacks added up, to `[prof] sample_out` (default
 // "prof_samples.folded" in the working folder), now and then and at shutdown:
 //   <label>;<thread>;<outermost frame>;...;<leaf frame> <count>
 // The label is the scene a script marked with `@log SCENE start NAME` (empty when none). Frames in the game exe are named from the linker map
 // (lifted game functions are f_<guest address>); frames in other modules show as module!+0x<offset>. `prof_report.py` (local test script) turns the file
 // into tables. Cost: a few percent of one core per 100 Hz and 10 threads; each sampled thread is stopped for a few microseconds per sample.
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -25,8 +23,9 @@
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/log.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/symbols.h"
 #include "nxrt/symbols.h"
-#include "stackwalk.h"
 
 namespace nxrt {
 namespace {
@@ -68,14 +67,6 @@ uint32_t name_index(State& s, const std::string& n) {
     return static_cast<uint32_t>(s.names.size() - 1);
 }
 
-// True when the two bytes before `ip` are a `syscall` instruction (0F 05): the thread is inside a system call. No C++ objects here (SEH).
-bool after_syscall(uint64_t ip) {
-    uint8_t b[2] = {0, 0};
-    SIZE_T got = 0;
-    if (!ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(ip - 2), b, 2, &got) || got != 2) return false;   // no fault if the page is not mapped
-    return b[0] == 0x0F && b[1] == 0x05;
-}
-
 void flush_samples(State& s);
 
 void loop() {
@@ -92,18 +83,14 @@ void loop() {
         batch.assign(recs.size(), Sample{});
         std::vector<char> ok(recs.size(), 0);
         const uint32_t label = s.label.load(std::memory_order_relaxed);
+        const os::ThreadId self = os::thread_current_id();
         for (size_t i = 0; i < recs.size(); i++) {
-            HANDLE h = static_cast<HANDLE>(recs[i].host_handle);
-            if (!h || recs[i].host_tid == GetCurrentThreadId()) continue;
-            if (SuspendThread(h) == static_cast<DWORD>(-1)) continue;
-            CONTEXT tc{};
-            tc.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-            if (GetThreadContext(h, &tc)) {
-                batch[i].n = static_cast<uint8_t>(detail::capture_stack(&tc, batch[i].frames, kDepth));
-                batch[i].waiting = after_syscall(tc.Rip) ? 1 : 0;
-                ok[i] = batch[i].n > 0;
-            }
-            ResumeThread(h);
+            if (!recs[i].host_handle || recs[i].host_tid == self) continue;
+            os::ThreadSample ts;
+            if (os::thread_sample(recs[i].host_handle, &ts, batch[i].frames, kDepth) != os::SampleResult::Ok) continue;
+            batch[i].n = static_cast<uint8_t>(ts.nframes);
+            batch[i].waiting = ts.in_syscall ? 1 : 0;
+            ok[i] = batch[i].n > 0;
         }
         const std::vector<std::string> names = [&] {
             std::vector<std::string> n;

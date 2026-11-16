@@ -113,6 +113,26 @@ struct ThreadRunState {
 bool thread_run_states(std::vector<ThreadRunState>& out);
 bool thread_run_states_supported();              // whether thread_run_states can work on this host at all
 
+// ---- sampling another thread (watchdog, sampling profiler) ----------------------------------------------------------------------
+
+struct ThreadSample {
+    uint64_t pc = 0, sp = 0, fp = 0;   // instruction, stack and frame pointer registers of the thread (fp: rbp)
+    size_t nframes = 0;                // frames written, frames[0] is pc
+    bool in_syscall = false;           // the thread sits at (or just after) a system call instruction: it is waiting in the kernel, not running code
+};
+enum class SampleResult : uint8_t {
+    Ok,
+    NoSuspend,    // the thread could not be stopped (gone, blocked from signals, no permission): nothing was read
+    NoContext,    // stopped, but its registers could not be read
+};
+// Stops the thread for a moment, reads its registers, walks its host stack into frames[0..max_frames) and lets it go. Allocation free and
+// lock free on the sampled thread, which may hold the heap or the log lock meanwhile; the caller must not allocate or log while a sample is
+// in flight and may do whatever it likes afterwards. Windows: SuspendThread / GetThreadContext / ResumeThread. Linux: a real-time signal sent
+// with tgkill whose handler captures the context and walks the stack on the thread itself (an interrupted sleep or poll may return EINTR once;
+// restartable calls restart; the answer is awaited for 200 ms). Calls from several threads at once are serialised. Not for the calling thread
+// on Windows (it would suspend itself).
+SampleResult thread_sample(ThreadHandle h, ThreadSample* out, uint64_t* frames, size_t max_frames);
+
 // ---- audio ---------------------------------------------------------------------------------------------------------------------
 
 // Asks the host to schedule the calling (audio) thread for timely delivery (Windows: MMCSS task "Pro Audio", else the Highest band; Linux:
@@ -123,5 +143,7 @@ void thread_boost_audio();
 
 // Open OS handles (Windows) or file descriptors (Linux) of the process, 0 when unknown.
 size_t process_handle_count();
+// Threads of this process (Windows: Toolhelp snapshot; Linux: /proc/self/task), 0 when unknown.
+size_t process_thread_count();
 
 }  // namespace nxrt::os

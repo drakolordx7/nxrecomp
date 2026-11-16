@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "nxrt/abi.h"
+#include "nxrt/os/fault.h"
 
 namespace nxrt {
 
@@ -18,7 +19,7 @@ namespace nxrt {
 struct ThreadRecord {
     std::string name;
     uint32_t host_tid = 0;
-    void* host_handle = nullptr;  // a real HANDLE opened with THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION
+    void* host_handle = nullptr;  // an os::ThreadHandle (nxrt/os/thread.h) of the thread: sample it with os::thread_sample, read its CPU time with os::thread_cpu_time_ns
     ::Ctx* ctx = nullptr;
     uint64_t guest_tid = 0;       // kernel thread id (0 = none)
 };
@@ -43,28 +44,34 @@ void diag_clear_recent_files();
 // ---- crash handler -------------------------------------------------------------------------------------------------------
 struct CrashOptions {
     const char* report_path = nullptr;   // nullptr: "<exe name>_crash.txt" next to the exe; "" = no file
-    bool terminate = true;               // after reporting: ExitProcess(exit_code) via TerminateProcess; false in tests
+    bool terminate = true;               // after reporting: end the process with exit_code (os::terminate); false in tests
+    bool hand_to_system = false;         // after reporting: let the system's default action end the process instead (Linux: a core file where ulimit -c allows; also [diag] crash_core)
     uint32_t exit_code = 4;
     // Called with the finished report text before termination (tests). May be null.
     void (*on_report)(const char* text, void* user) = nullptr;
     void* user = nullptr;
 };
-// Installs SetUnhandledExceptionFilter (+ a vectored handler for stack overflow and guest traps 0xE0000001/2). Idempotent.
+// Registers the reporter as the unhandled fault handler of the fault layer (nxrt/os/fault.h: Windows SetUnhandledExceptionFilter, Linux the
+// last stop of the SIGSEGV/SIGBUS dispatcher plus SIGILL, SIGFPE, SIGABRT). Idempotent. Faults that a chain handler repairs or an os::guard
+// catches never reach it.
 void crash_install(const CrashOptions& opt = {});
 void crash_uninstall();
-// Builds the report text for an exception without terminating (also used by the self-test).
+bool crash_installed();
+// Builds the report text for a fault without terminating (also used by the self-test: a chain handler that gets a FaultInfo calls it while the
+// faulting context is live).
 // Layout (every section is always present, with "(none)" when it has nothing):
-//   HOST EXCEPTION 0x<code> at host address 0x<addr> on thread <name> (tid N)
+//   HOST EXCEPTION 0x<code> at host address 0x<addr> on thread <name> (tid N)     (code: the Windows exception code; a Linux signal is mapped to
+//                                                                              the nearest one and shown on an extra "signal" line)
 //     in <module> at offset 0x..        (symbolised through symbols.h: "module+0x.. (symbol+0x..)")
 //     reading|writing|executing address 0x...        (access violations only)
 //   last guest function entered: f_<hex>             (guest_function_of(rip), else Ctx-based when the ABI has one)
 //   guest registers: x0..x30, sp, pc-ish, tpidr, tpidrro   (from the thread's registered Ctx)
 //   guest frame chain (x29): lr=<hex> <- <hex> ...
-//   host call stack (innermost first): module+0xOFFSET (symbol+0x..)   up to 32 frames, via RtlVirtualUnwind
+//   host call stack (innermost first): module+0xOFFSET (symbol+0x..)   up to 32 frames (Windows: RtlVirtualUnwind; Linux: .eh_frame unwinder)
 //   guest call stack (innermost first): f_<hex> ...        (lifted functions found on the host stack)
 //   threads: one line per registered thread (name, guest tid, lr)
 //   last files opened (oldest first): ...
-std::string crash_build_report(void* exception_pointers);
+std::string crash_build_report(const os::FaultInfo& fault);
 // Number of exceptions the installed handler has turned into reports (tests).
 uint32_t crash_exceptions_reported();
 
@@ -77,8 +84,8 @@ void prof_sampler_label(const char* label);
 
 // ---- freeze watchdog ------------------------------------------------------------------------------------------------------
 // A thread checks every poll_ms whether diag_frame_tick() advanced; after `seconds` without a tick it dumps every registered
-// thread's host stack (SuspendThread, capture RIP/stack through RtlVirtualUnwind into a fixed buffer, ResumeThread: no
-// allocation while a thread is suspended), symbolised, plus guest lr / x29 chain, to the log and to the report file, then calls
+// thread's host stack (os::thread_sample: the thread is stopped for a moment and its stack walked into a fixed buffer: no
+// allocation while a thread is stopped), symbolised, plus guest lr / x29 chain, to the log and to the report file, then calls
 // on_fire. It fires once per freeze (re-arms after the next tick).
 struct WatchdogOptions {
     double seconds = 0;                  // 0 = [diag] watchdog_seconds (env NXRT_DIAG_WATCHDOG_SECONDS), default 10; < 0 = disabled

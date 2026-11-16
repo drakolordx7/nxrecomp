@@ -2,8 +2,8 @@
 #include "nxrt/log.h"
 
 #include "nxrt/config.h"
-
-#include <windows.h>
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 
 #include <atomic>
 #include <cstdio>
@@ -36,8 +36,7 @@ bool g_to_stderr = true;
 bool g_stderr_all = false;
 uint64_t g_counts[kLevelCount] = {};
 unsigned g_since_flush = 0;
-long long g_freq = 1;
-long long g_t0 = 0;
+uint64_t g_t0 = 0;   // os::monotonic_ns() at log_init
 
 thread_local char t_name[64] = {};
 
@@ -93,11 +92,7 @@ void apply(const Resolved& r, bool only_if_uninit) {
     std::memset(g_counts, 0, sizeof g_counts);
     g_since_flush = 0;
 
-    LARGE_INTEGER freq{}, now{};
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&now);
-    g_freq = freq.QuadPart > 0 ? freq.QuadPart : 1;
-    g_t0 = now.QuadPart;
+    g_t0 = os::monotonic_ns();
 
     if (!r.path.empty()) {
         if (r.keep_previous) rotate_previous(r.path);
@@ -112,9 +107,7 @@ void apply(const Resolved& r, bool only_if_uninit) {
 }
 
 double seconds_since_init_locked() {
-    LARGE_INTEGER now{};
-    QueryPerformanceCounter(&now);
-    return static_cast<double>(now.QuadPart - g_t0) / static_cast<double>(g_freq);
+    return static_cast<double>(os::monotonic_ns() - g_t0) / 1e9;
 }
 
 }
@@ -232,7 +225,7 @@ void logv(LogLevel l, const char* tag, const char* fmt, va_list ap) {
     std::lock_guard<std::recursive_mutex> g(g_mu);
     char prefix[256];
     std::snprintf(prefix, sizeof prefix, "[%10.6f %c t%lu %s] ", seconds_since_init_locked(), kLevelLetters[li],
-                  static_cast<unsigned long>(GetCurrentThreadId()), t_name[0] ? t_name : "-");
+                  static_cast<unsigned long>(os::thread_current_id()), t_name[0] ? t_name : "-");
     std::string line = prefix;
     line += tag ? tag : "";
     line += ": ";

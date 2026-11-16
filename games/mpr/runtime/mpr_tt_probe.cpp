@@ -17,10 +17,6 @@
 //   CPlayerMP1                    +0x3f0 EPlayerMovementState (u32)
 // The warp: SetCurrentWorldId(gpGameState, world); CurrentWorldState()->SetDesiredAreaAssetId(area); CGameState::ContinueWithNewInitialState(
 // CStateManager::GameState(), SInitialState{area, -1}); CGameInstanceState::QuitGame(7) with the instance state from CStateManager::GameInstanceState().
-#include <windows.h>
-#include <psapi.h>
-#include <tlhelp32.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -38,11 +34,17 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/hwwatch.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/symbols.h"
 #include "nxrt/os/fault.h"
 #include "mpr_sites.h"
 #include "mpr_tt_probe.h"
 #include "nxrt/game/tt_probe.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/hwwatch.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/symbols.h"
 #include "nxrt/tt.h"
 #include "nxrt/tt_script.h"
 #include "mpr_addrs.h"
@@ -354,75 +356,39 @@ bool call_guest(::Ctx* c, uint64_t offset, const std::string& args, uint64_t* re
 }
 
 
-// ---- @watch: hardware write watch on the player's velocity.y / position.y (S25) ------------------------------------------------------------
-// Debug registers DR0 (velocity.y) and DR1 (position.y) are set on every thread; the write traps into a vectored handler that records the writing
-// instruction pointer, the value written and the module-range return addresses on the stack (guest functions are native frames of the lifted code).
-// Hits are logged once per frame; resolve the addresses with llvm-symbolizer against mpr.exe / mpr.pdb.
+// ---- @watch: write watch on the player's velocity.y / position.y (S25) ------------------------------------------------------------------------
+// Where the host has data breakpoints (nxrt/os/hwwatch.h: Windows debug registers DR0 and DR1 on every thread) a write traps and the handler records the
+// writing instruction pointer, the value written and the module-range return addresses on the stack (guest functions are native frames of the lifted
+// code); hits are logged once per frame, resolve the addresses with llvm-symbolizer against the exe and its debug file. Linux has no such thing for a
+// process's own memory without ptrace (page protection cannot name the writer without single-stepping), so there the two values are polled once per
+// frame: a change is logged with the frame number, the writer is unknown.
 namespace {
-struct WatchHit { uint64_t rip; uint64_t addr; float value; int slot; int nstack; uint64_t stack[10]; DWORD tid; };
+struct WatchHit { uint64_t rip; uint64_t addr; float value; int slot; int nstack; uint64_t stack[10]; uint32_t tid; };
 constexpr int kMaxHits = 4096;
 WatchHit g_hits[kMaxHits];
 std::atomic<int> g_hit_count{0};
 std::atomic<int> g_hit_logged{0};
 std::atomic<bool> g_watch_on{false};
+bool g_polling = false;
+uint32_t g_poll_bits[2] = {0, 0};
 uint64_t g_watch_addr[2] = {0, 0};
-void* g_veh = nullptr;
 uint64_t g_mod_lo = 0, g_mod_hi = 0;
 
-LONG CALLBACK watch_veh(PEXCEPTION_POINTERS ep) {
-    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP || !g_watch_on.load()) return EXCEPTION_CONTINUE_SEARCH;
-    CONTEXT* cx = ep->ContextRecord;
-    const DWORD64 dr6 = cx->Dr6;
-    if (!(dr6 & 0x3)) return EXCEPTION_CONTINUE_SEARCH;
-    for (int slot = 0; slot < 2; slot++) {
-        if (!(dr6 & (1u << slot))) continue;
-        const int i = g_hit_count.fetch_add(1);
-        if (i >= kMaxHits) continue;
-        WatchHit& h = g_hits[i];
-        h.rip = cx->Rip; h.slot = slot; h.addr = g_watch_addr[slot]; h.tid = GetCurrentThreadId();
-        h.value = *reinterpret_cast<volatile float*>(g_watch_addr[slot]);
-        h.nstack = 0;
-        const uint64_t* sp = reinterpret_cast<const uint64_t*>(cx->Rsp);
-        for (int k = 0; k < 512 && h.nstack < 10; k++) {
-            uint64_t v = 0;
-            if (!nxrt::os::guard::read(sp + k, &v, 8)) break;
-            if (v >= g_mod_lo && v < g_mod_hi) h.stack[h.nstack++] = v;
-        }
+void on_watch_hit(const nxrt::os::HwWatchHit& hw) {
+    if (!g_watch_on.load()) return;
+    const int i = g_hit_count.fetch_add(1);
+    if (i >= kMaxHits) return;
+    WatchHit& h = g_hits[i];
+    h.rip = hw.pc; h.slot = hw.slot; h.addr = g_watch_addr[hw.slot]; h.tid = hw.tid;
+    h.value = 0;
+    nxrt::os::guard::read(reinterpret_cast<const void*>(g_watch_addr[hw.slot]), &h.value, 4);
+    h.nstack = 0;
+    const uint64_t* sp = reinterpret_cast<const uint64_t*>(hw.sp);
+    for (int k = 0; k < 512 && h.nstack < 10; k++) {
+        uint64_t v = 0;
+        if (!nxrt::os::guard::read(sp + k, &v, 8)) break;
+        if (v >= g_mod_lo && v < g_mod_hi) h.stack[h.nstack++] = v;
     }
-    cx->Dr6 = 0;
-    return EXCEPTION_CONTINUE_EXECUTION;
-}
-
-void set_debug_regs(bool on) {
-    const DWORD pid = GetCurrentProcessId();
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snap == INVALID_HANDLE_VALUE) return;
-    THREADENTRY32 te{};
-    te.dwSize = sizeof te;
-    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
-        if (te.th32OwnerProcessID != pid) continue;
-        HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, te.th32ThreadID);
-        if (!th) continue;
-        const bool self = te.th32ThreadID == GetCurrentThreadId();
-        if (!self) SuspendThread(th);
-        CONTEXT cx{};
-        cx.ContextFlags = CONTEXT_DEBUG_REGISTERS;
-        if (GetThreadContext(th, &cx)) {
-            cx.Dr0 = on ? g_watch_addr[0] : 0;
-            cx.Dr1 = on ? g_watch_addr[1] : 0;
-            DWORD64 d7 = 0;
-            if (on) {
-                if (g_watch_addr[0]) d7 |= (1ull << 0) | (1ull << 16) | (3ull << 18);      // slot 0: local enable, write, 4 bytes
-                if (g_watch_addr[1]) d7 |= (1ull << 2) | (1ull << 20) | (3ull << 22);      // slot 1
-            }
-            cx.Dr7 = d7;
-            cx.Dr6 = 0;
-            SetThreadContext(th, &cx);
-        }
-        if (!self) ResumeThread(th);
-        CloseHandle(th);
-    }
-    CloseHandle(snap);
 }
 }
 
@@ -444,15 +410,22 @@ bool watch_start(::Ctx* c, int what) {
         if (!xf) return false;
         g_watch_addr[1] = xf + 28;
     }
-    HMODULE m = GetModuleHandleA(nullptr);
-    MODULEINFO mi{};
-    GetModuleInformation(GetCurrentProcess(), m, &mi, sizeof mi);
-    g_mod_lo = reinterpret_cast<uint64_t>(mi.lpBaseOfDll);
-    g_mod_hi = g_mod_lo + mi.SizeOfImage;
+    const std::vector<nxrt::os::symbols::Module> mods = nxrt::os::symbols::modules();
+    g_mod_lo = mods.empty() ? 0 : mods.front().base;
+    g_mod_hi = mods.empty() ? 0 : g_mod_lo + mods.front().size;
     g_hit_count = 0; g_hit_logged = 0;
-    if (!g_veh) g_veh = AddVectoredExceptionHandler(1, watch_veh);
+    g_polling = !nxrt::os::hw_watch_supported();
     g_watch_on = true;
-    set_debug_regs(true);
+    if (g_polling) {
+        for (int k = 0; k < 2; k++) {
+            g_poll_bits[k] = 0;
+            if (g_watch_addr[k]) nxrt::os::guard::read(reinterpret_cast<const void*>(g_watch_addr[k]), &g_poll_bits[k], 4);
+        }
+        NXLOG_W("tt", "watch: this host has no data breakpoints: polling the values once per frame (the writer is not recorded)");
+    } else if (!nxrt::os::hw_watch_start(g_watch_addr, on_watch_hit)) {
+        g_watch_on = false;
+        return false;
+    }
     NXLOG_I("tt", "watch: on (vel.y at 0x%llx, pos.y at 0x%llx), module base 0x%llx (frame %llu)", static_cast<unsigned long long>(g_watch_addr[0]),
             static_cast<unsigned long long>(g_watch_addr[1]), static_cast<unsigned long long>(g_mod_lo), static_cast<unsigned long long>(frame()));
     return true;
@@ -460,12 +433,25 @@ bool watch_start(::Ctx* c, int what) {
 
 void watch_flush(uint64_t fr) {
     if (!g_watch_on.load()) return;
+    if (g_polling) {
+        for (int k = 0; k < 2; k++) {
+            uint32_t bits = 0;
+            if (!g_watch_addr[k] || !nxrt::os::guard::read(reinterpret_cast<const void*>(g_watch_addr[k]), &bits, 4) || bits == g_poll_bits[k]) continue;
+            float was, now;
+            std::memcpy(&was, &g_poll_bits[k], 4);
+            std::memcpy(&now, &bits, 4);
+            g_poll_bits[k] = bits;
+            g_hit_count.fetch_add(1);
+            NXLOG_I("tt", "watch: frame %llu %s %g -> %g (polled)", static_cast<unsigned long long>(fr), k == 0 ? "vel.y" : "pos.y", was, now);
+        }
+        return;
+    }
     const int n = std::min(g_hit_count.load(), kMaxHits);
     for (int i = g_hit_logged.load(); i < n; i++) {
         const WatchHit& h = g_hits[i];
         char b[512];
         int o = std::snprintf(b, sizeof b, "watch: frame %llu %s=%g rip=+0x%llx tid=%lu stack:", static_cast<unsigned long long>(fr), h.slot == 0 ? "vel.y" : "pos.y", h.value,
-                              static_cast<unsigned long long>(h.rip - g_mod_lo), h.tid);
+                              static_cast<unsigned long long>(h.rip - g_mod_lo), static_cast<unsigned long>(h.tid));
         for (int k = 0; k < h.nstack && o < 480; k++) o += std::snprintf(b + o, sizeof b - o, " +0x%llx", static_cast<unsigned long long>(h.stack[k] - g_mod_lo));
         NXLOG_I("tt", "%s", b);
     }
@@ -475,7 +461,7 @@ void watch_flush(uint64_t fr) {
 void watch_stop() {
     if (!g_watch_on.load()) return;
     watch_flush(frame());
-    set_debug_regs(false);
+    if (!g_polling) nxrt::os::hw_watch_stop();
     g_watch_on = false;
     NXLOG_I("tt", "watch: off, %d hits", g_hit_count.load());
 }
@@ -628,24 +614,23 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
     if (want.size() > 8) for (const auto& w : want) { want_set.insert(w.second); want_name[w.second] = w.first; }
     uint64_t want_lo = ~0ull, want_hi = 0;           // every wanted pointer lies in a narrow range: rejecting the rest first makes the scan an order of magnitude faster
     for (const auto& w : want) { want_lo = std::min(want_lo, w.second); want_hi = std::max(want_hi, w.second); }
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    uint8_t* a = static_cast<uint8_t*>(si.lpMinimumApplicationAddress);
+    uint64_t a = 0x10000;
+    const uint64_t a_end = 0x7FFFFFFF0000ull;
     size_t hits = 0;
     uint64_t scanned = 0;
     std::vector<uint8_t> buf;
-    while (a < static_cast<uint8_t*>(si.lpMaximumApplicationAddress)) {
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (!VirtualQuery(a, &mbi, sizeof mbi)) break;
-        uint8_t* next = static_cast<uint8_t*>(mbi.BaseAddress) + mbi.RegionSize;
-        const bool readable = mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) && (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY));
-        if (readable && mbi.RegionSize >= 64) {
-            scanned += mbi.RegionSize;
-            for (size_t off = 0; off < mbi.RegionSize; off += (64u << 20)) {
-                const size_t n = std::min<size_t>(64u << 20, mbi.RegionSize - off);
+    while (a < a_end) {
+        nxrt::os::mem::Region mbi;
+        if (!nxrt::os::mem::query(a, &mbi)) break;
+        const uint64_t next = mbi.base + mbi.size;
+        const bool readable = mbi.state == nxrt::os::mem::State::Committed && (mbi.prot == nxrt::os::mem::Prot::R || mbi.prot == nxrt::os::mem::Prot::RW || mbi.prot == nxrt::os::mem::Prot::RWX);
+        if (readable && mbi.size >= 64) {
+            scanned += mbi.size;
+            for (uint64_t off = 0; off < mbi.size; off += (64u << 20)) {
+                const size_t n = static_cast<size_t>(std::min<uint64_t>(64u << 20, mbi.size - off));
                 buf.resize(n);
                 size_t got = n;
-                if (!nxrt::os::guard::read(static_cast<uint8_t*>(mbi.BaseAddress) + off, buf.data(), n) || got < 8) continue;
+                if (!nxrt::os::guard::read(reinterpret_cast<const void*>(mbi.base + off), buf.data(), n) || got < 8) continue;
                 for (size_t i = 0; i + 8 <= got; i += 8) {
                     uint64_t v;
                     std::memcpy(&v, &buf[i], 8);
@@ -654,7 +639,7 @@ bool dump_objects(const std::string& classes, const std::string& out_path, std::
                     for (size_t wi = 0; wi < (want_set.empty() ? want.size() : 1); wi++) {
                         const std::pair<std::string, uint64_t> w = want_set.empty() ? want[wi] : std::pair<std::string, uint64_t>{want_name[v], v};
                         if (v != w.second) continue;
-                        const uint64_t obj = reinterpret_cast<uint64_t>(mbi.BaseAddress) + off + i;
+                        const uint64_t obj = mbi.base + off + i;
                         const uint64_t xf = rd64(rd64(rd64(obj + 8) + 0x20) + 0x40);
                         float m[12];
                         if (xf && rd(xf, &m) && std::isfinite(m[3]) && std::isfinite(m[7]) && std::isfinite(m[11])) {

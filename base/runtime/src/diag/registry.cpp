@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Thread registry and recent-file ring (declared in nxrt/diag.h).
-#include <windows.h>
-
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "nxrt/diag.h"
+#include "nxrt/os/thread.h"
 
 namespace nxrt {
 namespace {
@@ -24,12 +24,10 @@ size_t g_files_next = 0, g_files_count = 0;
 }
 
 size_t diag_register_thread(const char* name, ::Ctx* ctx, uint64_t guest_tid) {
-    HANDLE real = nullptr;
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &real,
-                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+    os::ThreadHandle real = os::thread_adopt_current();
     ThreadRecord r;
     r.name = name ? name : "";
-    r.host_tid = GetCurrentThreadId();
+    r.host_tid = os::thread_current_id();
     r.host_handle = real;
     r.ctx = ctx;
     r.guest_tid = guest_tid;
@@ -48,8 +46,8 @@ size_t diag_register_thread(const char* name, ::Ctx* ctx, uint64_t guest_tid) {
 
 void diag_unregister_thread() {
     std::lock_guard<std::mutex> lk(g_lock);
-    if (t_index < g_threads.size() && g_threads[t_index].host_tid == GetCurrentThreadId()) {
-        if (g_threads[t_index].host_handle) CloseHandle(g_threads[t_index].host_handle);
+    if (t_index < g_threads.size() && g_threads[t_index].host_tid == os::thread_current_id()) {
+        if (g_threads[t_index].host_handle) os::thread_close(g_threads[t_index].host_handle);
         g_threads[t_index] = ThreadRecord{};
     }
     t_index = ~size_t(0);
@@ -84,11 +82,7 @@ std::vector<ThreadRecord> diag_threads_dup() {
         if (!t.host_tid) continue;
         ThreadRecord r = t;
         r.host_handle = nullptr;
-        if (t.host_handle) {
-            HANDLE d = nullptr;
-            if (!DuplicateHandle(GetCurrentProcess(), static_cast<HANDLE>(t.host_handle), GetCurrentProcess(), &d, 0, FALSE, DUPLICATE_SAME_ACCESS)) d = nullptr;
-            r.host_handle = d;
-        }
+        if (t.host_handle) r.host_handle = os::thread_dup(t.host_handle);
         out.push_back(std::move(r));
     }
     return out;
@@ -96,13 +90,13 @@ std::vector<ThreadRecord> diag_threads_dup() {
 
 void diag_threads_release(std::vector<ThreadRecord>& recs) {
     for (ThreadRecord& r : recs)
-        if (r.host_handle) CloseHandle(static_cast<HANDLE>(r.host_handle));
+        if (r.host_handle) os::thread_close(r.host_handle);
     recs.clear();
 }
 
 void diag_note_file(const char* what, const char* path) {
     char buf[600];
-    snprintf(buf, sizeof buf, "[%lu] %s %s", GetCurrentThreadId(), what ? what : "?", path ? path : "(null)");
+    snprintf(buf, sizeof buf, "[%u] %s %s", os::thread_current_id(), what ? what : "?", path ? path : "(null)");
     std::lock_guard<std::mutex> lk(g_files_lock);
     g_files[g_files_next] = buf;
     g_files_next = (g_files_next + 1) % kRing;

@@ -3,8 +3,12 @@
 // services/audren/Integration/ThreadBoost.h; behaviour is unchanged.
 #include "nxrt/os/thread.h"
 
+#include "nxrt/os/fault.h"
+#include "walk.h"
+
 #include <windows.h>
 #include <avrt.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -260,6 +264,37 @@ void thread_boost_audio() {
     } else {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     }
+}
+
+SampleResult thread_sample(ThreadHandle h, ThreadSample* out, uint64_t* frames, size_t max_frames) {
+    *out = ThreadSample{};
+    if (!h || SuspendThread(H(h)) == static_cast<DWORD>(-1)) return SampleResult::NoSuspend;
+    CONTEXT tc{};
+    tc.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+    const bool got = GetThreadContext(H(h), &tc) != 0;
+    if (got) {
+        out->pc = tc.Rip;
+        out->sp = tc.Rsp;
+        out->fp = tc.Rbp;
+        out->nframes = detail::capture_context(&tc, frames, max_frames);   // while the thread is stopped: its stack cannot change under the walk
+    }
+    ResumeThread(H(h));
+    if (!got) return SampleResult::NoContext;
+    uint8_t b[2] = {0, 0};
+    out->in_syscall = out->pc >= 2 && guard::read(reinterpret_cast<const void*>(out->pc - 2), b, 2) && b[0] == 0x0F && b[1] == 0x05;
+    return SampleResult::Ok;
+}
+
+size_t process_thread_count() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    THREADENTRY32 te;
+    te.dwSize = sizeof te;
+    size_t n = 0;
+    const DWORD pid = GetCurrentProcessId();
+    if (Thread32First(snap, &te)) do { if (te.th32OwnerProcessID == pid) n++; } while (Thread32Next(snap, &te));
+    CloseHandle(snap);
+    return n;
 }
 
 size_t process_handle_count() {

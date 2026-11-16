@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // S34: gauges, the soak sampler, and the per-thread cache of the indirect-call dispatch.
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -14,6 +13,9 @@
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/gauge.h"
+#include "nxrt/os/fault.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/thread.h"
 #include "test_framework.h"
 
 NXTEST_GROUP(soak)
@@ -30,15 +32,27 @@ int64_t find_gauge(const char* name, bool* found = nullptr) {
     return -1;
 }
 
-// SEH helper (no C++ objects in the frame): the exception code a guest call to `addr` raises, or 0 when it returns.
-DWORD call_and_catch(uint64_t addr) {
+// A chain handler that notes access violations (it never handles anything): tells a fault from a guest trap.
+std::atomic<int> g_av_seen{0};
+nxrt::os::FaultResult note_av(const nxrt::os::FaultInfo& fi, void*) {
+    if (fi.kind == nxrt::os::FaultKind::AccessViolation) g_av_seen++;
+    return nxrt::os::FaultResult::Continue;
+}
+struct CallArgs {
+    ::Ctx* c;
+    uint64_t addr;
+};
+
+// The exception code a guest call to `addr` raises, or 0 when it returns: 0xE0000001 for a guest trap, 0xC0000005 for an access violation.
+uint32_t call_and_catch(uint64_t addr) {
     ::Ctx c{};
-    __try {
-        nxrt::dispatch_call(&c, addr);
-    } __except (GetExceptionCode() == 0xE0000001u || GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        return GetExceptionCode();
-    }
-    return 0;
+    CallArgs a{&c, addr};
+    g_av_seen = 0;
+    const int id = nxrt::os::fault_register(note_av, nullptr, 0);
+    const bool returned = nxrt::os::guard::call([](void* p) { auto* x = static_cast<CallArgs*>(p); nxrt::dispatch_call(x->c, x->addr); }, &a, true);
+    nxrt::os::fault_unregister(id);
+    if (returned) return 0;
+    return g_av_seen.load() ? 0xC0000005u : 0xE0000001u;
 }
 
 std::atomic<int> g_a_calls{0}, g_b_calls{0};
@@ -78,9 +92,7 @@ NXTEST(gauge_register_again_replaces) {
 }
 
 NXTEST(soak_sampler_writes_json_lines) {
-    char tmp[MAX_PATH];
-    GetTempPathA(sizeof tmp, tmp);
-    const std::string path = std::string(tmp) + "nxrt_soak_test_" + std::to_string(GetCurrentProcessId()) + ".jsonl";
+    const std::string path = (std::filesystem::temp_directory_path() / ("nxrt_soak_test_" + std::to_string(nxrt::os::process::pid()) + ".jsonl")).string();
     std::remove(path.c_str());
     nxrt::config_set("diag", "soak_csv", path.c_str());
     nxrt::config_set("diag", "soak_interval_s", "0.5");
@@ -160,9 +172,7 @@ NXTEST(dispatch_cache_colliding_addresses) {
 }
 
 NXTEST(sampling_profiler_writes_folded_stacks) {
-    char tmp[MAX_PATH];
-    GetTempPathA(sizeof tmp, tmp);
-    const std::string path = std::string(tmp) + "nxrt_prof_test_" + std::to_string(GetCurrentProcessId()) + ".folded";
+    const std::string path = (std::filesystem::temp_directory_path() / ("nxrt_prof_test_" + std::to_string(nxrt::os::process::pid()) + ".folded")).string();
     std::remove(path.c_str());
     nxrt::config_set("prof", "sample_hz", "200");
     nxrt::config_set("prof", "sample_out", path.c_str());
@@ -222,7 +232,7 @@ NXTEST(diag_threads_dup_handles_survive_unregister) {
         if (r.name == "dup-test") {
             found = true;
             CHECK(r.host_handle != nullptr);
-            CHECK_EQ(GetThreadId(static_cast<HANDLE>(r.host_handle)), r.host_tid);   // still a valid handle to that thread
+            CHECK_EQ(nxrt::os::thread_id(r.host_handle), r.host_tid);   // still a valid handle to that thread
         }
     CHECK(found);
     nxrt::diag_threads_release(recs);

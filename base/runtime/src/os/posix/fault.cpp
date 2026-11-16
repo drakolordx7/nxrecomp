@@ -16,6 +16,7 @@
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 
@@ -35,6 +36,7 @@ thread_local int tl_depth = 0;                 // > 0 while the dispatcher runs 
 thread_local uint64_t tl_stack_lo = 0;         // lowest address of this thread's stack (0 unknown)
 
 struct sigaction g_old_segv, g_old_bus;
+std::atomic<bool> g_other_installed{false};
 
 uint32_t current_tid() { return static_cast<uint32_t>(syscall(SYS_gettid)); }
 
@@ -77,6 +79,7 @@ void on_signal(int sig, siginfo_t* si, void* uc_) {
     fi.native = uc;
 #if defined(__x86_64__)
     fi.is_write = (uc->uc_mcontext.gregs[REG_ERR] & 2) != 0;
+    fi.is_exec = (uc->uc_mcontext.gregs[REG_ERR] & 0x10) != 0;
     fi.pc = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RIP]);
     fi.sp = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RSP]);
 #endif
@@ -108,6 +111,30 @@ void on_signal(int sig, siginfo_t* si, void* uc_) {
     errno = saved_errno;
 }
 
+// SIGILL, SIGFPE, SIGABRT: not faults of the chain; only the unhandled handler (the crash reporter) hears of them. After it returns the default
+// action runs: returning re-executes the instruction (ILL, FPE) or lets abort() finish (ABRT), now with the default disposition.
+void on_other_signal(int sig, siginfo_t* si, void* uc_) {
+    const int saved_errno = errno;
+    if (tl_depth == 0) {
+        ++tl_depth;
+        ucontext_t* uc = static_cast<ucontext_t*>(uc_);
+        FaultInfo fi;
+        fi.kind = FaultKind::Other;
+        fi.code = static_cast<uint32_t>(sig);
+        fi.addr = reinterpret_cast<uint64_t>(si->si_addr);
+        fi.tid = current_tid();
+        fi.native = uc;
+#if defined(__x86_64__)
+        fi.pc = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RIP]);
+        fi.sp = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RSP]);
+#endif
+        detail::unhandled_run(fi);
+        --tl_depth;
+    }
+    restore_default(sig);
+    errno = saved_errno;
+}
+
 __attribute__((noinline)) bool run_guarded(void (*fn)(void*), void* arg, bool traps) {
     Frame f;
     f.prev = tl_guard;
@@ -136,7 +163,17 @@ void platform_install() {
     sigaction(SIGBUS, &sa, &g_old_bus);
 }
 
-void platform_unhandled_set() {}
+void platform_unhandled_set() {
+    if (g_other_installed.exchange(true)) return;
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = on_other_signal;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGILL, &sa, nullptr);
+    sigaction(SIGFPE, &sa, nullptr);
+    sigaction(SIGABRT, &sa, nullptr);
+}
 
 }  // namespace detail
 
@@ -165,13 +202,14 @@ void fault_thread_init() {
     tl_alt.mem = m;
 }
 
-void raise_guest_trap(uint32_t code) {
-    if (Frame* g = tl_guard; g && g->catch_traps) siglongjmp(g->jb, 1);
+__attribute__((noinline)) void raise_guest_trap(uint32_t code) {
     FaultInfo fi;
     fi.kind = FaultKind::GuestTrap;
     fi.code = code;
     fi.tid = current_tid();
-    if (detail::chain_run(fi)) return;
+    fi.pc = reinterpret_cast<uint64_t>(__builtin_return_address(0));   // the code that raised it: the crash reporter finds it in the unwind
+    if (detail::chain_run(fi)) return;                                  // the chain first, then a guard that catches traps (fault.h points 3 and 6; Windows: VEH before SEH)
+    if (Frame* g = tl_guard; g && g->catch_traps) siglongjmp(g->jb, 1);
     detail::unhandled_run(fi);
 }
 

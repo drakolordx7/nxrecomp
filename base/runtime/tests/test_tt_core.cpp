@@ -5,7 +5,9 @@
 // The tables of a real game are tested in that game's folder (games/<id>/runtime/tests).
 #include "test_framework.h"
 
-#include <windows.h>
+#include <filesystem>
+
+#include "nxrt/os/time.h"
 
 #include <cmath>
 #include <cstdio>
@@ -121,7 +123,7 @@ const GameProbes kToyProbes = [] {
 
 Rig::Rig(const char* name) {
     cur = this;
-    out = std::string("tt_test_out\\") + name;
+    out = std::string("tt_test_out/") + name;
     tt_guid_to_bytes(kWorld, world);
     tt_guid_to_bytes(kAreaA, area);
     info = nxtest::fixture_game();
@@ -140,8 +142,8 @@ std::string slurp(const std::string& p) {
 void spit(const std::string& p, const std::string& t) { std::ofstream f(p, std::ios::binary); f << t; }
 
 std::string scriptfile(const char* name, const std::string& text) {
-    CreateDirectoryA("tt_test_out", nullptr);
-    const std::string p = std::string("tt_test_out\\") + name;
+    std::filesystem::create_directories("tt_test_out");
+    const std::string p = std::string("tt_test_out/") + name;
     spit(p, text);
     return p;
 }
@@ -174,7 +176,7 @@ NXTEST(wait_timeout_fails_with_the_script_line) {
     begin(r, {{"script", s}});
     run_frames(r, 100);
     CHECK_EQ(r.exit_code_seen, 1);
-    const std::string res = slurp(r.out + "\\result.json");
+    const std::string res = slurp(r.out + "/result.json");
     CHECK(res.find("\"verdict\":\"fail\"") != std::string::npos);
     CHECK(res.find("timeout.nxs:3:") != std::string::npos);
     CHECK(res.find("\"fail_line\":3") != std::string::npos);
@@ -187,7 +189,7 @@ NXTEST(assert_failure_ends_the_run) {
     begin(r, {{"script", s}});
     run_frames(r, 50);
     CHECK_EQ(r.exit_code_seen, 1);
-    CHECK(slurp(r.out + "\\result.json").find("assertion failed") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("assertion failed") != std::string::npos);
     shutdown();
 }
 
@@ -196,7 +198,7 @@ NXTEST(parse_error_is_exit_code_2) {
     const std::string s = scriptfile("bad.nxs", "5\nfrobnicate 3\n");
     begin(r, {{"script", s}});
     CHECK_EQ(r.exit_code_seen, 2);
-    CHECK(slurp(r.out + "\\result.json").find("bad.nxs:2") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("bad.nxs:2") != std::string::npos);
     shutdown();
 }
 
@@ -290,9 +292,9 @@ NXTEST(shots_go_through_the_provider) {
     set_screenshot_provider(shot_ok, nullptr);
     run_frames(r, 50);
     CHECK_EQ(r.exit_code_seen, 0);
-    const std::string res = slurp(r.out + "\\result.json");
+    const std::string res = slurp(r.out + "/result.json");
     CHECK(res.find("\"first.png\"") != std::string::npos && res.find("\"second.png\"") != std::string::npos);
-    CHECK_EQ(slurp(r.out + "\\shots\\first.png"), std::string("PNG?"));
+    CHECK_EQ(slurp(r.out + "/shots/first.png"), std::string("PNG?"));
     shutdown();
     set_screenshot_provider(nullptr, nullptr);
 }
@@ -319,8 +321,8 @@ NXTEST(a_shot_waits_for_its_file_before_the_next_step) {
     CHECK(!finished());                              // asked, not written yet: the script has not reached @pass
     run_frames(r, 10);
     CHECK_EQ(r.exit_code_seen, 0);
-    CHECK_EQ(slurp(r.out + "\\shots\\late.png"), std::string("PNG?"));     // on disk when the run ended
-    CHECK(slurp(r.out + "\\result.json").find("\"shots\":[\"late.png\"]") != std::string::npos);
+    CHECK_EQ(slurp(r.out + "/shots/late.png"), std::string("PNG?"));     // on disk when the run ended
+    CHECK(slurp(r.out + "/result.json").find("\"shots\":[\"late.png\"]") != std::string::npos);
     shutdown();
     set_screenshot_provider(nullptr, nullptr);
 }
@@ -331,9 +333,9 @@ NXTEST(a_shot_that_never_lands_is_missing_after_the_timeout) {
     begin(r, {{"script", s}, {"shot_timeout_ms", "50"}});
     set_screenshot_provider(shot_async_request, nullptr, shot_never_poll);
     ::Ctx ctx{};
-    for (int i = 0; i < 400 && !finished(); i++) { frame_boundary(&ctx); Sleep(1); }
+    for (int i = 0; i < 400 && !finished(); i++) { frame_boundary(&ctx); nxrt::os::sleep_ms(1); }
     CHECK_EQ(r.exit_code_seen, 0);
-    CHECK(slurp(r.out + "\\result.json").find("\"missing_shots\":[\"never\"]") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("\"missing_shots\":[\"never\"]") != std::string::npos);
     shutdown();
     set_screenshot_provider(nullptr, nullptr);
 }
@@ -354,9 +356,9 @@ NXTEST(waitlog_waits_for_a_log_line_and_counts_lines_logged_before_the_step) {
     NXLOG_I("test", "the marker-42 line");
     frame_boundary(&ctx);
     CHECK(!finished());                              // the first wait is done, the second one waits
-    for (int i = 0; i < 100 && !finished(); i++) { frame_boundary(&ctx); Sleep(2); }
+    for (int i = 0; i < 100 && !finished(); i++) { frame_boundary(&ctx); nxrt::os::sleep_ms(2); }
     CHECK_EQ(r.exit_code_seen, 1);                   // the second regex never appears: the run fails at its line
-    CHECK(slurp(r.out + "\\result.json").find("waitlog.nxs:2:") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("waitlog.nxs:2:") != std::string::npos);
     shutdown();
 }
 
@@ -367,7 +369,7 @@ NXTEST(missing_provider_is_a_note_unless_required) {
         begin(r, {{"script", s}, {"require_shots", req ? "1" : "0"}});
         run_frames(r, 50);
         CHECK_EQ(r.exit_code_seen, req ? 1 : 0);
-        if (!req) CHECK(slurp(r.out + "\\result.json").find("\"missing_shots\":[\"x\"]") != std::string::npos);
+        if (!req) CHECK(slurp(r.out + "/result.json").find("\"missing_shots\":[\"x\"]") != std::string::npos);
         shutdown();
     }
 }
@@ -378,7 +380,7 @@ NXTEST(max_frames_budget_fails_the_run) {
     begin(r, {{"script", s}, {"max_frames", "30"}});
     run_frames(r, 500);
     CHECK_EQ(r.exit_code_seen, 1);
-    CHECK(slurp(r.out + "\\result.json").find("max_frames") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("max_frames") != std::string::npos);
     shutdown();
 }
 
@@ -397,9 +399,9 @@ NXTEST(watchdog_freeze_ends_a_scripted_run_with_code_5) {
     init();
     ::Ctx ctx{};
     frame_boundary(&ctx);                       // one frame, then the "game" hangs
-    for (int i = 0; i < 60 && r.exit_code_seen == -999; i++) Sleep(100);
+    for (int i = 0; i < 60 && r.exit_code_seen == -999; i++) nxrt::os::sleep_ms(100);
     CHECK_EQ(r.exit_code_seen, 5);
-    CHECK(slurp(r.out + "\\result.json").find("\"verdict\":\"freeze\"") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("\"verdict\":\"freeze\"") != std::string::npos);
     shutdown();
     nxrt::watchdog_stop();
 }

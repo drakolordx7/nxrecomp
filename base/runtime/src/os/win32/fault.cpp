@@ -27,6 +27,7 @@ bool describe(EXCEPTION_POINTERS* ep, FaultInfo* fi) {
     if (code == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2) {
         fi->kind = FaultKind::AccessViolation;
         fi->is_write = rec->ExceptionInformation[0] == 1;
+        fi->is_exec = rec->ExceptionInformation[0] == 8;
         fi->addr = static_cast<uint64_t>(rec->ExceptionInformation[1]);
     } else if (code == EXCEPTION_STACK_OVERFLOW) {
         fi->kind = FaultKind::StackOverflow;
@@ -107,7 +108,11 @@ void platform_unhandled_set() {
 
 }  // namespace detail
 
-void fault_thread_init() {}
+// Reserves stack for the handlers of this thread if it overflows (the crash reporter runs on it); the guarantee is a property of the thread.
+void fault_thread_init() {
+    ULONG guarantee = 64 * 1024;
+    SetThreadStackGuarantee(&guarantee);
+}
 
 void raise_guest_trap(uint32_t code) { RaiseException(code, EXCEPTION_NONCONTINUABLE, 0, nullptr); }
 

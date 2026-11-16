@@ -4,7 +4,9 @@
 // a line that does not parse: it is skipped with a note in the status, and the run goes on.
 #include "test_framework.h"
 
-#include <windows.h>
+#include <filesystem>
+
+#include "nxrt/os/time.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -39,7 +41,7 @@ std::string wait_status(const std::string& status, const char* what) {
     for (int waited = 0; waited < 10000; waited += 10) {
         const std::string s = slurp(status);
         if (s.find(what) != std::string::npos) return s;
-        Sleep(10);
+        nxrt::os::sleep_ms(10);
     }
     return std::string();
 }
@@ -56,21 +58,21 @@ struct LiveRun {
     std::string live, status, out;
     std::thread th;
     explicit LiveRun(const char* name, const std::string& script_text) {
-        CreateDirectoryA("tt_test_out", nullptr);
-        out = std::string("tt_test_out\\") + name;
-        CreateDirectoryA(out.c_str(), nullptr);
-        live = out + "\\live.nxs";
+        std::filesystem::create_directories("tt_test_out");
+        out = std::string("tt_test_out/") + name;
+        std::filesystem::create_directories(out);
+        live = out + "/live.nxs";
         status = live + ".status";
-        DeleteFileA(status.c_str());
+        { std::error_code ec; std::filesystem::remove(status, ec); }
         spit(live, "");
-        spit(out + "\\script.nxs", script_text);
+        spit(out + "/script.nxs", script_text);
         nxrt::config_clear();
         reset_for_tests();
         set_exit_handler(on_exit_code);
         g_exit_seen = -999;
         nxrt::config_set("test", "out", out.c_str());
         nxrt::config_set("test", "frame_source", "manual");
-        nxrt::config_set("test", "script", (out + "\\script.nxs").c_str());
+        nxrt::config_set("test", "script", (out + "/script.nxs").c_str());
         nxrt::config_set("test", "live", live.c_str());
         init();
         th = std::thread([] {
@@ -103,7 +105,7 @@ NXTEST(lines_appended_while_idle_run_and_end_the_run) {
     spit(r.live, "@end\n", true);
     r.join();
     CHECK_EQ(g_exit_seen, 0);
-    CHECK(slurp(r.out + "\\result.json").find("\"verdict\":\"pass\"") != std::string::npos);
+    CHECK(slurp(r.out + "/result.json").find("\"verdict\":\"pass\"") != std::string::npos);
 }
 
 NXTEST(a_line_that_does_not_parse_is_skipped_and_the_run_goes_on) {

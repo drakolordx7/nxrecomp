@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Test tooling core (S5): configuration, the frame boundary, virtual clock, seeded RNG, per-frame hash and trace, result file,
 // input recording / replay, crash and freeze plumbing. See include/nxrt/tt.h.
-#include <windows.h>
-#include <psapi.h>
-
 #include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <regex>
@@ -21,6 +19,12 @@
 #include "nxrt/game.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fault.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 #include "nxrt/runtime.h"
 #include "nxrt/module.h"
 #include "nxrt/timestep.h"
@@ -65,7 +69,7 @@ struct State {
     std::atomic<uint64_t> frames{0};
     bool started = false;
     std::atomic<uint64_t> vticks{0};         // virtual clock (19.2 MHz ticks)
-    std::atomic<DWORD> frame_tid{0};         // the host thread that runs the frame boundary (the one whose sleeps move the clock)
+    std::atomic<uint32_t> frame_tid{0};         // the host thread that runs the frame boundary (the one whose sleeps move the clock)
     std::atomic<uint64_t> rng_ctr{0};
     uint64_t vbase = 19200000ull * 100;
     uint64_t chain = 0xcbf29ce484222325ull;
@@ -100,7 +104,7 @@ struct State {
     MouseSinkFn mouse_sink = nullptr;
     KeySinkFn key_sink = nullptr;
     std::vector<std::string> keys_down;      // names the key steps pressed and not yet released (released when the run ends)
-    LARGE_INTEGER qpf{}, t_last{}, t_start{};
+    uint64_t t_start_ns = 0;                 // os::monotonic_ns() at the start of the run
     double last_ms = 0;
     uint64_t last_mem_frame = 0;
     double mem_mb = 0;
@@ -161,13 +165,8 @@ std::string json_escape(const std::string& s) {
 }
 
 void make_dirs(const std::string& path) {
-    std::string cur;
-    for (size_t i = 0; i < path.size(); i++) {
-        const char ch = path[i];
-        cur += ch;
-        if ((ch == '\\' || ch == '/') && i > 2) CreateDirectoryA(cur.c_str(), nullptr);
-    }
-    CreateDirectoryA(path.c_str(), nullptr);
+    std::error_code ec;
+    std::filesystem::create_directories(os::fs::native_path(path), ec);
 }
 
 std::string parent_dir(const std::string& p) {
@@ -178,7 +177,7 @@ std::string parent_dir(const std::string& p) {
 std::string join(const std::string& a, const std::string& b) {
     if (a.empty()) return b;
     const char l = a.back();
-    return (l == '\\' || l == '/') ? a + b : a + "\\" + b;
+    return (l == '\\' || l == '/') ? a + b : a + "/" + b;
 }
 
 
@@ -224,12 +223,11 @@ uint64_t hash_region_memory(State& s, uint64_t h) {
         }
         uint64_t a = lo;
         while (a < hi) {
-            MEMORY_BASIC_INFORMATION mbi;
-            if (!VirtualQuery(reinterpret_cast<void*>(a), &mbi, sizeof mbi)) break;
-            const uint64_t end = std::min<uint64_t>(hi, reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize);
-            const DWORD p = mbi.Protect & 0xff;
-            const bool readable = mbi.State == MEM_COMMIT && !(mbi.Protect & PAGE_GUARD) && p != PAGE_NOACCESS;
-            const bool rw = p == PAGE_READWRITE || p == PAGE_WRITECOPY;
+            os::mem::Region mbi;
+            if (!os::mem::query(a, &mbi)) break;
+            const uint64_t end = std::min<uint64_t>(hi, mbi.base + mbi.size);
+            const bool readable = mbi.state == os::mem::State::Committed && mbi.prot != os::mem::Prot::None;
+            const bool rw = mbi.prot == os::mem::Prot::RW || mbi.prot == os::mem::Prot::RWX;
             if (readable && (!rw_only || rw)) spans.emplace_back(a, end - a);
             if (end <= a) break;
             a = end;
@@ -266,11 +264,7 @@ uint64_t hash_state(State& s, uint64_t frame, const GameState& g, bool valid) {
     return h;
 }
 
-double now_ms(State& s) {
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    return static_cast<double>(c.QuadPart - s.t_start.QuadPart) * 1000.0 / static_cast<double>(s.qpf.QuadPart);
-}
+double now_ms(State& s) { return static_cast<double>(os::monotonic_ns() - s.t_start_ns) / 1e6; }
 
 void write_trace_line(State& s, uint64_t k, uint64_t h, const GameState& g, bool valid, double ms, double mem) {
     if (!s.trace) return;
@@ -303,9 +297,7 @@ void write_result(State& s, int code, const char* verdict, const std::string& ms
     const std::string path = join(s.out, "result.json");
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return;
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    const double wall = static_cast<double>(c.QuadPart - s.t_start.QuadPart) / static_cast<double>(s.qpf.QuadPart);
+    const double wall = static_cast<double>(os::monotonic_ns() - s.t_start_ns) / 1e9;
     std::fprintf(f, "{\n \"schema\":1,\n \"verdict\":\"%s\",\n \"exit_code\":%d,\n \"message\":\"%s\",\n \"script\":\"%s\",\n \"frames\":%llu,\n \"wall_s\":%.3f,\n",
                  verdict, code, json_escape(msg).c_str(), json_escape(s.script).c_str(), static_cast<unsigned long long>(s.frames.load()), wall);
     std::fprintf(f, " \"deterministic\":%s,\n \"seed\":%llu,\n \"final_hash\":\"%016llx\",\n \"steps_total\":%zu,\n \"steps_done\":%zu,\n \"fail_line\":%d,\n",
@@ -333,7 +325,7 @@ void flush_files(State& s) {
 
 void default_exit(int code) {
     log_flush();
-    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
+    os::terminate(static_cast<uint32_t>(code));
 }
 
 void on_crash_report(const char* text, void*) {
@@ -385,7 +377,7 @@ void deadline_loop(State* s, double secs, void (*report)()) {
     }
     NXLOG_I("tt", "state at the deadline:\n%s", nxrt::summary().c_str());
     log_flush();
-    TerminateProcess(GetCurrentProcess(), 124);
+    os::terminate(124);
 }
 
 void shots_loop(State* s, double first, double every, std::string dir) {
@@ -436,9 +428,7 @@ bool init() {
     else if (src == "manual") s.src = Source::Manual;
     else if (src.rfind("svc:", 0) == 0) { s.src = Source::Svc; s.svc_n = static_cast<uint32_t>(std::strtoul(src.c_str() + 4, nullptr, 0)); if (!s.svc_n) s.svc_n = 1; }
     else s.src = Source::Hook;
-    QueryPerformanceFrequency(&s.qpf);
-    QueryPerformanceCounter(&s.t_start);
-    s.t_last = s.t_start;
+    s.t_start_ns = os::monotonic_ns();
     s.vticks = s.vbase;
     s.rng_ctr = 0;
 
@@ -461,7 +451,7 @@ bool init() {
         std::string rf = config_get_str("test", "regions", "");
         if (rf.empty()) {
             const std::string cand = join(parent_dir(s.script), "regions.tsv");
-            if (GetFileAttributesA(cand.c_str()) != INVALID_FILE_ATTRIBUTES) rf = cand;
+            if (os::fs::exists(cand)) rf = cand;
         }
         if (!rf.empty()) {
             std::string err;
@@ -546,12 +536,12 @@ bool take_screenshot(const std::string& png_path, int timeout_ms) {
     State& s = S();
     if (!s.shot_fn || !s.shot_fn(png_path.c_str(), s.shot_user)) return false;
     if (!s.shot_poll_fn) return true;
-    const uint64_t t0 = GetTickCount64();
+    const uint64_t t0 = os::tick_ms();
     for (;;) {
         const int r = s.shot_poll_fn(png_path.c_str(), s.shot_user);
         if (r != 0) return r > 0;
-        if (static_cast<int64_t>(GetTickCount64() - t0) >= timeout_ms) return false;
-        Sleep(10);
+        if (static_cast<int64_t>(os::tick_ms() - t0) >= timeout_ms) return false;
+        os::sleep_ms(10);
     }
 }
 void start_wall_deadline(double seconds, void (*report)()) {
@@ -617,24 +607,21 @@ bool virtual_sleep(int64_t ns) {
     State& s = S();
     if (!s.on || !s.det) return false;
     const uint64_t add = ns > 0 ? static_cast<uint64_t>(ns) * 192 / 10000 : 0;
-    const DWORD ft = s.frame_tid.load(std::memory_order_relaxed);
-    if (add == 0 || ft == 0 || ft == GetCurrentThreadId()) {
+    const uint32_t ft = s.frame_tid.load(std::memory_order_relaxed);
+    if (add == 0 || ft == 0 || ft == os::thread_current_id()) {
         if (add) s.vticks.fetch_add(add, std::memory_order_relaxed);
-        SwitchToThread();
+        os::thread_yield();
         return true;
     }
     const uint64_t target = s.vticks.load(std::memory_order_relaxed) + add;
-    LARGE_INTEGER f, t0, t;
-    QueryPerformanceFrequency(&f);
-    QueryPerformanceCounter(&t0);
+    const uint64_t t0 = os::monotonic_ns();
     const double limit_s = static_cast<double>(ns) * 1e-9;
     for (;;) {
         if (s.vticks.load(std::memory_order_relaxed) >= target || !s.on) return true;
-        QueryPerformanceCounter(&t);
-        const double left = limit_s - static_cast<double>(t.QuadPart - t0.QuadPart) / static_cast<double>(f.QuadPart);
+        const double left = limit_s - static_cast<double>(os::monotonic_ns() - t0) * 1e-9;
         if (left <= 0) return true;
-        if (left >= 0.002) Sleep(1);
-        else SwitchToThread();
+        if (left >= 0.002) os::sleep_ms(1);
+        else os::thread_yield();
     }
 }
 
@@ -659,10 +646,8 @@ void rng_fill(void* p, size_t n) {
         }
         return;
     }
-    using Fn = BOOLEAN(WINAPI*)(PVOID, ULONG);
-    static Fn fn = reinterpret_cast<Fn>(GetProcAddress(LoadLibraryA("advapi32.dll"), "SystemFunction036"));
-    if (fn) fn(p, static_cast<ULONG>(n));
-    else for (size_t i = 0; i < n; i++) b[i] = static_cast<uint8_t>(rand());
+    if (!os::process::random_bytes(p, n))
+        for (size_t i = 0; i < n; i++) b[i] = static_cast<uint8_t>(rand());
 }
 
 namespace {
@@ -691,9 +676,7 @@ void clear_kernel_providers() {
 uint64_t wall_filetime() {
     State& s = S();
     if (s.on && s.det) return 133000000000000000ull + (s.vticks.load() - s.vbase) * 10000ull / 192ull;     // 100 ns units, fixed epoch
-    FILETIME ft;
-    GetSystemTimePreciseAsFileTime(&ft);
-    return (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    return os::wall_filetime();
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------
@@ -740,7 +723,7 @@ bool shot_request(const std::string& name, std::string* why_not) {
         NXLOG_W("tt", "@shot %s: no screenshot provider", name.c_str());
         return false;
     }
-    s.shot_start_ms = GetTickCount64();
+    s.shot_start_ms = os::tick_ms();
     if (!s.shot_fn(s.shot_path.c_str(), s.shot_user)) {
         s.missing_shots.push_back(name);
         if (why_not) *why_not = "the screenshot provider refused the request";
@@ -757,7 +740,7 @@ ShotStatus shot_poll(std::string* why_not) {
         s.shots.push_back(s.shot_name + ".png");
         return ShotStatus::Done;
     }
-    const bool timed_out = static_cast<int64_t>(GetTickCount64() - s.shot_start_ms) >= s.shot_timeout_ms;
+    const bool timed_out = static_cast<int64_t>(os::tick_ms() - s.shot_start_ms) >= s.shot_timeout_ms;
     if (r == 0 && !timed_out) return ShotStatus::Pending;
     s.missing_shots.push_back(s.shot_name);
     if (why_not) *why_not = r < 0 ? "the screenshot provider failed" : "the file was not written within " + std::to_string(s.shot_timeout_ms) + " ms";
@@ -770,7 +753,7 @@ bool take_shot(const std::string& name, std::string* why_not) {
     for (;;) {
         const ShotStatus r = shot_poll(why_not);
         if (r != ShotStatus::Pending) return r == ShotStatus::Done;
-        Sleep(10);
+        os::sleep_ms(10);
     }
 }
 
@@ -837,7 +820,7 @@ void frame_boundary(::Ctx* c) {
     if (s.finished) return;
     const uint64_t k = s.frames.load();
     s.frames.store(k + 1);
-    s.frame_tid.store(GetCurrentThreadId(), std::memory_order_relaxed);
+    s.frame_tid.store(os::thread_current_id(), std::memory_order_relaxed);
     diag_frame_tick_nolisten();
     if (s.det) {
         const uint64_t target = s.vbase + k * s.step_ticks;
@@ -861,8 +844,7 @@ void frame_boundary(::Ctx* c) {
     s.last_ms = t;
     if (k - s.last_mem_frame >= 30 || k == 0) {
         s.last_mem_frame = k;
-        PROCESS_MEMORY_COUNTERS_EX pmc{};
-        if (GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc)) s.mem_mb = static_cast<double>(pmc.PrivateUsage) / 1048576.0;
+        if (const uint64_t fp = os::mem::footprint()) s.mem_mb = static_cast<double>(fp) / 1048576.0;
         write_trace_line(s, k, h, g, valid, ms, s.mem_mb);
     } else {
         write_trace_line(s, k, h, g, valid, ms, 0);

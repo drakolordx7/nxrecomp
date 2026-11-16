@@ -18,10 +18,12 @@
 //     hands the fault to the system: the process dies as it would without us (Linux: default SIGSEGV action, core dump; Windows: normal
 //     unhandled-exception behaviour). A reporter that wants to end the run itself calls terminate().
 //  5. Only access violations, stack overflows and guest traps reach the chain; other exceptions (breakpoints, C++ exceptions, ...) do not.
+//     They reach the unhandled handler as kind Other once one is set: Windows any exception, Linux SIGILL, SIGFPE and SIGABRT (code = the
+//     signal number; after the handler returns Continue the default action ends the process).
 //  6. Guest traps (raise_guest_trap) run the same chain with kind GuestTrap on the calling thread's normal stack (Linux) or as a vectored
 //     exception (Windows). If nothing handles the trap raise_guest_trap returns and the caller ends the process with terminate().
-//  7. Every thread that runs host code the runtime starts calls fault_thread_init() once at its start (an alternate stack on Linux; so
-//     a stack overflow can be reported; a no-op on Windows). Calling it again is harmless.
+//  7. Every thread that runs host code the runtime starts calls fault_thread_init() once at its start (an alternate stack on Linux, a stack guarantee on
+//     Windows; so a stack overflow can be reported). Calling it again is harmless.
 //  Priorities: kPriorityFirst for repair handlers that must see every fault (write tracking), 0 for ordinary ones, kPriorityLast for reporters.
 #pragma once
 #include <cstddef>
@@ -36,7 +38,8 @@ struct FaultInfo {
     uint32_t code = 0;          // GuestTrap: the code given to raise_guest_trap; else the native code (Windows exception code, Linux signal number)
     uint64_t addr = 0;          // AccessViolation / StackOverflow: the address the instruction touched
     bool is_write = false;      // AccessViolation: the instruction wrote (false for reads and instruction fetches)
-    uint64_t pc = 0, sp = 0;    // instruction and stack pointer of the faulting thread (0 for a GuestTrap on Linux: no machine context)
+    bool is_exec = false;       // AccessViolation: the fault was an instruction fetch (jump to a non-executable or unmapped address)
+    uint64_t pc = 0, sp = 0;    // instruction and stack pointer of the faulting thread (GuestTrap on Linux: no machine context; pc is the return address into the code that raised it, sp 0)
     uint32_t tid = 0;           // host thread id (GetCurrentThreadId / gettid)
     void* native = nullptr;     // EXCEPTION_POINTERS* (Windows) or ucontext_t* (Linux, null for a GuestTrap): for the crash reporter's own os code
 };
