@@ -22,6 +22,9 @@ Modules (each one a header here and one source file per platform; those marked d
 | `dynlib` | loading shared libraries and finding symbols in them |
 | `symbols` | host address to name (map file or ELF symbols), stack capture |
 
+`movie_mf.cpp` (`win32`: the Media Foundation decoder of the `movie::` library, a fallback behind `[media] backend = mf`; `posix`: a stub) is the one
+platform file that is not an OS module: the FFmpeg backend is the same code on both systems (`src/media/movie_ffmpeg.cpp`).
+
 `src/os/sync.cpp` (the guest-address wait objects of the kernel) is not part of this layer and stays where it is.
 
 ## thread, sync, time

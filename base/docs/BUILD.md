@@ -83,5 +83,5 @@ ninja -C <dir> -k 0
 ```
 
 The same presets exist in `runtime/cmake/game_project` (game exe; `-DGAME_LIB_DIR` holds `lib<id>_<module>.a`) and `recomp/game` (lift). The
-launcher is Windows only for now (`NXRT_BUILD_LAUNCHER`). The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy
+launcher is Windows only for now (`NXRT_BUILD_LAUNCHER`). FFmpeg (movies; `runtime/cmake/ffmpeg.cmake`): Windows fetches the pinned BtbN LGPL shared build into the archive cache and copies its DLLs next to every exe; Linux uses the system packages (`libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev`, FFmpeg 4.4 or newer), or `-DNXRT_FFMPEG_BUNDLED=ON` fetches the same pinned build as `.so` files that are copied next to the exe ($ORIGIN rpath; what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy
 in `NX/build/textures/linux`. Much of the runtime still includes `windows.h` and does not compile on Linux yet.

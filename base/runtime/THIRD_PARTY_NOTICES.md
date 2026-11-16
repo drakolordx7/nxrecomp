@@ -32,9 +32,18 @@ SOFTWARE.
 
 ## smo-recomp, ScarletNX and ssbu-recomp (GPL-3.0)
 
-`src/media/movie_mf.cpp` (the `movie::` library on Media Foundation) follows the design of smo-recomp `runtime/services/nnmovie_mf.c` (GPL-3.0): the object layouts of the library, the decoder's two buffer pools, and the token that carries a decoded sample from the extractor to a decoder. The code is rewritten for nxrt (C++, a decode-ahead worker, edit lists, the plain exported wrappers instead of virtual calls).
+`src/media/movie_hle.cpp` (the protocol layer of the `movie::` library; the decoders are `src/media/movie_ffmpeg.cpp` and `src/os/win32/movie_mf.cpp`) follows the design of smo-recomp `runtime/services/nnmovie_mf.c` (GPL-3.0): the object layouts of the library, the decoder's two buffer pools, and the token that carries a decoded sample from the extractor to a decoder. The code is rewritten for nxrt (C++, a decode-ahead worker, edit lists, the plain exported wrappers instead of virtual calls).
 
 The nxrt parts that come from smo-recomp and ScarletNX are under GPL-3.0, like nxrt itself (GPL-3.0-or-later). The same holds for the ssbu-recomp references in `include/nxrt/diag.h`, `src/eh/*` (facts read from `runtime/eh_runtime.h` and `runtime/nncxxrt.c`: header layout of the SDK's libc++abi, the non-unique-name bit) and `src/core/hooks.cpp` (idea only). Upstream licence files: smo-recomp `LICENSE` (GPL-3.0), ScarletNX `LICENSE` (GPL-3.0; its source headers say GPL-3.0-or-later), ssbu-recomp `LICENSE` (GPL-3.0). The GPL-3.0 text for nxrt is the `LICENSE` file at the repository root.
+
+## FFmpeg (LGPL-2.1-or-later, linked dynamically)
+
+`src/media/movie_ffmpeg.cpp` decodes the movies of the games with FFmpeg (libavformat, libavcodec, libavutil, libswresample, libswscale; https://ffmpeg.org). The libraries are used as shared libraries through their public API, never copied into the runtime or modified: the DLLs (Windows) or `.so` files (Linux) that ship in a release sit next to the exe and can be replaced by any other build of the same major version.
+
+- Windows: the BtbN `lgpl-shared` build (https://github.com/BtbN/FFmpeg-Builds, FFmpeg n8.1.3, release `autobuild-2026-10-31-12-59`, `ffmpeg-n8.1.3-27-g8dca1586f4-win64-lgpl-shared-8.1.zip`, SHA256 `5cef7bc48e513f3cee7c881e8b2999d835541edb1846c3e89443a67f8f8556ab`), fetched at configure time by `cmake/ffmpeg.cmake`. It is configured without `--enable-gpl` and without `--enable-nonfree`, so the libraries are under the GNU LGPL; the build's own `LICENSE.txt` (LGPL-3.0) is the licence text of the shipped DLLs, and the build scripts and the exact configuration are published by BtbN. The FFmpeg source of this version is at https://ffmpeg.org/releases/ and https://github.com/FFmpeg/FFmpeg (tag `n8.1.3`).
+- Linux: the system libraries of the distribution (4.4 or newer), or with `-DNXRT_FFMPEG_BUNDLED=ON` the BtbN `linux64-lgpl-shared` build of the same FFmpeg version (SHA256 `493e89a48da02b9a7d217b60f7f60c3c917c9bed73459d8a106e5e987da082ef`), shipped as `.so` files next to the exe.
+
+The code written against the API (this repository) is GPL-3.0-or-later; an LGPL library used through its API and kept replaceable does not change that. The decoders FFmpeg contains (H.264, VP8, VP9, AAC, Opus, Vorbis) implement published formats; patent licences for them are a matter between the user and the format's licensors, as with any media player. The release package lists FFmpeg and its licence in its `licenses` folder.
 
 ## LLVM libc++abi (Apache-2.0 with LLVM exceptions)
 
