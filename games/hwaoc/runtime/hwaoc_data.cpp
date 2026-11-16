@@ -11,7 +11,7 @@ const game::Info& data_info() {
         game::Info g;
         game::fill_identity(g);
         g.frame_update = addr::kFrameTask;     // the KIDS frame task: once per update (docs/FRAMESTEP.md)
-        g.settings = &settings_section();       // [display] game_step
+        g.settings = &play::hwaoc_settings_section();   // [display] game_step, hud, dynamic_resolution
         return g;
     }();
     return info;

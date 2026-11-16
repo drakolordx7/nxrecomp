@@ -136,5 +136,10 @@ constexpr uint64_t kTick_86d050 = 0x86d050;   // interval as float: s1
 constexpr uint64_t kTick_8c2f00 = 0x8c2f00;   // interval as float: s1
 constexpr uint64_t kTick_f9da94 = 0xf9da94;   // interval as float: s0
 constexpr uint64_t kTick_fa8418 = 0xfa8418;   // interval as float: s1
+constexpr uint64_t kDeviceCreate = 0x17c5b60;   // KTGL device create (x0 device, x1 config: u32 width, height, ..., [8] width, [9] height)
+constexpr uint64_t kSceneSize = 0x8d9b14;   // str x8, [x20, #0x368]: x8 = scene width | height << 32
+constexpr uint64_t kDynResScaleA = 0x85d108;   // ucvtf s0, s0 (s0 = the dynamic scene height)
+constexpr uint64_t kDynResScaleB = 0x85e240;   // ucvtf s0, s0 (the same in the second view setup)
+constexpr uint64_t kCameraProjection = 0x18a1080;   // KTGL camera projection update (x0 camera)
 
 }

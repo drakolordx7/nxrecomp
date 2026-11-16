@@ -12,7 +12,13 @@ target_compile_features(nxrt_game_hwaoc_data PUBLIC cxx_std_20)
 add_library(nxrt_game_hwaoc_core STATIC "${_hw}/hwaoc_core.cpp" "${_hw}/hwaoc_timestep.cpp")
 target_link_libraries(nxrt_game_hwaoc_core PUBLIC nxrt_game_hwaoc_data nxrt)
 
+# the launcher's Resolution tab (neutral page API, nxrt/game/launcher_ui.h); only the launcher exe links it
+if(TARGET nxrt_launcher_core AND NOT NXRT_LAUNCHER_LEGACY)
+    add_library(nxrt_game_hwaoc_launcher STATIC "${_hw}/hwaoc_launcher.cpp")
+    target_link_libraries(nxrt_game_hwaoc_launcher PUBLIC nxrt_game_hwaoc_data)
+endif()
+
 if(TARGET nxrt_gfx)
-    add_library(nxrt_game_hwaoc STATIC "${_hw}/hwaoc_game.cpp")
+    add_library(nxrt_game_hwaoc STATIC "${_hw}/hwaoc_game.cpp" "${_hw}/hwaoc_play.cpp" "${_hw}/hwaoc_display.cpp")
     target_link_libraries(nxrt_game_hwaoc PUBLIC nxrt_game_hwaoc_core nxrt_gfx)
 endif()
