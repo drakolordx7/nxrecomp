@@ -36,6 +36,7 @@
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/os/fs.h"
 #include "nxrt/os/fault.h"
 #include "nxrt/os/process.h"

@@ -16,6 +16,17 @@
         "NXRT_TEST_TRACE": "none",
         "NXRT_DIAG_WATCHDOG_SECONDS": "90"
       }
+    },
+    "movies": {
+      "_": "fresh save, the first-run screen, then the movies play to the end into the prologue battle (tt/movies.tt)",
+      "seconds": 200,
+      "env": {
+        "NXRT_TEST_SCRIPT": "{game}/tt/movies.tt",
+        "NXRT_TEST_FRAME_SOURCE": "tick",
+        "NXRT_TEST_OUT": "{run}/tt",
+        "NXRT_TEST_TRACE": "none",
+        "NXRT_DIAG_WATCHDOG_SECONDS": "90"
+      }
     }
   }
 }
