@@ -1,0 +1,167 @@
+Hyrule Warriors: Age of Calamity PC (test build 0.1.0): controls, settings and help
+===================================================================================
+
+This file goes with README.txt. It lists every default key, the settings you can change, the known problems and
+the fixes for common problems.
+
+
+Controls
+--------
+
+Keyboard and mouse (the launcher's Keyboard tab and the F1 page change any of these). The keyboard and mouse
+controls have only been tested by script, not by a person at a keyboard, so tell us what feels wrong.
+
+  Move                  W A S D
+  Camera                Mouse (raw mouse counts turn the camera; the game's own pitch limits apply)
+  Attack                Left button
+  Strong attack         Right button
+  Jump                  Space
+  Dodge                 Left Shift
+  Lock on               Q or middle button
+  Unique action         E or mouse side button 5
+  Sheikah Slate runes   Left Ctrl or mouse side button 4
+  Special attack        F
+  Camera reset          C
+  Items / d-pad         Arrow keys, or keys 1 (up), 2 (right), 3 (down), 4 (left); the mouse wheel steps items
+  Pause                 Escape
+  Map                   Tab or M
+  Menus: confirm        Return, Keypad Enter, Space or left button
+  Menus: back           Escape, Backspace or right button
+  Menus: L and R        Q and E, or Page Up and Page Down
+  Menus: ZL, ZR, X, Y   Z, C, F and R
+  Menus: minus          Tab
+
+Always available:
+
+  F1                    Settings page (the same settings as the launcher)
+  F2                    Frame rate counter on or off
+  Alt+Enter             Borderless fullscreen on or off
+
+Controllers: Xbox, PlayStation and Switch controllers work through SDL, together with the keyboard. The launcher
+(Controller tab) changes the button layout and what each controller button presses. The Switch layout the game
+uses is: left stick moves, right stick turns the camera, Y attack, X strong attack, A jump, B dodge, ZL lock on,
+ZR unique action, L special attack, R held with a face button for a Sheikah Slate rune, + pause, - map.
+
+Button icons in the game follow what you use: keyboard and mouse icons until you touch a controller, then that
+controller's icons. The d-pad and stick icons stay the Switch ones. The mouse does not move a pointer in the menus
+yet: use the keys.
+
+
+The launcher
+------------
+
+hwaoc_launcher needs no installer. It reads and writes controls.ini in the game folder, the same file the game's
+F1 page edits. Tabs: Display (window mode and size, frame rate limit, VSync, field of view), Controls (mouse
+sensitivity, inverting, button icon style), Keyboard (every action with up to two keys or mouse buttons;
+double-click a key, then press the new key; Delete clears it), Controller, and Extras.
+
+"Game folder" at the top shows where the game files are. "Change..." points the launcher at another folder
+(remembered in hwaoc_launcher.ini). "Run setup again..." starts the setup tool. Save keeps your changes, Play saves
+and starts the game, and Reset to defaults restores the factory value of every setting.
+
+There is no "Prepare shaders" step in this build. The game builds its graphics pipelines while you play, so
+expect short stutters when something new appears on screen, mostly in the first minutes.
+
+Resolution and aspect ratio follow the window: any size works, ultrawide included, and the HUD stays in a 16:9
+frame in the middle (controls.ini [display] hud = stretched fills the width instead). The frame rate limit is in
+the Display tab. The game's logic runs at 30 and is advanced by real elapsed time, so a higher limit gives a
+smoother picture, not a faster game.
+
+
+Game folder
+-----------
+
+After setup the folder holds, next to the program:
+
+  exefs\             the game program, copied from the dump unchanged
+  romfs\             the game's data files, with the 1.4.1 update applied
+  aoc\               the DLC you gave to setup, one folder for each
+  shader_cache\      translated shaders
+  shader_cache.hwaocshc  the shader pack that came with the release (about 220 MB). Setup unpacks it into
+                     shader_cache, so you can delete it afterwards. Keep it if you might run setup again after
+                     deleting shader_cache.
+  hwaoc.ini          settings the game reads from this folder (setup writes it)
+  controls.ini       your controls and display settings
+  setup.log          what happened, every run
+  hwaoc.log          the last game run (hwaoc.log.prev is the one before)
+
+You can also run setup from a command line: hwaoc_setup_cli --input game.nsp --input update.nsp --input dlc.nsp
+--out D:\HWAOC (add --keys prod.keys if it cannot find your keys). Exit codes: 0 done, 1 error, 2 the dump cannot
+be used, 3 keys problem, 4 disk problem, 5 stopped (run it again). Setup accepts game version 1.4.1 only, made of
+the base game and the 1.4.1 update (title id 01002B00111A2800). It refuses the base game alone and any other
+update.
+
+Settings in the files (each line is optional; a missing key keeps its default):
+
+- controls.ini [display] window_mode: windowed (default), borderless or exclusive. vsync: 0 or 1. fps_cap: frame
+  limit, 0 for none. The launcher's Display tab sets these.
+- controls.ini [mouse] yaw and pitch: radians per mouse count. invert_y, invert_x: 1 flips the camera.
+- hwaoc.ini [gfx] gpu: discrete or integrated, or part of a GPU's name, if the wrong card is chosen.
+- hwaoc.ini [audio] volume: 0.0 to 1.0. device: default, or part of an output device's name.
+- hwaoc.ini [fs] save_dir: the folder for save data.
+
+hwaoc.ini is a plain text file. Setup rewrites it each time it runs while the first line (a comment that starts
+with "; Written by hwaoc_setup") is there, so delete that line once you have edits you want to keep.
+
+
+Known issues in this test build
+-------------------------------
+
+- Shaders: the translated shader pack that comes with this build was made from the opening battle only. The
+  game's own shaders are machine code for the Switch's GPU, and this build cannot translate a shader it does not
+  know on your PC. Past the opening battle, characters, enemies or effects may be invisible or missing. A line
+  like "no translated shader for block ..." in hwaoc.log shows it happened. Please report where.
+- The first start can sit on a black or frozen screen for 14 to 94 seconds, in about one start out of three. It
+  goes on by itself: wait up to two minutes before closing it. A hwaoc_freeze.txt next to the program is the
+  game's own report of such a stall; attach it to your report.
+- The title screen only shows after you have played the opening battle. A fresh save always goes first-run
+  screen, movies, opening battle. Later parts of the game were not played.
+- Ultrawide (21:9): the minimap's enemy markers sit to the right of the minimap. The rest of the HUD is centered.
+  16:10 and narrower were only looked at at 1280x800.
+- Keyboard and mouse have only been tested by script. The mouse cannot point at menu entries yet. The Unique
+  action and Special attack keys were set from earlier notes and are not checked against the game's tutorial.
+- Linux has only been run with software rendering (lavapipe) in a test box, never on a real GPU.
+- Only the NVIDIA GeForce RTX 3080 has been tried. AMD and Intel GPUs have not.
+- Windows limits a file's full path to 260 characters. Keep the game folder path under about 180 characters.
+
+
+Troubleshooting
+---------------
+
+- The launcher says "No game files in this folder yet" but you ran setup into another folder: press "Change..."
+  and pick that folder.
+- Setup: "No Switch keys file was found": press Browse next to "Your Switch keys" and pick prod.keys.
+- Setup: "The keys cannot open this dump": your keys are older than the game. Dump the keys again from a console
+  on recent firmware.
+- Setup: "This version of the game is not supported": give the base game together with the 1.4.1 update. Setup
+  names the version it found and the one it wants.
+- Setup: "different game" or "This is an update": use the dump of this game, with its base game.
+- Setup: "The dump is damaged": copy the file again or dump the game again. Setup checks the dump's own hashes
+  before it writes anything.
+- Setup: "Not enough free space": free some space or pick another drive. Running setup again is safe.
+- Setup stopped halfway (power cut, crash, Stop button): run it again. Finished files are kept.
+- Setup: "Shader pack not found": hwaoc_setup wants shader_cache.hwaocshc in its own folder. Unpack the whole
+  release, not single files.
+- A message about Vulkan, "cannot create the game window", or a black window: the game needs a Vulkan 1.3
+  driver. Update the graphics driver. On a laptop, make sure the game uses the discrete GPU.
+- A missing DLL (Windows) or shared library (Linux) message: the astcdec and FFmpeg files must stay in the same
+  folder as the program. Unpack the whole release.
+- The picture stays black in the battle: the shaders were not installed. Run setup again and send setup.log.
+- No sound: the game plays through your default output device. Set [audio] device in hwaoc.ini to part of the
+  name of the device you use. The list of devices is in hwaoc.log.
+- The game does not start at all: look for hwaoc_fatal.txt, hwaoc_crash.txt and hwaoc_freeze.txt next to the program.
+
+
+Reporting a bug
+---------------
+
+Open an issue at https://github.com/drakolordx7/nxrecomp/issues and attach:
+
+- hwaoc.log from the run where it happened (and setup.log for a setup problem), plus hwaoc_crash.txt,
+  hwaoc_fatal.txt or hwaoc_freeze.txt if one exists
+- your GPU, driver version and operating system, and the version number (top right of the launcher, the
+  "hwaoc 0.1.0" line near the top of hwaoc.log)
+- a screenshot for a visual bug, and where in the game you were
+
+setup.log contains no key data. Never post prod.keys, title.keys or your dump, and never attach files taken from
+the game.

@@ -277,6 +277,8 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
                     if (x.build_id == bb) hint = " The base game alone is supported: leave the update out.";
             } catch (const Error&) {
             }
+        } else {
+            hint = " If this is the base game, give its supported update together with it.";
         }
         fail(Fail::Input, "This version of the game is not supported: found %s (program build id %s). Supported: %s.%s",
              found.c_str(), d->build_id.c_str(), supported_text(sup).c_str(), hint.c_str());

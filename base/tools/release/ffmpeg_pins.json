@@ -18,11 +18,11 @@
     "archive": "ffmpeg-n8.1.3-27-g8dca1586f4-linux64-lgpl-shared-8.1.tar.xz",
     "archive_sha256": "493e89a48da02b9a7d217b60f7f60c3c917c9bed73459d8a106e5e987da082ef",
     "files": {
-      "libavcodec.so.62": null,
-      "libavformat.so.62": null,
-      "libavutil.so.60": null,
-      "libswresample.so.6": null,
-      "libswscale.so.9": null
+      "libavcodec.so.62": "61db7aceebe3245af23f799724c0eeea678fc7db745aa6cacf55388bbba123d9",
+      "libavformat.so.62": "70305663690586350b557d2a26d65af255ef02e1e3207eb71cc70be1922e20ab",
+      "libavutil.so.60": "1cb4abc6b565e244dbc02c90c63b01c07d15960beef098093c96f1cfc9f89c2c",
+      "libswresample.so.6": "9026c4e6d1355f3071397cf09b2f1650911565923dba9df19da1371e7abf0191",
+      "libswscale.so.9": "38d7313366d60b4aa23b8d2dd9a9cca99515f3a5c97df86d18cb89ba0f356c3e"
     }
   }
 }

@@ -709,7 +709,12 @@ def _elf_info(data):
     return info
 
 
-def elf_problems(rel, data, a, shipped):
+# The pinned FFmpeg libraries (exact file name and SHA-256 of ffmpeg_pins.json) may need these two system libraries, which every glibc system has.
+# Nothing else is let through, and our own files never get this.
+FFMPEG_SYSTEM_NEEDED = ('libgcc_s.so.1', 'libmvec.so.1')
+
+
+def elf_problems(rel, data, a, shipped, sha=None):
     """The Linux audit of one shipped ELF file (see the module doc); `shipped`: names of the libraries in the release root."""
     info = elf_info(data)
     if info is None:
@@ -719,6 +724,8 @@ def elf_problems(rel, data, a, shipped):
         a.problems.append('elf-arch: %s is not an x86-64 file (e_machine %d)' % (rel, info['machine']))
     for name in info['needed']:
         if name in shipped or any(re.fullmatch(rx, name) for rx in ELF_ALLOWED_NEEDED):
+            continue
+        if name in FFMPEG_SYSTEM_NEEDED and sha is not None and ffmpeg_pinned(rel, sha):
             continue
         shared_cxx = name in ('libstdc++.so.6', 'libgcc_s.so.1')
         a.problems.append('elf-needed: %s needs %s%s' % (rel, name, ' (the C++ runtime must be linked statically)' if shared_cxx else ''))
@@ -821,7 +828,7 @@ def audit_files(refs, expected, deny, leak=False, strict=False):
                 crt_problems(rel, f.read(), a, sha)
         elif PLATFORM == LINUX and head[:4] == ELF_MAGIC:
             with ref.opener() as f:
-                elf_problems(rel, f.read(), a, shipped)
+                elf_problems(rel, f.read(), a, shipped, sha)
     if MANIFEST in have and manifest_text is not None:
         for p in manifest_problems(manifest_text, a.hashes):
             a.problems.append(p)

@@ -157,7 +157,7 @@ class Driver:
         if a.release:
             extra += ['-DNXRT_RELEASE=ON', '-DNXRT_FFMPEG_BUNDLED=ON']
         src = os.path.join(self.base, 'runtime', 'cmake', 'game_project')
-        ok = self.configure('%s exe' % self.game, src, out, extra, a.clean) and self.build('%s exe' % self.game, out, [self.game])
+        ok = self.configure('%s exe' % self.game, src, out, extra, a.clean) and self.build('%s exe' % self.game, out, [self.game] + ([self.game + '_launcher'] if a.release else []))
         print('exe: ' + out)
         if not ok:
             self.failed.append('game exe build')

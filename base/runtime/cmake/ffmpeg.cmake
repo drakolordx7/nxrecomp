@@ -85,5 +85,7 @@ function(nxrt_ffmpeg_deploy target)
     if(NX_PLATFORM STREQUAL "linux")
         set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "$ORIGIN")
         set_property(TARGET ${target} APPEND PROPERTY INSTALL_RPATH "$ORIGIN")
+        # Linking the libraries by full path would put their build folder into the exe's run path: only $ORIGIN stays (the release audit refuses the rest).
+        set_property(TARGET ${target} PROPERTY BUILD_WITH_INSTALL_RPATH ON)
     endif()
 endfunction()
