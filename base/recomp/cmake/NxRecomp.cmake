@@ -23,11 +23,13 @@
 # expects the runtime to provide the functions ctx.h declares as runtime-provided. Public include directories: recomp/include
 # (nxrecomp/ctx.h) and the generated folder (funcs.h).
 #
-# Flags: clang-cl, C++20, no exceptions/RTTI, -fno-strict-aliasing and -ffp-contract=off (smo-recomp's: lifted FP must not be
-# fused or reordered), -mcx16 (128-bit exclusives are cmpxchg16b), /O1. Functions longer than OPTNONE_INSNS (program.py) are
+# Flags (cmake/nx_platform.cmake NX_GUEST_COMPILE_OPTIONS, clang-cl or clang spelling): C++20, no exceptions/RTTI, -fno-strict-aliasing and
+# -ffp-contract=off (smo-recomp's: lifted FP must not be fused or reordered), -mcx16 (128-bit exclusives are cmpxchg16b), O1.
+# The libraries are <id>_<module>.lib on Windows and lib<id>_<module>.a on Linux. Functions longer than OPTNONE_INSNS (program.py) are
 # emitted with NX_OPTNONE by the lifter itself (bounded compile time).
 
 set(NXRECOMP_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." CACHE PATH "recomp/ folder")
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/nx_platform.cmake")   # NX_PLATFORM, NX_GUEST_COMPILE_OPTIONS
 include("${CMAKE_CURRENT_LIST_DIR}/nx_toolchain.cmake")     # NX_PYTHON
 
 file(GLOB NX_LIFTER_SOURCES CONFIGURE_DEPENDS
@@ -93,7 +95,7 @@ function(nxrecomp_add_module target)
   add_library(${target} STATIC ${shard_srcs} "${A_OUTDIR}/module_${A_NAME}.cpp")
   target_include_directories(${target} PUBLIC "${NXRECOMP_ROOT}/include" "${A_OUTDIR}")
   target_compile_features(${target} PUBLIC cxx_std_20)
-  target_compile_options(${target} PRIVATE /O1 /w /EHs-c- /GR- -fno-strict-aliasing -ffp-contract=off -mcx16)   # clang-cl
+  target_compile_options(${target} PRIVATE ${NX_GUEST_COMPILE_OPTIONS})
 endfunction()
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/nx_game.cmake")
@@ -139,5 +141,5 @@ function(nxrecomp_add_game)
   add_executable(${G_ID}_link_check EXCLUDE_FROM_ALL "${NXRECOMP_ROOT}/testing/link_check.cpp" "${NXRECOMP_ROOT}/testing/rt_stubs.cpp")
   target_include_directories(${G_ID}_link_check PRIVATE "${gen}")
   target_link_libraries(${G_ID}_link_check PRIVATE ${libs})
-  target_compile_options(${G_ID}_link_check PRIVATE /w /EHs-c- /GR-)
+  target_compile_options(${G_ID}_link_check PRIVATE ${NX_GUEST_NOEH_OPTIONS})
 endfunction()

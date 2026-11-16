@@ -68,3 +68,20 @@ The manifest's optional `setup_hook` names a CMake file in the game folder (Metr
 tool (texture list, shader program scan, ini lines); without it the tool only extracts. The file formats the runtime and the setup tool share
 (BC7 cache key, `programs.bin`, shader pack) are `formats/nx_formats.h` and its Python twin, checked by `python formats/test_formats.py`.
 
+## Linux x86-64 (work in progress)
+
+One codebase for both systems: `cmake/nx_platform.cmake` is the one place that decides the platform (`NX_PLATFORM` win32|linux) and holds every
+flag, library name and source folder that differs; a build rule is fixed once. Platform code lives in `runtime/src/os/win32` and
+`runtime/src/os/posix` (see `runtime/include/nxrt/os/README.md`), picked up by a glob.
+
+Toolchain: clang (23), lld, Ninja, CMake 3.25+ (`cmake/linux-clang.cmake`; `NX_CLANG_VERSION` picks another LLVM version). SDL3 is built from
+source: X11, Wayland, PipeWire, Pulse and ALSA development packages (and `libxtst-dev`) must be installed.
+
+```
+cmake --preset linux-release -B <dir> [-DNXRT_GAME_DIRS="<games/mpr>;<games/ap>"]        (run in base/runtime; -DNXRT_DEPS_DIR=<archive cache>)
+ninja -C <dir> -k 0
+```
+
+The same presets exist in `runtime/cmake/game_project` (game exe; `-DGAME_LIB_DIR` holds `lib<id>_<module>.a`) and `recomp/game` (lift). The
+launcher is Windows only for now (`NXRT_BUILD_LAUNCHER`). The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy
+in `NX/build/textures/linux`. Much of the runtime still includes `windows.h` and does not compile on Linux yet.

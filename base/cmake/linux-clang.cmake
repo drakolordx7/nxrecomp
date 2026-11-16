@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Toolchain file for Linux x86-64: LLVM clang + lld + Ninja (the Windows counterpart is recomp/cmake/clang-cl.cmake). Used by the Linux presets
+# (cmake/linux-presets.json). The compiler and linker flags themselves live in cmake/nx_platform.cmake.
+#   NX_CLANG_VERSION   suffix of the versioned LLVM tools (clang-23, clang++-23, ld.lld-23): env or -D; empty = unversioned names, else the newest found
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+if(NOT NX_CLANG_VERSION AND DEFINED ENV{NX_CLANG_VERSION})
+    set(NX_CLANG_VERSION "$ENV{NX_CLANG_VERSION}")
+endif()
+if(NX_CLANG_VERSION)
+    set(_nx_cc_names clang-${NX_CLANG_VERSION})
+    set(_nx_cxx_names clang++-${NX_CLANG_VERSION})
+    set(_nx_lld_names ld.lld-${NX_CLANG_VERSION})
+else()
+    set(_nx_cc_names clang-23 clang-22 clang-21 clang-20 clang-19 clang-18 clang)
+    set(_nx_cxx_names clang++-23 clang++-22 clang++-21 clang++-20 clang++-19 clang++-18 clang++)
+    set(_nx_lld_names ld.lld-23 ld.lld-22 ld.lld-21 ld.lld-20 ld.lld-19 ld.lld-18 ld.lld)
+endif()
+find_program(NX_C_COMPILER NAMES ${_nx_cc_names} REQUIRED)
+find_program(NX_CXX_COMPILER NAMES ${_nx_cxx_names} REQUIRED)
+find_program(NX_LLD NAMES ${_nx_lld_names} REQUIRED)
+set(CMAKE_C_COMPILER "${NX_C_COMPILER}")
+set(CMAKE_CXX_COMPILER "${NX_CXX_COMPILER}")
+foreach(_k EXE SHARED MODULE)
+    set(CMAKE_${_k}_LINKER_FLAGS_INIT "--ld-path=${NX_LLD}")
+endforeach()
+include("${CMAKE_CURRENT_LIST_DIR}/../recomp/cmake/nx_toolchain.cmake")   # NX_SCCACHE
+if(NX_SCCACHE)
+    set(CMAKE_C_COMPILER_LAUNCHER "${NX_SCCACHE}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${NX_SCCACHE}")
+endif()

@@ -1,0 +1,8 @@
+{
+  "version": 6,
+  "include": [ "../../cmake/linux-presets.json" ],
+  "configurePresets": [
+    { "name": "linux-release", "inherits": "linux-release-base", "toolchainFile": "${sourceDir}/../../cmake/linux-clang.cmake", "binaryDir": "${sourceDir}/../../../build/linux/lift" },
+    { "name": "linux-debug", "inherits": "linux-debug-base", "toolchainFile": "${sourceDir}/../../cmake/linux-clang.cmake", "binaryDir": "${sourceDir}/../../../build/linux-debug/lift" }
+  ]
+}

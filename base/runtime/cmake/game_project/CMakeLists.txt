@@ -3,13 +3,12 @@
 # recomp/scripts/build_game.cmd into <game dir>/work/build/<id>). Names, ids and modules come from <game dir>/game.json.
 #   pwsh runtime\scripts\build_game_exe.ps1 -Game <games\<id>> [-Release] [-Version 0.1.0]      exact commands: docs/BUILD.md
 # Nothing derived from the game lives here: the libraries are imported from the work folder, the NSOs are read at run time.
+#   Linux: cmake --preset linux-release -B <dir> -DNX_GAME_DIR=<games/<id>> -DGAME_LIB_DIR=<dir with lib<id>_<module>.a>
 cmake_minimum_required(VERSION 3.25)
-# Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
-# included, uses it; the libraries this one links must agree (a mismatch is a link error).
-if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
+# The platform (before project(): the static MSVC runtime is set there on Windows)
+include("${CMAKE_CURRENT_LIST_DIR}/../../../cmake/nx_platform.cmake")
 project(nx_game_exe C CXX)
+nx_platform_setup()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -20,7 +19,7 @@ if(NOT NX_GAME_DIR)
     message(FATAL_ERROR "set NX_GAME_DIR to the game folder (games/<id>)")
 endif()
 nx_game_read("${NX_GAME_DIR}" G)
-set(GAME_LIB_DIR "${G_DIR}/work/build/${G_ID}" CACHE PATH "folder with the lifted libraries <id>_<module>.lib (recomp/scripts/build_game.cmd)")
+set(GAME_LIB_DIR "${G_DIR}/work/build/${G_ID}" CACHE PATH "folder with the lifted libraries <id>_<module>.lib, Linux lib<id>_<module>.a (recomp/scripts/build_game.cmd)")
 # The release version ("0.1.0"; "dev" for local builds): the game log, --version, the launcher window and the file properties show it.
 set(GAME_VERSION "dev" CACHE STRING "release version shown by the game exe and the launcher")
 
