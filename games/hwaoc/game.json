@@ -1,0 +1,34 @@
+{
+  "id": "hwaoc",
+  "title": "Hyrule Warriors: Age of Calamity",
+  "product": "Hyrule Warriors: Age of Calamity PC",
+  "short_title": "Age of Calamity",
+  "title_id": "01002B00111A2000",
+  "save_folder": "HWAOCRecomp",
+  "entry_module": "rtld",
+  "languages": ["Japanese", "AmericanEnglish", "French", "German", "Italian", "Spanish", "Korean", "Dutch", "BritishEnglish", "CanadianFrench",
+                "LatinAmericanSpanish", "SimplifiedChinese", "TraditionalChinese"],
+  "builds": [
+    {"build_id": "E5F275B5D0889899E55DE1A164EEF060D547B0A8", "version": "1.4.1"}
+  ],
+  "modules": [
+    {"name": "main", "base": "0x7100000000", "shards": 128, "sites": "recomp/main.sites"},
+    {"name": "sdk", "base": "0x7500000000", "shards": 32},
+    {"name": "subsdk0", "base": "0x7600000000", "shards": 24},
+    {"name": "rtld", "base": "0x7700000000", "shards": 1}
+  ],
+  "files": {
+    "exe": "hwaoc.exe",
+    "setup": "hwaoc_setup.exe",
+    "setup_cli": "hwaoc_setup_cli.exe",
+    "launcher": "hwaoc_launcher.exe",
+    "launcher_ini": "hwaoc_launcher.ini",
+    "game_ini": "hwaoc.ini",
+    "log": "hwaoc.log",
+    "shader_pack": "shader_cache.hwaocshc"
+  },
+  "release": {
+    "prefix": "hwaoc",
+    "setup_glob": "hwaoc_setup*.exe"
+  }
+}

@@ -1,0 +1,17 @@
+# sub-repos and local-only folders
+/refs/
+/toolchain/
+/game/
+/work/
+/publish/
+*.i64
+*.idb
+*.nsp
+*.xci
+*.nsz
+*.keys
+*.log
+nxrt.log*
+__pycache__/
+
+# local tooling (never published)
