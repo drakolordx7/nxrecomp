@@ -144,7 +144,7 @@ message box titles from `info().title`. Its own names (`mpr.log`, `mpr.ini`, `--
 | `src/pipeline.h` expected title id and build id | (a) | `src/game.h` `GameProfile`, defined in `src/games/mpr.cpp` (`MPRS_GAME`); the options still default to them and the CLI can still override |
 | `src/pipeline.cpp` "v1.0.0" in messages and the display version, `mpr.ini`, `shader_cache.mprshc` | (a) | `game().version`, `game_ini`, `shader_pack` |
 | `src/container.cpp` "Setup needs Metroid Prime Remastered", "original v1.0.0" | (a) | `game().title`, `game().version` |
-| `gui/main_win32.cpp` window title, "Metroid Prime Remastered found" | (a) | `game().product`, `game().title` |
+| `gui/main_ui.cpp` window title, "Metroid Prime Remastered found" | (a) | `game().product`, `game().title` |
 | `gui/setup.rc`, `setup.manifest` | (c) | not moved (gap) |
 | texture cache, program scan (`texcache.cpp`, `programs.cpp`, `pak.cpp`, `txtr.cpp`): Retro pak/TXTR formats | (c) | not moved (gap) |
 

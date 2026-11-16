@@ -6,57 +6,32 @@
 # game). Without a game the base builds nxrt_launcher, unbranded and without resources.
 # With the option off this file defines nothing, and the games' `if(TARGET nxrt_launcher_core)` guards skip their launcher pages.
 #
-# NXRT_LAUNCHER_LEGACY (Windows only, off): build the old plain Win32 launcher (apps/launcher/legacy, include/nxrt/game/launcher_ui_win32.h, a game's
-# pages in its legacy/ folder) in place of the new one, under the same names, until the new one is confirmed. The game's launcher pages library
-# is the one that matches (a game's CMake picks its files by NXRT_LAUNCHER_LEGACY).
 option(NXRT_BUILD_LAUNCHER "Build the launcher (apps/launcher, SDL3 + Dear ImGui) and its tests" ON)
-if(NX_PLATFORM STREQUAL "win32")
-    option(NXRT_LAUNCHER_LEGACY "Build the old Win32 launcher instead of the new SDL3 + Dear ImGui one" OFF)
-else()
-    set(NXRT_LAUNCHER_LEGACY OFF)
-endif()
 if(NOT NXRT_BUILD_LAUNCHER)
     return()
 endif()
 set(NXRT_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/apps/launcher" CACHE INTERNAL "the launcher sources (nxrt_add_launcher runs in the game project)")
 
-if(NXRT_LAUNCHER_LEGACY)
-    # ---- the old Win32 launcher ------------------------------------------------------------------------------------------------------
-    set(NXRT_LAUNCHER_SRC "${NXRT_LAUNCHER_DIR}/legacy")
-    add_library(nxrt_launcher_core STATIC
-        "${NXRT_LAUNCHER_SRC}/keymap_win.cpp" "${NXRT_LAUNCHER_SRC}/game_info.cpp" "${NXRT_LAUNCHER_SRC}/bindings_edit.cpp"
-        "${NXRT_LAUNCHER_DIR}/pad_capture.cpp")
-    target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_SRC}" "${NXRT_LAUNCHER_DIR}")
-    target_compile_definitions(nxrt_launcher_core PUBLIC UNICODE _UNICODE NXRT_LAUNCHER_LEGACY=1)
-    target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings shell32 shlwapi)
-    set(NXRT_LAUNCHER_APP_SOURCES
-        "${NXRT_LAUNCHER_SRC}/main.cpp" "${NXRT_LAUNCHER_SRC}/ui.cpp" "${NXRT_LAUNCHER_SRC}/page_display.cpp" "${NXRT_LAUNCHER_SRC}/page_controls.cpp"
-        "${NXRT_LAUNCHER_SRC}/page_keys.cpp" "${NXRT_LAUNCHER_SRC}/page_pad.cpp" "${NXRT_LAUNCHER_SRC}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
-    set(NXRT_LAUNCHER_APP_LIBS comctl32 uxtheme dwmapi shlwapi ole32 shell32 CACHE INTERNAL "")
-    set(NXRT_LAUNCHER_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher_legacy")
-else()
-    # ---- the SDL3 + Dear ImGui launcher ---------------------------------------------------------------------------------------------------
-    include("${NX_BASE_DIR}/ui/nxui.cmake")
-    # The few host calls the launcher makes (processes, files, time) without the rest of the runtime.
-    add_library(nxrt_launcher_os STATIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/process.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/fs.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/time.cpp")
-    target_include_directories(nxrt_launcher_os PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
-    target_compile_features(nxrt_launcher_os PUBLIC cxx_std_20)
-    nx_platform_target_system_libs(nxrt_launcher_os)
+# ---- the SDL3 + Dear ImGui launcher ---------------------------------------------------------------------------------------------------
+include("${NX_BASE_DIR}/ui/nxui.cmake")
+# The few host calls the launcher makes (processes, files, time) without the rest of the runtime.
+add_library(nxrt_launcher_os STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/process.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/fs.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/time.cpp")
+target_include_directories(nxrt_launcher_os PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_compile_features(nxrt_launcher_os PUBLIC cxx_std_20)
+nx_platform_target_system_libs(nxrt_launcher_os)
 
-    add_library(nxrt_launcher_core STATIC
-        "${NXRT_LAUNCHER_DIR}/form.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp" "${NXRT_LAUNCHER_DIR}/pad_capture.cpp")
-    # The public SDK (include/nxrt/game) is all a game module sees; the base's own tests reach the private headers through their own INCLUDES.
-    target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_DIR}")
-    target_compile_definitions(nxrt_launcher_core PUBLIC NXRT_EXE_SUFFIX="${NX_EXE_SUFFIX}")
-    target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings nxrt_launcher_os)
-    set(NXRT_LAUNCHER_APP_SOURCES
-        "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/page_view.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
-        "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
-    set(NXRT_LAUNCHER_APP_LIBS nxui CACHE INTERNAL "")
-    set(NXRT_LAUNCHER_TEST_DIR "")
-endif()
+add_library(nxrt_launcher_core STATIC
+    "${NXRT_LAUNCHER_DIR}/form.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp" "${NXRT_LAUNCHER_DIR}/pad_capture.cpp")
+# The public SDK (include/nxrt/game) is all a game module sees; the base's own tests reach the private headers through their own INCLUDES.
+target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_DIR}")
+target_compile_definitions(nxrt_launcher_core PUBLIC NXRT_EXE_SUFFIX="${NX_EXE_SUFFIX}")
+target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings nxrt_launcher_os)
+set(NXRT_LAUNCHER_APP_SOURCES
+    "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/page_view.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
+    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
+set(NXRT_LAUNCHER_APP_LIBS nxui CACHE INTERNAL "")
 
 # nxrt_add_launcher(<target> [VERSION <v>] [GAME_LIB <lib> REGISTER <function>] [RC <file>] [OUTPUT_NAME <name>] [OUTPUT_DIR <dir>])
 # The launcher exe. VERSION is the release version it shows ("dev" for local builds). GAME_LIB/REGISTER: the game module's data library and
@@ -78,7 +53,7 @@ function(nxrt_add_launcher target)
         target_link_libraries(${target} PRIVATE ${A_GAME_LIB})
         target_compile_definitions(${target} PRIVATE NXRT_LAUNCHER_GAME_REGISTER=${A_REGISTER})
     endif()
-    if(NX_PLATFORM STREQUAL "win32" AND NOT NXRT_LAUNCHER_LEGACY)
+    if(NX_PLATFORM STREQUAL "win32")
         target_link_options(${target} PRIVATE /ENTRY:mainCRTStartup)   # a GUI program with main(), not WinMain
     endif()
     if(A_RC AND NX_PLATFORM STREQUAL "win32")
@@ -95,15 +70,7 @@ endfunction()
 nxrt_add_launcher(nxrt_launcher)
 
 if(NXRT_BUILD_TESTS)
-    if(NXRT_LAUNCHER_LEGACY)
-        # the old launcher: its key-message test, and the SDL pad test the two launchers share
-        file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${NXRT_LAUNCHER_TEST_DIR}/*.cpp")
-        list(APPEND NXRT_LAUNCHER_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/test_pad_capture.cpp")
-        set(_nxrt_launcher_test_inc "${NXRT_LAUNCHER_DIR}/legacy" "${NXRT_LAUNCHER_DIR}")
-    else()
-        file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/*.cpp")
-        set(_nxrt_launcher_test_inc "${NXRT_LAUNCHER_DIR}")
-    endif()
+    file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/*.cpp")
     nxrt_add_test_exe(nxrt_launcher_tests SOURCES ${NXRT_LAUNCHER_TEST_SOURCES} LINK nxrt_launcher_core nxrt_fixture_game
-                      REGISTER nxrt_register_fixture_game INCLUDES ${_nxrt_launcher_test_inc})
+                      REGISTER nxrt_register_fixture_game INCLUDES "${NXRT_LAUNCHER_DIR}")
 endif()

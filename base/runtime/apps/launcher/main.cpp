@@ -3,12 +3,19 @@
 // keyboard, controller, button prompts, frame rate counter), shows whether the game files are in place, starts the setup tool
 // for the first-time setup, and starts the game exe (<id>).
 //   <id>_launcher [--game <folder>] [--page <n>] [--auto-play] [--auto-prepare] [--no-prepare] [--game-args "<text>"] [--setup-args "<text>"]
+//                 [--auto-save] [--auto-report <file>] [--auto-press setup|play]
 // --game uses that game folder for this run (the folder saved in <id>_launcher.ini is left alone). --page opens that tab.
 // --auto-play saves nothing, opens no window and starts the game at once (for scripted runs). --game-args adds text to
 // the command line of the game exe; --setup-args does the same for the setup tool (scripted runs).
 // --auto-prepare runs the shader preparation without asking: at startup when a window is open, and before the game when
 // --auto-play is given (then it waits for it). --no-prepare never asks and never starts the preparation on its own; the
 // Extras tab button still works.
+// Automation for scripted runs (the test scripts and the release smoke gate), the same on every system:
+// --auto-save opens no window: it loads controls.ini through the pages and saves it back, exactly what Save does (exit 1 when that fails).
+// --auto-report <file> opens no window: it writes what the launcher knows about the game folder to <file> as key=value lines (state=ready
+// or not_ready, summary, settings=missing|ok|broken, pages, ...). It runs after --auto-save when both are given.
+// --auto-press setup|play opens the window and presses that button once on the first frame, as a click would.
+// NXUI_SHOT=<file.bmp> (base/ui) saves a picture of the window and ends the run; --page picks the tab it shows.
 //
 // The same program on Windows and Linux: SDL3 and Dear ImGui (nxui), pages written against nxrt/game/launcher_ui.h.
 
@@ -86,6 +93,9 @@ struct CmdLine {
     bool auto_play = false;
     bool auto_prepare = false;
     bool no_prepare = false;
+    bool auto_save = false;
+    std::string auto_report;
+    std::string auto_press;   // "setup" or "play"
 };
 
 CmdLine parse_cmdline(int argc, char** argv) {
@@ -100,6 +110,9 @@ CmdLine parse_cmdline(int argc, char** argv) {
         else if (a == "--auto-play") c.auto_play = true;
         else if (a == "--auto-prepare") c.auto_prepare = true;
         else if (a == "--no-prepare") c.no_prepare = true;
+        else if (a == "--auto-save") c.auto_save = true;
+        else if (a == "--auto-report" && more) c.auto_report = argv[++i];
+        else if (a == "--auto-press" && more) c.auto_press = argv[++i];
     }
     return c;
 }
@@ -154,6 +167,9 @@ private:
 
     void say(const std::string& text) { ui_.message({product_name(), text, {}, {}}); }
     void load_game_dir(const std::string& dir);
+    void read_settings();
+    int run_headless(const std::string& dir);
+    bool write_report(const std::string& path);
     bool store_and_save(bool quiet);
     void refresh_status();
     void choose_folder();
@@ -172,6 +188,7 @@ private:
     nxui::App ui_;
     std::vector<std::unique_ptr<Page>> pages_;
     int want_page_ = -1;               // --page: select this tab on the first frame
+    bool press_pending_ = false;       // --auto-press: the button is pressed on the first frame
 
     std::string game_dir_;
     bool game_dir_pinned_ = false;     // --game: do not write the folder to <id>_launcher.ini
@@ -215,13 +232,17 @@ void App::build_pages() {
     }
 }
 
-void App::load_game_dir(const std::string& dir) {
-    game_dir_ = dir;
+void App::read_settings() {
     std::string err;
     Settings s;
     const bool ok = load_settings(controls_path(game_dir_), &s, &err);
     cur_ = s;
     settings_broken_ = !ok && !err.empty();
+}
+
+void App::load_game_dir(const std::string& dir) {
+    game_dir_ = dir;
+    read_settings();
     dirty_ = false;
     for (auto& p : pages_) p->load(cur_);
     refresh_status();
@@ -237,6 +258,7 @@ bool App::store_and_save(bool quiet) {
     std::string err;
     if (!save_settings(path, cur_, &err)) {
         if (!quiet) say("The settings could not be saved:\n\n" + err);
+        else std::fprintf(stderr, "The settings could not be saved: %s\n", err.c_str());
         return false;
     }
     settings_broken_ = false;
@@ -664,6 +686,11 @@ void App::draw_bottom() {
 }
 
 void App::frame() {
+    if (press_pending_) {
+        press_pending_ = false;
+        if (cmd_.auto_press == "setup") run_setup();
+        else play();
+    }
     poll_jobs();
     ui_.keep_awake(busy() || cap_.active || padcap_.active);
     for (auto& p : pages_) p->state_changed();
@@ -675,6 +702,47 @@ void App::frame() {
     draw_capture();
 }
 
+// --auto-save / --auto-report: no window. The pages are built and loaded the way the window does it, so a save here is what Save writes.
+int App::run_headless(const std::string& dir) {
+    game_dir_ = dir;
+    game_dir_pinned_ = true;
+    read_settings();
+    build_pages();
+    refresh_status();
+    int rc = 0;
+    if (cmd_.auto_save && !store_and_save(true)) rc = 1;
+    if (!cmd_.auto_report.empty() && !write_report(cmd_.auto_report)) rc = 1;
+    return rc;
+}
+
+bool App::write_report(const std::string& path) {
+    const char* settings = settings_broken_ ? "broken" : (fs::exists(controls_path(game_dir_)) ? "ok" : "missing");
+    std::string t;
+    auto line = [&](const char* k, const std::string& v) { t += std::string(k) + "=" + v + "\n"; };
+    auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
+    line("version", version_text());
+    line("product", product_name());
+    line("game_dir", game_dir_);
+    line("state", game_.ready() ? "ready" : "not_ready");
+    line("setup_finished", flag(game_.setup_finished));
+    line("exefs", flag(game_.exefs));
+    line("romfs", flag(game_.romfs));
+    line("textures", flag(game_.textures));
+    line("shaders", flag(game_.shaders));
+    line("shader_prepare_available", flag(shader_prepare_available(game_dir_)));
+    line("shader_prepare_done", flag(shader_prepare_done(game_dir_)));
+    line("settings", settings);
+    line("pages", std::to_string(pages_.size()));
+    line("summary", game_.summary());
+    std::FILE* f = fs::fopen(path, "wb");
+    if (!f) {
+        std::fprintf(stderr, "The report file could not be written: %s\n", path.c_str());
+        return false;
+    }
+    const bool ok = std::fwrite(t.data(), 1, t.size(), f) == t.size();
+    return std::fclose(f) == 0 && ok;
+}
+
 int App::run() {
     LauncherConfig cfg;
     load_launcher_config(launcher_config_path(), &cfg);
@@ -683,6 +751,8 @@ int App::run() {
         dir = cmd_.game;
         game_dir_pinned_ = true;
     }
+
+    if (cmd_.auto_save || !cmd_.auto_report.empty()) return run_headless(dir);
 
     if (cmd_.auto_play) {
         SDL_Init(0);
@@ -711,15 +781,10 @@ int App::run() {
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);   // for the "Controller: Connected" line; the pad box opens it again (counted)
 
     game_dir_ = dir;
-    {
-        std::string err;
-        Settings s;
-        const bool ok = load_settings(controls_path(game_dir_), &s, &err);
-        cur_ = s;
-        settings_broken_ = !ok && !err.empty();
-    }
+    read_settings();
     build_pages();
     want_page_ = std::clamp(cmd_.page, 0, static_cast<int>(pages_.size()) - 1);
+    press_pending_ = cmd_.auto_press == "setup" || cmd_.auto_press == "play";
     refresh_status();
     if (cmd_.auto_prepare && !cmd_.no_prepare && shader_prepare_available(game_dir_) && !shader_prepare_done(game_dir_))
         start_prepare(false, false, PrepOrigin::automatic);

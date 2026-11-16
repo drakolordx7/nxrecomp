@@ -158,5 +158,5 @@ foreach(isa avx2 sse4.1 sse2)
     add_custom_command(TARGET nx_setup_cli POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:nx_setup_cli>)
 endforeach()
-# The setup window (gui/gui.cmake): SDL3 + Dear ImGui (base/ui) on both systems; NXS_GUI_LEGACY (Windows) builds the old Win32 window instead.
+# The setup window (gui/gui.cmake): SDL3 + Dear ImGui (base/ui) on both systems.
 include(${CMAKE_CURRENT_SOURCE_DIR}/gui/gui.cmake)

@@ -137,7 +137,9 @@ built in `nx-linux`, ctest, a headless boot when the exe exists; it prints `LINU
 
 ### Launcher and setup window
 
-The launcher (`NXRT_BUILD_LAUNCHER`, on by default) is the same SDL3 + Dear ImGui program on both systems (`base/ui` is the shell, `runtime/apps/launcher` the pages; the setup window `tools/setup/gui/main_ui.cpp` uses the same shell); `-DNXRT_LAUNCHER_LEGACY=ON` (Windows) builds the old Win32 launcher in its place, `-DNXS_GUI_LEGACY=ON` the old setup window. With `NXUI_SHOT=<file.bmp>` set, either program saves its window after a few frames and exits (a test aid; `SDL_VIDEO_DRIVER=offscreen SDL_RENDER_DRIVER=software` runs it headless).
+The launcher (`NXRT_BUILD_LAUNCHER`, on by default) is the same SDL3 + Dear ImGui program on both systems (`base/ui` is the shell, `runtime/apps/launcher` the pages; the setup window `tools/setup/gui/main_ui.cpp` uses the same shell). With `NXUI_SHOT=<file.bmp>` set, either program saves its window after a few frames and exits (a test aid; `SDL_VIDEO_DRIVER=offscreen SDL_RENDER_DRIVER=software` runs it headless).
+
+Test and automation aids (the same on both systems; the scripts `games/mpr/launcher_e2e.py` and `cleanroom_rc.py` use them, no window messages are involved): `<id>_launcher --auto-save` loads `controls.ini` through the pages and saves it back without a window; `--auto-report <file>` writes the folder state (`state=ready|not_ready`, `summary`, `settings`, `pages`, ...) as `key=value` lines without a window; `--auto-press setup|play` presses that button on the first frame; `--page <n>` opens a tab; `--game`, `--setup-args`, `--game-args`, `--auto-play`, `--auto-prepare` and `--no-prepare` as before. The setup window takes `--auto-start --exit-when-done --no-message-box`.
 
 The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy in `NX/build/textures/linux`.
 
