@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// A small Horizon kernel: result codes, kernel objects and the handle table, guest threads (one Win32 thread per guest thread,
+// A small Horizon kernel: result codes, kernel objects and the handle table, guest threads (one host thread per guest thread,
 // console core model), and the 19.2 MHz system tick. The SVC dispatcher lives in svc.h, IPC sessions in ipc.h.
 // Pattern from SuperMarioWonderRecomp runtime/src/kernel.cpp + kernel_state.h (MIT) and smo-recomp runtime/os/os_threads.c (GPL-3.0).
 #pragma once
@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "nxrt/abi.h"
+#include "nxrt/os/sync.h"
+#include "nxrt/os/thread.h"
 
 namespace nxrt::kernel {
 
@@ -97,8 +99,8 @@ struct KThread : KObject {
     int prio = 44;                      // HOS priority 0 (highest) .. 63; applications use 28..59 (nn::os 0..31 = prio - 28)
     int ideal_core = 0;                 // console core 0..2 the thread prefers (-1 none)
     uint64_t core_mask = 1;             // console cores the thread may run on (bit n = core n)
-    void* host_handle = nullptr;
-    uint32_t host_tid = 0;
+    os::ThreadHandle host_handle = nullptr;   // owned (os::thread_close in the destructor)
+    os::ThreadId host_tid = 0;
     bool started = false, cancel_sync = false;
     std::atomic<bool> exited{false};    // written under the kernel lock (thread_mark_exited), read under the thread-list lock and elsewhere
     std::atomic<bool> aged{false};      // starvation guard (starvation_guard.cpp): the host leaves this thread ready, so its yields keep the processor
@@ -107,7 +109,7 @@ struct KThread : KObject {
     uint32_t wait_result = 0;
     uint64_t wait_mutex = 0, wait_key = 0, wait_addr = 0;
     uint32_t wait_tag = 0;
-    void* cv_storage[1] = {nullptr};    // CONDITION_VARIABLE is pointer sized: this thread's own wake-up (kernel_sync.cpp)
+    os::CondVar cv;                     // this thread's own wake-up, waited on with the kernel lock (kernel_sync.cpp)
     std::weak_ptr<KThread> self;
     ~KThread() override;
     ObjType type() const override { return ObjType::Thread; }
@@ -149,7 +151,7 @@ struct SchedInfo {
     int slot = -1;                       // processor slot taken (-1: shared / explicit mask)
 };
 SchedInfo sched_info();                  // initialises on first use
-int sched_host_priority(int hos_prio);   // THREAD_PRIORITY_* for a HOS priority under the model (nn::os prio = hos - 28)
+os::PriorityBand sched_host_priority(int hos_prio);   // the host band for a HOS priority under the model (nn::os prio = hos - 28)
 // Which console core the calling thread is on right now: the core of its host processor, or its ideal core.
 int sched_current_core();
 // Process priority class. [sched] priority_class = auto | high | above_normal | normal (default auto: high when `interactive`, i.e. a person
@@ -157,9 +159,10 @@ int sched_current_core();
 // background CPU load a woken thread waits a full scheduler quantum for its processor (debug 180, S10 measurements: 100 to 200 ms
 // stalls and half the frame rate with every core busy); a class above the background keeps the hand-overs immediate.
 void sched_set_process_priority(bool interactive);
-void sched_apply(KThread& t);
+void sched_apply(KThread& t);              // places the running host thread of `t` (affinity and band of the console core model)
+os::ThreadPlacement sched_placement(const KThread& t);   // the same placement, to give a host thread at its start
 std::string sync_wait_report();          // the guest threads blocked in WaitForAddress / process-wide keys / mutex hand-overs, with the word each waits on (watchdog dump; never blocks)
-void yield_host();                       // the calling thread offers its processor to another ready thread (SwitchToThread), unless the starvation guard aged it
+void yield_host();                       // the calling thread offers its processor to another ready thread (os::thread_yield), unless the starvation guard aged it
 void starvation_guard_start();           // ages guest threads the host leaves ready but never runs (starvation_guard.cpp, [sched] starvation_guard)
 void starvation_guard_stop();
 uint64_t starvation_boosts();
@@ -168,7 +171,7 @@ void install_busy_mutex_hle();           // nn::os::LockBusyMutex as host code t
 void sched_reset_for_tests();            // forget the slot and re-read the config at the next sched_info()
 
 // ---- time --------------------------------------------------------------------------------------------------------------------
-uint64_t system_tick();                  // 19.2 MHz, from QueryPerformanceCounter
+uint64_t system_tick();                  // 19.2 MHz, from the host monotonic clock (os::monotonic_ns)
 constexpr uint64_t kTickHz = 19200000;
 void sleep_ns(int64_t ns);               // high-resolution sleep; <= 0 yields
 uint64_t wall_filetime();                // 100 ns units since 1601-01-01: the host clock, or the provider's (time.cpp)

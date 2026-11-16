@@ -2,8 +2,6 @@
 // nn::os::LockBusyMutex as host code (src/kernel/busy_mutex.cpp, debug note 240): it takes the lock the way the SDK does (lock word at +0x10,
 // disable count in TLS+0x100) and gives the processor away while it waits, so a waiter that outranks the holder on the same host
 // processor cannot starve it. Guest threads never run CHECK: results go through atomics and the test thread checks after the join.
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -13,6 +11,8 @@
 #include "nxrt/abi.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 #include "test_framework.h"
 NXTEST_GROUP(kernel_busy_mutex)
 
@@ -36,6 +36,16 @@ void call_lock(Fake& f) {
     fn(&c);
 }
 
+// Pins the calling thread to the host processors in `cpu` and puts it in `band` (boost off: the console model's setting).
+void place_self(uint64_t cpu, nxrt::os::PriorityBand band, bool no_boost) {
+    nxrt::os::ThreadPlacement p;
+    p.affinity = cpu;
+    p.set_band = true;
+    p.band = band;
+    p.disable_boost = no_boost;
+    nxrt::os::thread_place(nxrt::os::thread_current(), p);
+}
+
 }  // namespace
 
 NXTEST(uncontended_lock_sets_word_and_disable_count) {
@@ -53,10 +63,9 @@ NXTEST(waiter_that_outranks_the_holder_does_not_starve_it) {
     Fake f;
     f.word()->store(1);                                       // held by the other thread
     std::atomic<bool> holder_ready{false}, acquired{false}, holder_done{false};
-    const DWORD_PTR cpu = DWORD_PTR(1) << 1;                  // both threads on host processor 1
+    const uint64_t cpu = 1ull << 1;                  // both threads on host processor 1
     std::thread holder([&] {
-        SetThreadAffinityMask(GetCurrentThread(), cpu);
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+        place_self(cpu, nxrt::os::PriorityBand::Lowest, false);
         holder_ready = true;
         volatile uint64_t sink = 0;
         const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
@@ -64,16 +73,14 @@ NXTEST(waiter_that_outranks_the_holder_does_not_starve_it) {
         f.word()->store(0, std::memory_order_release);
         holder_done = true;
     });
-    while (!holder_ready) Sleep(1);
+    while (!holder_ready) nxrt::os::sleep_ms(1);
     std::thread waiter([&] {
-        SetThreadAffinityMask(GetCurrentThread(), cpu);
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-        SetThreadPriorityBoost(GetCurrentThread(), TRUE);
+        place_self(cpu, nxrt::os::PriorityBand::Highest, true);
         call_lock(f);
         acquired = true;
     });
     const auto t0 = std::chrono::steady_clock::now();
-    while (!acquired && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10)) Sleep(5);
+    while (!acquired && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10)) nxrt::os::sleep_ms(5);
     const bool got = acquired.load();
     if (!got) f.word()->store(0);                             // let the threads end whatever happens
     holder.join();
@@ -113,26 +120,23 @@ NXTEST(wfe_spin_loop_does_not_starve_the_thread_it_waits_for) {
     alignas(64) static std::atomic<uint32_t> flag;
     flag.store(0);
     std::atomic<bool> done{false}, spinner_started{false};
-    const DWORD_PTR cpu = DWORD_PTR(1) << 1;
+    const uint64_t cpu = 1ull << 1;
     std::thread releaser([&] {
-        SetThreadAffinityMask(GetCurrentThread(), cpu);
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
-        while (!spinner_started) Sleep(1);
+        place_self(cpu, nxrt::os::PriorityBand::Lowest, false);
+        while (!spinner_started) nxrt::os::sleep_ms(1);
         volatile uint64_t sink = 0;
         const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
         while (std::chrono::steady_clock::now() < until) sink += 1;     // 300 ms of work before it can release the spinner
         flag.store(1, std::memory_order_release);
     });
     std::thread spinner([&] {
-        SetThreadAffinityMask(GetCurrentThread(), cpu);
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-        SetThreadPriorityBoost(GetCurrentThread(), TRUE);
+        place_self(cpu, nxrt::os::PriorityBand::Highest, true);
         spinner_started = true;
         while (flag.load(std::memory_order_relaxed) == 0) nx_spin_hint(1);
         done = true;
     });
     const auto t0 = std::chrono::steady_clock::now();
-    while (!done && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10)) Sleep(5);
+    while (!done && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(10)) nxrt::os::sleep_ms(5);
     const bool got = done.load();
     if (!got) flag.store(1);
     releaser.join();

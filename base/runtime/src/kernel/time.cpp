@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // System tick and high-resolution sleep. Pattern from smo-recomp runtime/os/os_threads.c sleep_ns and SuperMarioWonderRecomp kernel.cpp system_tick.
-#include <windows.h>
-
 #include <atomic>
 
-#include "nxrt/hires_wait.h"
 #include "nxrt/kernel.h"
+#include "nxrt/os/time.h"
 
 namespace nxrt::kernel {
 
@@ -24,27 +22,18 @@ bool rng_provided_fill(void* p, size_t n) {
 uint64_t wall_filetime() {
     if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->wall_filetime)
         if (uint64_t v; cp->wall_filetime(&v)) return v;
-    FILETIME ft;
-    GetSystemTimePreciseAsFileTime(&ft);
-    return (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+    return os::wall_filetime();
 }
 
 uint64_t system_tick() {
     if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->tick)
         if (uint64_t vt; cp->tick(&vt)) return vt;
-    static const uint64_t freq = [] {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        return static_cast<uint64_t>(f.QuadPart);
-    }();
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    const uint64_t v = static_cast<uint64_t>(c.QuadPart);
-    return (v / freq) * kTickHz + (v % freq) * kTickHz / freq;
+    const uint64_t ns = os::monotonic_ns();
+    return (ns / 1000000000ull) * kTickHz + (ns % 1000000000ull) * kTickHz / 1000000000ull;
 }
 
-// SleepThread takes nanoseconds and the console timer is good to a few microseconds. Sleep() counts whole milliseconds on a
-// 1 ms or 15.6 ms grid, so the wait runs on a high-resolution waitable timer (hires_wait.h); Sleep() is only the fallback.
+// SleepThread takes nanoseconds and the console timer is good to a few microseconds. Windows' Sleep() counts whole milliseconds on a
+// 1 ms or 15.6 ms grid, so os::sleep_ns waits on a high-resolution timer; the whole-millisecond sleep is only its fallback.
 // A zero or negative span yields, as on the console.
 void sleep_ns(int64_t ns) {
     if (const ClockProvider* cp = g_clock.load(std::memory_order_acquire); cp && cp->sleep && cp->sleep(ns)) return;
@@ -52,7 +41,7 @@ void sleep_ns(int64_t ns) {
         yield_host();
         return;
     }
-    if (!hires_wait_ns(ns)) Sleep(static_cast<DWORD>((ns + 999999) / 1000000));
+    os::sleep_ns(ns);
 }
 
 }

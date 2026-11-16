@@ -25,6 +25,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/svc.h"
 #include "test_framework.h"
 
@@ -54,10 +55,15 @@ bool slept_at_least(double ms_elapsed, double want_ms) { return ms_elapsed >= wa
 
 // Joins host threads, but no longer than 20 s overall. A deadlock ends the whole run with exit code 3 instead of hanging CTest.
 void join_host(const char* test, std::vector<std::thread>& ts) {
-    std::vector<HANDLE> hs;
-    for (auto& t : ts) hs.push_back(static_cast<HANDLE>(t.native_handle()));
-    if (!hs.empty() && WaitForMultipleObjects(static_cast<DWORD>(hs.size()), hs.data(), TRUE, 20000) == WAIT_TIMEOUT) watchdog_abort(test);
+    std::atomic<bool> joined{false};
+    std::thread dog([&] {
+        const auto limit = Clock::now() + std::chrono::milliseconds(20000);
+        while (!joined.load() && Clock::now() < limit) sleep_ms(5);
+        if (!joined.load()) watchdog_abort(test);
+    });
     for (auto& t : ts) t.join();
+    joined = true;
+    dog.join();
 }
 
 void join_guest(const char* test, uint32_t handle) {
@@ -177,18 +183,17 @@ uint32_t guest_spawn(int prio, int core, std::function<void()> body) {
 // a quantum of 15 ms or more per hand-over, and 20000 hand-overs outlast the 20 s watchdog (docs/debug/180.md). The tests therefore
 // run in the high priority class: even the lowest of the six guest bands then ranks above normal load. The class is raised in begin()
 // and put back in end(), so it covers exactly the time the kernel is under test.
-DWORD g_saved_class = 0;
+bool g_priority_raised = false;
 
 void raise_priority() {
-    if (g_saved_class) return;
-    g_saved_class = GetPriorityClass(GetCurrentProcess());
-    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    if (g_priority_raised) return;
+    g_priority_raised = nxrt::os::process_set_priority(nxrt::os::ProcessPriority::High);
 }
 
 void restore_priority() {
-    if (!g_saved_class) return;
-    SetPriorityClass(GetCurrentProcess(), g_saved_class);
-    g_saved_class = 0;
+    if (!g_priority_raised) return;
+    nxrt::os::process_set_priority(nxrt::os::ProcessPriority::Normal);
+    g_priority_raised = false;
 }
 
 void begin() {

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Guest threads: one Win32 thread per guest thread, a TLS region per thread (TPIDRRO_EL0) and a static TLS block (TPIDR_EL0).
+// Guest threads: one host thread per guest thread, a TLS region per thread (TPIDRRO_EL0) and a static TLS block (TPIDR_EL0).
 // Pattern from SuperMarioWonderRecomp runtime/src/kernel.cpp new_thread / thread_main (MIT, Copyright (c) 2026 BelmanteGu) and
 // smo-recomp runtime/os/os_threads.c (thread start with console core model).
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <functional>
+#include <mutex>
+#include <shared_mutex>
 
 #include "kernel_internal.h"
 #include "nxrt/config.h"
@@ -18,11 +18,13 @@
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
+#include "nxrt/os/sync.h"
+#include "nxrt/os/thread.h"
 
 namespace nxrt::kernel {
 namespace {
 
-SRWLOCK g_list_lock = SRWLOCK_INIT;
+os::SharedMutex g_list_lock;
 std::vector<std::shared_ptr<KThread>> g_all;
 std::atomic<uint64_t> g_next_id{0x50};
 thread_local KThread* t_self = nullptr;
@@ -34,10 +36,8 @@ struct GaugeHook {
     ~GaugeHook() { nxrt::gauge_unregister(name); }
 };
 GaugeHook gauge_threads("kernel.threads", [] {
-    AcquireSRWLockShared(&g_list_lock);
-    const int64_t n = static_cast<int64_t>(g_all.size());
-    ReleaseSRWLockShared(&g_list_lock);
-    return n;
+    std::shared_lock<os::SharedMutex> lk(g_list_lock);
+    return static_cast<int64_t>(g_all.size());
 });
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
@@ -48,13 +48,13 @@ void finish_current(KThread& t) {
     t_self = nullptr;
 }
 
-DWORD WINAPI host_thread_main(LPVOID param) {
+void host_thread_main(void* param) {
     auto* box = static_cast<std::shared_ptr<KThread>*>(param);
     t_keepalive = std::move(*box);
     delete box;
     KThread* t = t_keepalive.get();
     t_self = t;
-    t->host_tid = GetCurrentThreadId();
+    t->host_tid = os::thread_current_id();
     log_set_thread_name(t->name.c_str());
     diag_register_thread(t->name.c_str(), &t->ctx, t->id);
     NXLOG_D("thread", "%s (id 0x%llx) starts at 0x%llx, core mask %llx prio %d", t->name.c_str(), (unsigned long long)t->id,
@@ -63,7 +63,6 @@ DWORD WINAPI host_thread_main(LPVOID param) {
     NXLOG_D("thread", "%s returned from its entry function", t->name.c_str());
     finish_current(*t);
     t_keepalive.reset();
-    return 0;
 }
 
 }
@@ -72,7 +71,7 @@ DWORD WINAPI host_thread_main(LPVOID param) {
 // so there is nothing to give back. They cost 0x1000 bytes plus the block (at least 0x1000) per thread ever created, a
 // few hundred KiB an hour at the S34 soak rate, against the 4 GiB kernel region.
 KThread::~KThread() {
-    if (host_handle) CloseHandle(static_cast<HANDLE>(host_handle));
+    os::thread_close(host_handle);
 }
 
 KThread* current_thread() { return t_self; }
@@ -115,12 +114,11 @@ uint32_t thread_create(const ThreadParams& p) {
         NXLOG_E("thread", "handle table full");
         return 0;
     }
-    AcquireSRWLockExclusive(&g_list_lock);
+    std::lock_guard<os::SharedMutex> list_lock(g_list_lock);
     // Thread objects of threads that have exited and that nothing else refers to (the game closed the handle, the host thread dropped its
     // own reference) leave the list. Without this the list grew by every thread the game ever made (S34 soak: 60 an hour).
     g_all.erase(std::remove_if(g_all.begin(), g_all.end(), [](const std::shared_ptr<KThread>& o) { return o->exited && o.use_count() == 1; }), g_all.end());
     g_all.push_back(t);
-    ReleaseSRWLockExclusive(&g_list_lock);
     return t->handle;
 }
 
@@ -128,28 +126,24 @@ uint32_t thread_start(uint32_t handle) {
     auto t = handle_as<KThread>(handle);
     if (!t) return kInvalidHandle;
     {
-        AcquireSRWLockExclusive(&detail::g_k);
+        std::lock_guard<os::Mutex> lk(detail::g_k);
         const bool already = t->started;
         t->started = true;
-        ReleaseSRWLockExclusive(&detail::g_k);
         if (already) return kInvalidState;
     }
-    SIZE_T stack = 0;
     int64_t mb = config_get_int("threads", "host_stack_mb", 64);
-    stack = static_cast<SIZE_T>((mb < 1 ? 64 : mb) << 20);
+    os::ThreadOptions opt;
+    opt.stack_bytes = static_cast<size_t>((mb < 1 ? 64 : mb) << 20);
+    opt.name = t->name.c_str();
+    opt.placement = sched_placement(*t);
     auto* box = new std::shared_ptr<KThread>(t);
-    DWORD tid = 0;
-    HANDLE h = CreateThread(nullptr, stack, host_thread_main, box, CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION, &tid);
-    if (!h) {
-        NXLOG_E("thread", "CreateThread failed for %s (error %lu)", t->name.c_str(), GetLastError());
+    // host_handle and host_tid are in place before the new thread runs its first line
+    if (!os::thread_start(opt, host_thread_main, box, &t->host_handle, &t->host_tid)) {
+        NXLOG_E("thread", "starting the host thread failed for %s", t->name.c_str());
         delete box;
         t->started = false;
         return kOutOfResource;
     }
-    t->host_handle = h;
-    t->host_tid = tid;
-    sched_apply(*t);
-    ResumeThread(h);
     return kOk;
 }
 
@@ -160,8 +154,7 @@ void thread_exit() {
         finish_current(*t);
         t_keepalive.reset();     // the object may die here: t must not be touched again
     }
-    ExitThread(0);
-    for (;;) {}
+    os::thread_exit();
 }
 
 uint32_t main_thread_adopt(uint64_t stack_size, const char* name) {
@@ -176,16 +169,14 @@ uint32_t main_thread_adopt(uint64_t stack_size, const char* name) {
     uint32_t h = thread_create(p);
     if (!h) return 0;
     auto t = handle_as<KThread>(h);
-    HANDLE real = nullptr;
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &real, THREAD_ALL_ACCESS, FALSE, 0);
-    t->host_handle = real;
-    t->host_tid = GetCurrentThreadId();
+    t->host_handle = os::thread_adopt_current();
+    t->host_tid = os::thread_current_id();
     t->started = true;
     t_self = t.get();
     log_set_thread_name(t->name.c_str());
     diag_register_thread(t->name.c_str(), &t->ctx, t->id);
     sched_apply(*t);
-    NXLOG_I("thread", "host thread %lu is now the guest main thread (stack 0x%llx..0x%llx)", GetCurrentThreadId(), (unsigned long long)stack, (unsigned long long)p.stack_top);
+    NXLOG_I("thread", "host thread %u is now the guest main thread (stack 0x%llx..0x%llx)", static_cast<unsigned>(os::thread_current_id()), (unsigned long long)stack, (unsigned long long)p.stack_top);
     return h;
 }
 
@@ -194,18 +185,15 @@ void main_thread_release() {
 }
 
 std::vector<std::shared_ptr<KThread>> threads() {
-    AcquireSRWLockShared(&g_list_lock);
-    auto v = g_all;
-    ReleaseSRWLockShared(&g_list_lock);
-    return v;
+    std::shared_lock<os::SharedMutex> lk(g_list_lock);
+    return g_all;
 }
 
 bool thread_join(uint32_t handle, uint32_t timeout_ms) {
     auto t = handle_as<KThread>(handle);
     if (!t || !t->started) return true;
-    HANDLE h = static_cast<HANDLE>(t->host_handle);
-    if (!h) return true;
-    return WaitForSingleObject(h, timeout_ms) == WAIT_OBJECT_0;
+    if (!t->host_handle) return true;
+    return os::thread_join(t->host_handle, timeout_ms);
 }
 
 uint64_t thread_count_running() {
@@ -248,12 +236,13 @@ void kernel_reset() {
     std::vector<std::shared_ptr<KThread>> all = threads();
     for (auto& t : all) {
         if (t.get() == t_self || !t->started || t->exited || !t->host_handle) continue;
-        if (WaitForSingleObject(static_cast<HANDLE>(t->host_handle), 5000) != WAIT_OBJECT_0)
+        if (!os::thread_join(t->host_handle, 5000))
             NXLOG_E("thread", "kernel_reset: %s is still running after 5 s", t->name.c_str());
     }
-    AcquireSRWLockExclusive(&g_list_lock);
-    g_all.clear();
-    ReleaseSRWLockExclusive(&g_list_lock);
+    {
+        std::lock_guard<os::SharedMutex> lk(g_list_lock);
+        g_all.clear();
+    }
     handles_reset();
     detail::sync_reset();
 }

@@ -14,8 +14,6 @@
 // priority one included), then goes back to its band. Healthy runs never starve for that long, so nothing changes for them: it is an escape from
 // starvation, not a second scheduler. Config: [sched] starvation_guard (default on), [sched] starvation_ms (default 300, time a thread must
 // have been ready and unscheduled before it is boosted).
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -31,30 +29,10 @@
 #include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "nxrt/os/thread.h"
 
 namespace nxrt::kernel {
 namespace {
-
-// The parts of the NtQuerySystemInformation(SystemProcessInformation) records that are used (stable since Windows Vista, x64 layout).
-struct ThreadRec {
-    LARGE_INTEGER kernel_time, user_time, create_time;
-    ULONG wait_time;
-    PVOID start_address;
-    PVOID unique_process, unique_thread;
-    LONG priority, base_priority;
-    ULONG context_switches, thread_state, wait_reason;
-};
-static_assert(sizeof(ThreadRec) == 0x50, "SYSTEM_THREAD_INFORMATION");
-struct ProcRec {
-    ULONG next_entry_offset, number_of_threads;
-    uint8_t body[0x100 - 8];
-};
-static_assert(sizeof(ProcRec) == 0x100, "SYSTEM_PROCESS_INFORMATION");
-constexpr ULONG kStateReady = 1;
-constexpr ULONG kStateStandby = 3;
-constexpr int kSystemProcessInformation = 5;
-
-using NtQuery = LONG(NTAPI*)(ULONG, PVOID, ULONG, PULONG);
 
 struct Guard {
     std::mutex m;
@@ -70,7 +48,7 @@ Guard& guard() {
 }
 
 struct Seen {
-    ULONG switches = 0;
+    uint32_t switches = 0;
     int ready_polls = 0;
     int boost_polls = 0;
     bool boosted = false;
@@ -79,40 +57,18 @@ constexpr int kBoostPolls = 3;
 
 void loop(Guard* g, int poll_ms, int need_polls) {
     log_set_thread_name("starve-guard");
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);        // it must run when everything else is starved
-    NtQuery nt_query = reinterpret_cast<NtQuery>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation"));
-    if (!nt_query) return;
-    std::vector<uint8_t> buf(1 << 20);
+    os::thread_set_band(os::thread_current(), os::PriorityBand::Highest);        // it must run when everything else is starved
+    std::vector<os::ThreadRunState> states;
+    std::unordered_map<uint32_t, const os::ThreadRunState*> by_tid;
     std::unordered_map<uint32_t, Seen> seen;
-    const uint32_t pid = GetCurrentProcessId();
     for (;;) {
         {
             std::unique_lock<std::mutex> lk(g->m);
             if (g->cv.wait_for(lk, std::chrono::milliseconds(poll_ms), [g] { return g->stop; })) return;
         }
-        ULONG need = 0;
-        LONG st = nt_query(kSystemProcessInformation, buf.data(), static_cast<ULONG>(buf.size()), &need);
-        if (st < 0) {
-            if (need > buf.size()) buf.resize(need + (need >> 3));
-            continue;
-        }
-        const ThreadRec* mine = nullptr;
-        ULONG nthreads = 0;
-        for (size_t off = 0;;) {
-            const ProcRec* p = reinterpret_cast<const ProcRec*>(buf.data() + off);
-            // UniqueProcessId sits at offset 0x50 of SYSTEM_PROCESS_INFORMATION on x64
-            const uint64_t ppid = *reinterpret_cast<const uint64_t*>(buf.data() + off + 0x50);
-            if (ppid == pid) {
-                mine = reinterpret_cast<const ThreadRec*>(buf.data() + off + sizeof(ProcRec));
-                nthreads = p->number_of_threads;
-                break;
-            }
-            if (!p->next_entry_offset) break;
-            off += p->next_entry_offset;
-        }
-        if (!mine) continue;
-        std::unordered_map<uint32_t, const ThreadRec*> by_tid;
-        for (ULONG i = 0; i < nthreads; i++) by_tid[static_cast<uint32_t>(reinterpret_cast<uintptr_t>(mine[i].unique_thread))] = &mine[i];
+        if (!os::thread_run_states(states)) continue;
+        by_tid.clear();
+        for (const os::ThreadRunState& r : states) by_tid[r.tid] = &r;
         for (const std::shared_ptr<KThread>& t : threads()) {
             if (!t->started || t->exited || !t->host_handle || !t->host_tid) continue;
             auto it = by_tid.find(t->host_tid);
@@ -121,21 +77,21 @@ void loop(Guard* g, int poll_ms, int need_polls) {
                 s = Seen{};
                 continue;
             }
-            const ThreadRec& r = *it->second;
-            const bool ready = r.thread_state == kStateReady || r.thread_state == kStateStandby;
-            if (ready && r.context_switches == s.switches) s.ready_polls++;
+            const os::ThreadRunState& r = *it->second;
+            const bool ready = r.ready;
+            if (ready && r.switches == s.switches) s.ready_polls++;
             else s.ready_polls = ready ? 1 : 0;
-            s.switches = r.context_switches;
-            HANDLE h = static_cast<HANDLE>(t->host_handle);
+            s.switches = r.switches;
+            os::ThreadHandle h = t->host_handle;
             if (s.boosted) {
                 if (++s.boost_polls >= kBoostPolls) {
-                    SetThreadPriority(h, sched_host_priority(t->prio));
+                    os::thread_set_band(h, sched_host_priority(t->prio));
                     t->aged = false;
                     s.boosted = false;
                     s.ready_polls = 0;
                 }
             } else if (s.ready_polls >= need_polls) {
-                SetThreadPriority(h, THREAD_PRIORITY_TIME_CRITICAL);
+                os::thread_set_band(h, os::PriorityBand::TimeCritical);
                 t->aged = true;                                 // its yields keep the processor while it is aged
                 s.boosted = true;
                 s.boost_polls = 0;
@@ -153,6 +109,10 @@ void loop(Guard* g, int poll_ms, int need_polls) {
 void starvation_guard_start() {
     if (!config_get_bool("sched", "starvation_guard", true)) {
         NXLOG_I("sched", "[sched] starvation_guard = 0: guest threads the host leaves ready are not aged");
+        return;
+    }
+    if (!os::thread_run_states_supported()) {
+        NXLOG_I("sched", "starvation guard not started: this host does not report thread states (its scheduler does not starve a ready thread)");
         return;
     }
     Guard& g = guard();

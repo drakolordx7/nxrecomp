@@ -5,8 +5,6 @@
 
 #include "nxrt/sync.h"
 
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -26,7 +24,7 @@ using Threads = std::vector<std::thread>;
 using Clock = std::chrono::steady_clock;
 
 constexpr int64_t kMs = 1000000;
-constexpr DWORD kWatchdogMs = 20000;
+constexpr int kWatchdogMs = 20000;
 
 // Guest addresses are never dereferenced; each test takes its own slots.
 uint64_t A(uint64_t slot) { return 0x71000000A0ull + slot * 0x100; }
@@ -40,15 +38,18 @@ void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms
 // Joins every thread, but no longer than 20 s overall. On timeout the whole test process is ended with exit code 3, so a
 // deadlock fails the run instead of hanging CTest.
 void join_watched(const char* test, Threads& ts) {
-    std::vector<HANDLE> handles;
-    for (auto& t : ts) handles.push_back(static_cast<HANDLE>(t.native_handle()));
-    if (!handles.empty() &&
-        WaitForMultipleObjects(static_cast<DWORD>(handles.size()), handles.data(), TRUE, kWatchdogMs) == WAIT_TIMEOUT) {
+    std::atomic<bool> joined{false};
+    std::thread dog([&] {
+        const auto limit = Clock::now() + std::chrono::milliseconds(kWatchdogMs);
+        while (!joined.load() && Clock::now() < limit) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (joined.load()) return;
         std::printf("    WATCHDOG: %s did not finish within 20 s; aborting the test run\n", test);
         std::fflush(stdout);
         std::_Exit(3);
-    }
+    });
     for (auto& t : ts) t.join();
+    joined = true;
+    dog.join();
 }
 
 template <class F>
