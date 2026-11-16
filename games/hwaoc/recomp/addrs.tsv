@@ -8,3 +8,16 @@ data	kObjectStep	0x16702d0	per-object step
 data	kFrameRateBlock	0x26a2280	frame-rate block {30, 2, 30, 30.0}
 data	kDevicePointer	0x2bb0798	KTGL device pointer
 data	kFps5994	0x1ef8ddc	59.94 constant
+# M7 display (branch hwaoc-res; runtime/hwaoc_display.cpp): output and scene size, dynamic resolution, camera aspect (Hor+).
+#   the KTGL device is created from a config on the stack ({1920, 1080, 3, 9, 5, interval 2, 9, 0, 1920, 1080, ...}): [0] [1] the display
+#   (swapchain, vi layer, 2D layout) size, [8] [9] a second size pair (0 = the first)
+entry	kDeviceCreate	0x17c5b60	KTGL device create (x0 device, x1 config: u32 width, height, ..., [8] width, [9] height)
+#   right after it the 3D scene's render size {1440, 810} is stored into the graphics system ([x20 + 0x368], x8 = height << 32 | width)
+mid	kSceneSize	0x8d9b14	str x8, [x20, #0x368]: x8 = scene width | height << 32
+#   dynamic resolution: the scene height in force (qword_2780B78, 567..810 docked) over 810.0 is the scene scale written to the view ([x9 + 0x11c]);
+#   the hooks load 810 into s0 before the ucvtf so the scale stays 1.0 (the full scene size) unless [display] dynamic_resolution is on
+mid	kDynResScaleA	0x85d108	ucvtf s0, s0 (s0 = the dynamic scene height)
+mid	kDynResScaleB	0x85e240	ucvtf s0, s0 (the same in the second view setup)
+#   KTGL camera projection: [cam + 320] near, [+324] far, [+328] vertical FOV (radians), [+332] aspect (16/9 from the camera defaults),
+#   [+344] bit 0 orthographic, bit 1 reversed depth; writes the projection matrix at [cam + 192]
+entry	kCameraProjection	0x18a1080	KTGL camera projection update (x0 camera)

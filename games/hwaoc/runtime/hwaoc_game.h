@@ -13,6 +13,7 @@
 void nxrt_register_game_hwaoc();
 void nxrt_register_game_hwaoc_core();
 void nxrt_register_game_hwaoc_data();
+void nxrt_register_game_hwaoc_launcher();   // the launcher exe: data + its pages (hwaoc_launcher.cpp)
 
 namespace nxrt::games::hwaoc {
 const game::Info& data_info();

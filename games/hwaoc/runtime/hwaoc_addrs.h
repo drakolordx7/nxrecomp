@@ -11,5 +11,10 @@ constexpr uint64_t kObjectStep = 0x16702d0;   // per-object step
 constexpr uint64_t kFrameRateBlock = 0x26a2280;   // frame-rate block {30, 2, 30, 30.0}
 constexpr uint64_t kDevicePointer = 0x2bb0798;   // KTGL device pointer
 constexpr uint64_t kFps5994 = 0x1ef8ddc;   // 59.94 constant
+constexpr uint64_t kDeviceCreate = 0x17c5b60;   // KTGL device create (x0 device, x1 config: u32 width, height, ..., [8] width, [9] height)
+constexpr uint64_t kSceneSize = 0x8d9b14;   // str x8, [x20, #0x368]: x8 = scene width | height << 32
+constexpr uint64_t kDynResScaleA = 0x85d108;   // ucvtf s0, s0 (s0 = the dynamic scene height)
+constexpr uint64_t kDynResScaleB = 0x85e240;   // ucvtf s0, s0 (the same in the second view setup)
+constexpr uint64_t kCameraProjection = 0x18a1080;   // KTGL camera projection update (x0 camera)
 
 }

@@ -27,6 +27,17 @@
         "NXRT_TEST_TRACE": "none",
         "NXRT_DIAG_WATCHDOG_SECONDS": "90"
       }
+    },
+    "res": {
+      "_": "fresh save into the prologue battle, two shots there (tt/res.tt); set the size with --env NXRT_BOOT_HEADLESS_WIDTH=.. --env NXRT_BOOT_HEADLESS_HEIGHT=..",
+      "seconds": 200,
+      "env": {
+        "NXRT_TEST_SCRIPT": "{game}/tt/res.tt",
+        "NXRT_TEST_FRAME_SOURCE": "tick",
+        "NXRT_TEST_OUT": "{run}/tt",
+        "NXRT_TEST_TRACE": "none",
+        "NXRT_DIAG_WATCHDOG_SECONDS": "90"
+      }
     }
   }
 }
