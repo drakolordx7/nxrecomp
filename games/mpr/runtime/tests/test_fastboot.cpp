@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Start-up and menu tweaks (S46, runtime/mpr_fastboot.cpp), hook level: the entry hooks driven the way lifted code drives them
 // (nx_hook_entry on the guest address) against stand-in guest functions and a fake game state in host memory, at a base of its own.
+#include <windows.h>
+
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -11,7 +13,6 @@
 #include "nxrt/abi.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
-#include "nxrt/os/mem.h"
 #include "nxrt/tt_script.h"
 #include "mpr_fastboot.h"
 #include "nxrt/game/play_types.h"
@@ -38,12 +39,7 @@ struct Fake {
 Fake g_f;
 
 uint64_t addr(const std::vector<uint8_t>& b) { return reinterpret_cast<uint64_t>(b.data()); }
-void commit(uint64_t a, size_t n) {
-    namespace om = nxrt::os::mem;
-    const uint64_t lo = a & ~(om::kGranularity - 1), hi = (a + n + om::kGranularity - 1) & ~(om::kGranularity - 1);
-    om::reserve_fixed(lo, hi - lo);
-    om::commit(a, n, om::Prot::RW);
-}
+void commit(uint64_t a, size_t n) { VirtualAlloc(reinterpret_cast<void*>(a), n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
 
 void set_area(const char* world, const char* area) {
     uint8_t w[16], a[16];
