@@ -2,8 +2,6 @@
 // The starvation guard (src/kernel/starvation_guard.cpp, debug note 422): a guest thread in the lowest priority band that the host leaves
 // ready on its pinned processor, because ordinary programs keep that processor busy, gets a time slice at top priority now and then.
 // Guest threads never run CHECK: results go through atomics and the test thread checks after the join.
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -17,6 +15,8 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 #include "nxrt/svc.h"
 #include "test_framework.h"
 
@@ -33,12 +33,7 @@ void spinning_guest(::Ctx*) {
     while (!g_stop.load(std::memory_order_relaxed)) g_work.fetch_add(1, std::memory_order_relaxed);
 }
 
-uint64_t cpu_ms(HANDLE h) {
-    FILETIME c, e, kt, ut;
-    if (!GetThreadTimes(h, &c, &e, &kt, &ut)) return 0;
-    auto to_ms = [](const FILETIME& f) { return ((static_cast<uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime) / 10000; };
-    return to_ms(kt) + to_ms(ut);
-}
+uint64_t cpu_ms(nxrt::os::ThreadHandle h) { return nxrt::os::thread_cpu_time_ns(h) / 1000000; }
 
 void begin() {
     k::kernel_reset();
@@ -55,12 +50,16 @@ void begin() {
 
 NXTEST(boosts_a_lowest_band_thread_that_other_programs_starve) {
     begin();
+    if (!nxrt::os::thread_run_states_supported()) {
+        nxtest::skip("this host does not report thread states: the guard is not started there");
+        return;
+    }
     const k::SchedInfo si = k::sched_info();
     if (!si.active) {
         nxtest::skip("the console core model is off on this machine");
         return;
     }
-    const DWORD_PTR mask = static_cast<DWORD_PTR>(si.host_masks[0]);
+    const uint64_t mask = si.host_masks[0];
     k::ThreadParams p;
     p.entry = 0x7100010000ull;
     nxrt::fn_register(p.entry, spinning_guest);
@@ -75,19 +74,21 @@ NXTEST(boosts_a_lowest_band_thread_that_other_programs_starve) {
     std::atomic<bool> hogs_stop{false};
     for (int i = 0; i < 6; i++)
         hogs.emplace_back([&] {
-            SetThreadAffinityMask(GetCurrentThread(), mask);
+            nxrt::os::ThreadPlacement pl;
+            pl.affinity = mask;
+            nxrt::os::thread_place(nxrt::os::thread_current(), pl);
             volatile uint64_t x = 0;
             while (!hogs_stop.load(std::memory_order_relaxed)) x += 1;
         });
-    Sleep(200);
+    nxrt::os::sleep_ms(200);
     REQUIRE(k::thread_start(h) == k::kOk);
     auto t = k::handle_as<k::KThread>(h);
-    HANDLE host = static_cast<HANDLE>(t->host_handle);
-    Sleep(3000);
+    nxrt::os::ThreadHandle host = t->host_handle;
+    nxrt::os::sleep_ms(3000);
     const uint64_t without = cpu_ms(host);               // no guard yet: the hogs outrank the lowest band
     const uint64_t boosts0 = k::starvation_boosts();
     k::starvation_guard_start();
-    Sleep(4000);
+    nxrt::os::sleep_ms(4000);
     const uint64_t with = cpu_ms(host) - without;
     const uint64_t boosts = k::starvation_boosts() - boosts0;
     g_stop = true;

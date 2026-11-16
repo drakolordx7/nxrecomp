@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Console core model. The three application cores of the console are three host processors; every guest thread's affinity is its
-// core mask mapped onto them and its HOS priority is mapped onto six Windows priority bands with the dynamic boost off.
+// core mask mapped onto them and its HOS priority is mapped onto six host priority bands (os::PriorityBand) with the dynamic boost off.
 // Measured in smo-recomp (runtime/os/os_threads.c): free scheduling failed 4 of 6 boots in sead heap code, the console model 0 of 6.
 // Config: [sched] console_cores (default 1; env NXRT_SCHED_CONSOLE_CORES), [sched] host_cpus = hexadecimal mask of host processors to use,
 // [sched] pick = auto (the three fastest free physical cores, one hardware thread each) | top (the old rule: every second processor from the top of the mask).
-#include <windows.h>
-
+#include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
-#include <algorithm>
 #include <mutex>
+#include <string>
 #include <vector>
 
 #include "nxrt/config.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "nxrt/os/thread.h"
 
 namespace nxrt::kernel {
 namespace {
@@ -23,42 +24,18 @@ namespace {
 std::mutex g_lock;
 bool g_done = false;
 SchedInfo g_info;
-HANDLE g_slot_mutex = nullptr;
-
-// The physical cores of processor group 0 inside `proc`, fastest first (a hybrid CPU reports a higher EfficiencyClass for its performance cores), each
-// as the mask of ONE hardware thread of the core (its lowest): a guest thread never shares a core with another guest thread, and never lands on an
-// efficiency core while a performance core is free. Empty when the system call fails.
-std::vector<uint64_t> cores_fastest_first(uint64_t proc) {
-    std::vector<uint64_t> out;
-    DWORD len = 0;
-    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
-    if (!len) return out;
-    std::vector<uint8_t> buf(len);
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data()), &len)) return out;
-    struct C { int eff; uint64_t first; };
-    std::vector<C> cores;
-    for (DWORD off = 0; off < len;) {
-        auto* e = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buf.data() + off);
-        if (e->Relationship == RelationProcessorCore && e->Processor.GroupCount >= 1 && e->Processor.GroupMask[0].Group == 0) {
-            const uint64_t m = static_cast<uint64_t>(e->Processor.GroupMask[0].Mask) & proc;
-            if (m) cores.push_back({e->Processor.EfficiencyClass, m & (~m + 1)});
-        }
-        off += e->Size;
-    }
-    std::stable_sort(cores.begin(), cores.end(), [](const C& a, const C& b) { return a.eff > b.eff || (a.eff == b.eff && a.first < b.first); });
-    for (const C& c : cores) out.push_back(c.first);
-    return out;
-}
+void* g_slot = nullptr;            // the claim on this process's core slot (os::slot_claim)
 
 uint64_t take_core_slot(const std::vector<uint64_t>& cores, int* slot_out) {
     for (size_t k = 0; k + 3 <= cores.size(); k += 3) {
         char name[64];
-        snprintf(name, sizeof name, "Local\\nxrt_core_slot_%zu", k / 3);
-        HANDLE m = CreateMutexA(nullptr, FALSE, name);
-        if (!m) break;
-        if (GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(m); continue; }
-        if (g_slot_mutex) CloseHandle(g_slot_mutex);
-        g_slot_mutex = m;
+        snprintf(name, sizeof name, "nxrt_core_slot_%zu", k / 3);
+        void* m = nullptr;
+        const os::SlotResult r = os::slot_claim(name, &m);
+        if (r == os::SlotResult::Error) break;
+        if (r == os::SlotResult::Busy) continue;
+        if (g_slot) os::slot_release(g_slot);
+        g_slot = m;
         const uint64_t mask = cores[k] | cores[k + 1] | cores[k + 2];
         *slot_out = static_cast<int>(k / 3);
         NXLOG_I("sched", "console cores: slot %zu of %zu, the %zu-th to %zu-th fastest physical cores (mask %llx); other nxrt processes take other slots", k / 3, cores.size() / 3, k + 1, k + 3, (unsigned long long)mask);
@@ -75,12 +52,13 @@ uint64_t take_slot(uint64_t proc, int* slot_out) {
         if (proc >> b & 1) bits[nb++] = b;
     for (int k = 0; k < nb / 6; k++) {
         char name[64];
-        snprintf(name, sizeof name, "Local\\nxrt_console_cores_%d", k);
-        HANDLE m = CreateMutexA(nullptr, FALSE, name);
-        if (!m) break;
-        if (GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(m); continue; }
-        if (g_slot_mutex) CloseHandle(g_slot_mutex);
-        g_slot_mutex = m;
+        snprintf(name, sizeof name, "nxrt_console_cores_%d", k);
+        void* m = nullptr;
+        const os::SlotResult r = os::slot_claim(name, &m);
+        if (r == os::SlotResult::Error) break;
+        if (r == os::SlotResult::Busy) continue;
+        if (g_slot) os::slot_release(g_slot);
+        g_slot = m;
         uint64_t mask = 0;
         for (int i = 6 * k; i < 6 * k + 6; i++) mask |= 1ull << bits[i];
         *slot_out = k;
@@ -100,20 +78,19 @@ void init_locked() {
         NXLOG_I("sched", "console core model off ([sched] console_cores = 0)");
         return;
     }
-    DWORD_PTR proc = 0, sys = 0;
-    GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
+    const uint64_t proc = os::process_cpu_mask();
     uint64_t usable = proc;
     std::string cpus = config_get_str("sched", "host_cpus", "");
     int slot = -1;
     if (!cpus.empty()) {
-        uint64_t want = _strtoui64(cpus.c_str(), nullptr, 16);
+        uint64_t want = strtoull(cpus.c_str(), nullptr, 16);
         if (want & usable) usable &= want;
         NXLOG_I("sched", "host_cpus %s: using processors %llx of %llx", cpus.c_str(), (unsigned long long)usable, (unsigned long long)proc);
     } else {
         bool top = config_get_str("sched", "pick", "auto") == "top";
         uint64_t chosen = 0;
         if (!top) {
-            const std::vector<uint64_t> cores = cores_fastest_first(usable);
+            const std::vector<uint64_t> cores = os::cores_fastest_first(usable);
             if (cores.size() >= 3) chosen = take_core_slot(cores, &slot);
         }
         if (chosen) {
@@ -161,74 +138,89 @@ void sched_reset_for_tests() {
     std::lock_guard<std::mutex> lk(g_lock);
     g_done = false;
     g_info = SchedInfo{};
-    if (g_slot_mutex) { CloseHandle(g_slot_mutex); g_slot_mutex = nullptr; }
+    if (g_slot) { os::slot_release(g_slot); g_slot = nullptr; }
 }
 
 // nn::os priorities run 0 (highest) .. 31 (lowest); HOS priority = nn::os + 28. Six bands under the model:
 // <= 4, 5..8, 9..15, 16, 17, 18..31 (smo: 17 against 18 on one core decided a use-after-free race in 2 of 91 stage-entry runs).
-int sched_host_priority(int hos_prio) {
+os::PriorityBand sched_host_priority(int hos_prio) {
+    using B = os::PriorityBand;
     const int nn = hos_prio - 28;
     if (sched_info().active) {
-        if (nn <= 4) return THREAD_PRIORITY_TIME_CRITICAL;
-        if (nn <= 8) return THREAD_PRIORITY_HIGHEST;
-        if (nn <= 15) return THREAD_PRIORITY_ABOVE_NORMAL;
-        if (nn == 16) return THREAD_PRIORITY_NORMAL;
-        if (nn == 17) return THREAD_PRIORITY_BELOW_NORMAL;
-        return THREAD_PRIORITY_LOWEST;
+        if (nn <= 4) return B::TimeCritical;
+        if (nn <= 8) return B::Highest;
+        if (nn <= 15) return B::AboveNormal;
+        if (nn == 16) return B::Normal;
+        if (nn == 17) return B::BelowNormal;
+        return B::Lowest;
     }
-    if (nn <= 4) return THREAD_PRIORITY_HIGHEST;
-    if (nn <= 15) return THREAD_PRIORITY_ABOVE_NORMAL;
-    if (nn == 16) return THREAD_PRIORITY_NORMAL;
-    if (nn <= 27) return THREAD_PRIORITY_BELOW_NORMAL;
-    return THREAD_PRIORITY_LOWEST;
+    if (nn <= 4) return B::Highest;
+    if (nn <= 15) return B::AboveNormal;
+    if (nn == 16) return B::Normal;
+    if (nn <= 27) return B::BelowNormal;
+    return B::Lowest;
 }
 
 void sched_set_process_priority(bool interactive) {
     std::string v = config_get_str("sched", "priority_class", "auto");
     for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    DWORD cls = 0;
-    if (v == "high") cls = HIGH_PRIORITY_CLASS;
-    else if (v == "above_normal" || v == "above") cls = ABOVE_NORMAL_PRIORITY_CLASS;
-    else if (v == "normal") cls = NORMAL_PRIORITY_CLASS;
-    else if (v == "auto") cls = interactive ? HIGH_PRIORITY_CLASS : 0;
-    else NXLOG_W("sched", "[sched] priority_class = %s is not auto, high, above_normal or normal: left alone", v.c_str());
-    if (!cls) return;
-    if (SetPriorityClass(GetCurrentProcess(), cls)) NXLOG_I("sched", "process priority class: %s", cls == HIGH_PRIORITY_CLASS ? "high" : cls == ABOVE_NORMAL_PRIORITY_CLASS ? "above normal" : "normal");
-    else NXLOG_W("sched", "SetPriorityClass failed, error %lu", static_cast<unsigned long>(GetLastError()));
+    os::ProcessPriority cls = os::ProcessPriority::Normal;
+    const char* label = "normal";
+    bool set = true;
+    if (v == "high") { cls = os::ProcessPriority::High; label = "high"; }
+    else if (v == "above_normal" || v == "above") { cls = os::ProcessPriority::AboveNormal; label = "above normal"; }
+    else if (v == "normal") {}
+    else if (v == "auto" && interactive) { cls = os::ProcessPriority::High; label = "high"; }
+    else {
+        set = false;
+        if (v != "auto") NXLOG_W("sched", "[sched] priority_class = %s is not auto, high, above_normal or normal: left alone", v.c_str());
+    }
+    if (!set) return;
+    if (os::process_set_priority(cls)) NXLOG_I("sched", "process priority class: %s", label);
+    else NXLOG_W("sched", "raising the process priority (%s) failed or is not permitted", label);
 }
 
 void yield_host() {
     KThread* t = current_thread();
-    if (t && t->aged.load(std::memory_order_relaxed)) YieldProcessor();   // aged: a hand-over would give its time slice to the program that starves it
-    else SwitchToThread();
+    if (t && t->aged.load(std::memory_order_relaxed)) os::cpu_relax();   // aged: a hand-over would give its time slice to the program that starves it
+    else os::thread_yield();
 }
 
 int sched_current_core() {
     SchedInfo si = sched_info();
     KThread* t = current_thread();
     if (si.active) {
-        PROCESSOR_NUMBER pn{};
-        GetCurrentProcessorNumberEx(&pn);
-        if (pn.Group == 0)
+        const int cpu = os::cpu_current();
+        if (cpu >= 0)
             for (int i = 0; i < 3; i++)
-                if (si.host_masks[i] >> pn.Number & 1) return i;
+                if (si.host_masks[i] >> cpu & 1) return i;
     }
     return t ? (t->ideal_core >= 0 ? t->ideal_core : 0) : 0;
 }
 
-void sched_apply(KThread& t) {
-    HANDLE h = static_cast<HANDLE>(t.host_handle);
-    if (!h) return;
-    SchedInfo si = sched_info();
+os::ThreadPlacement sched_placement(const KThread& t) {
+    os::ThreadPlacement p;
+    const SchedInfo si = sched_info();
     if (si.active) {
-        DWORD_PTR m = 0;
+        uint64_t m = 0;
         for (int i = 0; i < 3; i++)
-            if (t.core_mask >> i & 1) m |= static_cast<DWORD_PTR>(si.host_masks[i]);
-        if (!m) m = static_cast<DWORD_PTR>(si.host_masks[0]);
-        SetThreadAffinityMask(h, m);
-        SetThreadPriorityBoost(h, TRUE);            // Windows' dynamic boost off
+            if (t.core_mask >> i & 1) m |= si.host_masks[i];
+        if (!m) m = si.host_masks[0];
+        p.affinity = m;
+        p.disable_boost = true;                    // the host's dynamic boost off
     }
-    SetThreadPriority(h, sched_host_priority(t.prio));
+    p.set_band = true;
+    p.band = sched_host_priority(t.prio);
+    return p;
+}
+
+void sched_apply(KThread& t) {
+    if (!t.host_handle) return;
+    if (!os::thread_place(t.host_handle, sched_placement(t))) {
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true))
+            NXLOG_W("sched", "the host refused part of a thread's placement (priority bands above the process's nice value need CAP_SYS_NICE or an RLIMIT_NICE on Linux)");
+    }
 }
 
 }

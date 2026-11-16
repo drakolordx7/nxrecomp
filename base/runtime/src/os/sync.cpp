@@ -6,8 +6,6 @@
 
 #include "nxrt/sync.h"
 
-#include <windows.h>
-
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -15,14 +13,15 @@
 
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "nxrt/os/sync.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 
 namespace nxrt::sync {
 namespace {
 
 constexpr const char* kTag = "sync";
 constexpr size_t kBuckets = 4096;
-constexpr int64_t kNsPerMs = 1000000;
-constexpr DWORD kMaxWaitMs = 0x7FFFFFFE;  // one below INFINITE
 
 enum class Kind : uint8_t { Mutex, Cond, Event, Sem };
 
@@ -48,12 +47,10 @@ struct Object {
 struct Mutex : Object {
     static constexpr Kind kKind = Kind::Mutex;
     explicit Mutex(uint64_t a) : Object(a, kKind) {
-        InitializeSRWLock(&lk);
-        InitializeConditionVariable(&cv);
     }
-    SRWLOCK lk;
-    CONDITION_VARIABLE cv;
-    DWORD owner = 0;
+    os::Mutex lk;
+    os::CondVar cv;
+    os::ThreadId owner = 0;
     uint32_t rec = 0;
     bool recursive = false;
 };
@@ -68,11 +65,9 @@ struct CondWaiter {
 struct Cond : Object {
     static constexpr Kind kKind = Kind::Cond;
     explicit Cond(uint64_t a) : Object(a, kKind) {
-        InitializeSRWLock(&lk);
-        InitializeConditionVariable(&cv);
     }
-    SRWLOCK lk;
-    CONDITION_VARIABLE cv;
+    os::Mutex lk;
+    os::CondVar cv;
     CondWaiter* head = nullptr;
     CondWaiter* tail = nullptr;
 };
@@ -80,11 +75,9 @@ struct Cond : Object {
 struct Event : Object {
     static constexpr Kind kKind = Kind::Event;
     explicit Event(uint64_t a) : Object(a, kKind) {
-        InitializeSRWLock(&lk);
-        InitializeConditionVariable(&cv);
     }
-    SRWLOCK lk;
-    CONDITION_VARIABLE cv;
+    os::Mutex lk;
+    os::CondVar cv;
     bool signaled = false;
     bool auto_clear = false;
 };
@@ -92,22 +85,20 @@ struct Event : Object {
 struct Sem : Object {
     static constexpr Kind kKind = Kind::Sem;
     explicit Sem(uint64_t a) : Object(a, kKind) {
-        InitializeSRWLock(&lk);
-        InitializeConditionVariable(&cv);
     }
-    SRWLOCK lk;
-    CONDITION_VARIABLE cv;
+    os::Mutex lk;
+    os::CondVar cv;
     int32_t count = 0;
     int32_t max_count = std::numeric_limits<int32_t>::max();
 };
 
 struct Bucket {
-    SRWLOCK lock;  // zero-initialised static storage is a valid unlocked SRWLOCK
-    Object* head;
+    os::SharedMutex lock;  // constant-initialised: a static array of these is ready before main
+    Object* head = nullptr;
 };
 
 Bucket g_buckets[kBuckets];
-SRWLOCK g_grave_lock;
+os::Mutex g_grave_lock;
 Object* g_grave = nullptr;
 std::atomic<size_t> g_live{0};
 std::atomic<size_t> g_grave_n{0};
@@ -133,11 +124,11 @@ Object* find_in(Object* head, uint64_t addr) {
 }
 
 void park(Object* o) {
-    AcquireSRWLockExclusive(&g_grave_lock);
+    g_grave_lock.lock();
     o->gnext = g_grave;
     g_grave = o;
     g_grave_n.fetch_add(1, std::memory_order_relaxed);
-    ReleaseSRWLockExclusive(&g_grave_lock);
+    g_grave_lock.unlock();
 }
 
 // Caller holds the bucket exclusive. Removes o from the chain and parks it; it is still valid memory afterwards.
@@ -154,15 +145,15 @@ void unlink_locked(Bucket& b, Object* o) {
 template <class T>
 T* get(uint64_t addr) {
     Bucket& b = g_buckets[bucket_index(addr)];
-    AcquireSRWLockShared(&b.lock);
+    b.lock.lock_shared();
     Object* o = find_in(b.head, addr);
     if (o && o->kind == T::kKind) {
-        ReleaseSRWLockShared(&b.lock);
+        b.lock.unlock_shared();
         return static_cast<T*>(o);
     }
-    ReleaseSRWLockShared(&b.lock);
+    b.lock.unlock_shared();
 
-    AcquireSRWLockExclusive(&b.lock);
+    b.lock.lock();
     o = find_in(b.head, addr);
     if (!o || o->kind != T::kKind) {
         if (o) {
@@ -176,24 +167,13 @@ T* get(uint64_t addr) {
         g_live.fetch_add(1, std::memory_order_relaxed);
         o = n;
     }
-    ReleaseSRWLockExclusive(&b.lock);
+    b.lock.unlock();
     return static_cast<T*>(o);
 }
 
 // ---- timing -----------------------------------------------------------------------------------------------------------
 
-int64_t now_ns() {
-    static const int64_t freq = [] {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        return f.QuadPart;
-    }();
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    const int64_t secs = c.QuadPart / freq;
-    const int64_t rem = c.QuadPart % freq;
-    return secs * 1000000000LL + static_cast<int64_t>(static_cast<double>(rem) * 1e9 / static_cast<double>(freq));
-}
+int64_t now_ns() { return static_cast<int64_t>(os::monotonic_ns()); }
 
 struct Deadline {
     bool forever;
@@ -208,40 +188,38 @@ Deadline deadline_for(int64_t timeout_ns) {
 }
 
 // One sleep on cv with lk held (the sleep releases lk while blocked). Returns false, without sleeping, when a timed wait
-// has run out of time. The sleep is rounded up to whole milliseconds so it never ends before the deadline; the caller
-// re-checks its predicate after every return, so spurious and early returns from the OS are harmless.
-bool wait_step(CONDITION_VARIABLE* cv, SRWLOCK* lk, const Deadline& d) {
+// has run out of time. The sleep never ends before the deadline on the clock; the caller re-checks its predicate after every
+// return, so spurious and early returns from the OS are harmless.
+bool wait_step(os::CondVar* cv, os::Mutex* lk, const Deadline& d) {
     if (d.forever) {
-        SleepConditionVariableSRW(cv, lk, INFINITE, 0);
+        cv->wait(*lk);
         return true;
     }
     const int64_t rem = d.at - now_ns();
     if (rem <= 0) return false;
-    int64_t ms = rem / kNsPerMs + (rem % kNsPerMs ? 1 : 0);
-    if (ms > static_cast<int64_t>(kMaxWaitMs)) ms = kMaxWaitMs;
-    SleepConditionVariableSRW(cv, lk, static_cast<DWORD>(ms), 0);
+    cv->wait_for(*lk, rem);
     return true;
 }
 
 // ---- mutex helpers ------------------------------------------------------------------------------------------------------
 
 uint32_t mutex_release_all(Mutex* m) {
-    AcquireSRWLockExclusive(&m->lk);
+    m->lk.lock();
     const uint32_t held = m->rec;
     m->owner = 0;
     m->rec = 0;
-    WakeConditionVariable(&m->cv);
-    ReleaseSRWLockExclusive(&m->lk);
+    m->cv.notify_one();
+    m->lk.unlock();
     return held;
 }
 
 void mutex_take_blocking(Mutex* m, uint32_t rec) {
-    const DWORD me = GetCurrentThreadId();
-    AcquireSRWLockExclusive(&m->lk);
-    while (m->owner != 0) SleepConditionVariableSRW(&m->cv, &m->lk, INFINITE, 0);
+    const os::ThreadId me = os::thread_current_id();
+    m->lk.lock();
+    while (m->owner != 0) m->cv.wait(m->lk);
     m->owner = me;
     m->rec = rec;
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
 }
 
 // ---- condition wait -----------------------------------------------------------------------------------------------------
@@ -252,11 +230,11 @@ void mutex_take_blocking(Mutex* m, uint32_t rec) {
 bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) {
     Cond* c = get<Cond>(cond_addr);
     Mutex* m = get<Mutex>(mutex_addr);
-    const DWORD me = GetCurrentThreadId();
+    const os::ThreadId me = os::thread_current_id();
 
-    AcquireSRWLockExclusive(&m->lk);
+    m->lk.lock();
     const bool owned = m->owner == me;
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
     if (!owned) {
         NXLOG_E(kTag, "cond wait on 0x%llx without holding mutex 0x%llx; not waiting",
                 static_cast<unsigned long long>(cond_addr), static_cast<unsigned long long>(mutex_addr));
@@ -264,7 +242,7 @@ bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) 
     }
 
     CondWaiter node;
-    AcquireSRWLockExclusive(&c->lk);
+    c->lk.lock();
     if (c->tail) c->tail->next = &node; else c->head = &node;
     c->tail = &node;
     const uint32_t held = mutex_release_all(m);
@@ -281,7 +259,7 @@ bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) 
             if (c->tail == &node) c->tail = prev;
         }
     }
-    ReleaseSRWLockExclusive(&c->lk);
+    c->lk.unlock();
 
     mutex_take_blocking(m, held);
     return signalled;
@@ -291,7 +269,7 @@ bool cond_wait_impl(uint64_t cond_addr, uint64_t mutex_addr, const Deadline& d) 
 
 bool event_wait_impl(uint64_t addr, const Deadline& d) {
     Event* e = get<Event>(addr);
-    AcquireSRWLockExclusive(&e->lk);
+    e->lk.lock();
     bool ok = true;
     while (!e->signaled) {
         if (!wait_step(&e->cv, &e->lk, d)) {
@@ -300,13 +278,13 @@ bool event_wait_impl(uint64_t addr, const Deadline& d) {
         }
     }
     if (ok && e->auto_clear) e->signaled = false;
-    ReleaseSRWLockExclusive(&e->lk);
+    e->lk.unlock();
     return ok;
 }
 
 bool sem_acquire_impl(uint64_t addr, const Deadline& d) {
     Sem* s = get<Sem>(addr);
-    AcquireSRWLockExclusive(&s->lk);
+    s->lk.lock();
     bool ok = true;
     while (s->count == 0) {
         if (!wait_step(&s->cv, &s->lk, d)) {
@@ -315,7 +293,7 @@ bool sem_acquire_impl(uint64_t addr, const Deadline& d) {
         }
     }
     if (ok) s->count--;
-    ReleaseSRWLockExclusive(&s->lk);
+    s->lk.unlock();
     return ok;
 }
 
@@ -327,34 +305,34 @@ bool sem_acquire_impl(uint64_t addr, const Deadline& d) {
 // ignored (the call returns without taking the mutex again, so one unlock frees it). It never blocks.
 void mutex_init(uint64_t addr, bool recursive) {
     Mutex* m = get<Mutex>(addr);
-    AcquireSRWLockExclusive(&m->lk);
+    m->lk.lock();
     m->recursive = recursive;
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
 }
 
 void mutex_lock(uint64_t addr) {
     Mutex* m = get<Mutex>(addr);
-    const DWORD me = GetCurrentThreadId();
-    AcquireSRWLockExclusive(&m->lk);
+    const os::ThreadId me = os::thread_current_id();
+    m->lk.lock();
     if (m->owner == me) {
         const bool recursive = m->recursive;
         if (recursive) m->rec++;
-        ReleaseSRWLockExclusive(&m->lk);
+        m->lk.unlock();
         if (!recursive)
             NXLOG_E(kTag, "mutex 0x%llx: lock by its owner (thread %lu) on a non-recursive mutex; ignored",
                     static_cast<unsigned long long>(addr), static_cast<unsigned long>(me));
         return;
     }
-    while (m->owner != 0) SleepConditionVariableSRW(&m->cv, &m->lk, INFINITE, 0);
+    while (m->owner != 0) m->cv.wait(m->lk);
     m->owner = me;
     m->rec = 1;
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
 }
 
 bool mutex_try_lock(uint64_t addr) {
     Mutex* m = get<Mutex>(addr);
-    const DWORD me = GetCurrentThreadId();
-    AcquireSRWLockExclusive(&m->lk);
+    const os::ThreadId me = os::thread_current_id();
+    m->lk.lock();
     bool ok = false;
     if (m->owner == 0) {
         m->owner = me;
@@ -364,42 +342,42 @@ bool mutex_try_lock(uint64_t addr) {
         m->rec++;
         ok = true;
     }
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
     return ok;
 }
 
 void mutex_unlock(uint64_t addr) {
     Mutex* m = get<Mutex>(addr);
-    const DWORD me = GetCurrentThreadId();
-    AcquireSRWLockExclusive(&m->lk);
+    const os::ThreadId me = os::thread_current_id();
+    m->lk.lock();
     if (m->owner != me) {
-        const DWORD owner = m->owner;
-        ReleaseSRWLockExclusive(&m->lk);
+        const os::ThreadId owner = m->owner;
+        m->lk.unlock();
         NXLOG_E(kTag, "mutex 0x%llx: unlock by thread %lu, owner is thread %lu; ignored",
                 static_cast<unsigned long long>(addr), static_cast<unsigned long>(me), static_cast<unsigned long>(owner));
         return;
     }
     if (--m->rec == 0) {
         m->owner = 0;
-        WakeConditionVariable(&m->cv);
+        m->cv.notify_one();
     }
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
 }
 
 bool mutex_is_locked_by_current(uint64_t addr) {
     Mutex* m = get<Mutex>(addr);
-    const DWORD me = GetCurrentThreadId();
-    AcquireSRWLockExclusive(&m->lk);
+    const os::ThreadId me = os::thread_current_id();
+    m->lk.lock();
     const bool ok = m->owner == me;
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
     return ok;
 }
 
 bool mutex_is_locked(uint64_t addr) {
     Mutex* m = get<Mutex>(addr);
-    AcquireSRWLockExclusive(&m->lk);
+    m->lk.lock();
     const bool ok = m->owner != 0;
-    ReleaseSRWLockExclusive(&m->lk);
+    m->lk.unlock();
     return ok;
 }
 
@@ -422,20 +400,20 @@ bool cond_timed_wait(uint64_t cond, uint64_t mutex, int64_t timeout_ns) {
 // and the waiter reads `woken` only under the same lock, so the node is never used after its owner has returned.
 void cond_signal(uint64_t addr) {
     Cond* c = get<Cond>(addr);
-    AcquireSRWLockExclusive(&c->lk);
+    c->lk.lock();
     if (CondWaiter* w = c->head) {
         c->head = w->next;
         if (!c->head) c->tail = nullptr;
         w->next = nullptr;
         w->woken = true;
-        WakeAllConditionVariable(&c->cv);
+        c->cv.notify_all();
     }
-    ReleaseSRWLockExclusive(&c->lk);
+    c->lk.unlock();
 }
 
 void cond_broadcast(uint64_t addr) {
     Cond* c = get<Cond>(addr);
-    AcquireSRWLockExclusive(&c->lk);
+    c->lk.lock();
     CondWaiter* w = c->head;
     c->head = c->tail = nullptr;
     while (w) {
@@ -444,8 +422,8 @@ void cond_broadcast(uint64_t addr) {
         w->woken = true;
         w = n;
     }
-    WakeAllConditionVariable(&c->cv);
-    ReleaseSRWLockExclusive(&c->lk);
+    c->cv.notify_all();
+    c->lk.unlock();
 }
 
 // ---- event --------------------------------------------------------------------------------------------------------------
@@ -455,29 +433,29 @@ void cond_broadcast(uint64_t addr) {
 // Manual-clear: signal releases every waiter and stays set until event_clear.
 void event_init(uint64_t addr, bool signaled, bool auto_clear) {
     Event* e = get<Event>(addr);
-    AcquireSRWLockExclusive(&e->lk);
+    e->lk.lock();
     e->signaled = signaled;
     e->auto_clear = auto_clear;
-    WakeAllConditionVariable(&e->cv);
-    ReleaseSRWLockExclusive(&e->lk);
+    e->cv.notify_all();
+    e->lk.unlock();
 }
 
 void event_signal(uint64_t addr) {
     Event* e = get<Event>(addr);
-    AcquireSRWLockExclusive(&e->lk);
+    e->lk.lock();
     e->signaled = true;
     if (e->auto_clear)
-        WakeConditionVariable(&e->cv);
+        e->cv.notify_one();
     else
-        WakeAllConditionVariable(&e->cv);
-    ReleaseSRWLockExclusive(&e->lk);
+        e->cv.notify_all();
+    e->lk.unlock();
 }
 
 void event_clear(uint64_t addr) {
     Event* e = get<Event>(addr);
-    AcquireSRWLockExclusive(&e->lk);
+    e->lk.lock();
     e->signaled = false;
-    ReleaseSRWLockExclusive(&e->lk);
+    e->lk.unlock();
 }
 
 void event_wait(uint64_t addr) {
@@ -486,10 +464,10 @@ void event_wait(uint64_t addr) {
 
 bool event_try_wait(uint64_t addr) {
     Event* e = get<Event>(addr);
-    AcquireSRWLockExclusive(&e->lk);
+    e->lk.lock();
     bool ok = e->signaled;
     if (ok && e->auto_clear) e->signaled = false;
-    ReleaseSRWLockExclusive(&e->lk);
+    e->lk.unlock();
     return ok;
 }
 
@@ -502,11 +480,11 @@ bool event_timed_wait(uint64_t addr, int64_t timeout_ns) {
 // Defaults: count 0, max INT32_MAX. Re-initialising clamps the count into [0, max].
 void sem_init(uint64_t addr, int32_t count, int32_t max_count) {
     Sem* s = get<Sem>(addr);
-    AcquireSRWLockExclusive(&s->lk);
+    s->lk.lock();
     s->max_count = max_count < 0 ? 0 : max_count;
     s->count = count < 0 ? 0 : (count > s->max_count ? s->max_count : count);
-    WakeAllConditionVariable(&s->cv);
-    ReleaseSRWLockExclusive(&s->lk);
+    s->cv.notify_all();
+    s->lk.unlock();
 }
 
 void sem_acquire(uint64_t addr) {
@@ -515,10 +493,10 @@ void sem_acquire(uint64_t addr) {
 
 bool sem_try_acquire(uint64_t addr) {
     Sem* s = get<Sem>(addr);
-    AcquireSRWLockExclusive(&s->lk);
+    s->lk.lock();
     const bool ok = s->count > 0;
     if (ok) s->count--;
-    ReleaseSRWLockExclusive(&s->lk);
+    s->lk.unlock();
     return ok;
 }
 
@@ -529,22 +507,22 @@ bool sem_timed_acquire(uint64_t addr, int64_t timeout_ns) {
 void sem_release(uint64_t addr, int32_t n) {
     if (n <= 0) return;
     Sem* s = get<Sem>(addr);
-    AcquireSRWLockExclusive(&s->lk);
+    s->lk.lock();
     const int64_t room = static_cast<int64_t>(s->max_count) - s->count;
     const int64_t added = n > room ? (room > 0 ? room : 0) : n;
     s->count += static_cast<int32_t>(added);
     if (added == 1)
-        WakeConditionVariable(&s->cv);
+        s->cv.notify_one();
     else if (added > 1)
-        WakeAllConditionVariable(&s->cv);
-    ReleaseSRWLockExclusive(&s->lk);
+        s->cv.notify_all();
+    s->lk.unlock();
 }
 
 int32_t sem_count(uint64_t addr) {
     Sem* s = get<Sem>(addr);
-    AcquireSRWLockExclusive(&s->lk);
+    s->lk.lock();
     const int32_t v = s->count;
-    ReleaseSRWLockExclusive(&s->lk);
+    s->lk.unlock();
     return v;
 }
 
@@ -552,10 +530,10 @@ int32_t sem_count(uint64_t addr) {
 
 void destroy(uint64_t addr) {
     Bucket& b = g_buckets[bucket_index(addr)];
-    AcquireSRWLockExclusive(&b.lock);
+    b.lock.lock();
     Object* o = find_in(b.head, addr);
     if (o) unlink_locked(b, o);
-    ReleaseSRWLockExclusive(&b.lock);
+    b.lock.unlock();
 }
 
 size_t object_count() {
@@ -566,15 +544,15 @@ size_t object_count() {
 // pointer to one of these objects (for example blocked in a wait) would be left referencing freed memory.
 void reset_all() {
     for (auto& b : g_buckets) {
-        AcquireSRWLockExclusive(&b.lock);
+        b.lock.lock();
         while (b.head) unlink_locked(b, b.head);
-        ReleaseSRWLockExclusive(&b.lock);
+        b.lock.unlock();
     }
-    AcquireSRWLockExclusive(&g_grave_lock);
+    g_grave_lock.lock();
     Object* g = g_grave;
     g_grave = nullptr;
     g_grave_n.store(0, std::memory_order_relaxed);
-    ReleaseSRWLockExclusive(&g_grave_lock);
+    g_grave_lock.unlock();
     while (g) {
         Object* n = g->gnext;
         delete g;

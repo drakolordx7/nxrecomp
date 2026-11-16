@@ -4,8 +4,6 @@
 // Every case starts from kernel_reset + fn_clear + svc_init + mem::shutdown/init and ends with a kernel_reset (which joins its threads).
 // Guest threads never run CHECK (the failure counter is thread-local): they store results in atomics and the test thread checks them
 // after the join. Every wait has a 20 s deadline: a hung guest thread ends the run with exit code 3 instead of hanging CTest.
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -24,6 +22,8 @@
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
@@ -33,6 +33,7 @@
 NXTEST_GROUP(kernel_threads)
 
 namespace k = nxrt::kernel;
+namespace os = nxrt::os;
 namespace mem = nxrt::mem;
 
 namespace {
@@ -174,22 +175,22 @@ bool has_line(const std::vector<LogLine>& v, const std::string& needle, int leve
 int bit_of(uint64_t m) { return m ? __builtin_ctzll(m) : -1; }
 
 // Expected band table, written from the scheduling model (six bands).
-int band_active(int nn) {
-    if (nn <= 4) return THREAD_PRIORITY_TIME_CRITICAL;
-    if (nn <= 8) return THREAD_PRIORITY_HIGHEST;
-    if (nn <= 15) return THREAD_PRIORITY_ABOVE_NORMAL;
-    if (nn == 16) return THREAD_PRIORITY_NORMAL;
-    if (nn == 17) return THREAD_PRIORITY_BELOW_NORMAL;
-    return THREAD_PRIORITY_LOWEST;
+os::PriorityBand band_active(int nn) {
+    if (nn <= 4) return os::PriorityBand::TimeCritical;
+    if (nn <= 8) return os::PriorityBand::Highest;
+    if (nn <= 15) return os::PriorityBand::AboveNormal;
+    if (nn == 16) return os::PriorityBand::Normal;
+    if (nn == 17) return os::PriorityBand::BelowNormal;
+    return os::PriorityBand::Lowest;
 }
 
 // Expected table without the model, as sched.cpp has it.
-int band_inactive(int nn) {
-    if (nn <= 4) return THREAD_PRIORITY_HIGHEST;
-    if (nn <= 15) return THREAD_PRIORITY_ABOVE_NORMAL;
-    if (nn == 16) return THREAD_PRIORITY_NORMAL;
-    if (nn <= 27) return THREAD_PRIORITY_BELOW_NORMAL;
-    return THREAD_PRIORITY_LOWEST;
+os::PriorityBand band_inactive(int nn) {
+    if (nn <= 4) return os::PriorityBand::Highest;
+    if (nn <= 15) return os::PriorityBand::AboveNormal;
+    if (nn == 16) return os::PriorityBand::Normal;
+    if (nn <= 27) return os::PriorityBand::BelowNormal;
+    return os::PriorityBand::Lowest;
 }
 
 void fn_idle(::Ctx*) {}
@@ -202,7 +203,7 @@ k::KThread* g_expect_thread = nullptr;
 
 void fn_identity(::Ctx* c) {
     g_arg_seen = c->x[0];
-    g_tid_seen = GetCurrentThreadId();
+    g_tid_seen = os::thread_current_id();
     const bool ok = nxrt::diag_thread_ctx() == c && k::current_thread() == g_expect_thread && k::current_ctx() == c;
     g_ctx_ok = ok ? 1 : 0;
     g_ran = 1;
@@ -211,7 +212,7 @@ void fn_identity(::Ctx* c) {
 // Release gate for threads that must stay alive while the test inspects them.
 std::atomic<bool> g_release{false};
 void fn_wait_release(::Ctx*) {
-    while (!g_release.load()) Sleep(1);
+    while (!g_release.load()) os::sleep_ms(1);
 }
 
 std::atomic<int> g_mid_reached{0};
@@ -249,9 +250,7 @@ void fn_probe(::Ctx* c) {
         const int64_t t = mono_ns();
         if (t >= end) break;
         if (t >= next) {
-            PROCESSOR_NUMBER pn{};
-            GetCurrentProcessorNumberEx(&pn);
-            p->samples.push_back({t, pn.Number});
+            p->samples.push_back({t, static_cast<uint32_t>(os::cpu_current())});
             next = t + kMs;
         }
     }
@@ -363,7 +362,7 @@ NXTEST(thread_start_runs_entry_on_host_thread) {
     CHECK_EQ(g_ran.load(), 1);
     CHECK_EQ(g_arg_seen.load(), 0xABCDull);
     CHECK_EQ(g_ctx_ok.load(), 1);
-    CHECK(g_tid_seen.load() != GetCurrentThreadId());
+    CHECK(g_tid_seen.load() != os::thread_current_id());
     CHECK(g_tid_seen.load() == t->host_tid);
     CHECK(t->exited);
     CHECK(k::thread_join(h, 1000));
@@ -615,7 +614,7 @@ NXTEST(main_thread_adopt_on_host_thread) {
             const mem::VmInfo vi = mem::vm_query(top - 0x100000);
             vm_ok = vi.state == mem::kMemStack ? 1 : 0;
             for (const auto& r : nxrt::diag_threads())
-                if (r.host_tid == GetCurrentThreadId()) diag_ok = 1;
+                if (r.host_tid == os::thread_current_id()) diag_ok = 1;
         }
         // The helper ends here: drop its diagnostics record, or the watchdog case later in --all finds a dead thread it cannot suspend.
         nxrt::diag_unregister_thread();
@@ -623,7 +622,7 @@ NXTEST(main_thread_adopt_on_host_thread) {
     });
     {
         Deadline dl("main_thread_adopt helper");
-        while (!done.load()) Sleep(1);
+        while (!done.load()) os::sleep_ms(1);
     }
     th.join();
     CHECK(adopted.load() != 0);
@@ -644,8 +643,7 @@ NXTEST(console_core_placement) {
         nxtest::skip("console core model not active on this machine");
         return;
     }
-    DWORD_PTR proc = 0, sys = 0;
-    GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
+    const uint64_t proc = os::process_cpu_mask();
     for (int i = 0; i < 3; i++) {
         CHECK_EQ(__builtin_popcountll(si.host_masks[i]), 1);
         CHECK((si.host_masks[i] & proc) == si.host_masks[i]);
@@ -661,10 +659,7 @@ NXTEST(console_core_placement) {
         CHECK_EQ(k::thread_start(hs[core]), k::kOk);
         auto t = thread_of(hs[core]);
         REQUIRE(t);
-        GROUP_AFFINITY ga{};
-        CHECK(GetThreadGroupAffinity(static_cast<HANDLE>(t->host_handle), &ga) != 0);
-        CHECK_EQ(ga.Group, 0);
-        CHECK_EQ(static_cast<uint64_t>(ga.Mask), si.host_masks[core]);
+        CHECK_EQ(os::thread_get_affinity(t->host_handle), si.host_masks[core]);
     }
     for (int core = 0; core < 3; core++) CHECK(join_guest(hs[core], names[core]));
     for (int core = 0; core < 3; core++) {
@@ -698,9 +693,7 @@ NXTEST(core_mask_0x3_stays_on_cores_0_and_1) {
     CHECK_EQ(k::thread_start(h), k::kOk);
     auto t = thread_of(h);
     REQUIRE(t);
-    GROUP_AFFINITY ga{};
-    GetThreadGroupAffinity(static_cast<HANDLE>(t->host_handle), &ga);
-    CHECK_EQ(static_cast<uint64_t>(ga.Mask), si.host_masks[0] | si.host_masks[1]);
+    CHECK_EQ(os::thread_get_affinity(t->host_handle), si.host_masks[0] | si.host_masks[1]);
     CHECK(join_guest(h, "mask3"));
     const int ok0 = bit_of(si.host_masks[0]), ok1 = bit_of(si.host_masks[1]);
     bool only_01 = true;
@@ -734,9 +727,7 @@ NXTEST(set_core_mask_moves_running_thread) {
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     auto t = thread_of(h);
     REQUIRE(t);
-    GROUP_AFFINITY ga{};
-    GetThreadGroupAffinity(static_cast<HANDLE>(t->host_handle), &ga);
-    CHECK_EQ(static_cast<uint64_t>(ga.Mask), si.host_masks[2]);
+    CHECK_EQ(os::thread_get_affinity(t->host_handle), si.host_masks[2]);
     CHECK(join_guest(h, "mover"));
 
     const int own0 = bit_of(si.host_masks[0]), own2 = bit_of(si.host_masks[2]);
@@ -760,20 +751,20 @@ NXTEST(priority_bands_active_and_inactive) {
     begin();
     const k::SchedInfo si = k::sched_info();
     if (si.active) {
-        for (int nn = 0; nn <= 31; nn++) CHECK_EQ(k::sched_host_priority(28 + nn), band_active(nn));
+        for (int nn = 0; nn <= 31; nn++) CHECK_EQ(static_cast<int>(k::sched_host_priority(28 + nn)), static_cast<int>(band_active(nn)));
     } else {
         std::printf("    note: console core model not active here, the active table is not checked\n");
     }
     nxrt::config_set("sched", "console_cores", "0");
     k::sched_reset_for_tests();
     CHECK(!k::sched_info().active);
-    for (int nn = 0; nn <= 31; nn++) CHECK_EQ(k::sched_host_priority(28 + nn), band_inactive(nn));
+    for (int nn = 0; nn <= 31; nn++) CHECK_EQ(static_cast<int>(k::sched_host_priority(28 + nn)), static_cast<int>(band_inactive(nn)));
     nxrt::config_clear();
     k::sched_reset_for_tests();
     end_case();
 }
 
-NXTEST(started_thread_win32_priority_follows_bands) {
+NXTEST(started_thread_priority_follows_bands) {
     begin();
     g_release = false;
     const int prios[6] = {28 + 0, 28 + 6, 28 + 12, 28 + 16, 28 + 17, 28 + 25};
@@ -789,15 +780,15 @@ NXTEST(started_thread_win32_priority_follows_bands) {
     for (int i = 0; i < 6; i++) {
         auto t = thread_of(hs[i]);
         if (!t || !t->host_handle) continue;
-        const int got = GetThreadPriority(static_cast<HANDLE>(t->host_handle));
-        CHECK_EQ(got, k::sched_host_priority(prios[i]));
-        if (k::sched_info().active) CHECK_EQ(got, band_active(prios[i] - 28));
+        const int got = static_cast<int>(os::thread_get_band(t->host_handle));
+        CHECK_EQ(got, static_cast<int>(k::sched_host_priority(prios[i])));
+        if (k::sched_info().active) CHECK_EQ(got, static_cast<int>(band_active(prios[i] - 28)));
     }
     // A running thread changes band with thread_set_priority.
     auto t0 = thread_of(hs[0]);
     if (t0) {
         CHECK(k::thread_set_priority(*t0, 28 + 17));
-        CHECK_EQ(GetThreadPriority(static_cast<HANDLE>(t0->host_handle)), k::sched_host_priority(28 + 17));
+        CHECK_EQ(static_cast<int>(os::thread_get_band(t0->host_handle)), static_cast<int>(k::sched_host_priority(28 + 17)));
     }
     g_release = true;
     for (int i = 0; i < 6; i++)
@@ -809,8 +800,7 @@ NXTEST(started_thread_win32_priority_follows_bands) {
 
 NXTEST(config_switch_console_cores) {
     begin();
-    DWORD_PTR proc = 0, sys = 0;
-    GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
+    const uint64_t proc = os::process_cpu_mask();
     k::sched_reset_for_tests();
     const bool capable = k::sched_info().active;
 
@@ -823,9 +813,7 @@ NXTEST(config_switch_console_cores) {
     CHECK_EQ(k::thread_start(h), k::kOk);
     auto t = thread_of(h);
     REQUIRE(t);
-    GROUP_AFFINITY ga{};
-    GetThreadGroupAffinity(static_cast<HANDLE>(t->host_handle), &ga);
-    CHECK_EQ(static_cast<uint64_t>(ga.Mask), static_cast<uint64_t>(proc));
+    CHECK_EQ(os::thread_get_affinity(t->host_handle), proc);
     g_release = true;
     CHECK(join_guest(h, "unpinned"));
 
@@ -852,10 +840,10 @@ NXTEST(system_tick_monotonic_and_rate) {
     CHECK(monotonic);
 
     const uint64_t a = k::system_tick();
-    Sleep(100);
+    os::sleep_ms(100);
     const uint64_t b = k::system_tick();
     const int64_t d = static_cast<int64_t>(b - a);
-    CHECK(d >= 1920000 - 300000);                  // Sleep(100) never returns early: at least 100 ms - 15 ms of 19.2 MHz ticks
+    CHECK(d >= 1920000 - 300000);                  // os::sleep_ms(100) never returns early: at least 100 ms - 15 ms of 19.2 MHz ticks
     CHECK(d <= 1920000 * 50);                      // and returns (a busy machine may delay the wake-up by any amount: the upper bound only catches a wrong tick rate, 50x)
 
     const uint64_t before = k::system_tick();

@@ -5,8 +5,6 @@
 // read the published step (an atomic). Statistics are guarded by a lock.
 #include "nxrt/timestep.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -22,6 +20,7 @@
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
 #include "nxrt/movie.h"
+#include "nxrt/os/time.h"
 #include "nxrt/pacing.h"
 #include "nxrt/tt.h"
 
@@ -114,16 +113,7 @@ namespace {
 
 constexpr const char* kTag = "timestep";
 
-double qpc_seconds() {
-    static const double inv = [] {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        return 1.0 / static_cast<double>(f.QuadPart);
-    }();
-    LARGE_INTEGER t;
-    QueryPerformanceCounter(&t);
-    return static_cast<double>(t.QuadPart) * inv;
-}
+double mono_seconds() { return static_cast<double>(os::monotonic_ns()) * 1e-9; }
 
 struct G {
     std::mutex mu;
@@ -171,7 +161,7 @@ uint32_t f2u(float f) {
 
 double clock_now() {
     G& s = g();
-    return s.test_clock ? s.test_clock() : qpc_seconds();
+    return s.test_clock ? s.test_clock() : mono_seconds();
 }
 
 void wait_until(double target) { g().waiter.until_ns(static_cast<uint64_t>(target * 1e9)); }

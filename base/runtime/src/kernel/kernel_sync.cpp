@@ -3,10 +3,8 @@
 // WaitProcessWideKeyAtomic/SignalProcessWideKey (condition variables), WaitForAddress/SignalToAddress, WaitSynchronization and
 // CancelSynchronization. The recompiled SDK's nn::os mutexes and condition variables sit on these.
 // Logic ported from SuperMarioWonderRecomp runtime/src/kernel.cpp (MIT, Copyright (c) 2026 BelmanteGu; see THIRD_PARTY_NOTICES.md),
-// reworked: one SRWLOCK kernel lock, a condition variable per thread, waiters woken in priority order, a pending
+// reworked: one kernel lock, a condition variable per thread, waiters woken in priority order, a pending
 // CancelSynchronization is remembered until the next wait.
-#include <windows.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <functional>
@@ -19,11 +17,12 @@
 #include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "nxrt/os/sync.h"
 
 namespace nxrt::kernel {
 namespace detail {
 
-SRWLOCK g_k = SRWLOCK_INIT;
+os::Mutex g_k;
 
 namespace {
 std::vector<KThread*> g_sync_waiters;
@@ -32,8 +31,8 @@ std::vector<KThread*> g_cv_waiters;
 std::vector<KThread*> g_addr_waiters;
 
 struct Guard {
-    Guard() { AcquireSRWLockExclusive(&g_k); }
-    ~Guard() { ReleaseSRWLockExclusive(&g_k); }
+    Guard() { g_k.lock(); }
+    ~Guard() { g_k.unlock(); }
 };
 
 void remove_from(std::vector<KThread*>& v, KThread* t) { v.erase(std::remove(v.begin(), v.end(), t), v.end()); }
@@ -82,14 +81,13 @@ int64_t now_ns() {
 bool block_on_wake(KThread& t, int64_t timeout_ns) {
     const int64_t until = timeout_ns < 0 ? 0 : now_ns() + timeout_ns;
     while (!t.wake) {
-        DWORD ms = INFINITE;
         if (timeout_ns >= 0) {
-            int64_t rem = until - now_ns();
+            const int64_t rem = until - now_ns();
             if (rem <= 0) return false;
-            int64_t m = (rem + 999999) / 1000000;
-            ms = static_cast<DWORD>(m > 0x7FFFFFFE ? 0x7FFFFFFE : m);
+            t.cv.wait_for(g_k, rem);
+        } else {
+            t.cv.wait(g_k);
         }
-        SleepConditionVariableSRW(thread_cv(t), &g_k, ms, 0);
     }
     return true;
 }
@@ -97,13 +95,13 @@ bool block_on_wake(KThread& t, int64_t timeout_ns) {
 void wake_thread(KThread& t, uint32_t result) {
     t.wake = true;
     t.wait_result = result;
-    WakeConditionVariable(thread_cv(t));
+    t.cv.notify_one();
 }
 
 void thread_mark_exited(KThread& t) {
     Guard g;
     t.exited = true;
-    for (KThread* w : g_sync_waiters) WakeConditionVariable(thread_cv(*w));
+    for (KThread* w : g_sync_waiters) w->cv.notify_one();
 }
 
 void sync_reset() {
@@ -120,8 +118,8 @@ using namespace detail;
 
 std::string sync_wait_report() {
     // Called from the watchdog thread while the process may be frozen: never block on the kernel lock.
-    if (!TryAcquireSRWLockExclusive(&g_k)) return "kernel sync report: the kernel lock is held (a thread is inside a sync call)\n";
-    struct Release { ~Release() { ReleaseSRWLockExclusive(&g_k); } } release;
+    if (!g_k.try_lock()) return "kernel sync report: the kernel lock is held (a thread is inside a sync call)\n";
+    struct Release { ~Release() { g_k.unlock(); } } release;
     std::string out = "kernel sync waiters:\n";
     char b[256];
     auto list = [&](const char* kind, const std::vector<KThread*>& v, uint64_t KThread::*field) {
@@ -317,14 +315,13 @@ uint32_t wait_synchronization(const uint32_t* handles, int32_t count, int64_t ti
             return kOk;
         }
         if (timeout_ns == 0) return kTimedOut;
-        DWORD ms = INFINITE;
         if (timeout_ns > 0) {
-            int64_t rem = until - now_ns();
+            const int64_t rem = until - now_ns();
             if (rem <= 0) return kTimedOut;
-            int64_t m = (rem + 999999) / 1000000;
-            ms = static_cast<DWORD>(m > 0x7FFFFFFE ? 0x7FFFFFFE : m);
+            me.cv.wait_for(g_k, rem);
+        } else {
+            me.cv.wait(g_k);
         }
-        SleepConditionVariableSRW(thread_cv(me), &g_k, ms, 0);
     }
 }
 
@@ -333,13 +330,13 @@ uint32_t cancel_synchronization(uint32_t thread_handle) {
     if (!t) return kInvalidHandle;
     Guard g;
     t->cancel_sync = true;
-    if (std::find(g_sync_waiters.begin(), g_sync_waiters.end(), t.get()) != g_sync_waiters.end()) WakeConditionVariable(thread_cv(*t));
+    if (std::find(g_sync_waiters.begin(), g_sync_waiters.end(), t.get()) != g_sync_waiters.end()) t->cv.notify_one();
     return kOk;
 }
 
 void notify_waitable_changed() {
     Guard g;
-    for (KThread* t : g_sync_waiters) WakeConditionVariable(thread_cv(*t));
+    for (KThread* t : g_sync_waiters) t->cv.notify_one();
 }
 
 // ---- gauges (include/nxrt/gauge.h): wait-queue lengths ----
@@ -352,9 +349,9 @@ struct GaugeHook {
 
 // Length of one wait queue under the kernel lock. The sampler never waits for the kernel lock: -1 while a thread holds it.
 int64_t queue_len(const std::vector<KThread*>& v) {
-    if (!TryAcquireSRWLockExclusive(&g_k)) return -1;
+    if (!g_k.try_lock()) return -1;
     const int64_t n = static_cast<int64_t>(v.size());
-    ReleaseSRWLockExclusive(&g_k);
+    g_k.unlock();
     return n;
 }
 
