@@ -19,7 +19,7 @@ mid	kCutFrame	0x857d80	scene update: after add w10,w10,#1 (an event cutscene's f
 mid	kCutLeft	0x857da4	scene update: after sub w10,w10,#1 (the event cutscene's frames left)
 mid	kFpsRecip	0xb09ad4	after ucvtf s1,s1 of the block's fps (+8): s1 = 1 / step
 ## The block's interval read as a float multiplier: ldr s/w <- interval; ucvtf s<reg>; the site is the instruction after the ucvtf (s<reg> = 60 Hz ticks of this update, fractional).
-## Generated from IDA (every load of the interval whose ucvtf+4 is reached only by fall-through); the register is in hwaoc_timestep_sites.inc.
+## Generated from IDA (every load of the interval whose ucvtf+4 is reached only by fall-through); the register is in runtime/hwaoc_timestep_sites.h.
 mid	kTick_1bab0	0x1bab0	interval as float: s0
 mid	kTick_1badc	0x1badc	interval as float: s0
 mid	kTick_1ef08	0x1ef08	interval as float: s1

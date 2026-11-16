@@ -19,7 +19,7 @@
     },
     "fps": {
       "_": "the title run into the prologue battle, then the frame-step speed check (tt/fps.tt); set NXRT_TIME_MAX_RATE for the rate",
-      "seconds": 200,
+      "seconds": 320,
       "env": {
         "NXRT_TEST_SCRIPT": "{game}/tt/fps.tt",
         "NXRT_TEST_FRAME_SOURCE": "tick",

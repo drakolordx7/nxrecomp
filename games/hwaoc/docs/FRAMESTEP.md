@@ -47,6 +47,14 @@ Sources: seedds/nxnative issue 536 and its `patches.py` (fixed 60 fps on 1.3.0/1
   `max_rate` (the step is never shorter: an uncapped run is held to it), `min_rate = 30` (a slower update makes the game run slow, as
   on the Switch), `smooth`, `log_every`.
 
+## Checked (prologue battle, headless 720p, `--preset fps`)
+- 60 cap: 60.0 Hz steady until the battle; 144 cap: 140-150 Hz in the menus and movies; uncapped: 480 Hz (the base's max_rate) in menus, 170 Hz in a loading screen.
+- Speed: Link held forward for 3 s of host time ends at the same place on the bridge with the 30 fps step (cap 30, identical to retail), the 60 cap run and
+  the 144 cap run (the battle itself ran 33-45 Hz on the busy test PC in both: a fractional-tick step). The battle was not reached above 60 Hz.
+- Limits seen: an uncapped run (480 Hz) keeps the loading screen up much longer on a busy PC (the update loop competes with the loader threads);
+  use a cap (the default is 60). A start freezes in 2 of 6 starts at frame 2 with the hooks off as well (the main thread waits in the game's start-up
+  job sync): not caused by the frame step.
+
 ## Risks not checked
 - Places that copy the integer interval into object or script state at creation (`main+0x6d6968`, `0x7644e0`, `0x6e7c94`,
   `0x6f3af8`) take whatever the current update's whole ticks are; a 0 there (above 60 fps) could stall that object's timer.
