@@ -4,9 +4,8 @@
 
 #include "nxrt/config.h"
 #include "nxrt/log.h"
-
-#include <windows.h>
-#include <psapi.h>
+#include "nxrt/os/fault.h"
+#include "nxrt/os/mem.h"
 
 #include <atomic>
 #include <chrono>
@@ -79,7 +78,7 @@ void guard_loop(Settings s) {
                 log_flush();
                 std::fprintf(stderr, "memory: %.2f GB is over the %.1f GB limit: stopping\n", gb, limit_gb);
                 std::fflush(nullptr);
-                TerminateProcess(GetCurrentProcess(), 3);
+                os::terminate(3);
             }
         }
 
@@ -89,13 +88,7 @@ void guard_loop(Settings s) {
 
 }
 
-uint64_t memguard_footprint() {
-    PROCESS_MEMORY_COUNTERS_EX pmc{};
-    pmc.cb = sizeof pmc;
-    if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof pmc))
-        return 0;
-    return static_cast<uint64_t>(pmc.PrivateUsage);
-}
+uint64_t memguard_footprint() { return os::mem::footprint(); }
 
 void memguard_set_discount(uint64_t (*gpu_bytes)()) { g_discount.store(gpu_bytes); }
 

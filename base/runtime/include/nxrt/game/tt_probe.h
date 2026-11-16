@@ -7,7 +7,7 @@
 
 namespace nxrt::tt::detail {
 
-bool read_mem(uint64_t addr, void* out, size_t n);       // ReadProcessMemory on ourselves: false instead of a fault
+bool read_mem(uint64_t addr, void* out, size_t n);       // a guarded read (os::guard): false instead of a fault
 bool write_mem(uint64_t addr, const void* in, size_t n);
 
 }  // namespace nxrt::tt::detail

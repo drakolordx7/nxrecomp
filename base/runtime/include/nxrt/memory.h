@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "nxrt/os/mem.h"
+
 namespace nxrt::mem {
 
 // ---- address-space layout (documented constants; every value is above what a Windows process with HIGHENTROPYVA off uses) ----
@@ -27,7 +29,7 @@ constexpr uint64_t kKernelSize = 0x100000000ull;
 constexpr uint64_t kPage = 0x1000;
 constexpr uint64_t kAllocGranularity = 0x10000;     // views of a section start at multiples of 64 KiB
 
-enum class Prot { None, R, RW, RX, RWX };
+using Prot = os::mem::Prot;   // None, R, RW, RX, RWX
 
 struct Config {
     uint64_t heap_reserve = 0;        // bytes of section; 0 = [memory] heap_gb from the config (default 6 GiB)
@@ -46,7 +48,7 @@ bool commit(uint64_t addr, uint64_t size, Prot p = Prot::RW);
 bool decommit(uint64_t addr, uint64_t size);
 bool protect(uint64_t addr, uint64_t size, Prot p);
 uint64_t alloc_kernel(uint64_t size, uint64_t align = kPage);   // committed RW memory from the kernel region (bump allocator)
-bool is_mapped(uint64_t addr, uint64_t size);                // every byte of the range is committed and accessible (VirtualQuery)
+bool is_mapped(uint64_t addr, uint64_t size);                // every byte of the range is committed and accessible (the host page table: nxrt/os/mem.h)
 // An address inside the guest span (the main image up to the end of the kernel region): where a guest pointer can point.
 constexpr bool is_guest_ptr(uint64_t addr) { return addr >= kMainBase && addr < kKernelBase + kKernelSize; }
 // A guest pointer whose first `size` bytes can be read without a fault: safe for diagnostics that follow guest data.

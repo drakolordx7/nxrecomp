@@ -22,7 +22,6 @@
 // Reference: the oracle's recomp/oracle/e2e/rt/eh_rt.cpp (S1, GPL-3.0-or-later) for the table walk and landing protocol; this file adds
 // two-phase search, typeinfo matching with class hierarchies (typeinfo.cpp), the libc++abi exception header protocol, per-thread
 // state, rethrow, nested exceptions and uncaught-exception reporting.
-#include <windows.h>
 
 #include <atomic>
 #include <cstdarg>
@@ -34,6 +33,7 @@
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/eh.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
@@ -547,7 +547,7 @@ void terminate_process(::Ctx* c, const char* why) {
         h(c, why);
         return;
     }
-    TerminateProcess(GetCurrentProcess(), kTerminateExitCode);
+    os::terminate(kTerminateExitCode);
 }
 
 Stats stats() {

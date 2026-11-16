@@ -3,8 +3,7 @@
 #include "play_aim.h"
 
 #include "display_hooks.h"
-
-#include <windows.h>
+#include "nxrt/os/fault.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,23 +13,17 @@ namespace nxrt::play {
 
 bool guest_read(uint64_t addr, void* out, size_t n) {
     if (addr < 0x10000) return false;
-    SIZE_T got = 0;
-    return ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<const void*>(addr), out, n, &got) && got == n;
+    return nxrt::os::guard::read(reinterpret_cast<const void*>(addr), out, n);
 }
 
-// A direct store (after a read that proves the page is mapped, under an exception guard). WriteProcessMemory looks the region up first (NtQueryVirtualMemory) and for an address in the guest heap that
-// lookup takes tens of milliseconds (measured 56 ms per call against the player object, 3 to 10 us elsewhere), once per frame: the game ran at 8 frames
-// per second. ReadProcessMemory has no such lookup (2 us).
+// A direct store (after a read that proves the page is mapped, under a fault guard). A write through the host's process API (WriteProcessMemory) looks the region up first
+// and for an address in the guest heap that lookup takes tens of milliseconds (measured 56 ms per call against the player object, 3 to 10 us elsewhere), once per
+// frame: the game ran at 8 frames per second. A guarded direct copy has no such lookup.
 bool guest_write(uint64_t addr, const void* in, size_t n) {
     if (addr < 0x10000) return false;
     uint8_t probe[64];
     if (n > sizeof probe || !guest_read(addr, probe, n)) return false;      // unmapped or reserved: a read says so in 2 us (a fault here would reach the runtime's own handler first)
-    __try {
-        std::memcpy(reinterpret_cast<void*>(addr), in, n);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
+    return nxrt::os::guard::write(reinterpret_cast<void*>(addr), in, n);
 }
 
 bool shift_look_filter(uint64_t filter, float d) {
