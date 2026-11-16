@@ -5,16 +5,16 @@ Age of Calamity is a 30 fps game: every update steps the game by whole 60 Hz vsy
 `runtime/hwaoc_timestep.cpp` hands that time to the game's own mechanisms. Sites: `recomp/addrs.tsv`, section "frame step".
 
 ## How the game steps (1.4.1, checked in IDA on our ELF)
-- **KIDS frame task** `main+0x166fff0`, once per update, before the scene: reads the task fps (`[x19,#0x30]`, 30), waits until
+- KIDS frame task `main+0x166fff0`, once per update, before the scene: reads the task fps (`[x19,#0x30]`, 30), waits until
   1/fps has passed since the last update (sleep 1 ms or run jobs), measures the real time (`[x19,#0x24]`), then takes the update's
-  step from the **frame-rate object** (`x23`: `+0x34` step = timescale / fps, `+0x44` a second step, `+0x48` fps 30), or with no
+  step from the frame-rate object (`x23`: `+0x34` step = timescale / fps, `+0x44` a second step, `+0x48` fps 30), or with no
   object 1/fps or the measured time. The step goes to `[x19,#0x18]` and into the system clocks (`+0x3348`, `+0x3358`).
-- **Frame-rate block** `main+0x26a2280` = {fps, interval, fps, float fps} = {30, 2, 30, 30.0}, written only by the game's interval
+- Frame-rate block `main+0x26a2280` = {fps, interval, fps, float fps} = {30, 2, 30, 30.0}, written only by the game's interval
   request (`main+0x8a35e0`, `main+0xfc3c50`: fps = 60 / interval). The battle steps by it: 117 places read the interval as a float
   multiplier (`ldr` + `ucvtf`), about 55 as an integer (timers `+= interval`, `-= interval`, `== 2` tuning switches, copies into
   script state), 25 divide by the float fps, one reads the integer fps as a float (`main+0xb09ac8`).
-- **KTGL device frame rate** (device `+0x32d0`, 59.94 / interval): the event scripts step by it.
-- **Event cutscenes** count whole 30 fps frames: the scene update (`main+0x857510`) adds 1 to the cutscene's frame and takes 1 from
+- KTGL device frame rate (device `+0x32d0`, 59.94 / interval): the event scripts step by it.
+- Event cutscenes count whole 30 fps frames: the scene update (`main+0x857510`) adds 1 to the cutscene's frame and takes 1 from
   its frames left on every update.
 - The present interval (device config, 2) is ignored by the base's NVN present: presents follow the updates.
 Sources: seedds/nxnative issue 536 and its `patches.py` (fixed 60 fps on 1.3.0/1.4.1) for where to look; every site re-read here.
@@ -30,14 +30,14 @@ Sources: seedds/nxnative issue 536 and its `patches.py` (fixed 60 fps on 1.3.0/1
 | Input, camera | read and stepped in every update, so every rendered frame |
 
 ## What keeps its native rate (and why)
-- **Integer interval users** (timers, counters, `interval == 2` switches): the integer interval is the whole 60 Hz ticks that real time
+- Integer interval users (timers, counters, `interval == 2` switches): the integer interval is the whole 60 Hz ticks that real time
   has accumulated by this update (0, 1, 2, ...), so they keep real time on average and step in 1/60 s quanta. Above 60 fps some updates
   get 0 (nothing counts down that update); at 30 fps it is 2 as on the Switch. A rate that alternates 1 and 2 (40..59 fps) also flips
   the `== 2` tuning switches between updates.
-- **Event cutscenes** stay on 30 fps frames: the frame and frames left advance by the whole 30 fps frames of real time (0, 1 or 2 per
+- Event cutscenes stay on 30 fps frames: the frame and frames left advance by the whole 30 fps frames of real time (0, 1 or 2 per
   update), so a cutscene keeps its speed and sync with its voices at any rate but its camera and animation move in 1/30 s steps.
   Interpolating them needs the cutscene's own timeline: not done.
-- **Movies** play on the host clock (base media).
+- Movies play on the host clock (base media).
 
 ## Settings
 - Frame rate limit: the base's Display page and F1 (`controls.ini` `[display] fps_cap`, VSync), applied at the frame boundary.

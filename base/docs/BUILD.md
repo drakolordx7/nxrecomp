@@ -103,8 +103,8 @@ pwsh    wt.ps1 <name> -Linux ...        (the same, from the stream script)
 FFmpeg (movies; `runtime/cmake/ffmpeg.cmake`): Windows fetches the pinned BtbN LGPL shared build into the archive cache and
 copies its DLLs next to every exe; Linux uses the system packages (`libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev`,
 FFmpeg 4.4 or newer), or `-DNXRT_FFMPEG_BUNDLED=ON` fetches the same pinned build as `.so` files that are copied next to the exe ($ORIGIN rpath;
-what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. The setup tool: (`python3 wt.py main --game <id> --setup --test`, 14 of 16 test groups
-need nothing else: `shadercache` wants the Python module `zstandard`, `texcache` a real ispc build).
+what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. The setup tool tests (`python3 wt.py main --game <id> --setup --test`): 14 of 16 test groups
+need nothing else; `shadercache` wants the Python module `zstandard`, `texcache` a real ispc build.
 
 ### Setup tool and release on Linux
 
@@ -140,6 +140,4 @@ built in `nx-linux`, ctest, a headless boot when the exe exists; it prints `LINU
 The launcher (`NXRT_BUILD_LAUNCHER`, on by default) is the same SDL3 + Dear ImGui program on both systems (`base/ui` is the shell, `runtime/apps/launcher` the pages; the setup window `tools/setup/gui/main_ui.cpp` uses the same shell). With `NXUI_SHOT=<file.bmp>` set, either program saves its window after a few frames and exits (a test aid; `SDL_VIDEO_DRIVER=offscreen SDL_RENDER_DRIVER=software` runs it headless).
 
 Test and automation aids (the same on both systems; the scripts `games/mpr/launcher_e2e.py` and `cleanroom_rc.py` use them, no window messages are involved): `<id>_launcher --auto-save` loads `controls.ini` through the pages and saves it back without a window; `--auto-report <file>` writes the folder state (`state=ready|not_ready`, `summary`, `settings`, `pages`, ...) as `key=value` lines without a window; `--auto-press setup|play` presses that button on the first frame; `--page <n>` opens a tab; `--game`, `--setup-args`, `--game-args`, `--auto-play`, `--auto-prepare` and `--no-prepare` as before. The setup window takes `--auto-start --exit-when-done --no-message-box`.
-
-The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy in `NX/build/textures/linux`.
 

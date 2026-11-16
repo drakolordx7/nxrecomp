@@ -32,7 +32,7 @@ Only one subsdk (`subsdk0`), like mpr and ap.
 
 - Base v0 main: 16,814,561 bytes, text 26,608,592, build ID `935EBE83C4A0658348A8A1C05CF8DAC3F43CEB84`. rtld, sdk and subsdk0 are byte-identical between base and update (only main and main.npdm change).
 - ELFs (nx2elf): `work/elf/{main,rtld,sdk,subsdk0}.elf`; main.elf is 41.4 MB (mpr 33 MB, ap 27.5 MB).
-- SDK: `NintendoSdk_nnSdk-9_6_0-Release` in sdk; main has `NintendoSDK_gfx-9_6_0` and `libz-9_6_0`; sdk has `NintendoSDK_NVN-9_6_0`; subsdk0 has `NintendoSDK_movie-9_6_0`. **SDK 9.6.0** (every program NCA reports SdkAddon 9.6.0). Older than ap (10.4.1) and mpr (15+); main.npdm kernel version is 9.1.
+- SDK: `NintendoSdk_nnSdk-9_6_0-Release` in sdk; main has `NintendoSDK_gfx-9_6_0` and `libz-9_6_0`; sdk has `NintendoSDK_NVN-9_6_0`; subsdk0 has `NintendoSDK_movie-9_6_0`. SDK 9.6.0 (every program NCA reports SdkAddon 9.6.0). Older than ap (10.4.1) and mpr (15+); main.npdm kernel version is 9.1.
 - main.npdm: main thread priority 44 on core 0, stack 1 MiB, thread priority range 28..59, cores 0..3, handle table 0x200, SystemResourceSize 0, 64-bit application, debug flag on. Services requested: acc:u0 aoc:u apm appletOE audin:u audout:u audren:u banana bcat:u bsd:u bsdcfg caps:su caps:u csrng friend:u fsp-srv hid htc htc:tenv htcs hwopus irs ldn:u ldr:ro lm mii:u mm:u nfc:mf:u nfc:user nfp:user ngct:u nifm:u nim:eca notif:a nsd:u ntc nvdrv pcm pctl pl:u prepo:u set sfdnsres ssl time:u vi:u.
 - NACP: 13 languages (AmericanEnglish, BritishEnglish, Japanese, French, German, LatinAmericanSpanish, Spanish, Italian, Dutch, CanadianFrench, Korean, Traditional and Simplified Chinese), startup account required, AddOnContentRegistrationType OnDemand, user save 2 MiB + 2 MiB journal, local communication ID = title ID, video capture enabled.
 
@@ -41,7 +41,7 @@ Only one subsdk (`subsdk0`), like mpr and ap.
 - Same API as mpr and ap, so the base's NVN-on-Vulkan path applies.
 
 ## Engine and middleware
-- Koei Tecmo **KTGL** (Koei Tecmo Game Library, since renamed Katana Engine, by Future Tech Base): main has 453 `KTGL*` strings, `KIDS*` strings (Koei Tecmo's tool/system layer) and `mud::from_kidshost::EvaluateScript` script bindings. Sources: [PCGamingWiki Katana Engine](https://www.pcgamingwiki.com/wiki/Engine:Katana_Engine), [Wikipedia](https://en.wikipedia.org/wiki/Katana_Engine).
+- Koei Tecmo KTGL (Koei Tecmo Game Library, since renamed Katana Engine, by Future Tech Base): main has 453 `KTGL*` strings, `KIDS*` strings (Koei Tecmo's tool/system layer) and `mud::from_kidshost::EvaluateScript` script bindings. Sources: [PCGamingWiki Katana Engine](https://www.pcgamingwiki.com/wiki/Engine:Katana_Engine), [Wikipedia](https://en.wikipedia.org/wiki/Katana_Engine).
 - Audio: nn::audio renderer (88 audio symbols in main), nn::codec `HardwareOpusMultiStreamDecoder` (service `hwopus`). Audio archives are `IDRK0000/SRST` ([srst-extractor](https://github.com/hackyourlife/srst-extractor) writes `kns` tracks).
 - Movies: subsdk0 is Nintendo's nn::movie 9.6.0: Android-derived stagefright/OMX (`SoftOpus`, `SoftVorbis`, `video_decoder.vpx`, libwebm, `jpegTegra*`, `mmnv`, `SfNvnUtil`, a curl HTTP connection class). The RomFS has 97 `.webm` movies plus 4 logo movies, so playback goes through mm:u and the nvdrv decode path.
 - Input and extras: nn::hid with vibration, amiibo (nfp, 14 symbols, an amiibo window in the UI), nn::ec shop (the eShop upgrade offer), nn::oe, nn::account, nn::nifm, nn::aoc.
