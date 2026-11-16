@@ -22,7 +22,6 @@ Modules (each one a header here and one source file per platform; those marked d
 | `dynlib` | loading shared libraries and finding symbols in them (not needed so far: no caller loads a library by name) |
 | `symbols` | (done) host address to name (Windows linker map, Linux ELF symtab + dladdr), loaded modules, stack capture (RtlVirtualUnwind, libgcc unwinder) |
 | `procinfo` | (done) memory, CPU time, handle and thread counts of this process (the soak sampler) |
-| `spawn` | (done) run another program and wait for it (tests that need a real crash) |
 | `hwwatch` | (done on Windows only) data breakpoints on the process's own memory, for developer probes; Linux says unsupported |
 
 `movie_mf.cpp` (`win32`: the Media Foundation decoder of the `movie::` library, a fallback behind `[media] backend = mf`; `posix`: a stub) is the one

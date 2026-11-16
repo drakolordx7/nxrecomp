@@ -10,7 +10,6 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/os/fault.h"
 #include "nxrt/os/process.h"
-#include "nxrt/os/spawn.h"
 #include "nxrt/symbols.h"
 
 #include <atomic>
@@ -251,10 +250,11 @@ std::string read_file(const std::string& path) {
 }
 
 bool run_child(const char* mode, const std::string& report, const std::string& log, int& exit_code) {
-    const nxrt::os::process::RunResult r =
-        nxrt::os::process::run_and_wait(nxrt::os::process::exe_path(), {"--child", mode, report}, {{"NXRT_LOG", log}}, 30000);
-    exit_code = r.exit_code;
-    return r.started && !r.timed_out;
+    nxrt::os::process::setenv("NXRT_LOG", log.c_str());
+    nxrt::os::process::Child c = nxrt::os::process::Child::spawn(nxrt::os::process::exe_path(), {"--child", mode, report});
+    nxrt::os::process::setenv("NXRT_LOG", "");
+    if (!c.valid()) return false;
+    return c.wait(30000, &exit_code);
 }
 
 void remove_temp(const std::string& path) {
