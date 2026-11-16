@@ -10,6 +10,7 @@
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <string>
@@ -431,6 +432,9 @@ private:
         if (f->pts != AV_NOPTS_VALUE) us = av_rescale_q(f->pts, t.st->time_base, kUs) - base_us_;
         else if (t.next_audio_us != INT64_MIN) us = t.next_audio_us;
         else us = 0;
+        // The time of a block is where the data before it ends: a container that counts in milliseconds (WebM) rounds the time of every Opus packet
+        // by up to 0.5 ms, and the first frame of a stream is shortened by the decoder (the pre-skip). Only a real gap or jump takes the packet's time.
+        if (t.next_audio_us != INT64_MIN && f->pts != AV_NOPTS_VALUE && std::llabs(us - t.next_audio_us) < 25000) us = t.next_audio_us;
         const int cap = swr_get_out_samples(t.rs.swr, f->nb_samples) + 16;
         SourceSample smp;
         smp.us = us;
