@@ -147,6 +147,9 @@ public:
 
     using Opts = AppOpts;
 
+    // True on Mesa's software rasteriser (lavapipe / llvmpipe, VK_DRIVER_ID_MESA_LLVMPIPE): a test that hits one of its known deviations
+    // skips there, by driver id, and keeps its full assertion on every other driver.
+    bool on_lavapipe() const { return dev && dev->gpu().driver_id == static_cast<int>(VK_DRIVER_ID_MESA_LLVMPIPE); }
     bool init() { return init(AppOpts()); }
     bool init(const AppOpts& o) {
         width = o.width;

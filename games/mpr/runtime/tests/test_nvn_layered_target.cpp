@@ -208,6 +208,10 @@ NXTEST(passthrough_geometry_shader_copies_location_0) {
     // from NDC y = -1, or v = 1 - (r + 0.5) / 8 when they run the other way. The orientation is not assumed: both are counted and the
     // larger count must cover every texel.
     constexpr float kTol = 2e-3f;
+    // The vertex shader (38f38f70414e8efe) writes x, y and z of Location 0 and never w; the 1 the test expects there is whatever the GPU leaves in
+    // an output component nobody wrote (the GPUs the test was written on: 1). Lavapipe leaves 0. On lavapipe (by driver id) w is not compared; every other driver
+    // keeps the full (u, v, face, 1) check.
+    const bool check_w = !app.on_lavapipe();
     const size_t total = 6 * static_cast<size_t>(kSide) * kSide;
     size_t match_down = 0, match_up = 0;
     for (int f = 0; f < 6; ++f) {
@@ -219,7 +223,7 @@ NXTEST(passthrough_geometry_shader_copies_location_0) {
                 std::memcpy(t, &raw[(static_cast<size_t>(r) * kSide + c) * 16], 16);
                 const float u = (static_cast<float>(c) + 0.5f) / kSide;
                 const float v_down = (static_cast<float>(r) + 0.5f) / kSide, v_up = 1.0f - v_down;
-                const bool uvz = std::fabs(t[0] - u) < kTol && std::fabs(t[2] - static_cast<float>(f)) < kTol && std::fabs(t[3] - 1.0f) < kTol;
+                const bool uvz = std::fabs(t[0] - u) < kTol && std::fabs(t[2] - static_cast<float>(f)) < kTol && (!check_w || std::fabs(t[3] - 1.0f) < kTol);
                 if (uvz && std::fabs(t[1] - v_down) < kTol) ++match_down;
                 if (uvz && std::fabs(t[1] - v_up) < kTol) ++match_up;
             }

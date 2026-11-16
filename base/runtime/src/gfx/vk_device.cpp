@@ -434,6 +434,14 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
         gi.type = static_cast<int>(p.deviceType);
         gi.api_version = p.apiVersion;
         gi.driver_version = p.driverVersion;
+        {
+            VkPhysicalDeviceVulkan12Properties v12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+            VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &v12};
+            if (p.apiVersion >= VK_API_VERSION_1_2) {
+                vkGetPhysicalDeviceProperties2(devs[i], &p2);
+                gi.driver_id = static_cast<int>(v12.driverID);
+            }
+        }
         VkPhysicalDeviceMemoryProperties mp;
         vkGetPhysicalDeviceMemoryProperties(devs[i], &mp);
         for (uint32_t h = 0; h < mp.memoryHeapCount; ++h)
