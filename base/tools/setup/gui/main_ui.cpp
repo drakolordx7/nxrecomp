@@ -18,7 +18,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <format>
+#include <initializer_list>
+#include <type_traits>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -32,6 +33,45 @@
 #include "log.h"
 #include "nxui/ui.h"
 #include "pipeline.h"
+
+// std::format is not in every libstdc++ the Linux box has (GCC 12 and older); the few forms this window uses: {} {:.Nf} {:0N}.
+namespace fmtx {
+template <class T>
+std::string conv(const T& v, const std::string& spec) {
+    if constexpr (std::is_convertible_v<T, std::string>) {
+        return std::string(v);
+    } else {
+        char buf[64];
+        if constexpr (std::is_floating_point_v<T>) {
+            if (spec.size() > 1 && spec[0] == '.') std::snprintf(buf, sizeof buf, "%.*f", std::atoi(spec.c_str() + 1), static_cast<double>(v));
+            else std::snprintf(buf, sizeof buf, "%g", static_cast<double>(v));
+        } else {
+            const int width = spec.size() > 1 && spec[0] == '0' ? std::atoi(spec.c_str() + 1) : 0;
+            std::snprintf(buf, sizeof buf, "%0*lld", width, static_cast<long long>(v));
+        }
+        return buf;
+    }
+}
+template <class... A>
+std::string format(const char* f, const A&... a) {
+    const std::function<std::string(const std::string&)> conv_fns[] = {[&a](const std::string& sp) { return conv(a, sp); }..., nullptr};
+    std::string out;
+    size_t next = 0;
+    for (const char* c = f; *c; ++c) {
+        if (*c != '{') {
+            out += *c;
+            continue;
+        }
+        const char* end = std::strchr(c, '}');
+        if (!end) break;
+        std::string spec(c + 1, end);
+        if (!spec.empty() && spec[0] == ':') spec.erase(0, 1);
+        if (next < sizeof...(A)) out += conv_fns[next++](spec);
+        c = end;
+    }
+    return out;
+}
+}  // namespace fmtx
 
 namespace {
 
@@ -188,25 +228,25 @@ CmdLine parse_command_line(int argc, char** argv) {
 
 std::string size_text(u64 bytes) {
     const double b = static_cast<double>(bytes);
-    if (b >= 1e9) return std::format("{:.1f} GB", b / 1e9);
-    return std::format("{:.0f} MB", b / 1e6);
+    if (b >= 1e9) return fmtx::format("{:.1f} GB", b / 1e9);
+    return fmtx::format("{:.0f} MB", b / 1e6);
 }
 
 std::string duration_text(double secs) {
     const long long total = std::llround(secs);
     const long long m = total / 60, s = total % 60;
-    return m > 0 ? std::format("{} min {} s", m, s) : std::format("{} s", s);
+    return m > 0 ? fmtx::format("{} min {} s", m, s) : fmtx::format("{} s", s);
 }
 
 std::string eta_text(double secs) {
-    if (secs < 90) return std::format("about {:.0f} s left", secs);
-    return std::format("about {:.0f} min left", secs / 60);
+    if (secs < 90) return fmtx::format("about {:.0f} s left", secs);
+    return fmtx::format("about {:.0f} min left", secs / 60);
 }
 
 std::string clock_text(u64 ms) {
     const u64 s = ms / 1000;
-    if (s >= 3600) return std::format("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60);
-    return std::format("{:02}:{:02}", s / 60, s % 60);
+    if (s >= 3600) return fmtx::format("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60);
+    return fmtx::format("{:02}:{:02}", s / 60, s % 60);
 }
 
 double stage_weight(Stage s) {
@@ -595,13 +635,13 @@ void App::show_inspect_result() {
     if (summary_.supported) {
         std::string extra;
         if (!summary_.update.empty()) extra += ", update " + summary_.update;
-        if (summary_.dlc_count) extra += std::format(", {} DLC ({})", summary_.dlc_count, size_text(summary_.dlc_bytes));
-        std::string text = std::format("{} found ({}{}). Needs {}, {} free.", nxs::game().title, summary_.container, extra, size_text(summary_.disk_needed),
+        if (summary_.dlc_count) extra += fmtx::format(", {} DLC ({})", summary_.dlc_count, size_text(summary_.dlc_bytes));
+        std::string text = fmtx::format("{} found ({}{}). Needs {}, {} free.", nxs::game().title, summary_.container, extra, size_text(summary_.disk_needed),
                                        size_text(summary_.disk_free));
         if (!summary_.notes.empty()) text += " Note: " + summary_.notes[0] + (summary_.notes.size() > 1 ? " (more in the log)" : "");
         dump_status_ = text;
         dump_status_color_ = nxui::col::green;
-        disk_line_ = std::format("This folder needs about {} (free: {}).", size_text(summary_.disk_needed), size_text(summary_.disk_free));
+        disk_line_ = fmtx::format("This folder needs about {} (free: {}).", size_text(summary_.disk_needed), size_text(summary_.disk_free));
     } else {
         std::string problem = summary_.problem;
         if (problem.empty()) problem = "This is not a dump this setup can use.";
@@ -690,15 +730,15 @@ void App::on_run_done(std::unique_ptr<RunMsg> r) {
     if (r->ok) {
         run_success_ = true;
         const double secs = r->report.total_seconds > 0 ? r->report.total_seconds : elapsed_ms / 1000.0;
-        stage_title_ = std::format("Setup finished in {}. Your game folder is ready:", duration_text(secs));
+        stage_title_ = fmtx::format("Setup finished in {}. Your game folder is ready:", duration_text(secs));
         stage_detail_.clear();
         stage_frac_ = overall_frac_ = 1.f;
-        overall_text_ = std::format("Overall 100%     Elapsed {}", clock_text(elapsed_ms));
+        overall_text_ = fmtx::format("Overall 100%     Elapsed {}", clock_text(elapsed_ms));
         NXS_LOGI("Setup finished in %s", duration_text(secs).c_str());
         if (!cli_.no_message_box && !cli_.exit_when_done) {
             const auto& rep = r->report;
             show_box("Setup finished",
-                     std::format("Setup finished in {}.\n\nFiles written: {}\nFiles already in place: {}\nTextures converted: {}, skipped: {}, failed: {}",
+                     fmtx::format("Setup finished in {}.\n\nFiles written: {}\nFiles already in place: {}\nTextures converted: {}, skipped: {}, failed: {}",
                                  duration_text(secs), rep.files_written, rep.files_skipped, rep.textures_converted, rep.textures_skipped,
                                  rep.textures_failed));
         }
@@ -743,9 +783,9 @@ void App::refresh_progress() {
     std::string detail;
     if (stage_active_ && stage_total_ > 0) {
         frac = std::min(1.0, static_cast<double>(done) / static_cast<double>(stage_total_));
-        detail = stage_percent_ ? std::format("{}% done", static_cast<int>(frac * 100))
-                 : stage_bytes_ ? std::format("{} of {}", size_text(done), size_text(stage_total_))
-                                : std::format("{} of {} textures", done, stage_total_);
+        detail = stage_percent_ ? fmtx::format("{}% done", static_cast<int>(frac * 100))
+                 : stage_bytes_ ? fmtx::format("{} of {}", size_text(done), size_text(stage_total_))
+                                : fmtx::format("{} of {} textures", done, stage_total_);
         const double stage_secs = (SDL_GetTicks() - stage_started_ms_) / 1000.0;
         if (done > 0 && done < stage_total_ && stage_secs >= 5) {
             const double rate = static_cast<double>(done) / stage_secs;
@@ -757,7 +797,7 @@ void App::refresh_progress() {
     stage_detail_ = detail;
     const double overall = completed_weight_ + (stage_active_ ? stage_weight(stage_) * frac : 0.0);
     overall_frac_ = static_cast<float>(std::clamp(overall / 100.0, 0.0, 1.0));
-    overall_text_ = std::format("Overall {:.0f}%     Elapsed {}", overall, clock_text(SDL_GetTicks() - run_started_ms_));
+    overall_text_ = fmtx::format("Overall {:.0f}%     Elapsed {}", overall, clock_text(SDL_GetTicks() - run_started_ms_));
 }
 
 // ---- events and frames -------------------------------------------------------------------------------------------------------------
@@ -957,7 +997,7 @@ int App::run() {
         for (size_t i = 0; i < quality_values_.size(); ++i)
             if (quality_values_[i] == cli_.quality) index = static_cast<int>(i);
         if (index < 0) {
-            quality_items_.push_back(std::format("Custom (quality {})", cli_.quality));
+            quality_items_.push_back(fmtx::format("Custom (quality {})", cli_.quality));
             quality_values_.push_back(cli_.quality);
             index = static_cast<int>(quality_values_.size()) - 1;
         }

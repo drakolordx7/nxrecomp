@@ -26,6 +26,7 @@
 #include "nxrt/runtime.h"
 #include "nxrt/services.h"
 #include "nxrt/svc.h"
+#include "low_mem.h"
 #include "test_framework.h"
 
 namespace nxsvc {
@@ -97,6 +98,32 @@ struct MsgBuf {
     MsgBuf& operator=(const MsgBuf&) = delete;
 };
 
+// Host buffers handed to a service through a message. A message names a buffer by a 39-bit address; where the host's own addresses are higher
+// (Linux) the buffer is copied to memory below 2^39 (low_mem.h) for the call and the bytes a service may write are copied back afterwards.
+class Bounce {
+public:
+    ~Bounce() {
+        for (auto& e : e_)
+            if (e.back) std::memcpy(reinterpret_cast<void*>(e.orig), reinterpret_cast<void*>(e.low), e.size);
+    }
+    template <class Addr, class Size>
+    void in(Addr& addr, Size size, bool copy_back) {
+        if (addr < nxtest::kAddr39 || size == 0) return;
+        void* low = nxtest::low_alloc(size);
+        if (!low) return;
+        std::memcpy(low, reinterpret_cast<const void*>(addr), size);
+        e_.push_back({static_cast<uint64_t>(addr), reinterpret_cast<uint64_t>(low), static_cast<uint64_t>(size), copy_back});
+        addr = reinterpret_cast<uint64_t>(low);
+    }
+
+private:
+    struct Entry {
+        uint64_t orig, low, size;
+        bool back;
+    };
+    std::vector<Entry> e_;
+};
+
 class Session {
 public:
     Session() = default;
@@ -159,6 +186,12 @@ public:
         m.ptrs = args.x;
         m.recv_list = args.c;
         m.recv_list_flags = args.recv_flags;
+        Bounce bounce;      // a buffer above 2^39 (Linux stacks and heaps) goes through a copy below it; no-op where host addresses are low
+        for (auto& d : m.send) bounce.in(d.addr, d.size, false);
+        for (auto& d : m.recv) bounce.in(d.addr, d.size, true);
+        for (auto& d : m.exch) bounce.in(d.addr, d.size, true);
+        for (auto& d : m.ptrs) bounce.in(d.addr, d.size, false);
+        for (auto& d : m.recv_list) bounce.in(d.addr, d.size, true);
         std::string err;
         if (hipc::build(m, mb.p, 0x100 / 4, &err) == 0) {
             nxtest::fail(__FILE__, __LINE__, "hipc::build", err);
@@ -238,6 +271,7 @@ struct Env {
         nxrt::ipc::registry_reset();
         nxrt::services::register_all();
         nxrt::services::reset_all();
+        nxtest::low_reset();
     }
 };
 
