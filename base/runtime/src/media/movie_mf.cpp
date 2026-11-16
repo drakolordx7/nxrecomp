@@ -9,8 +9,8 @@
 // decode; edit lists of the MP4 are honoured (the first frame is at 0, the AAC priming is cut), as ffmpeg does.
 //
 // Layouts read off the game's main (v1.0.0, IDA) and off subsdk0:
-//   movie::Extractor  16 bytes embedded in the game's extractor object   {marker, impl*}
-//   movie::Decoder    16 bytes embedded in the game's decoder object     {marker, impl*}
+//   movie::Extractor  16 bytes embedded in the game's extractor object   {host vtable, impl*}
+//   movie::Decoder    16 bytes embedded in the game's decoder object     {host vtable, impl*}
 //   movie::MediaData  8 bytes, one pointer to a key/value store          {impl*}
 //   movie::Buffer     0x40 bytes: +0 offset i32, +4 size i32, +c flags u32, +0x10 owns u8, +0x18 capacity u64, +0x20 i64, +0x28 base
 //   ClientStreamReader (the game's reader object, vtable at +0 of the object): +0x10 Open(path, void** handle) -> bool,
@@ -32,6 +32,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <functional>
@@ -41,6 +42,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <initializer_list>
 #include <vector>
 
 #include "nxrt/abi.h"
@@ -48,8 +50,10 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
 #include "nxrt/module.h"
 #include "nxrt/movie.h"
+#include "nxrt/services.h"
 
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
@@ -80,7 +84,10 @@ constexpr int ST_NO_OUTPUT = 0x100e;
 constexpr uint32_t FLAG_EOS = 4;
 constexpr size_t kSlotBytes = 64;
 constexpr uint64_t kTokenMagic = 0x4d4f564945544f4bull;   // "MOVIETOK"
-constexpr uint64_t kObjMarker = 0x4e58524d4f564945ull;    // "NXRMOVIE": byte 0..7 of an object the host owns
+// Byte 0..7 of an Extractor or Decoder the host owns: a vtable of host thunks (object_vtable below), so a game that calls the members
+// through the vtable (older SDKs) reaches the same handlers as one that calls the exported wrappers.
+uint64_t ext_vtable();
+uint64_t dec_vtable();
 constexpr int kAudioChunk = 0x8000;                   // what GetOutputBufferSize says for audio (the game allocates at least this)
 constexpr size_t kVideoQueueMax = 6, kAudioQueueMax = 64, kOtherQueueMax = 8;
 constexpr int kWaitMs = 8000;                         // longest the extractor makes a game thread wait for the worker
@@ -133,8 +140,9 @@ bool mf_ready() {
 
 // ---- movie::MediaData ----------------------------------------------------------------------------------------------------------
 struct MDEntry {
-    enum Type { I32, I64, STR, PTR } t = I32;
+    enum Type { I32, I64, STR, PTR, RECT } t = I32;
     int64_t i = 0;
+    int32_t r[4] = {0, 0, 0, 0};     // RECT: left, top, right, bottom (inclusive, as stagefright's "crop")
     std::string s;
     uint64_t p = 0;
 };
@@ -144,6 +152,11 @@ struct MD {
     void set_i64(const char* k, int64_t v) { MDEntry& x = e[k]; x.t = MDEntry::I64; x.i = v; }
     void set_str(const char* k, const char* v) { MDEntry& x = e[k]; x.t = MDEntry::STR; x.s = v ? v : ""; }
     void set_ptr(const char* k, uint64_t v) { MDEntry& x = e[k]; x.t = MDEntry::PTR; x.p = v; }
+    void set_rect(const char* k, int32_t l, int32_t t, int32_t r, int32_t b) {
+        MDEntry& x = e[k];
+        x.t = MDEntry::RECT;
+        x.r[0] = l; x.r[1] = t; x.r[2] = r; x.r[3] = b;
+    }
     const MDEntry* find(const char* k) const { auto it = e.find(k); return it == e.end() ? nullptr : &it->second; }
     bool get_i32(const char* k, int32_t* out) const {
         const MDEntry* x = find(k);
@@ -169,6 +182,20 @@ void mdata_copy(::Ctx* c) {
 }
 void mdata_dtor(::Ctx* c) { delete md_of(A0); wr64(A0, 0); }
 void mdata_clear(::Ctx* c) { if (MD* m = md_of(A0)) m->e.clear(); }
+void mdata_set_i32(::Ctx* c) {               // SetInt32(const char* key, int32 value)
+    if (MD* m = md_of(A0); m && A1) m->set_i32(reinterpret_cast<const char*>(A1), static_cast<int32_t>(A2));
+}
+void mdata_find_rect(::Ctx* c) {             // FindRect(const char* key, int* left, int* top, int* right, int* bottom)
+    MD* m = md_of(A0);
+    const MDEntry* x = m && A1 ? m->find(reinterpret_cast<const char*>(A1)) : nullptr;
+    const bool ok = x && x->t == MDEntry::RECT;
+    if (ok) {
+        const uint64_t out[4] = {A2, A3, A4, A5};
+        for (int k = 0; k < 4; k++)
+            if (out[k]) wr32(out[k], static_cast<uint32_t>(x->r[k]));
+    }
+    RET(ok);
+}
 void mdata_find_i32(::Ctx* c) {
     int32_t v = 0;
     MD* m = md_of(A0);
@@ -328,7 +355,7 @@ struct Ext {
     uint64_t samples_read = 0;
 };
 
-Ext* ext_of(uint64_t guest) { return guest && rd64(guest) == kObjMarker ? reinterpret_cast<Ext*>(rd64(guest + 8)) : nullptr; }
+Ext* ext_of(uint64_t guest) { return guest && rd64(guest) == ext_vtable() ? reinterpret_cast<Ext*>(rd64(guest + 8)) : nullptr; }
 
 int track_kind_of_native(IMFMediaType* t, GUID* sub) {
     GUID major{};
@@ -746,10 +773,10 @@ int ext_fill(Ext* e, std::unique_lock<std::mutex>& lk) {
 }
 
 // ---- Extractor handlers --------------------------------------------------------------------------------------------------------
-void ext_ctor(::Ctx* c) {                    // Extractor(ContainerType, CacheSize): 1 mp4, 2 mkv, 3 webm
+void ext_ctor(::Ctx* c) {                    // Extractor(ContainerType[, CacheSize]): 1 mp4, 2 mkv, 3 webm
     Ext* e = new Ext();
     e->container = static_cast<int>(A1);
-    wr64(A0, kObjMarker);
+    wr64(A0, ext_vtable());
     wr64(A0 + 8, reinterpret_cast<uint64_t>(e));
     s_extractors_created++;
     NXLOG_I("movie", "Extractor created (container type %d)", e->container);
@@ -767,6 +794,13 @@ void ext_dtor(::Ctx* c) {
         delete e;
     }
     s_extractors_destroyed++;
+}
+
+int ext_open_data(Ext* e, unsigned char* data, size_t size) {
+    if (e->container == 1 && (size < 12 || std::memcmp(data + 4, "ftyp", 4) != 0)) NXLOG_W("movie", "the movie data does not start with an MP4 'ftyp' box");
+    if (!ext_open(e, data, size)) return ST_FAILED;
+    ext_start_worker(e);
+    return ST_OK;
 }
 
 void ext_set_source(::Ctx* c) {              // SetDataSource(ClientStreamReader*, const char* path)
@@ -801,10 +835,27 @@ void ext_set_source(::Ctx* c) {              // SetDataSource(ClientStreamReader
     NXLOG_I("movie", "SetDataSource: read %lld of %lld bytes through the game's reader in %.2f s", static_cast<long long>(got), static_cast<long long>(size),
             std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     if (got != size) { RET(ST_FAILED); return; }
-    if (size < 12 || std::memcmp(data.get() + 4, "ftyp", 4) != 0) NXLOG_W("movie", "the movie data does not start with an MP4 'ftyp' box");
-    if (!ext_open(e, data.get(), static_cast<size_t>(size))) { RET(ST_FAILED); return; }
-    ext_start_worker(e);
-    RET(ST_OK);
+    RET(ext_open_data(e, data.get(), static_cast<size_t>(size)));
+}
+// SetDataSource(const char* path) of the older SDKs: the library opens the file itself. The path names a file of the game's data
+// ("rom:/movie/x.webm" or "movie/x.webm"): the mount name is dropped and the file is read from the RomFS folder.
+void ext_set_source_path(::Ctx* c) {
+    Ext* e = ext_of(A0);
+    const char* path = reinterpret_cast<const char*>(A1);
+    if (!e || !path) { RET(ST_INVALID); return; }
+    e->name = path;
+    std::string rel = path;
+    if (const size_t colon = rel.find(':'); colon != std::string::npos) rel.erase(0, colon + 1);
+    while (!rel.empty() && (rel[0] == '/' || rel[0] == '\\')) rel.erase(0, 1);
+    const std::string host = services::romfs_dir() + "/" + rel;
+    FILE* f = std::fopen(host.c_str(), "rb");
+    if (!f) { NXLOG_W("movie", "SetDataSource(%s): no file %s", path, host.c_str()); RET(ST_FAILED); return; }
+    std::vector<unsigned char> data;
+    unsigned char chunk[1 << 16];
+    for (size_t n; (n = std::fread(chunk, 1, sizeof chunk, f)) > 0;) data.insert(data.end(), chunk, chunk + n);
+    std::fclose(f);
+    NXLOG_I("movie", "SetDataSource(%s): %zu bytes from the RomFS folder", path, data.size());
+    RET(ext_open_data(e, data.data(), data.size()));
 }
 
 void ext_track_count(::Ctx* c) {
@@ -1035,7 +1086,7 @@ struct Dec {
     uint64_t in_count = 0, copied = 0, dropped = 0;
     bool warned_small = false, warned_token = false;
 };
-Dec* dec_of(uint64_t guest) { return guest && rd64(guest) == kObjMarker ? reinterpret_cast<Dec*>(rd64(guest + 8)) : nullptr; }
+Dec* dec_of(uint64_t guest) { return guest && rd64(guest) == dec_vtable() ? reinterpret_cast<Dec*>(rd64(guest + 8)) : nullptr; }
 
 // ---- gauges (include/nxrt/gauge.h) ----
 // Queued samples over every live extractor (kind 0 video, 1 audio): the registry lock first, then each extractor's m.
@@ -1131,7 +1182,7 @@ void dec_ctor(::Ctx* c) {                    // Decoder(DecoderType, DecoderOutp
     d->nin = 8;
     d->nout = d->is_video ? 16 : 64;
     d->mem.reset(new unsigned char[static_cast<size_t>(MAX_IN) * kSlotBytes]());
-    wr64(A0, kObjMarker);
+    wr64(A0, dec_vtable());
     wr64(A0 + 8, reinterpret_cast<uint64_t>(d));
     s_decoders_created++;
     NXLOG_I("movie", "Decoder created (type %d = %s, output format %d, mode %d)", d->type,
@@ -1166,11 +1217,11 @@ void dec_configure(::Ctx* c) {               // Configure(MediaData* format): th
     NXLOG_I("movie", "Decoder(%s) configured: %dx%d, %d Hz, %d ch", d->is_video ? "video" : "audio", d->w, d->h, d->rate, d->ch);
     RET(ST_OK);
 }
-void dec_register_events(::Ctx* c) {         // the game passes four null event pointers: everything is polled
+void dec_register_events(::Ctx* c) {         // DecoderEvents*: four nn::os::EventType* (input, output, format changed, error) or null
     Dec* d = dec_of(A0);
     if (!d) { RET(ST_INVALID); return; }
     d->events = A1;
-    if (A1 && (rd64(A1) || rd64(A1 + 8))) NXLOG_W("movie", "Decoder client events with real event objects are not signalled (the game polls)");
+    if (A1 && (rd64(A1) || rd64(A1 + 8))) NXLOG_I("movie", "Decoder(%s): client events registered (signalled on the vtable path)", d->is_video ? "video" : "audio");
     RET(ST_OK);
 }
 
@@ -1182,6 +1233,7 @@ void fill_format(Dec* d, MD* m) {
         m->set_i32("width", w); m->set_i32("height", h);
         m->set_i32("stride", w); m->set_i32("slice-height", h);
         m->set_i32("crop-width", w); m->set_i32("crop-height", h);
+        m->set_rect("crop", 0, 0, w - 1, h - 1);
         m->set_i32("color-format", 21);                  // OMX_COLOR_FormatYUV420SemiPlanar = NV12
         m->set_i32("nv12-width", w); m->set_i32("nv12-height", h);
         m->set_i32("nv12-y-stride", w); m->set_i32("nv12-uv-stride", w);
@@ -1420,6 +1472,100 @@ void dec_release_output(::Ctx* c) {          // ReleaseOutputBufferIndex(int ind
     RET(ST_OK);
 }
 
+// ---- vtables ---------------------------------------------------------------------------------------------------------------
+// Older SDKs (SDK 9 subsdk0, read off its vtables) construct the Extractor with one argument, Extractor(ContainerType), and call every
+// member through the vtable at +0 of the object; the arguments are those of the exported wrappers. Slots of the vtables, in order:
+//   Extractor: ~Extractor x2, SetDataSource(path) (read from the RomFS folder), SetDataSource(data, size), GetTrackCount, GetTrackConfiguration, SelectTrack,
+//     UnselectTrack, SeekTo, GetTrackIndexForAvailableData, Read, Advance, GetSampleTime, GetSampleMetaData, GetBufferedRange,
+//     SetDataSource(ClientStreamReader*, path)
+//   Decoder: ~Decoder x2, Configure, RegisterClientEvents, GetOutputFormat, Start, Stop, Reset, Flush, AcquireInputBufferIndex,
+//     GetInputBuffer, SendInputBufferForDecode, AcquireOutputBufferIndex, GetOutputBuffer(index, buffer), GetOutputBufferSize,
+//     ReleaseOutputBufferIndex, GetLastError, GetOutputBuffer(index, buffer, format), GetOutputBufferFormat
+// Members the wrapper API has no handler for answer ST_UNSUPPORTED (data sources other than the game's reader, the metadata and range
+// queries) or ST_OK (Reset, Flush, GetLastError, UnselectTrack: nothing to do for the host decoder).
+void vt_unsupported(::Ctx* c) { RET(ST_UNSUPPORTED); }
+void vt_ok(::Ctx* c) { RET(ST_OK); }
+void dec_get_output_no_format(::Ctx* c) {    // GetOutputBuffer(int index, Buffer* out)
+    c->x[3] = 0;
+    dec_get_output(c);
+}
+void dec_get_output_format(::Ctx* c) {       // GetOutputBufferFormat(int index, MediaData* format)
+    c->x[1] = c->x[2];
+    dec_get_format(c);
+}
+
+// Decoder client events (older SDKs): DecoderEvents is four nn::os::EventType pointers, signalled by the library when an input buffer
+// is free (0), an output buffer is ready (1), the output format changed (2) or an error happened (3). The game's decoder thread waits
+// for them (WaitAny) before it asks for buffers, so the vtable path signals them after the calls that change the answer, outside the
+// decoder lock, through the SDK's own nn::os::SignalEvent. A game that passes null events (the wrapper API) is not affected.
+enum { EV_INPUT = 0, EV_OUTPUT = 1, EV_FORMAT = 2 };
+void dec_signal(::Ctx* c, uint64_t obj, int which) {
+    Dec* d = dec_of(obj);
+    if (!d || !d->events) return;
+    const uint64_t ev = rd64(d->events + 8u * static_cast<uint64_t>(which));
+    if (!ev) return;
+    static const uint64_t signal = module_find_symbol("_ZN2nn2os11SignalEventEPNS0_9EventTypeE");
+    if (!signal) {
+        static std::once_flag once;
+        std::call_once(once, [] { NXLOG_W("movie", "nn::os::SignalEvent not found: decoder events are not signalled"); });
+        return;
+    }
+    gcall(c, signal, ev, 0, 0, 0, 0);
+}
+void ev_dec_start(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_start(c);
+    if (static_cast<int>(c->x[0]) != ST_OK) return;
+    if (Dec* d = dec_of(obj); d && d->is_video) dec_signal(c, obj, EV_FORMAT);
+    dec_signal(c, obj, EV_INPUT);
+    c->x[0] = ST_OK;
+}
+void ev_dec_send_input(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_send_input(c);
+    const uint64_t r = c->x[0];
+    dec_signal(c, obj, EV_INPUT);
+    dec_signal(c, obj, EV_OUTPUT);
+    c->x[0] = r;
+}
+void ev_dec_acquire_output(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_acquire_output(c);
+    const uint64_t r = c->x[0];
+    if (static_cast<int>(r) == ST_OK) dec_signal(c, obj, EV_OUTPUT);   // there may be more: the game takes one per wake
+    c->x[0] = r;
+}
+void ev_dec_release_output(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_release_output(c);
+    const uint64_t r = c->x[0];
+    dec_signal(c, obj, EV_OUTPUT);
+    dec_signal(c, obj, EV_INPUT);
+    c->x[0] = r;
+}
+
+uint64_t object_vtable(const char* cls, const std::initializer_list<HleFn>& slots) {
+    const uint64_t t = mem::alloc_kernel(slots.size() * 8, 16);
+    uint64_t i = 0;
+    for (HleFn f : slots) {
+        const std::string name = std::string("movie::") + cls + " vtable slot " + std::to_string(i);
+        wr64(t + 8 * i++, hle_register(name.c_str(), f));
+    }
+    return t;
+}
+uint64_t ext_vtable() {
+    static const uint64_t t = object_vtable("Extractor", {ext_dtor, ext_dtor, ext_set_source_path, vt_unsupported, ext_track_count,
+        ext_track_config, ext_select, vt_ok, ext_seek, ext_track_for_data, ext_read, ext_advance, ext_sample_time, vt_unsupported,
+        vt_unsupported, ext_set_source});
+    return t;
+}
+uint64_t dec_vtable() {
+    static const uint64_t t = object_vtable("Decoder", {dec_dtor, dec_dtor, dec_configure, dec_register_events, dec_get_format,
+        ev_dec_start, dec_stop, vt_ok, vt_ok, dec_acquire_input, dec_get_input, ev_dec_send_input, ev_dec_acquire_output,
+        dec_get_output_no_format, dec_output_size, ev_dec_release_output, vt_ok, dec_get_output, dec_get_output_format});
+    return t;
+}
+
 // ---- free functions ------------------------------------------------------------------------------------------------------------
 void movie_set_allocator(::Ctx* c) { NXLOG_D("movie", "SetAllocator(alloc %llx, free %llx)", static_cast<unsigned long long>(A0), static_cast<unsigned long long>(A1)); }
 void movie_set_core_mask(::Ctx*) {}
@@ -1441,10 +1587,13 @@ const Import kImports[] = {
     {"_ZN5movie9MediaDataD1Ev", mdata_dtor},
     {"_ZN5movie9MediaData5ClearEv", mdata_clear},
     {"_ZNK5movie9MediaData9FindInt32EPKcPi", mdata_find_i32},
+    {"_ZN5movie9MediaData8SetInt32EPKci", mdata_set_i32},
+    {"_ZNK5movie9MediaData8FindRectEPKcPiS3_S3_S3_", mdata_find_rect},
     {"_ZNK5movie9MediaData9FindInt64EPKcPl", mdata_find_i64},
     {"_ZNK5movie9MediaData10FindStringEPKcPS2_", mdata_find_str},
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", ext_ctor},
     {"_ZN5movie9ExtractorD1Ev", ext_dtor},
+    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", ext_ctor},
     {"_ZN5movie9Extractor13SetDataSourceEPNS_18ClientStreamReaderEPKc", ext_set_source},
     {"_ZN5movie9Extractor13GetTrackCountEPi", ext_track_count},
     {"_ZN5movie9Extractor21GetTrackConfigurationEiPNS_9MediaDataE", ext_track_config},

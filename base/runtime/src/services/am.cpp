@@ -990,6 +990,7 @@ ServicePtr make_application_functions() {
             return 0;
         });
         s.add_cmd(101, "SetApplicationCopyrightImage", ignored("SetApplicationCopyrightImage"));
+        s.add_cmd(102, "SetApplicationCopyrightVisibility", ignored("SetApplicationCopyrightVisibility"));
         s.add_cmd(110, "QueryApplicationPlayStatistics", ignored("QueryApplicationPlayStatistics", 4));
         s.add_cmd(120, "ExecuteProgram", ignored("ExecuteProgram"));
         s.add_cmd(121, "ClearUserChannel", [](Request&, Response&) -> uint32_t {

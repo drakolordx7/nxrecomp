@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Host implementation of Nintendo's multimedia library (the `movie::` API of the SDK, a port of Android's stagefright) on Windows
-// Media Foundation. The game imports 41 functions of the library (Extractor, Decoder, MediaData, Buffer, a few free functions); this
+// Media Foundation. A game imports some 40 functions of the library (Extractor, Decoder, MediaData, Buffer, a few free functions); this
 // module registers a host handler for each of them and forces the imports to the host (module_override_symbol), so the library that
 // ships in subsdk0 (and the NVDEC/VIC driver calls under it) never runs.
 //
@@ -22,7 +22,7 @@ namespace nxrt::media {
 // Safe to call more than once.
 bool install_movie_hle();
 
-// The mangled names of the 41 imports the handlers answer (for tests and docs).
+// The mangled names of the imports the handlers answer (for tests and docs).
 const char* const* movie_import_names(size_t* count);
 
 struct MovieStats {
