@@ -22,18 +22,9 @@ add_library(nxrt_game_mpr_core STATIC "${_mpr}/mpr_core.cpp" "${_mpr}/mpr_timest
 target_link_libraries(nxrt_game_mpr_core PUBLIC nxrt_game_mpr_data nxrt)
 
 if(TARGET nxrt_launcher_core)
-    # The pages are written against the base's neutral page API (nxrt/game/launcher_ui.h), the same on every system. NXRT_LAUNCHER_LEGACY (Windows,
-    # off) builds the old Win32 launcher instead, with the pages it needs (legacy/, launcher_ui_win32.h).
-    if(NXRT_LAUNCHER_LEGACY)
-        set(_mpr_lp "${_mpr}/legacy")
-    else()
-        set(_mpr_lp "${_mpr}")
-    endif()
-    add_library(nxrt_game_mpr_launcher STATIC "${_mpr_lp}/mpr_launcher.cpp" "${_mpr_lp}/mpr_page_tweaks.cpp" "${_mpr_lp}/mpr_page_fastboot.cpp")
+    # The pages are written against the base's neutral page API (nxrt/game/launcher_ui.h), the same on every system.
+    add_library(nxrt_game_mpr_launcher STATIC "${_mpr}/mpr_launcher.cpp" "${_mpr}/mpr_page_tweaks.cpp" "${_mpr}/mpr_page_fastboot.cpp")
     target_link_libraries(nxrt_game_mpr_launcher PUBLIC nxrt_game_mpr_data)
-    if(NXRT_LAUNCHER_LEGACY)
-        target_compile_definitions(nxrt_game_mpr_launcher PUBLIC UNICODE _UNICODE)
-    endif()
 endif()
 
 if(TARGET nxrt_gfx)
@@ -88,7 +79,7 @@ if(NXRT_BUILD_TESTS)
         endforeach()
     endif()
     file(GLOB _mpr_launcher_tests CONFIGURE_DEPENDS "${_mpr}/tests/launcher/*.cpp")
-    if(_mpr_launcher_tests AND TARGET nxrt_launcher_core AND NOT NXRT_LAUNCHER_LEGACY)   # (legacy: the old launcher has its own wide-string bindings_edit)
+    if(_mpr_launcher_tests AND TARGET nxrt_launcher_core)
         nxrt_add_test_exe(mpr_launcher_tests SOURCES ${_mpr_launcher_tests} LINK nxrt_launcher_core nxrt_game_mpr_data nxrt_internal_for_tests
                           REGISTER nxrt_register_game_mpr_data INCLUDES "${_mpr}/tests")
     endif()
