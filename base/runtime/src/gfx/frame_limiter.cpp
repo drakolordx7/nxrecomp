@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// FrameLimiter: schedule on QueryPerformanceCounter; coarse wait on a high-resolution waitable timer; spin for the last
+// FrameLimiter: schedule on the pacing clock (nxrt/pacing.h); coarse wait on a precise sleep; spin for the last
 // stretch. The behaviour and the thread rules are the contract in include/nxrt/frame_limiter.h.
 #include "nxrt/frame_limiter.h"
 

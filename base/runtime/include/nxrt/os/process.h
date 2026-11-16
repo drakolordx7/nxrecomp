@@ -7,14 +7,14 @@
 #include <cstdlib>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace nxrt::os::process {
 
 uint32_t pid();
 // Whether the process `pid` still runs. True when that cannot be told (no permission to ask).
 bool is_alive(uint32_t pid);
-// Ends this process now with `code`, without running destructors or atexit handlers.
-[[noreturn]] void terminate(int code);
+// Ending this process is os::terminate (fault.h).
 
 // The executable of this process (absolute, UTF-8; empty when the system does not say) and its folder ("." when unknown).
 std::string exe_path();
@@ -82,6 +82,52 @@ public:
 
 private:
     intptr_t h_ = 0;
+};
+
+// ---- child processes ----------------------------------------------------------------------------------------------------------------
+
+struct SpawnOptions {
+    uint64_t cpu_mask = 0;          // host CPU mask the child may run on (the first 64); 0 = as the parent
+    bool kill_with_parent = true;   // the child ends when this process does, also when it crashes (Windows: a job object; Linux: PDEATHSIG, which fires when the thread that spawned ends)
+    bool hidden = true;             // Windows: no console window
+};
+
+// A process this process started. Destroying the object ends the child when it still runs and releases it. Move-only.
+class Child {
+public:
+    Child() = default;
+    Child(Child&& o) noexcept : h_(o.h_), pid_(o.pid_) { o.h_ = 0; o.pid_ = 0; }
+    Child& operator=(Child&& o) noexcept {
+        if (this != &o) {
+            close();
+            h_ = o.h_;
+            pid_ = o.pid_;
+            o.h_ = 0;
+            o.pid_ = 0;
+        }
+        return *this;
+    }
+    Child(const Child&) = delete;
+    Child& operator=(const Child&) = delete;
+    ~Child() { close(); }
+
+    // Starts `exe` (a path) with `args` (not including the program name; no shell is involved, each argument arrives as one). The child
+    // inherits the environment, the current folder and the standard streams. An invalid Child when it could not be started.
+    static Child spawn(const std::string& exe, const std::vector<std::string>& args, const SpawnOptions& opt = {});
+
+    bool valid() const { return h_ != 0; }
+    uint32_t pid() const { return pid_; }
+    // Waits until the child has ended, at most timeout_ms (0xFFFFFFFF = no limit). True when it has ended; *exit_code then holds its code
+    // (Linux: 128 + the signal number when a signal ended it).
+    bool wait(uint32_t timeout_ms, int* exit_code = nullptr);
+    // Ends the child at once and waits for it. No effect on a child that has ended.
+    void kill();
+    // Kills the child when it still runs and releases the handle: the object is invalid afterwards.
+    void close();
+
+private:
+    intptr_t h_ = 0;
+    uint32_t pid_ = 0;
 };
 
 // Shows `text` to the user in a box when there is no console (a GUI-subsystem exe on Windows); elsewhere it does nothing (the caller has

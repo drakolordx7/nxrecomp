@@ -19,7 +19,7 @@
 #include "nxrt/platform.h"
 #include "extras/hdr_capture.h"
 #include "nxrt/game/hdr_math.h"
-#include "extras/win_display.h"
+#include "extras/display_hdr.h"
 #include "vk_gauges.h"
 
 namespace nxrt::gfx {
@@ -275,13 +275,13 @@ struct Renderer::Impl {
                     if (f.colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT && (f.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || f.format == VK_FORMAT_A2R10G10B10_UNORM_PACK32)) o10 = true;
                     if (f.colorSpace == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT && f.format == VK_FORMAT_R16G16B16A16_SFLOAT) osc = true;
                 }
-                extras::query_display_hdr(platform::native_hwnd(), &di);
+                extras::query_display_hdr(&di);
                 NXLOG_I(kTag, "HDR: surface offers HDR10 %s, scRGB %s; display %s: hdr %s, peak %.0f nits, SDR white %.0f nits (%s)", o10 ? "yes" : "no", osc ? "yes" : "no",
                         di.monitor, di.hdr_enabled ? "on" : "off", di.max_nits, di.sdr_white_nits, di.how);
             }
             if (!headless && es.hdr.mode == extras::HdrMode::Auto && !(di.valid && di.hdr_enabled)) {
-                // the NVIDIA driver lists HDR10 and scRGB surface formats whether or not Windows HDR is on for the monitor, so "auto" needs Windows' own answer
-                if (o10 || osc) NXLOG_I(kTag, "HDR: the surface lists HDR formats but Windows does not report HDR on for this monitor (%s): SDR output (set [hdr] mode = on to force HDR)", di.how);
+                // the NVIDIA driver lists HDR10 and scRGB surface formats whether or not Windows HDR is on for the monitor, so "auto" needs the system's own answer
+                if (o10 || osc) NXLOG_I(kTag, "HDR: the surface lists HDR formats but the system does not report HDR on for this monitor (%s): SDR output (set [hdr] mode = on to force HDR)", di.how);
                 o10 = osc = false;
             }
             const bool pick10 = es.hdr.format == extras::HdrFormat::Hdr10 ? o10 : es.hdr.format == extras::HdrFormat::ScRgb ? false : o10;

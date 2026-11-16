@@ -6,10 +6,14 @@
 #include <pwd.h>
 #include <signal.h>
 #include <sys/file.h>
+#include <sys/prctl.h>
+#include <sys/wait.h>
+#include <sched.h>
 #include <sys/random.h>
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 
 #include "nxrt/os/fs.h"
@@ -19,8 +23,6 @@ namespace nxrt::os::process {
 uint32_t pid() { return static_cast<uint32_t>(::getpid()); }
 
 bool is_alive(uint32_t pid) { return ::kill(static_cast<pid_t>(pid), 0) == 0 || errno == EPERM; }
-
-[[noreturn]] void terminate(int code) { ::_exit(code); }
 
 std::string exe_path() {
     char buf[4096];
@@ -129,6 +131,67 @@ void NamedLock::release() {
     if (!h_) return;
     ::close(static_cast<int>(h_ - 1));   // closing the descriptor drops the flock
     h_ = 0;
+}
+
+// ---- child processes ----------------------------------------------------------------------------------------------------------------
+
+Child Child::spawn(const std::string& exe, const std::vector<std::string>& args, const SpawnOptions& opt) {
+    Child c;
+    std::vector<char*> argv;
+    argv.push_back(const_cast<char*>(exe.c_str()));
+    for (const std::string& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+    argv.push_back(nullptr);
+    const pid_t parent = ::getpid();
+    const pid_t pid = ::fork();
+    if (pid < 0) return c;
+    if (pid == 0) {                       // only async-signal-safe calls from here to exec
+        if (opt.kill_with_parent) {
+            ::prctl(PR_SET_PDEATHSIG, SIGKILL);
+            if (::getppid() != parent) ::_exit(127);        // the parent ended before the request took hold
+        }
+        if (opt.cpu_mask) {
+            cpu_set_t set;
+            CPU_ZERO(&set);
+            for (int i = 0; i < 64; i++)
+                if (opt.cpu_mask >> i & 1) CPU_SET(i, &set);
+            ::sched_setaffinity(0, sizeof set, &set);
+        }
+        ::execv(exe.c_str(), argv.data());
+        ::_exit(127);
+    }
+    c.h_ = static_cast<intptr_t>(pid);
+    c.pid_ = static_cast<uint32_t>(pid);
+    return c;
+}
+
+bool Child::wait(uint32_t timeout_ms, int* exit_code) {
+    if (h_ <= 0) return true;
+    const pid_t pid = static_cast<pid_t>(h_);
+    const auto t0 = std::chrono::steady_clock::now();
+    for (;;) {
+        int st = 0;
+        const pid_t r = ::waitpid(pid, &st, WNOHANG);
+        if (r == pid || (r < 0 && errno != EINTR)) {
+            if (r == pid && exit_code) *exit_code = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
+            h_ = -1;                       // reaped: nothing left to kill or wait for
+            return true;
+        }
+        if (timeout_ms != 0xFFFFFFFFu && std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(timeout_ms)) return false;
+        ::usleep(1000);
+    }
+}
+
+void Child::kill() {
+    if (h_ <= 0) return;
+    ::kill(static_cast<pid_t>(h_), SIGKILL);
+    wait(10000);
+}
+
+void Child::close() {
+    if (!h_) return;
+    kill();
+    h_ = 0;
+    pid_ = 0;
 }
 
 void error_box(const char*, const char*) {}

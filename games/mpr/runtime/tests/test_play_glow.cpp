@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // S44 glow colour (runtime/play_glow.cpp): the colour math, the glow textures' identity and the shared texture edit hook.
 #include "test_framework.h"
+#include "guest_pages.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,7 +13,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <windows.h>
 #undef near
 #undef far
 
@@ -167,7 +167,7 @@ NXTEST(glow_textures_table_has_every_suit_and_not_the_hangar_lights) {
 NXTEST(glow_ball_tables_are_written_only_from_the_frame_thread) {
     constexpr uint64_t kBase = 0x5D00000000ull;
     constexpr uint64_t kTables[5] = {0x4b24a48, 0x4b24a98, 0x4b24ae8, 0x4b24b38, 0x4b24b88};
-    REQUIRE(VirtualAlloc(reinterpret_cast<void*>(kBase + 0x4b24000), 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != nullptr);
+    REQUIRE(nxtest::commit_pages(kBase + 0x4b24000, 0x2000));
     auto table = [&](int i, int e, int k) { return reinterpret_cast<volatile float*>(kBase + kTables[i] + 16u * e)[k]; };
     for (int i = 0; i < 5; ++i)
         for (int e = 0; e < 5; ++e) {

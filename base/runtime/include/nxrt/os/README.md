@@ -25,11 +25,14 @@ Modules (each one a header here and one source file per platform; those marked d
 | `spawn` | (done) run another program and wait for it (tests that need a real crash) |
 | `hwwatch` | (done on Windows only) data breakpoints on the process's own memory, for developer probes; Linux says unsupported |
 
+`movie_mf.cpp` (`win32`: the Media Foundation decoder of the `movie::` library, a fallback behind `[media] backend = mf`; `posix`: a stub) is the one
+platform file that is not an OS module: the FFmpeg backend is the same code on both systems (`src/media/movie_ffmpeg.cpp`).
+
 `src/os/sync.cpp` (the guest-address wait objects of the kernel) is not part of this layer and stays where it is.
 
 ## thread, sync, time
 
-- `thread.h`: `thread_start` (stack, name, priority band and CPU mask applied before the thread runs), `thread_join`, handles (`thread_close`, `thread_dup`, `thread_adopt_current`, `thread_current`), `PriorityBand` (six bands, Windows THREAD_PRIORITY numbers), `thread_place`, `thread_exit`, `run_with_stack` (the guest main thread needs 128 MiB: Windows links it into the exe, Linux runs on a pthread), the CPU layout (`process_cpu_mask`, `cores_fastest_first`), `process_set_priority`, `slot_claim` (cross-process core slots).
+- `thread.h`: `thread_start` (stack, name, priority band and CPU mask applied before the thread runs), `thread_join`, handles (`thread_close`, `thread_dup`, `thread_adopt_current`, `thread_current`), `PriorityBand` (bands, Windows THREAD_PRIORITY numbers), `thread_place`, `thread_exit`, `run_with_stack` (the guest main thread needs 128 MiB: Windows links it into the exe, Linux runs on a pthread), the CPU layout (`process_cpu_mask`, `cores_fastest_first`), `process_set_priority`, `slot_claim` (cross-process core slots).
 - `sync.h`: `Mutex`, `SharedMutex`, `CondVar`, constant-initialised, usable with `std::lock_guard` and friends (SRWLOCK and CONDITION_VARIABLE on Windows, futexes on Linux).
 - `time.h`: `monotonic_ns`, `tick_ms`, `wall_filetime`, `sleep_precise_ns` / `sleep_ns` / `sleep_ms` / `wait_until_ns`, `timer_resolution_acquire` / `release`.
 - Linux priority bands are nice offsets and cannot go above the process's nice value without privileges: see the top of `src/os/posix/thread.cpp`.

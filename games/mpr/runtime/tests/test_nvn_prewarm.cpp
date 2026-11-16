@@ -36,7 +36,7 @@ struct TempDir {
     fs::path path;
     TempDir() {
         const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-        path = fs::temp_directory_path() / ("nxrt_gfx_prewarm_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(stamp));
+        path = fs::temp_directory_path() / ("nxrt_gfx_prewarm_" + std::to_string(nxrt::os::process::pid()) + "_" + std::to_string(stamp));
         std::error_code ec;
         fs::create_directories(path, ec);
     }

@@ -24,6 +24,7 @@ function(nxrt_add_test_exe target)
     add_executable(${target} "${NXRT_TESTS_DIR}/test_main.cpp" ${A_SOURCES})
     target_include_directories(${target} PRIVATE "${NXRT_TESTS_DIR}" ${A_INCLUDES})
     target_link_libraries(${target} PRIVATE ${A_LINK})
+    nxrt_ffmpeg_deploy(${target})   # the FFmpeg libraries next to the exe
     if(A_DEFINES)
         target_compile_definitions(${target} PRIVATE ${A_DEFINES})
     endif()

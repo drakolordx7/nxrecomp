@@ -35,16 +35,6 @@
 #include <unordered_map>
 #include <vector>
 
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
-
 #include "nx_formats.h"
 #include "nxrt/config.h"
 #include "nvn_settings.h"
@@ -53,6 +43,7 @@
 #include "nxrt/ftrace.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/overlay.h"
 #include "nvn_gpu_internal.h"
 #include "nvn_pipeline.h"
@@ -337,31 +328,21 @@ VkPipeline build_fo(const GraphicsKey& key) {
 // A draw that needs a part a background thread is still building waits for that thread, which runs at below-normal priority and in efficiency mode:
 // on a busy PC it can starve for a long time, and the frame with it. The waiting draw lends the builder normal priority and full speed until it
 // is done (priority inheritance).
-#if defined(_WIN32)
 struct SelfHandle {
-    HANDLE h = nullptr;
-    ~SelfHandle() { if (h) CloseHandle(h); }
-    HANDLE get() {
-        if (!h) h = OpenThread(THREAD_SET_INFORMATION | THREAD_QUERY_LIMITED_INFORMATION, FALSE, GetCurrentThreadId());
+    nxrt::os::ThreadHandle h = nullptr;
+    ~SelfHandle() { if (h) nxrt::os::thread_close(h); }
+    nxrt::os::ThreadHandle get() {
+        if (!h) h = nxrt::os::thread_adopt_current();
         return h;
     }
 };
 thread_local SelfHandle t_self;
 void boost_thread(void* handle) {
     if (!handle) return;
-    HANDLE h = static_cast<HANDLE>(handle);
-    SetThreadPriority(h, THREAD_PRIORITY_ABOVE_NORMAL);
-    THREAD_POWER_THROTTLING_STATE st = {};
-    st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
-    st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-    st.StateMask = 0;                                    // explicitly not throttled
-    SetThreadInformation(h, ThreadPowerThrottling, &st, sizeof st);
+    nxrt::os::thread_set_band(handle, nxrt::os::PriorityBand::AboveNormal);
+    nxrt::os::thread_set_efficiency(handle, false);      // explicitly not throttled
 }
 void* self_handle() { return t_self.get(); }
-#else
-void boost_thread(void*) {}
-void* self_handle() { return nullptr; }
-#endif
 
 // The part for `key`: from the cache, from a build in flight (waits for it) or built here. `render` = called by a draw (counted apart from
 // the workers' builds). A part that failed to build is cached as null so it is not retried at every draw.
@@ -602,25 +583,15 @@ void learn_raster(const RasterKey& r) {
 }  // namespace
 
 void set_compile_thread_priority(bool background) {
-#if defined(_WIN32)
     const std::string& mode = nvn_settings().compile_priority;
-    int p = THREAD_PRIORITY_BELOW_NORMAL;
-    if (mode == "normal") p = THREAD_PRIORITY_NORMAL;
-    else if (mode == "idle") p = THREAD_PRIORITY_IDLE;
-    SetThreadPriority(GetCurrentThread(), p);
+    nxrt::os::PriorityBand p = nxrt::os::PriorityBand::BelowNormal;
+    if (mode == "normal") p = nxrt::os::PriorityBand::Normal;
+    else if (mode == "idle") p = nxrt::os::PriorityBand::Idle;
+    nxrt::os::thread_set_band(nxrt::os::thread_current(), p);
     // Efficiency mode (EcoQoS): Windows runs the thread on the efficiency cores of a hybrid CPU and at a lower clock elsewhere, so a burst of
     // shader compiles does not take the fast cores from the game's own threads. Not for the shader preparation, which wants all the speed.
     const bool eco = nvn_settings().compile_eco;
-    if (background && eco) {
-        THREAD_POWER_THROTTLING_STATE st = {};
-        st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
-        st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-        st.StateMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
-        SetThreadInformation(GetCurrentThread(), ThreadPowerThrottling, &st, sizeof st);
-    }
-#else
-    (void)background;
-#endif
+    if (background && eco) nxrt::os::thread_set_efficiency(nxrt::os::thread_current(), true);
 }
 
 bool gpl_active() {

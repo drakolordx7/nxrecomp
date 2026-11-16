@@ -4,7 +4,7 @@
 // layout, the goback/goahead extension of ToCalendarTimeInternal and the time-type checks of ParseTimeZoneBinary. The behaviour
 // they follow is tzcode localtime.c (public domain): localsub and time2.
 // to_posix is written as a candidate search (time2 semantics), not Ryujinx's binary search, so an ambiguous wall time gives two results.
-#include "nxrt/strutil.h"
+#include "nxrt/os/time.h"
 #include "timezone.h"
 
 #include <algorithm>
@@ -15,10 +15,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 namespace nxrt::services::tz {
 namespace {
@@ -225,7 +221,7 @@ int to_posix_impl(const RuleImage& r, const CalendarTime& cal, int64_t out[2]) {
     return count;
 }
 
-// ---- host rule (Windows) ----
+// ---- host rule ----
 
 struct AbbrMap {
     const char* windows_id;
@@ -234,7 +230,7 @@ struct AbbrMap {
     const char* dst_abbr;
 };
 
-// Windows time zone id -> IANA name and the abbreviations tzdata uses for it today. Zones not listed use the Windows id and
+// Windows time zone key name (what os::host_timezone gives there; the IANA name is matched too) -> IANA name and the abbreviations tzdata uses for it today. Zones not listed use the Windows id and
 // numeric abbreviations ("+03", "+0530").
 constexpr AbbrMap kZoneMap[] = {
     {"UTC", "UTC", "UTC", "UTC"},
@@ -277,7 +273,7 @@ constexpr AbbrMap kZoneMap[] = {
 
 const AbbrMap* find_zone(const std::string& id) {
     for (const AbbrMap& m : kZoneMap) {
-        if (id == m.windows_id) return &m;
+        if (id == m.windows_id || id == m.iana) return &m;
     }
     return nullptr;
 }
@@ -313,31 +309,13 @@ int find_or_add(std::vector<HostType>& types, int32_t utoff, bool isdst, const s
     return static_cast<int>(types.size() - 1);
 }
 
-#ifdef _WIN32
-using nxrt::str::narrow;
-
-// Local wall time of a SYSTEMTIME as seconds since the epoch in that wall clock. A wYear of 0 is a recurring rule:
-// wDay is the n-th wDayOfWeek of the month, 5 meaning the last.
-int64_t resolve_systemtime(const SYSTEMTIME& st, int year) {
-    const int64_t y = st.wYear != 0 ? st.wYear : year;
-    const int64_t first = days_from_civil(y, st.wMonth, 1);
-    int64_t day_of_month;
-    if (st.wYear != 0) {
-        day_of_month = st.wDay;
-    } else {
-        const int64_t first_wd = floor_mod(first + 4, 7);
-        day_of_month = 1 + floor_mod(st.wDayOfWeek - first_wd, 7) + 7 * (st.wDay - 1);
-        while (day_of_month > days_in_month(y, st.wMonth)) day_of_month -= 7;
-    }
-    return (first + day_of_month - 1) * kSecondsPerDay + st.wHour * 3600 + st.wMinute * 60 + st.wSecond;
-}
-
-// Builds the rule from the host's dynamic zone: for each year 1970..2037 the DST transitions of GetTimeZoneInformationForYear.
+// Builds the rule from the host's zone (os::host_timezone): for each year 1970..2037 the DST transitions.
 // Returns false when anything cannot be read or does not fit a rule.
 bool build_host_rule(RuleImage& img, std::string& name) {
-    DYNAMIC_TIME_ZONE_INFORMATION dtzi{};
-    if (GetDynamicTimeZoneInformation(&dtzi) == TIME_ZONE_ID_INVALID) return false;
-    const std::string key = narrow(dtzi.TimeZoneKeyName);
+    constexpr int kFirstYear = 1970, kLastYear = 2037;
+    os::HostZone zone;
+    if (!os::host_timezone(&zone, kFirstYear, kLastYear) || zone.years.size() != size_t(kLastYear - kFirstYear + 1)) return false;
+    const std::string& key = zone.key;
     if (key.empty()) return false;
     const AbbrMap* map = find_zone(key);
     name = map ? map->iana : key;
@@ -350,20 +328,16 @@ bool build_host_rule(RuleImage& img, std::string& name) {
     std::vector<HostType> types;
     std::vector<HostTransition> trans;
     int std_1970 = -1;
-    for (int year = 1970; year <= 2037; ++year) {
-        TIME_ZONE_INFORMATION tzi{};
-        if (!GetTimeZoneInformationForYear(static_cast<USHORT>(year), &dtzi, &tzi)) return false;
-        const int32_t std_off = -(tzi.Bias + tzi.StandardBias) * 60;
-        const int32_t dst_off = -(tzi.Bias + tzi.DaylightBias) * 60;
+    for (int year = kFirstYear; year <= kLastYear; ++year) {
+        const os::HostZoneYear& zy = zone.years[size_t(year - kFirstYear)];
+        const int32_t std_off = zy.std_off;
+        const int32_t dst_off = zy.dst_off;
         const int std_ty = find_or_add(types, std_off, false, abbr_for(false, std_off));
-        if (year == 1970) std_1970 = std_ty;
-        if (tzi.DaylightDate.wMonth == 0 || tzi.StandardDate.wMonth == 0) continue;
+        if (year == kFirstYear) std_1970 = std_ty;
+        if (!zy.has_dst) continue;
         const int dst_ty = find_or_add(types, dst_off, true, abbr_for(true, dst_off));
-        // DaylightDate is given in standard wall time, StandardDate in daylight wall time.
-        const int64_t start = resolve_systemtime(tzi.DaylightDate, year) - std_off;
-        const int64_t end = resolve_systemtime(tzi.StandardDate, year) - dst_off;
-        trans.push_back({start, std_ty, dst_ty});
-        trans.push_back({end, dst_ty, std_ty});
+        trans.push_back({zy.dst_start, std_ty, dst_ty});
+        trans.push_back({zy.dst_end, dst_ty, std_ty});
     }
     if (std_1970 < 0) return false;
 
@@ -426,7 +400,6 @@ bool build_host_rule(RuleImage& img, std::string& name) {
     img.defaulttype = 0;
     return valid_rule(img);
 }
-#endif
 
 }
 
@@ -444,7 +417,6 @@ void make_utc_rule(uint8_t* out) {
 }
 
 bool make_host_rule(uint8_t* out, std::string* name_out) {
-#ifdef _WIN32
     auto img = std::make_unique<RuleImage>();
     std::string name;
     if (build_host_rule(*img, name)) {
@@ -452,7 +424,6 @@ bool make_host_rule(uint8_t* out, std::string* name_out) {
         if (name_out) *name_out = name;
         return true;
     }
-#endif
     make_utc_rule(out);
     if (name_out) *name_out = "UTC";
     return false;

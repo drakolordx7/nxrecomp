@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The active host audio sink (include/nxrt/audio_sink.h): a NullSink until replaced. Also the process-wide master volume and the
+// The active host audio sink (include/nxrt/audio_sink.h): chosen from [audio] sink on first use, a NullSink where no device opens. Also the process-wide master volume and the
 // stats line that each sink logs when it closes.
 #include <atomic>
 #include <cstdio>
@@ -73,18 +73,29 @@ std::shared_ptr<AudioSink> sink() {
         const std::string want = config_get_str("audio", "sink", "auto");
         if (want == "paced") {
             chosen = make_paced_sink(config_get_double("audio", "paced_ppm", 0.0));
-        } else if (want == "xaudio2" || want == "auto") {
-            chosen = make_xaudio2_sink();
+        } else if (want == "xaudio2" || want == "sdl" || want == "auto") {
+            // The real open comes with the first frames; the probe only finds out whether a device is there.
+            auto usable = [](const std::shared_ptr<AudioSink>& s) {
+                if (!s || !s->open(48000, 2)) return false;
+                s->close();
+                return true;
+            };
+            if (want == "xaudio2") {   // the Windows fallback; SDL takes over where it is missing or fails
+                chosen = make_xaudio2_sink();
+                if (!usable(chosen)) {
+                    NXLOG_W("audio", "[audio] sink = xaudio2 is not usable here: using the SDL sink");
+                    chosen.reset();
+                }
+            }
             if (!chosen) {
-                NXLOG_W("audio", "XAudio2 is not available: using the null sink (no sound)");
-            } else if (!chosen->open(48000, 2)) {   // the real open comes with the first frames; this only finds out whether a device is there
-                NXLOG_W("audio", "XAudio2 cannot open an output device: using the null sink (no sound)");
-                chosen.reset();
-            } else {
-                chosen->close();
+                chosen = make_sdl_sink();
+                if (!usable(chosen)) {
+                    NXLOG_W("audio", "SDL cannot open an output device: using the null sink (no sound)");
+                    chosen.reset();
+                }
             }
         } else if (want != "null") {
-            NXLOG_W("audio", "[audio] sink = %s is not a sink name (auto, xaudio2, paced, null): using the null sink", want.c_str());
+            NXLOG_W("audio", "[audio] sink = %s is not a sink name (auto, sdl, xaudio2, paced, null): using the null sink", want.c_str());
         }
         if (!chosen) chosen = std::make_shared<NullSink>();
         const std::string wav = config_get_str("audio", "wav_dump", "");

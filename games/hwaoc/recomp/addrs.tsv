@@ -1,0 +1,10 @@
+## kind	name	offset in main	note. Single source of the hook-site addresses: NX/addrs.py writes recomp/main.sites and runtime/hwaoc_addrs.h from this file.
+## kinds: entry / mid / inline = hook site the runtime hooks by name; spare = site that a name is also used for; trace / traceinline = site of a diagnostic ([hwaoc] trace_fns, trace_at: no name);
+## fn / data = address the runtime calls or reads. A line starting with a single # is copied to recomp/main.sites; ## lines stay here.
+## No hook site yet (M1): the data rows are the frame-rate patch sites of update 1.4.1 from docs/RESEARCH.md (seedds/nxnative), not yet checked on our ELF.
+data	kDeviceConfig	0x8d9ae0	KTGL device config built at start-up ({1920, 1080, 3, 9, 5, interval 2, ...})
+data	kTaskFps	0x1670124	task frame rate
+data	kObjectStep	0x16702d0	per-object step
+data	kFrameRateBlock	0x26a2280	frame-rate block {30, 2, 30, 30.0}
+data	kDevicePointer	0x2bb0798	KTGL device pointer
+data	kFps5994	0x1ef8ddc	59.94 constant

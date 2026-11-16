@@ -3,8 +3,6 @@
 // at a time, against a fake host. No input is simulated: tabs are opened through ImGui's tab bar (TabBarQueueFocus).
 #include "test_framework.h"
 
-#include <windows.h>
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +10,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "nxrt/os/process.h"
 #include "imgui_internal.h"
 #include "nxrt/input_source.h"
 #include "play/play_ui.h"
@@ -169,12 +168,11 @@ NXTEST_CHILD(play_ui_300_bindings) {
 }
 
 NXTEST(bindings_empty_and_300_each_in_fresh_process) {
-    char exe[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    const std::string exe = nxrt::os::process::exe_path();
     const char* kids[] = {"play_ui_empty_bindings", "play_ui_300_bindings"};
     for (const char* k : kids) {
-        // cmd /c strips the outer pair of quotes, so the whole command is wrapped in one more pair.
-        const std::string cmd = std::string("\"\"") + exe + "\" --child " + k + "\"";
+        // One quoted path and plain arguments: cmd /c keeps those quotes (exactly two, around the executable), and so does sh.
+        const std::string cmd = "\"" + exe + "\" --child " + k;
         const int rc = std::system(cmd.c_str());
         CHECK_MSG(rc == 0, std::string("child ") + k + " returned " + std::to_string(rc));
     }

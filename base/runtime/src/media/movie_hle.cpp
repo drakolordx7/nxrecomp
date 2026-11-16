@@ -1,46 +1,41 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// movie:: (Nintendo's multimedia library, a port of Android's stagefright) on Windows Media Foundation. See include/nxrt/movie.h.
+// movie:: (Nintendo's multimedia library, a port of Android's stagefright): the protocol layer. See include/nxrt/movie.h. Demuxing and decoding
+// are done by a MovieSource (include/nxrt/movie_source.h): FFmpeg on both platforms (src/media/movie_ffmpeg.cpp), Windows Media Foundation as a
+// fallback (src/os/win32/movie_mf.cpp, [media] backend = mf).
 //
 // The protocol the game speaks was worked out for smo-recomp (runtime/services/nnmovie_mf.c, GPL-3.0, same library in another game):
-// the Extractor/Decoder objects, the buffer model of the decoder, the two-pool index scheme, the "token" trick that lets the source
-// reader's demux+decode stand in for a compressed sample. This file is a port of that design to nxrt, with these changes: the
+// the Extractor/Decoder objects, the buffer model of the decoder, the two-pool index scheme, the "token" trick that lets the source's
+// demux+decode stand in for a compressed sample. This file is a port of that design to nxrt, with these changes: the
 // game here calls the plain exported wrappers (not virtual functions), runs its decoders without events, so everything is polled;
-// the source reader runs in a worker thread per movie (decode-ahead queues per track) so the game's threads never wait for a
+// the source runs in a worker thread per movie (decode-ahead queues per track) so the game's threads never wait for a
 // decode; edit lists of the MP4 are honoured (the first frame is at 0, the AAC priming is cut), as ffmpeg does.
 //
 // Layouts read off the game's main (v1.0.0, IDA) and off subsdk0:
-//   movie::Extractor  16 bytes embedded in the game's extractor object   {marker, impl*}
-//   movie::Decoder    16 bytes embedded in the game's decoder object     {marker, impl*}
+//   movie::Extractor  16 bytes embedded in the game's extractor object   {host vtable, impl*}
+//   movie::Decoder    16 bytes embedded in the game's decoder object     {host vtable, impl*}
 //   movie::MediaData  8 bytes, one pointer to a key/value store          {impl*}
 //   movie::Buffer     0x40 bytes: +0 offset i32, +4 size i32, +c flags u32, +0x10 owns u8, +0x18 capacity u64, +0x20 i64, +0x28 base
 //   ClientStreamReader (the game's reader object, vtable at +0 of the object): +0x10 Open(path, void** handle) -> bool,
 //     +0x18 ReadAt(handle, offset, buf, n) -> bytes, +0x20 Close(handle), +0x28 GetSize(handle, int64*)
 // Results: 0 ok, 0x2000 end of data (GetTrackIndexForAvailableData / GetSampleTime / Read), 0x1011 no input buffer, 0x100e no output
 // buffer, 0x100b bad argument, 0x1000 failure.
-#define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <mfapi.h>
-#include <mferror.h>
-#include <mfidl.h>
-#include <mfreadwrite.h>
-#include <shlwapi.h>
-#include <wrl/client.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <functional>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
 #include <thread>
+#include <initializer_list>
 #include <vector>
 
 #include "nxrt/abi.h"
@@ -48,16 +43,12 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/gauge.h"
 #include "nxrt/log.h"
+#include "nxrt/memory.h"
 #include "nxrt/module.h"
 #include "nxrt/movie.h"
-
-#pragma comment(lib, "mfplat.lib")
-#pragma comment(lib, "mfreadwrite.lib")
-#pragma comment(lib, "mfuuid.lib")
-#pragma comment(lib, "shlwapi.lib")
-#pragma comment(lib, "ole32.lib")
-
-using Microsoft::WRL::ComPtr;
+#include "nxrt/movie_source.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/services.h"
 
 namespace nxrt::media {
 namespace {
@@ -80,12 +71,15 @@ constexpr int ST_NO_OUTPUT = 0x100e;
 constexpr uint32_t FLAG_EOS = 4;
 constexpr size_t kSlotBytes = 64;
 constexpr uint64_t kTokenMagic = 0x4d4f564945544f4bull;   // "MOVIETOK"
-constexpr uint64_t kObjMarker = 0x4e58524d4f564945ull;    // "NXRMOVIE": byte 0..7 of an object the host owns
+// Byte 0..7 of an Extractor or Decoder the host owns: a vtable of host thunks (object_vtable below), so a game that calls the members
+// through the vtable (older SDKs) reaches the same handlers as one that calls the exported wrappers.
+uint64_t ext_vtable();
+uint64_t dec_vtable();
 constexpr int kAudioChunk = 0x8000;                   // what GetOutputBufferSize says for audio (the game allocates at least this)
 constexpr size_t kVideoQueueMax = 6, kAudioQueueMax = 64, kOtherQueueMax = 8;
 constexpr int kWaitMs = 8000;                         // longest the extractor makes a game thread wait for the worker
 
-bool g_log = false;
+bool g_log = false, g_use_mf = false;
 bool g_lookahead = true, g_preroll = true, g_async_close = true;
 std::atomic<uint64_t> s_extractors_created{0}, s_extractors_destroyed{0}, s_decoders_created{0}, s_decoders_destroyed{0}, s_frames{0},
     s_audio_blocks{0}, s_audio_bytes{0}, s_samples{0}, s_read_errors{0};
@@ -114,27 +108,11 @@ uint64_t gcall(::Ctx* c, uint64_t fn, uint64_t a0, uint64_t a1, uint64_t a2, uin
     return r;
 }
 
-// ---- Media Foundation startup ---------------------------------------------------------------------------------------------------
-thread_local bool t_com = false;
-std::once_flag g_mf_once;
-HRESULT g_mf_hr = E_FAIL;
-
-bool mf_ready() {
-    if (!t_com) {
-        const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (SUCCEEDED(hr) || hr == RPC_E_CHANGED_MODE) t_com = true;
-    }
-    std::call_once(g_mf_once, [] {
-        g_mf_hr = MFStartup(MF_VERSION, MFSTARTUP_FULL);
-        NXLOG_I("movie", "MFStartup 0x%08lx", static_cast<unsigned long>(g_mf_hr));
-    });
-    return SUCCEEDED(g_mf_hr);
-}
-
 // ---- movie::MediaData ----------------------------------------------------------------------------------------------------------
 struct MDEntry {
-    enum Type { I32, I64, STR, PTR } t = I32;
+    enum Type { I32, I64, STR, PTR, RECT } t = I32;
     int64_t i = 0;
+    int32_t r[4] = {0, 0, 0, 0};     // RECT: left, top, right, bottom (inclusive, as stagefright's "crop")
     std::string s;
     uint64_t p = 0;
 };
@@ -144,6 +122,11 @@ struct MD {
     void set_i64(const char* k, int64_t v) { MDEntry& x = e[k]; x.t = MDEntry::I64; x.i = v; }
     void set_str(const char* k, const char* v) { MDEntry& x = e[k]; x.t = MDEntry::STR; x.s = v ? v : ""; }
     void set_ptr(const char* k, uint64_t v) { MDEntry& x = e[k]; x.t = MDEntry::PTR; x.p = v; }
+    void set_rect(const char* k, int32_t l, int32_t t, int32_t r, int32_t b) {
+        MDEntry& x = e[k];
+        x.t = MDEntry::RECT;
+        x.r[0] = l; x.r[1] = t; x.r[2] = r; x.r[3] = b;
+    }
     const MDEntry* find(const char* k) const { auto it = e.find(k); return it == e.end() ? nullptr : &it->second; }
     bool get_i32(const char* k, int32_t* out) const {
         const MDEntry* x = find(k);
@@ -169,6 +152,20 @@ void mdata_copy(::Ctx* c) {
 }
 void mdata_dtor(::Ctx* c) { delete md_of(A0); wr64(A0, 0); }
 void mdata_clear(::Ctx* c) { if (MD* m = md_of(A0)) m->e.clear(); }
+void mdata_set_i32(::Ctx* c) {               // SetInt32(const char* key, int32 value)
+    if (MD* m = md_of(A0); m && A1) m->set_i32(reinterpret_cast<const char*>(A1), static_cast<int32_t>(A2));
+}
+void mdata_find_rect(::Ctx* c) {             // FindRect(const char* key, int* left, int* top, int* right, int* bottom)
+    MD* m = md_of(A0);
+    const MDEntry* x = m && A1 ? m->find(reinterpret_cast<const char*>(A1)) : nullptr;
+    const bool ok = x && x->t == MDEntry::RECT;
+    if (ok) {
+        const uint64_t out[4] = {A2, A3, A4, A5};
+        for (int k = 0; k < 4; k++)
+            if (out[k]) wr32(out[k], static_cast<uint32_t>(x->r[k]));
+    }
+    RET(ok);
+}
 void mdata_find_i32(::Ctx* c) {
     int32_t v = 0;
     MD* m = md_of(A0);
@@ -204,78 +201,14 @@ void buf_base(::Ctx* c) { RET(rd64(A0 + B_BASE)); }
 void buf_size(::Ctx* c) { RET(rd32(A0 + B_SIZE)); }
 void buf_offset(::Ctx* c) { RET(rd32(A0 + B_OFFSET)); }
 
-// ---- the MP4 box walk: edit lists ----------------------------------------------------------------------------------------------
-struct Mp4Track {
-    uint32_t handler = 0;           // 'vide' / 'soun'
-    uint32_t timescale = 0;
-    int64_t delay_us = 0;           // leading empty edits: the track starts this much later
-    int64_t media_time = 0;         // start of the first real edit, in the track's time scale
-    bool has_edit = false;
-    int64_t offset_us() const { return delay_us - (timescale ? media_time * 1000000 / static_cast<int64_t>(timescale) : 0); }   // presentation time of media time 0
-};
-uint32_t be32(const uint8_t* p) { return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3]; }
-uint64_t be64(const uint8_t* p) { return (uint64_t(be32(p)) << 32) | be32(p + 4); }
-
-struct Mp4Walker {
-    const uint8_t* d;
-    size_t n;
-    uint32_t movie_ts = 1000;
-    std::vector<Mp4Track> tracks;
-
-    void walk(size_t off, size_t end, int depth, int trak) {
-        while (off + 8 <= end) {
-            uint64_t sz = be32(d + off);
-            const uint32_t type = be32(d + off + 4);
-            size_t hdr = 8;
-            if (sz == 1 && off + 16 <= end) { sz = be64(d + off + 8); hdr = 16; }
-            else if (sz == 0) sz = end - off;
-            if (sz < hdr || off + sz > end) return;
-            const uint8_t* body = d + off + hdr;
-            const size_t blen = static_cast<size_t>(sz - hdr);
-            auto is = [&](const char* s) { return type == be32(reinterpret_cast<const uint8_t*>(s)); };
-            if (is("moov") || is("edts") || is("mdia")) {
-                walk(off + hdr, off + static_cast<size_t>(sz), depth + 1, trak);
-            } else if (is("trak")) {
-                tracks.emplace_back();
-                walk(off + hdr, off + static_cast<size_t>(sz), depth + 1, static_cast<int>(tracks.size()) - 1);
-            } else if (is("mvhd") && blen >= 20) {
-                movie_ts = body[0] == 1 ? (blen >= 24 ? be32(body + 20) : 1000) : be32(body + 12);
-            } else if (is("mdhd") && trak >= 0 && blen >= 20) {
-                tracks[trak].timescale = body[0] == 1 ? (blen >= 24 ? be32(body + 20) : 0) : be32(body + 12);
-            } else if (is("hdlr") && trak >= 0 && blen >= 12) {
-                tracks[trak].handler = be32(body + 8);
-            } else if (is("elst") && trak >= 0 && blen >= 8) {
-                const uint32_t cnt = be32(body + 4);
-                const bool v1 = body[0] == 1;
-                const size_t esz = v1 ? 20 : 12;
-                int64_t delay = 0, media = 0;
-                bool got = false;
-                for (uint32_t k = 0; k < cnt && 8 + (k + 1) * esz <= blen && !got; k++) {
-                    const uint8_t* e = body + 8 + k * esz;
-                    const int64_t seg = v1 ? static_cast<int64_t>(be64(e)) : be32(e);
-                    const int64_t mt = v1 ? static_cast<int64_t>(be64(e + 8)) : static_cast<int32_t>(be32(e + 4));
-                    if (mt == -1) delay += seg * 1000000 / std::max<uint32_t>(movie_ts, 1);   // an empty edit: the track starts later
-                    else { media = mt; got = true; }
-                }
-                Mp4Track& t = tracks[trak];
-                t.has_edit = true;
-                t.delay_us = delay;
-                t.media_time = media;
-            }
-            off += static_cast<size_t>(sz);
-        }
-    }
-};
-
 // ---- the extractor -------------------------------------------------------------------------------------------------------------
+using SamplePtr = std::shared_ptr<SourceSample>;
 struct Item {
-    ComPtr<IMFSample> s;
+    SamplePtr s;
     int64_t us = 0;
-    uint32_t skip = 0;       // audio: leading bytes of the PCM to drop (priming)
 };
 struct Track {
     int kind = 2;
-    int mf_index = 0;
     std::string mime;
     int w = 0, h = 0, rate = 0, ch = 0, bitrate = 0, colorspace = 2;
     double fps = 0;
@@ -298,12 +231,12 @@ struct Ext {
     Ext& operator=(const Ext&) = delete;
     int container = 1;
     std::string name;
-    ComPtr<IMFSourceReader> rd;
-    ComPtr<IMFByteStream> bs;
+    std::unique_ptr<MovieSource> src;
+    std::unique_ptr<unsigned char[]> file;   // the movie data the source reads from (it must outlive the source: src is released first)
     std::vector<Track> tr;
     int64_t duration_us = 0;
     std::mutex m;
-    std::mutex reader_mu;            // the source reader: one call at a time (ReadSample, SetCurrentPosition, stream selection)
+    std::mutex reader_mu;            // the source: one call at a time (read, seek, track selection)
     std::condition_variable cv_data, cv_work;
     std::thread worker;
     bool stop = false, started = false;
@@ -328,114 +261,23 @@ struct Ext {
     uint64_t samples_read = 0;
 };
 
-Ext* ext_of(uint64_t guest) { return guest && rd64(guest) == kObjMarker ? reinterpret_cast<Ext*>(rd64(guest + 8)) : nullptr; }
-
-int track_kind_of_native(IMFMediaType* t, GUID* sub) {
-    GUID major{};
-    t->GetGUID(MF_MT_MAJOR_TYPE, &major);
-    t->GetGUID(MF_MT_SUBTYPE, sub);
-    if (major == MFMediaType_Video) return 0;
-    if (major == MFMediaType_Audio) return 1;
-    return 2;
-}
-bool is_fourcc_guid(const GUID& g) {
-    static const unsigned char tail[8] = {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
-    return g.Data2 == 0 && g.Data3 == 0x10 && std::memcmp(g.Data4, tail, 8) == 0;
-}
-constexpr uint32_t fourcc_of(char a, char b, char c, char d) { return uint32_t(uint8_t(a)) | (uint32_t(uint8_t(b)) << 8) | (uint32_t(uint8_t(c)) << 16) | (uint32_t(uint8_t(d)) << 24); }
+Ext* ext_of(uint64_t guest) { return guest && rd64(guest) == ext_vtable() ? reinterpret_cast<Ext*>(rd64(guest + 8)) : nullptr; }
 
 bool ext_open(Ext* e, unsigned char* data, size_t size) {
-    if (!mf_ready()) return false;
-    ComPtr<IStream> st;
-    st.Attach(SHCreateMemStream(data, static_cast<UINT>(size)));
-    if (!st) return false;
-    HRESULT hr = MFCreateMFByteStreamOnStream(st.Get(), &e->bs);
-    if (FAILED(hr)) { NXLOG_W("movie", "MFCreateMFByteStreamOnStream 0x%08lx", static_cast<unsigned long>(hr)); return false; }
-    ComPtr<IMFAttributes> ba;
-    if (SUCCEEDED(e->bs.As(&ba))) {
-        ba->SetString(MF_BYTESTREAM_CONTENT_TYPE, e->container == 2 ? L"video/x-matroska" : e->container == 3 ? L"video/webm" : L"video/mp4");
-        ba->SetString(MF_BYTESTREAM_ORIGIN_NAME, e->container == 2 ? L"movie.mkv" : e->container == 3 ? L"movie.webm" : L"movie.mp4");
-    }
-    hr = MFCreateSourceReaderFromByteStream(e->bs.Get(), nullptr, &e->rd);
-    if (FAILED(hr)) { NXLOG_W("movie", "MFCreateSourceReaderFromByteStream 0x%08lx", static_cast<unsigned long>(hr)); return false; }
-    PROPVARIANT var;
-    PropVariantInit(&var);
-    if (SUCCEEDED(e->rd->GetPresentationAttribute(MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var)) && var.vt == VT_UI8)
-        e->duration_us = static_cast<int64_t>(var.uhVal.QuadPart / 10);
-    PropVariantClear(&var);
-    e->rd->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
-
-    Mp4Walker mw{data, size};
-    if (e->container == 1) mw.walk(0, size, 0, -1);
-
-    std::vector<Track> mf_tracks;
-    for (DWORD i = 0;; i++) {
-        ComPtr<IMFMediaType> nt;
-        if (FAILED(e->rd->GetNativeMediaType(i, 0, &nt))) break;
-        GUID sub{};
+    e->src = g_use_mf ? make_mf_source() : make_ffmpeg_source();
+    if (!e->src) { NXLOG_W("movie", "no %s backend available", g_use_mf ? "Media Foundation" : "FFmpeg"); return false; }
+    if (!e->src->open(data, size, e->container)) { e->src.reset(); return false; }
+    e->duration_us = e->src->duration_us();
+    std::vector<Track> tracks;
+    for (const SourceTrack& st : e->src->tracks()) {
         Track t;
-        t.kind = track_kind_of_native(nt.Get(), &sub);
-        t.mf_index = static_cast<int>(i);
-        const uint32_t fcc = is_fourcc_guid(sub) ? sub.Data1 : 0;
-        if (t.kind == 0) {
-            UINT64 fs = 0, fr = 0;
-            nt->GetUINT64(MF_MT_FRAME_SIZE, &fs);
-            nt->GetUINT64(MF_MT_FRAME_RATE, &fr);
-            t.w = static_cast<int>(fs >> 32);
-            t.h = static_cast<int>(static_cast<uint32_t>(fs));
-            t.fps = static_cast<uint32_t>(fr) ? static_cast<double>(fr >> 32) / static_cast<double>(static_cast<uint32_t>(fr)) : 0.0;
-            UINT32 v = 0;
-            nt->GetUINT32(MF_MT_AVG_BITRATE, &v);
-            t.bitrate = static_cast<int>(v);
-            // the game's colour conversion: 0 BT.601 limited, 1 BT.601 full, 2 BT.709 limited, 3 BT.709 full
-            UINT32 mat = 0, range = 0;
-            nt->GetUINT32(MF_MT_YUV_MATRIX, &mat);
-            nt->GetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, &range);
-            const bool bt601 = mat == MFVideoTransferMatrix_BT601;
-            const bool full = range == MFNominalRange_0_255;
-            t.colorspace = bt601 ? (full ? 1 : 0) : (full ? 3 : 2);
-            t.mime = fcc == fourcc_of('V', 'P', '9', '0') ? "video/x-vnd.on2.vp9" : fcc == fourcc_of('V', 'P', '8', '0') ? "video/x-vnd.on2.vp8"
-                     : (fcc == fourcc_of('H', '2', '6', '4') || fcc == fourcc_of('A', 'V', 'C', '1')) ? "video/avc" : fcc == fourcc_of('H', 'E', 'V', 'C') ? "video/hevc" : "video/unknown";
-        } else if (t.kind == 1) {
-            UINT32 rate = 0, ch = 0, br = 0;
-            nt->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &rate);
-            nt->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &ch);
-            nt->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &br);
-            t.rate = static_cast<int>(rate);
-            t.ch = static_cast<int>(ch);
-            t.bitrate = static_cast<int>(br * 8);
-            static const GUID kVorbis = {0x8D2FD10B, 0x5841, 0x4a6b, {0x89, 0x05, 0x58, 0x8F, 0xEC, 0x1A, 0xDE, 0xD9}};
-            t.mime = sub == kVorbis ? "audio/vorbis" : fcc == 0x704F ? "audio/opus" : fcc == 0x1610 ? "audio/mp4a-latm" : fcc == 0x55 ? "audio/mpeg" : "audio/unknown";
-        } else {
-            t.mime = "application/octet-stream";
-        }
-        mf_tracks.push_back(std::move(t));
-    }
-    // file order: the i-th video (audio) trak of the file is the i-th video (audio) stream of the reader; the edit list of the trak
-    // gives the track its time offset
-    std::vector<Track> ordered;
-    {
-        size_t used_v = 0, used_a = 0;
-        const uint32_t vide = be32(reinterpret_cast<const uint8_t*>("vide")), soun = be32(reinterpret_cast<const uint8_t*>("soun"));
-        for (const Mp4Track& mt : mw.tracks) {
-            const int want = mt.handler == vide ? 0 : mt.handler == soun ? 1 : -1;
-            if (want < 0) continue;
-            size_t& used = want == 0 ? used_v : used_a;
-            size_t seen = 0;
-            for (Track& t : mf_tracks) {
-                if (t.kind != want) continue;
-                if (seen++ != used) continue;
-                if (mt.has_edit) t.offset_us = mt.offset_us();
-                ordered.push_back(t);
-                break;
-            }
-            used++;
-        }
-        for (const Track& t : mf_tracks) if (t.kind == 2) ordered.push_back(t);
+        t.kind = st.kind; t.mime = st.mime; t.w = st.w; t.h = st.h; t.rate = st.rate; t.ch = st.ch; t.bitrate = st.bitrate;
+        t.colorspace = st.colorspace; t.fps = st.fps; t.offset_us = st.offset_us;
+        tracks.push_back(std::move(t));
     }
     {   // under e->m: the gauges read the track queues from the sampler thread
         std::lock_guard<std::mutex> lk(e->m);
-        e->tr = ordered.size() == mf_tracks.size() ? ordered : mf_tracks;
+        e->tr = std::move(tracks);
     }
     std::string desc;
     for (size_t i = 0; i < e->tr.size(); i++) {
@@ -451,54 +293,23 @@ bool ext_open(Ext* e, unsigned char* data, size_t size) {
 }
 
 int ext_select_locked(Ext* e, int i, bool on) {
-    if (!e->rd || i < 0 || i >= static_cast<int>(e->tr.size())) return ST_INVALID;
+    if (!e->src || i < 0 || i >= static_cast<int>(e->tr.size())) return ST_INVALID;
     Track& t = e->tr[static_cast<size_t>(i)];
     if (e->reading) NXLOG_W("movie", "track %d selected after reading began: the stream may start late", i);
-    std::lock_guard<std::mutex> rl(e->reader_mu);
-    HRESULT hr = e->rd->SetStreamSelection(static_cast<DWORD>(t.mf_index), on ? TRUE : FALSE);
-    if (on && SUCCEEDED(hr) && t.kind != 2) {
-        ComPtr<IMFMediaType> mt;
-        MFCreateMediaType(&mt);
-        if (t.kind == 0) {
-            mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-            mt->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-        } else {
-            mt->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-            mt->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
-            mt->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-            mt->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, static_cast<UINT32>(t.rate));
-            mt->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, static_cast<UINT32>(t.ch));
-        }
-        hr = e->rd->SetCurrentMediaType(static_cast<DWORD>(t.mf_index), nullptr, mt.Get());
-        if (FAILED(hr) && t.kind == 1) {   // let the reader choose the PCM layout
-            ComPtr<IMFMediaType> mt2;
-            MFCreateMediaType(&mt2);
-            mt2->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-            mt2->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
-            hr = e->rd->SetCurrentMediaType(static_cast<DWORD>(t.mf_index), nullptr, mt2.Get());
-        }
-        if (SUCCEEDED(hr)) {
-            ComPtr<IMFMediaType> cur;
-            if (SUCCEEDED(e->rd->GetCurrentMediaType(static_cast<DWORD>(t.mf_index), &cur))) {
-                if (t.kind == 0) {
-                    UINT64 fs = 0;
-                    cur->GetUINT64(MF_MT_FRAME_SIZE, &fs);
-                    if (fs) { t.w = static_cast<int>(fs >> 32); t.h = static_cast<int>(static_cast<uint32_t>(fs)); }
-                } else {
-                    UINT32 v = 0;
-                    if (SUCCEEDED(cur->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &v))) t.rate = static_cast<int>(v);
-                    if (SUCCEEDED(cur->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &v))) t.ch = static_cast<int>(v);
-                }
-            }
-        } else {
-            NXLOG_W("movie", "track %d (%s): no Media Foundation decoder path (0x%08lx); left unselected", i, t.mime.c_str(), static_cast<unsigned long>(hr));
-            e->rd->SetStreamSelection(static_cast<DWORD>(t.mf_index), FALSE);
-            return ST_UNSUPPORTED;
-        }
+    SelectResult sr;
+    SourceTrack upd;
+    {
+        std::lock_guard<std::mutex> rl(e->reader_mu);
+        sr = e->src->select(i, on, &upd);
+    }
+    if (sr == SelectResult::Unsupported) {
+        NXLOG_W("movie", "track %d (%s): no decoder path; left unselected", i, t.mime.c_str());
+        return ST_UNSUPPORTED;
     }
     {
         std::lock_guard<std::mutex> lk(e->m);
-        t.selected = on && SUCCEEDED(hr);
+        if (on && sr == SelectResult::Ok && t.kind != 2) { t.w = upd.w; t.h = upd.h; t.rate = upd.rate; t.ch = upd.ch; }
+        t.selected = on && sr == SelectResult::Ok;
         e->nx.clear();
         e->ahead = 0;
         e->ahead_tried = false;
@@ -510,7 +321,7 @@ int ext_select_locked(Ext* e, int i, bool on) {
     }
     e->cv_work.notify_all();
     NXLOG_I("movie", "%s track %d (%s)", on ? "selected" : "unselected", i, t.mime.c_str());
-    return SUCCEEDED(hr) ? ST_OK : ST_FAILED;
+    return sr == SelectResult::Ok ? ST_OK : ST_FAILED;
 }
 
 void worker_main(Ext* e) {
@@ -518,21 +329,16 @@ void worker_main(Ext* e) {
         Alive() { g_media_workers.add(1); }
         ~Alive() { g_media_workers.sub(1); }
     } alive;
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     log_set_thread_name("movie-read");
     std::unique_lock<std::mutex> lk(e->m);
     while (!e->stop) {
         if (e->seek_pending) {
             const int64_t us = e->seek_us;
             lk.unlock();
-            HRESULT hr;
+            bool ok;
             {
                 std::lock_guard<std::mutex> rl(e->reader_mu);
-                PROPVARIANT var;
-                PropVariantInit(&var);
-                var.vt = VT_I8;
-                var.hVal.QuadPart = us * 10;
-                hr = e->rd->SetCurrentPosition(GUID_NULL, var);
+                ok = e->src->seek(us);
             }
             lk.lock();
             for (Track& t : e->tr) { t.q.clear(); t.eos = false; t.failed = false; t.last_us = INT64_MIN; }
@@ -541,7 +347,7 @@ void worker_main(Ext* e) {
             e->ahead_tried = false;
             e->cur_valid = false;
             e->seek_pending = false;
-            NXLOG_I("movie", "SeekTo(%.3f s) 0x%08lx", us / 1e6, static_cast<unsigned long>(hr));
+            NXLOG_I("movie", "SeekTo(%.3f s) %s", us / 1e6, ok ? "ok" : "failed");
             e->cv_data.notify_all();
             continue;
         }
@@ -556,17 +362,13 @@ void worker_main(Ext* e) {
                 e->ahead_tried = true;
                 e->ahead = 1;
                 lk.unlock();
-                HRESULT hr;
+                bool ok;
                 {
                     std::lock_guard<std::mutex> rl(e->reader_mu);
-                    PROPVARIANT var;
-                    PropVariantInit(&var);
-                    var.vt = VT_I8;
-                    var.hVal.QuadPart = 0;
-                    hr = e->rd->SetCurrentPosition(GUID_NULL, var);
+                    ok = e->src->seek(0);
                 }
                 lk.lock();
-                if (e->ahead == 1 && SUCCEEDED(hr) && !e->seek_pending && !e->stop) {
+                if (e->ahead == 1 && ok && !e->seek_pending && !e->stop) {
                     e->nx.assign(e->tr.size(), Ext::Ahead());
                     e->ahead = 2;
                     NXLOG_D("movie", "end of stream: the start is being decoded ahead for a loop");
@@ -592,19 +394,16 @@ void worker_main(Ext* e) {
             if (!pick || last < (ah ? e->nx[static_cast<size_t>(pick - e->tr.data())].last_us : pick->last_us)) pick = &t;
         }
         if (!pick) { e->cv_work.wait(lk); continue; }
-        const int mf_index = pick->mf_index;
         const int kind = pick->kind;
         const int64_t offset_us = pick->offset_us;
         const int rate = pick->rate, ch = pick->ch;
         const size_t ti = static_cast<size_t>(pick - e->tr.data());
         lk.unlock();
-        DWORD idx = 0, flags = 0;
-        LONGLONG ts = 0;
-        ComPtr<IMFSample> s;
-        HRESULT hr;
+        SamplePtr s = std::make_shared<SourceSample>();
+        ReadStatus rs;
         {
             std::lock_guard<std::mutex> rl(e->reader_mu);
-            hr = e->rd->ReadSample(static_cast<DWORD>(mf_index), 0, &idx, &flags, &ts, &s);
+            rs = e->src->read(static_cast<int>(ti), s.get());
         }
         lk.lock();
         if (e->seek_pending || e->stop) continue;
@@ -618,39 +417,33 @@ void worker_main(Ext* e) {
         bool& EOS = ah ? e->nx[ti].eos : t.eos;
         bool& FAIL = ah ? e->nx[ti].failed : t.failed;
         int64_t& LAST = ah ? e->nx[ti].last_us : t.last_us;
-        if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) {
+        if (rs == ReadStatus::Error) {
             s_read_errors++;
-            NXLOG_W("movie", "ReadSample(track %zu) failed (0x%08lx, flags 0x%lx) after %llu samples: treated as its end", ti, static_cast<unsigned long>(hr), flags,
-                    static_cast<unsigned long long>(e->samples_read));
+            NXLOG_W("movie", "read(track %zu) failed after %llu samples: treated as its end", ti, static_cast<unsigned long long>(e->samples_read));
             FAIL = EOS = true;
             e->cv_data.notify_all();
             continue;
         }
-        if (g_log) NXLOG_I("movie", "ReadSample(track %zu): flags 0x%lx ts %lld sample %p", ti, flags, static_cast<long long>(ts), static_cast<void*>(s.Get()));
-        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) {
+        if (g_log) NXLOG_I("movie", "read(track %zu): status %d ts %lld", ti, static_cast<int>(rs), static_cast<long long>(s->us));
+        if (rs == ReadStatus::End) {
             NXLOG_D("movie", "track %zu: end of stream after %zu queued", ti, Q.size());
             EOS = true;
             e->cv_data.notify_all();
             continue;
         }
-        if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) {   // the geometry of the stream changed: the game does not expect that
-            NXLOG_W("movie", "track %zu: media type changed mid-stream", ti);
-        }
-        if (!s) continue;
+        if (rs == ReadStatus::Again) continue;
         Item it;
-        it.us = static_cast<int64_t>(ts / 10) + offset_us;
+        it.us = s->us + offset_us;
         it.s = s;
         e->samples_read++;
         s_samples++;
         bool keep = true;
         if (it.us < 0) {
             if (kind == 1 && rate > 0 && ch > 0) {                 // audio before the presentation start: priming, cut it
-                DWORD len = 0;
-                s->GetTotalLength(&len);
                 const uint64_t frame_bytes = static_cast<uint64_t>(ch) * 2;
                 const uint64_t drop = (static_cast<uint64_t>(-it.us) * static_cast<uint64_t>(rate) + 999999) / 1000000 * frame_bytes;
-                if (drop >= len) keep = false;
-                else { it.skip = static_cast<uint32_t>(drop); it.us = 0; }
+                if (drop >= s->data.size()) keep = false;
+                else { s->data.erase(s->data.begin(), s->data.begin() + static_cast<std::ptrdiff_t>(drop)); it.us = 0; }
             } else {
                 keep = false;
             }
@@ -677,12 +470,11 @@ void ext_destroy(Ext* e) {
     e->cv_work.notify_all();
     e->cv_data.notify_all();
     if (e->worker.joinable()) e->worker.join();
-    e->rd.Reset();
-    e->bs.Reset();
+    e->src.reset();
 }
 
-// The game's destructor call returns at once (S21): the worker may be inside a ReadSample and tearing a source reader down stops its decoder
-// (60 to 80 ms), which would otherwise stall the game thread that closes the movie. A short-lived thread does the join and the release.
+// The game's destructor call returns at once (S21): the worker may be inside a read and tearing a source down stops its decoder
+// (60 to 80 ms with Media Foundation), which would otherwise stall the game thread that closes the movie. A short-lived thread does the join and the release.
 void ext_destroy_async(Ext* e) {
     {
         std::lock_guard<std::mutex> lk(e->m);
@@ -692,11 +484,9 @@ void ext_destroy_async(Ext* e) {
     e->cv_data.notify_all();
     try {
         std::thread([e] {
-            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
             log_set_thread_name("movie-close");
             ext_destroy(e);
             delete e;
-            CoUninitialize();
         }).detach();
     } catch (...) {
         ext_destroy(e);
@@ -746,10 +536,10 @@ int ext_fill(Ext* e, std::unique_lock<std::mutex>& lk) {
 }
 
 // ---- Extractor handlers --------------------------------------------------------------------------------------------------------
-void ext_ctor(::Ctx* c) {                    // Extractor(ContainerType, CacheSize): 1 mp4, 2 mkv, 3 webm
+void ext_ctor(::Ctx* c) {                    // Extractor(ContainerType[, CacheSize]): 1 mp4, 2 mkv, 3 webm
     Ext* e = new Ext();
     e->container = static_cast<int>(A1);
-    wr64(A0, kObjMarker);
+    wr64(A0, ext_vtable());
     wr64(A0 + 8, reinterpret_cast<uint64_t>(e));
     s_extractors_created++;
     NXLOG_I("movie", "Extractor created (container type %d)", e->container);
@@ -767,6 +557,15 @@ void ext_dtor(::Ctx* c) {
         delete e;
     }
     s_extractors_destroyed++;
+}
+
+// The movie data is owned by the extractor from here on: the source reads from it until the extractor is destroyed.
+int ext_open_data(Ext* e, std::unique_ptr<unsigned char[]> data, size_t size) {
+    if (e->container == 1 && (size < 12 || std::memcmp(data.get() + 4, "ftyp", 4) != 0)) NXLOG_W("movie", "the movie data does not start with an MP4 'ftyp' box");
+    if (!ext_open(e, data.get(), size)) return ST_FAILED;
+    e->file = std::move(data);
+    ext_start_worker(e);
+    return ST_OK;
 }
 
 void ext_set_source(::Ctx* c) {              // SetDataSource(ClientStreamReader*, const char* path)
@@ -801,24 +600,44 @@ void ext_set_source(::Ctx* c) {              // SetDataSource(ClientStreamReader
     NXLOG_I("movie", "SetDataSource: read %lld of %lld bytes through the game's reader in %.2f s", static_cast<long long>(got), static_cast<long long>(size),
             std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
     if (got != size) { RET(ST_FAILED); return; }
-    if (size < 12 || std::memcmp(data.get() + 4, "ftyp", 4) != 0) NXLOG_W("movie", "the movie data does not start with an MP4 'ftyp' box");
-    if (!ext_open(e, data.get(), static_cast<size_t>(size))) { RET(ST_FAILED); return; }
-    ext_start_worker(e);
-    RET(ST_OK);
+    RET(ext_open_data(e, std::move(data), static_cast<size_t>(size)));
+}
+// SetDataSource(const char* path) of the older SDKs: the library opens the file itself. The path names a file of the game's data
+// ("rom:/movie/x.webm" or "movie/x.webm"): the mount name is dropped and the file is read from the RomFS folder.
+void ext_set_source_path(::Ctx* c) {
+    Ext* e = ext_of(A0);
+    const char* path = reinterpret_cast<const char*>(A1);
+    if (!e || !path) { RET(ST_INVALID); return; }
+    e->name = path;
+    std::string rel = path;
+    if (const size_t colon = rel.find(':'); colon != std::string::npos) rel.erase(0, colon + 1);
+    while (!rel.empty() && (rel[0] == '/' || rel[0] == '\\')) rel.erase(0, 1);
+    const std::string host = services::romfs_dir() + "/" + rel;
+    std::FILE* f = os::fs::fopen(host, "rb");
+    if (!f) { NXLOG_W("movie", "SetDataSource(%s): no file %s", path, host.c_str()); RET(ST_FAILED); return; }
+    std::fseek(f, 0, SEEK_END);
+    const long size = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    std::unique_ptr<unsigned char[]> data(size > 0 && size <= (2l << 30) ? new (std::nothrow) unsigned char[static_cast<size_t>(size)] : nullptr);
+    const bool ok = data && std::fread(data.get(), 1, static_cast<size_t>(size), f) == static_cast<size_t>(size);
+    std::fclose(f);
+    if (!ok) { NXLOG_W("movie", "SetDataSource(%s): cannot read %s", path, host.c_str()); RET(ST_FAILED); return; }
+    NXLOG_I("movie", "SetDataSource(%s): %ld bytes from the RomFS folder", path, size);
+    RET(ext_open_data(e, std::move(data), static_cast<size_t>(size)));
 }
 
 void ext_track_count(::Ctx* c) {
     Ext* e = ext_of(A0);
     if (!e || !A1) { RET(ST_INVALID); return; }
-    wr32(A1, static_cast<uint32_t>(e->rd ? e->tr.size() : 0));
-    RET(e->rd ? ST_OK : ST_FAILED);
+    wr32(A1, static_cast<uint32_t>(e->src ? e->tr.size() : 0));
+    RET(e->src ? ST_OK : ST_FAILED);
 }
 
 void ext_track_config(::Ctx* c) {            // GetTrackConfiguration(int track, MediaData* out)
     Ext* e = ext_of(A0);
     const int i = static_cast<int>(A1);
     MD* m = md_of(A2);
-    if (!e || !m || !e->rd || i < 0 || i >= static_cast<int>(e->tr.size())) { RET(ST_INVALID); return; }
+    if (!e || !m || !e->src || i < 0 || i >= static_cast<int>(e->tr.size())) { RET(ST_INVALID); return; }
     const Track& t = e->tr[static_cast<size_t>(i)];
     m->e.clear();
     m->set_str("mime", t.mime.c_str());
@@ -876,7 +695,7 @@ void ext_select(::Ctx* c) {
 
 void ext_seek(::Ctx* c) {                    // SeekTo(int64 timeUs)
     Ext* e = ext_of(A0);
-    if (!e || !e->rd) { RET(ST_INVALID); return; }
+    if (!e || !e->src) { RET(ST_INVALID); return; }
     int64_t us = static_cast<int64_t>(A1);
     std::unique_lock<std::mutex> lk(e->m);
     if (us > 0) {                                  // the target is in presentation time; the reader's clock runs by the video's edit offset ahead
@@ -937,10 +756,9 @@ void ext_track_for_data(::Ctx* c) {          // GetTrackIndexForAvailableData(si
 
 struct Token {
     uint64_t magic;
-    IMFSample* s;
+    SamplePtr* sp;          // owned: a heap shared_ptr, released by the decoder that takes the token (or when the slot is cleared)
     int64_t ts;
-    uint32_t skip;
-    uint32_t pad;
+    uint64_t pad;
 };
 static_assert(sizeof(Token) <= kSlotBytes, "token must fit a decoder input slot");
 
@@ -955,8 +773,7 @@ void ext_read(::Ctx* c) {                    // Read(Buffer* out): the token for
         Track& t = e->tr[static_cast<size_t>(e->cur_track)];
         if (base && cap >= sizeof(Token) && !t.q.empty()) {
             const Item& it = t.q.front();
-            it.s->AddRef();
-            Token tok{kTokenMagic, it.s.Get(), it.us, it.skip, 0};
+            Token tok{kTokenMagic, new SamplePtr(it.s), it.us, 0};
             std::memcpy(reinterpret_cast<void*>(base), &tok, sizeof tok);
             wr32(b + B_OFFSET, 0);
             wr32(b + B_SIZE, static_cast<uint32_t>(sizeof tok));
@@ -998,13 +815,13 @@ enum { IN_CODEC = 0, IN_OFFERED, IN_CLIENT, IN_DECODING };
 enum { OUT_FREE = 0, OUT_READY, OUT_CLIENT };
 struct OutBuf {
     int state = OUT_FREE;
-    ComPtr<IMFSample> s;
+    SamplePtr s;
     uint32_t off = 0, len = 0;
     int64_t ts = 0;
     uint32_t flags = 0;
 };
 struct DecItem {
-    ComPtr<IMFSample> s;
+    SamplePtr s;
     uint32_t off = 0, remaining = 0;
     int64_t ts = 0;
     uint32_t flags = 0;
@@ -1035,7 +852,7 @@ struct Dec {
     uint64_t in_count = 0, copied = 0, dropped = 0;
     bool warned_small = false, warned_token = false;
 };
-Dec* dec_of(uint64_t guest) { return guest && rd64(guest) == kObjMarker ? reinterpret_cast<Dec*>(rd64(guest + 8)) : nullptr; }
+Dec* dec_of(uint64_t guest) { return guest && rd64(guest) == dec_vtable() ? reinterpret_cast<Dec*>(rd64(guest + 8)) : nullptr; }
 
 // ---- gauges (include/nxrt/gauge.h) ----
 // Queued samples over every live extractor (kind 0 video, 1 audio): the registry lock first, then each extractor's m.
@@ -1082,7 +899,7 @@ void dec_release_all(Dec* d) {
     for (int i = 0; i < d->nin; i++) {
         Token t;
         std::memcpy(&t, d->mem.get() + static_cast<size_t>(i) * kSlotBytes, sizeof t);
-        if (t.magic == kTokenMagic && t.s) t.s->Release();
+        if (t.magic == kTokenMagic) delete t.sp;
         std::memset(d->mem.get() + static_cast<size_t>(i) * kSlotBytes, 0, kSlotBytes);
         d->in_state[i] = IN_CODEC;
     }
@@ -1131,7 +948,7 @@ void dec_ctor(::Ctx* c) {                    // Decoder(DecoderType, DecoderOutp
     d->nin = 8;
     d->nout = d->is_video ? 16 : 64;
     d->mem.reset(new unsigned char[static_cast<size_t>(MAX_IN) * kSlotBytes]());
-    wr64(A0, kObjMarker);
+    wr64(A0, dec_vtable());
     wr64(A0 + 8, reinterpret_cast<uint64_t>(d));
     s_decoders_created++;
     NXLOG_I("movie", "Decoder created (type %d = %s, output format %d, mode %d)", d->type,
@@ -1166,11 +983,11 @@ void dec_configure(::Ctx* c) {               // Configure(MediaData* format): th
     NXLOG_I("movie", "Decoder(%s) configured: %dx%d, %d Hz, %d ch", d->is_video ? "video" : "audio", d->w, d->h, d->rate, d->ch);
     RET(ST_OK);
 }
-void dec_register_events(::Ctx* c) {         // the game passes four null event pointers: everything is polled
+void dec_register_events(::Ctx* c) {         // DecoderEvents*: four nn::os::EventType* (input, output, format changed, error) or null
     Dec* d = dec_of(A0);
     if (!d) { RET(ST_INVALID); return; }
     d->events = A1;
-    if (A1 && (rd64(A1) || rd64(A1 + 8))) NXLOG_W("movie", "Decoder client events with real event objects are not signalled (the game polls)");
+    if (A1 && (rd64(A1) || rd64(A1 + 8))) NXLOG_I("movie", "Decoder(%s): client events registered (signalled on the vtable path)", d->is_video ? "video" : "audio");
     RET(ST_OK);
 }
 
@@ -1182,6 +999,7 @@ void fill_format(Dec* d, MD* m) {
         m->set_i32("width", w); m->set_i32("height", h);
         m->set_i32("stride", w); m->set_i32("slice-height", h);
         m->set_i32("crop-width", w); m->set_i32("crop-height", h);
+        m->set_rect("crop", 0, 0, w - 1, h - 1);
         m->set_i32("color-format", 21);                  // OMX_COLOR_FormatYUV420SemiPlanar = NV12
         m->set_i32("nv12-width", w); m->set_i32("nv12-height", h);
         m->set_i32("nv12-y-stride", w); m->set_i32("nv12-uv-stride", w);
@@ -1264,14 +1082,13 @@ void dec_send_input(::Ctx* c) {              // SendInputBufferForDecode(int ind
     const uint32_t flags = static_cast<uint32_t>(A5);
     if (!d || i < 0 || i >= d->nin) { RET(ST_INVALID); return; }
     std::lock_guard<std::mutex> lk(d->m);
-    ComPtr<IMFSample> sample;
-    uint32_t skip = 0;
+    SamplePtr sample;
     Token t;
     std::memcpy(&t, d->mem.get() + static_cast<size_t>(i) * kSlotBytes, sizeof t);
     std::memset(d->mem.get() + static_cast<size_t>(i) * kSlotBytes, 0, sizeof t);
-    if (t.magic == kTokenMagic && t.s) {
-        sample.Attach(t.s);
-        skip = t.skip;
+    if (t.magic == kTokenMagic && t.sp) {
+        sample = *t.sp;
+        delete t.sp;
         if (ts <= 0) ts = t.ts;
     } else if (!(flags & FLAG_EOS) && !d->warned_token) {
         d->warned_token = true;
@@ -1283,7 +1100,7 @@ void dec_send_input(::Ctx* c) {              // SendInputBufferForDecode(int ind
         return;
     }
     d->in_count++;
-    const bool empty_audio = sample && !d->is_video && !(flags & FLAG_EOS) && [&] { DWORD len = 0; sample->GetTotalLength(&len); return len <= skip; }();
+    const bool empty_audio = sample && !d->is_video && !(flags & FLAG_EOS) && sample->data.empty();
     if ((!sample || empty_audio) && !(flags & FLAG_EOS)) {
         d->dropped++;
         d->in_state[i] = IN_OFFERED;
@@ -1297,10 +1114,8 @@ void dec_send_input(::Ctx* c) {              // SendInputBufferForDecode(int ind
     it.flags = flags & FLAG_EOS;
     it.in_idx = i;
     if (sample && !d->is_video) {
-        DWORD len = 0;
-        sample->GetTotalLength(&len);
-        it.off = std::min<uint32_t>(skip, len);
-        it.remaining = len - it.off;
+        it.off = 0;
+        it.remaining = static_cast<uint32_t>(sample->data.size());
     }
     if (g_log) NXLOG_I("movie", "SendInput(%s) idx %d t=%.3f flags %x", d->is_video ? "video" : "audio", i, ts / 1e6, flags);
     d->in_state[i] = IN_DECODING;
@@ -1333,53 +1148,27 @@ void dec_acquire_output(::Ctx* c) {          // AcquireOutputBufferIndex(int* in
     RET(r);
 }
 
+// The sample's bytes into the game's buffer: a video frame is NV12 at the size of the track (see SourceSample), audio is a slice of the PCM.
 size_t copy_out(Dec* d, const OutBuf& s, unsigned char* dst, size_t cap) {
     if (!s.s) return 0;
-    ComPtr<IMFMediaBuffer> mb;
-    if (FAILED(s.s->ConvertToContiguousBuffer(&mb)) || !mb) return 0;
+    const std::vector<uint8_t>& data = s.s->data;
     size_t written = 0;
     if (d->is_video) {
-        ComPtr<IMF2DBuffer> b2;
-        BYTE* scan = nullptr;
-        LONG pitch = 0;
-        DWORD len = 0;
-        BYTE* data = nullptr;
-        bool locked2d = false;
-        if (SUCCEEDED(mb.As(&b2)) && SUCCEEDED(b2->Lock2D(&scan, &pitch)) && scan && pitch > 0) {
-            locked2d = true;
-            data = scan;
-            mb->GetCurrentLength(&len);
-        } else if (SUCCEEDED(mb->Lock(&data, nullptr, &len)) && data) {
-            pitch = d->w;
-        } else {
-            return 0;
-        }
-        // The decoder pads the picture to whole macroblocks: the chroma plane starts after the padded luma plane (1600x900 is stored as
-        // 1600x912). The padded height is what the buffer length says: len = pitch * padded_height * 3 / 2.
-        const int w = d->w, h = d->h;
-        int padded = pitch > 0 ? static_cast<int>(static_cast<uint64_t>(len) * 2 / 3 / static_cast<uint64_t>(pitch)) : h;
-        if (padded < h) padded = h;
-        const size_t ysize = static_cast<size_t>(w) * h, uvrows = static_cast<size_t>((h + 1) / 2), need = ysize + static_cast<size_t>(w) * uvrows;
+        const size_t w = static_cast<size_t>(d->w), h = static_cast<size_t>(d->h);
+        const size_t need = w * h + w * ((h + 1) / 2);
+        if (data.size() < need) return 0;
         if (cap < need) {
-            if (!d->warned_small) { d->warned_small = true; NXLOG_W("movie", "the game's buffer of %zu bytes is smaller than a %dx%d NV12 frame (%zu)", cap, w, h, need); }
+            if (!d->warned_small) { d->warned_small = true; NXLOG_W("movie", "the game's buffer of %zu bytes is smaller than a %dx%d NV12 frame (%zu)", cap, d->w, d->h, need); }
         } else {
-            for (int y = 0; y < h; y++) std::memcpy(dst + static_cast<size_t>(y) * w, data + static_cast<size_t>(y) * pitch, static_cast<size_t>(w));
-            const BYTE* uv = data + static_cast<size_t>(pitch) * static_cast<size_t>(padded);
-            for (size_t y = 0; y < uvrows; y++) std::memcpy(dst + ysize + y * static_cast<size_t>(w), uv + y * static_cast<size_t>(pitch), static_cast<size_t>(w));
+            std::memcpy(dst, data.data(), need);
             written = need;
         }
-        if (locked2d) b2->Unlock2D(); else mb->Unlock();
     } else {
-        BYTE* data = nullptr;
-        DWORD len = 0;
-        if (SUCCEEDED(mb->Lock(&data, nullptr, &len)) && data) {
-            const size_t off = std::min<size_t>(s.off, len);
-            const size_t n = std::min<size_t>(s.len, len - off);
-            written = std::min(n, cap);
-            std::memcpy(dst, data + off, written);
-            if (n > cap && !d->warned_small) { d->warned_small = true; NXLOG_W("movie", "the game's audio buffer of %zu bytes is smaller than a block (%zu)", cap, n); }
-            mb->Unlock();
-        }
+        const size_t off = std::min<size_t>(s.off, data.size());
+        const size_t n = std::min<size_t>(s.len, data.size() - off);
+        written = std::min(n, cap);
+        std::memcpy(dst, data.data() + off, written);
+        if (n > cap && !d->warned_small) { d->warned_small = true; NXLOG_W("movie", "the game's audio buffer of %zu bytes is smaller than a block (%zu)", cap, n); }
     }
     return written;
 }
@@ -1420,6 +1209,100 @@ void dec_release_output(::Ctx* c) {          // ReleaseOutputBufferIndex(int ind
     RET(ST_OK);
 }
 
+// ---- vtables ---------------------------------------------------------------------------------------------------------------
+// Older SDKs (SDK 9 subsdk0, read off its vtables) construct the Extractor with one argument, Extractor(ContainerType), and call every
+// member through the vtable at +0 of the object; the arguments are those of the exported wrappers. Slots of the vtables, in order:
+//   Extractor: ~Extractor x2, SetDataSource(path) (read from the RomFS folder), SetDataSource(data, size), GetTrackCount, GetTrackConfiguration, SelectTrack,
+//     UnselectTrack, SeekTo, GetTrackIndexForAvailableData, Read, Advance, GetSampleTime, GetSampleMetaData, GetBufferedRange,
+//     SetDataSource(ClientStreamReader*, path)
+//   Decoder: ~Decoder x2, Configure, RegisterClientEvents, GetOutputFormat, Start, Stop, Reset, Flush, AcquireInputBufferIndex,
+//     GetInputBuffer, SendInputBufferForDecode, AcquireOutputBufferIndex, GetOutputBuffer(index, buffer), GetOutputBufferSize,
+//     ReleaseOutputBufferIndex, GetLastError, GetOutputBuffer(index, buffer, format), GetOutputBufferFormat
+// Members the wrapper API has no handler for answer ST_UNSUPPORTED (data sources other than the game's reader, the metadata and range
+// queries) or ST_OK (Reset, Flush, GetLastError, UnselectTrack: nothing to do for the host decoder).
+void vt_unsupported(::Ctx* c) { RET(ST_UNSUPPORTED); }
+void vt_ok(::Ctx* c) { RET(ST_OK); }
+void dec_get_output_no_format(::Ctx* c) {    // GetOutputBuffer(int index, Buffer* out)
+    c->x[3] = 0;
+    dec_get_output(c);
+}
+void dec_get_output_format(::Ctx* c) {       // GetOutputBufferFormat(int index, MediaData* format)
+    c->x[1] = c->x[2];
+    dec_get_format(c);
+}
+
+// Decoder client events (older SDKs): DecoderEvents is four nn::os::EventType pointers, signalled by the library when an input buffer
+// is free (0), an output buffer is ready (1), the output format changed (2) or an error happened (3). The game's decoder thread waits
+// for them (WaitAny) before it asks for buffers, so the vtable path signals them after the calls that change the answer, outside the
+// decoder lock, through the SDK's own nn::os::SignalEvent. A game that passes null events (the wrapper API) is not affected.
+enum { EV_INPUT = 0, EV_OUTPUT = 1, EV_FORMAT = 2 };
+void dec_signal(::Ctx* c, uint64_t obj, int which) {
+    Dec* d = dec_of(obj);
+    if (!d || !d->events) return;
+    const uint64_t ev = rd64(d->events + 8u * static_cast<uint64_t>(which));
+    if (!ev) return;
+    static const uint64_t signal = module_find_symbol("_ZN2nn2os11SignalEventEPNS0_9EventTypeE");
+    if (!signal) {
+        static std::once_flag once;
+        std::call_once(once, [] { NXLOG_W("movie", "nn::os::SignalEvent not found: decoder events are not signalled"); });
+        return;
+    }
+    gcall(c, signal, ev, 0, 0, 0, 0);
+}
+void ev_dec_start(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_start(c);
+    if (static_cast<int>(c->x[0]) != ST_OK) return;
+    if (Dec* d = dec_of(obj); d && d->is_video) dec_signal(c, obj, EV_FORMAT);
+    dec_signal(c, obj, EV_INPUT);
+    c->x[0] = ST_OK;
+}
+void ev_dec_send_input(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_send_input(c);
+    const uint64_t r = c->x[0];
+    dec_signal(c, obj, EV_INPUT);
+    dec_signal(c, obj, EV_OUTPUT);
+    c->x[0] = r;
+}
+void ev_dec_acquire_output(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_acquire_output(c);
+    const uint64_t r = c->x[0];
+    if (static_cast<int>(r) == ST_OK) dec_signal(c, obj, EV_OUTPUT);   // there may be more: the game takes one per wake
+    c->x[0] = r;
+}
+void ev_dec_release_output(::Ctx* c) {
+    const uint64_t obj = A0;
+    dec_release_output(c);
+    const uint64_t r = c->x[0];
+    dec_signal(c, obj, EV_OUTPUT);
+    dec_signal(c, obj, EV_INPUT);
+    c->x[0] = r;
+}
+
+uint64_t object_vtable(const char* cls, const std::initializer_list<HleFn>& slots) {
+    const uint64_t t = mem::alloc_kernel(slots.size() * 8, 16);
+    uint64_t i = 0;
+    for (HleFn f : slots) {
+        const std::string name = std::string("movie::") + cls + " vtable slot " + std::to_string(i);
+        wr64(t + 8 * i++, hle_register(name.c_str(), f));
+    }
+    return t;
+}
+uint64_t ext_vtable() {
+    static const uint64_t t = object_vtable("Extractor", {ext_dtor, ext_dtor, ext_set_source_path, vt_unsupported, ext_track_count,
+        ext_track_config, ext_select, vt_ok, ext_seek, ext_track_for_data, ext_read, ext_advance, ext_sample_time, vt_unsupported,
+        vt_unsupported, ext_set_source});
+    return t;
+}
+uint64_t dec_vtable() {
+    static const uint64_t t = object_vtable("Decoder", {dec_dtor, dec_dtor, dec_configure, dec_register_events, dec_get_format,
+        ev_dec_start, dec_stop, vt_ok, vt_ok, dec_acquire_input, dec_get_input, ev_dec_send_input, ev_dec_acquire_output,
+        dec_get_output_no_format, dec_output_size, ev_dec_release_output, vt_ok, dec_get_output, dec_get_output_format});
+    return t;
+}
+
 // ---- free functions ------------------------------------------------------------------------------------------------------------
 void movie_set_allocator(::Ctx* c) { NXLOG_D("movie", "SetAllocator(alloc %llx, free %llx)", static_cast<unsigned long long>(A0), static_cast<unsigned long long>(A1)); }
 void movie_set_core_mask(::Ctx*) {}
@@ -1441,10 +1324,13 @@ const Import kImports[] = {
     {"_ZN5movie9MediaDataD1Ev", mdata_dtor},
     {"_ZN5movie9MediaData5ClearEv", mdata_clear},
     {"_ZNK5movie9MediaData9FindInt32EPKcPi", mdata_find_i32},
+    {"_ZN5movie9MediaData8SetInt32EPKci", mdata_set_i32},
+    {"_ZNK5movie9MediaData8FindRectEPKcPiS3_S3_S3_", mdata_find_rect},
     {"_ZNK5movie9MediaData9FindInt64EPKcPl", mdata_find_i64},
     {"_ZNK5movie9MediaData10FindStringEPKcPS2_", mdata_find_str},
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", ext_ctor},
     {"_ZN5movie9ExtractorD1Ev", ext_dtor},
+    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", ext_ctor},
     {"_ZN5movie9Extractor13SetDataSourceEPNS_18ClientStreamReaderEPKc", ext_set_source},
     {"_ZN5movie9Extractor13GetTrackCountEPi", ext_track_count},
     {"_ZN5movie9Extractor21GetTrackConfigurationEiPNS_9MediaDataE", ext_track_config},
@@ -1485,10 +1371,16 @@ bool install_movie_hle() {
     static std::once_flag once;
     static bool ok = false;
     std::call_once(once, [] {
-        const std::string mode = config_get_str("media", "movie", "mf");
+        const std::string mode = config_get_str("media", "movie", "on");
         if (mode == "off") {
             NXLOG_W("movie", "[media] movie = off: the lifted subsdk0 library handles movie::");
             return;
+        }
+        const std::string backend = config_get_str("media", "backend", "ffmpeg");
+        g_use_mf = backend == "mf";
+        if (g_use_mf && !make_mf_source()) {
+            NXLOG_W("movie", "[media] backend = mf: Media Foundation is not available on this system, using FFmpeg");
+            g_use_mf = false;
         }
         g_log = config_get_bool("media", "movie_log", false);
         g_lookahead = config_get_bool("media", "movie_lookahead", true);
@@ -1499,7 +1391,7 @@ bool install_movie_hle() {
             module_override_symbol(im.name);
         }
         ok = true;
-        NXLOG_I("movie", "movie:: on Media Foundation: %zu imports routed to the host", kImportCount);
+        NXLOG_I("movie", "movie:: on %s: %zu imports routed to the host", g_use_mf ? "Media Foundation" : "FFmpeg", kImportCount);
     });
     return ok;
 }

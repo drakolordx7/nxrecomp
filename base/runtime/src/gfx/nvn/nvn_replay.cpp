@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <sstream>

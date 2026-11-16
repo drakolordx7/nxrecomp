@@ -18,6 +18,7 @@
 #include <vector>
 
 #include <nxrt/config.h>
+#include <nxrt/os/process.h>
 
 #include "nvn_settings.h"
 #include "nvn_core.h"
@@ -56,13 +57,8 @@ uint32_t g_next_id = 100;
 
 // Texture data is cached on disk by prepare_texture: the tests keep the cache off (the env var wins over the config).
 void no_cache() {
-#ifdef _WIN32
-    _putenv_s("NXRT_NVN_BC7_CACHE", "");
+    nxrt::os::process::setenv("NXRT_NVN_BC7_CACHE", "");
     nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
-#else
-    unsetenv("NXRT_NVN_BC7_CACHE");
-    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
-#endif
     config_set("nvn", "bc7_cache", "");
     nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
 }
@@ -932,13 +928,8 @@ fs::path new_cache_dir(const char* tag) {
                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::error_code ec;
     fs::create_directories(dir, ec);
-#ifdef _WIN32
-    _putenv_s("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+    nxrt::os::process::setenv("NXRT_NVN_BC7_CACHE", dir.string().c_str());
     nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
-#else
-    setenv("NXRT_NVN_BC7_CACHE", dir.string().c_str(), 1);
-    nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
-#endif
     return dir;
 }
 
