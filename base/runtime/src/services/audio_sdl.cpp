@@ -4,7 +4,7 @@
 // and Linux (PipeWire, PulseAudio, ALSA under SDL). It also provides list_output_devices().
 //
 // Push model: write() puts frames into the stream (SDL converts format, rate and channel count to what the device wants, 5.1 is mixed down on
-// a stereo device) and the device thread drains the stream at its own clock, so queued_frames() is the work's queue level and
+// a stereo device) and the device thread drains it at its own clock, so queued_frames() is the SDL queue level and
 // has_device_clock() is true. The stream is capped at kMaxQueuedFrames: beyond that write() drops the rest and reports what it accepted, so
 // the caller never blocks. A "get" callback on the stream runs on SDL's audio thread each time the device wants data; when the stream cannot
 // fill the request it counts an underrun (once per starved stretch), and it samples the queue level for the counters. The stream carries the
