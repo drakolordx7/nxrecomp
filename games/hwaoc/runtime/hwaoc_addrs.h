@@ -11,6 +11,17 @@ constexpr uint64_t kObjectStep = 0x16702d0;   // KIDS frame task: ldr w8,[x23,#0
 constexpr uint64_t kFrameRateBlock = 0x26a2280;   // frame-rate block {fps, interval (60 Hz vsyncs per update), fps, float fps} = {30, 2, 30, 30.0}
 constexpr uint64_t kDevicePointer = 0x2bb0798;   // KTGL device pointer (+0x32d0: the device frame rate, 59.94 / interval)
 constexpr uint64_t kFps5994 = 0x1ef8ddc;   // 59.94 constant
+constexpr uint64_t kMainYield = 0xff4f28;   // KTGL job wait (ff4c90), after its nn::os::YieldThread call: the guest main thread spins here while the game boots and loads: the window is served from it then
+constexpr uint64_t kMainRender = 0x17c98a0;   // in battle the guest main thread sits in the call at 0x17c989c of sub_17C9800 (a ring-slot loop that waits on a function-pointer call, then stores per-slot results) and comes back once a frame: a main-thread site for play mode to serve the window from; the frame task above runs on a worker
+constexpr uint64_t kCamYawRate = 0xfb0cd0;   // camera yaw rate from the right stick x: float(pad, speed), radians per camera update (pad struct +8, dead zone 68 of 127, game invert option)
+constexpr uint64_t kCamPitchRate = 0xfb0db0;   // camera pitch rate from the right stick y (pad struct +12)
+constexpr uint64_t kPadArray = 0x27838c0;   // pointer to the game's pad states, 368 bytes per pad (+0 buttons, +8/+12 right stick 0..254, +16/+20 left stick)
+constexpr uint64_t kCamYawRet0 = 0xfab238;   // main battle camera update (sub_FAA1C0): s0 = yaw rate just returned (mov v8,v0 follows)
+constexpr uint64_t kCamPitchRet0 = 0xfab24c;   // main battle camera update: s0 = pitch rate just returned
+constexpr uint64_t kCamYawRet1 = 0xfbadb4;   // camera mode 2 (sub_FBAD10): s0 = yaw rate
+constexpr uint64_t kCamPitchRet1 = 0xfbadc8;   // camera mode 2: s0 = pitch rate
+constexpr uint64_t kCamYawRet2 = 0xfd3fec;   // camera mode 3 (sub_FD3F40): s0 = yaw rate
+constexpr uint64_t kCamPitchRet2 = 0xfd4000;   // camera mode 3: s0 = pitch rate
 constexpr uint64_t kFrameTask = 0x166fff0;   // KIDS frame task (once per update, before the scene): Info::frame_update, the base's frame boundary
 constexpr uint64_t kTaskWait = 0x1670230;   // KIDS frame task: udiv x26,x24,x20 (period = tick frequency / fps): x20 = huge, the game's own 1/fps wait does not hold
 constexpr uint64_t kTaskHead = 0x16702b0;   // KIDS frame task, after the wait (every path): per-update ticks, the frame-rate block and the device frame rate

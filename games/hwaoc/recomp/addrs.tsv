@@ -8,6 +8,19 @@ data	kObjectStep	0x16702d0	KIDS frame task: ldr w8,[x23,#0x34], the frame-rate o
 data	kFrameRateBlock	0x26a2280	frame-rate block {fps, interval (60 Hz vsyncs per update), fps, float fps} = {30, 2, 30, 30.0}
 data	kDevicePointer	0x2bb0798	KTGL device pointer (+0x32d0: the device frame rate, 59.94 / interval)
 data	kFps5994	0x1ef8ddc	59.94 constant
+## ---- M7 keyboard and mouse (branch hwaoc-kbm): keep these rows together; the resolution and frame-rate streams add their own sections ----
+# M7 keyboard and mouse (hwaoc-kbm): main-thread sites that serve the window (the frame boundary, kFrameTask below, runs on a worker), and the camera's stick-rate returns the mouse adds to.
+mid	kMainYield	0xff4f28	KTGL job wait (ff4c90), after its nn::os::YieldThread call: the guest main thread spins here while the game boots and loads: the window is served from it then
+mid	kMainRender	0x17c98a0	in battle the guest main thread sits in the call at 0x17c989c of sub_17C9800 (a ring-slot loop that waits on a function-pointer call, then stores per-slot results) and comes back once a frame: a main-thread site for play mode to serve the window from; the frame task above runs on a worker
+fn	kCamYawRate	0xfb0cd0	camera yaw rate from the right stick x: float(pad, speed), radians per camera update (pad struct +8, dead zone 68 of 127, game invert option)
+fn	kCamPitchRate	0xfb0db0	camera pitch rate from the right stick y (pad struct +12)
+data	kPadArray	0x27838c0	pointer to the game's pad states, 368 bytes per pad (+0 buttons, +8/+12 right stick 0..254, +16/+20 left stick)
+mid	kCamYawRet0	0xfab238	main battle camera update (sub_FAA1C0): s0 = yaw rate just returned (mov v8,v0 follows)
+mid	kCamPitchRet0	0xfab24c	main battle camera update: s0 = pitch rate just returned
+mid	kCamYawRet1	0xfbadb4	camera mode 2 (sub_FBAD10): s0 = yaw rate
+mid	kCamPitchRet1	0xfbadc8	camera mode 2: s0 = pitch rate
+mid	kCamYawRet2	0xfd3fec	camera mode 3 (sub_FD3F40): s0 = yaw rate
+mid	kCamPitchRet2	0xfd4000	camera mode 3: s0 = pitch rate
 
 ## ---- frame step (hwaoc-fps, docs/FRAMESTEP.md, runtime/hwaoc_timestep.cpp) ----
 entry	kFrameTask	0x166fff0	KIDS frame task (once per update, before the scene): Info::frame_update, the base's frame boundary

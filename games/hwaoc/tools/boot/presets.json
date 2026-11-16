@@ -50,6 +50,19 @@
         "NXRT_TEST_TRACE": "none",
         "NXRT_DIAG_WATCHDOG_SECONDS": "90"
       }
+    },
+    "kbm": {
+      "_": "fresh save, first-run screen by keys, movies skipped, the prologue battle with WASD, mouse camera and mouse-button attacks (tt/kbm.tt)",
+      "seconds": 260,
+      "env": {
+        "NXRT_TEST_SCRIPT": "{game}/tt/kbm.tt",
+        "NXRT_TEST_FRAME_SOURCE": "tick",
+        "NXRT_TEST_OUT": "{run}/tt",
+        "NXRT_TEST_TRACE": "none",
+        "NXRT_DIAG_WATCHDOG_SECONDS": "90",
+        "NXRT_PROMPTS_DIR": "{nx}/base/runtime/assets/prompts",
+        "NXRT_PLAY_LOG_STATUS": "1"
+      }
     }
   }
 }
