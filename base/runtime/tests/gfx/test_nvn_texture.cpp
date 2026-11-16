@@ -276,9 +276,15 @@ NXTEST(layout_packaged_block_height_and_rejects) {
     b.packaged_layout[0] = 7;               // out of the range smo accepts (0..4): the default rule is used
     CHECK_EQ(be::compute_texture_layout(b).storage_size, 2048u);
 
-    // Rejects: unknown format, buffer target, zero size, array without layers, linear stride too small.
+    // A texel buffer: one untiled row of width elements.
+    const auto tb = be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_RGBA8));
+    CHECK(tb.valid);
+    CHECK(!tb.block_linear);
+    CHECK_EQ(tb.storage_size, 256u);
+    CHECK_EQ(tb.levels, 1u);
+
+    // Rejects: unknown format, zero size, array without layers, linear stride too small.
     CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_2D, 4, 4, 1, 1, 0)).valid);
-    CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_R8)).valid);
     CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_2D, 0, 4, 1, 1, NVN_FORMAT_R8)).valid);
     CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_2D_ARRAY, 4, 4, 0, 1, NVN_FORMAT_R8)).valid);
     TextureBuilderInfo lin = mk(NVN_TEXTURE_TARGET_2D, 100, 10, 1, 1, NVN_FORMAT_R8, NVN_TEXTURE_FLAGS_LINEAR);
@@ -577,7 +583,7 @@ NXTEST(initialize_rejects_bad_builders) {
     a.bformat(&bld, NVN_FORMAT_RGBA8);                                    // no storage set: no pool
     CHECK_EQ(a.init(&tex, &bld), 0);
 
-    build(a, bld, pool, NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_R8);            // buffer target has no layout
+    build(a, bld, pool, NVN_TEXTURE_TARGET_2D, 0, 1, 1, 1, NVN_FORMAT_R8);                     // zero width: no layout
     CHECK_EQ(a.init(&tex, &bld), 0);
     CHECK(be::host_of<be::Texture>(&tex) == nullptr);
 }
