@@ -135,7 +135,15 @@ void on_other_signal(int sig, siginfo_t* si, void* uc_) {
     errno = saved_errno;
 }
 
+}  // namespace
+namespace detail { void platform_install(); }
+namespace {
+
+// Windows catches a fault inside a guard with SEH and needs no setup; here the guard needs the dispatcher and this thread's alternate stack, even when
+// nothing ever registered a chain handler.
 __attribute__((noinline)) bool run_guarded(void (*fn)(void*), void* arg, bool traps) {
+    detail::platform_install();
+    fault_thread_init();
     Frame f;
     f.prev = tl_guard;
     f.catch_traps = traps;
@@ -154,6 +162,8 @@ __attribute__((noinline)) bool run_guarded(void (*fn)(void*), void* arg, bool tr
 namespace detail {
 
 void platform_install() {
+    static std::atomic<bool> installed{false};   // a guard may need the dispatcher before any handler is registered (see run_guarded)
+    if (installed.exchange(true)) return;
     struct sigaction sa;
     std::memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = on_signal;

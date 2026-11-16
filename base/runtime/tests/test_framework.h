@@ -24,6 +24,23 @@ std::vector<Case>& cases();
 std::vector<Child>& children();
 void fail(const char* file, int line, const char* expr, const std::string& detail);
 void skip(const char* why);  // mark the running case as skipped (counts as pass, printed as SKIP)
+// The gfx tests use the Khronos validation layer as an oracle (zero errors and warnings). Windows boxes have the Vulkan SDK, so a missing layer
+// is a failure there; the Linux dev box has lavapipe and only a distro layer too old for the extensions the device enables (it crashes), so
+// there the layer is optional: the tests still render and compare, and say that the validation counts are vacuous.
+inline bool validation_required() {
+#ifdef _WIN32
+    return true;
+#else
+    return false;
+#endif
+}
+// True when the case may go on: the layer is on, or it is optional here (a note says so).
+inline bool validation_ok(bool enabled) {
+    if (enabled) return true;
+    if (validation_required()) return false;
+    std::printf("    note: the Khronos validation layer is not loaded here: the zero validation error counts below prove nothing\n");
+    return true;
+}
 struct Registrar {
     Registrar(const char* g, const char* n, void (*f)()) { cases().push_back({g, n, f}); }
 };

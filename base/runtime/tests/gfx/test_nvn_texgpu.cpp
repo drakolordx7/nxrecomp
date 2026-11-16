@@ -189,7 +189,7 @@ bool bring_up(Rig& r) {
         std::printf("    device: %s\n", err.c_str());
         return false;
     }
-    CHECK(r.dev->validation_enabled());
+    CHECK(nxtest::validation_ok(r.dev->validation_enabled()));
     r.baseline_allocs = r.dev->memory_stats().allocations;
     if (!gpu::init_for_test(*r.dev, nullptr)) {
         std::printf("    back end did not start\n");

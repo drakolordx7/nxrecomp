@@ -191,8 +191,7 @@ void* thread_main(void* p) {
     pthread_setspecific(g_key, r);
     __atomic_store_n(&r->tid_ready, 1u, __ATOMIC_RELEASE);
     posix::futex_wake_all(&r->tid_ready);
-    wait_flag(&r->go);                       // the creator publishes the handle and tid first
-    place_rec(r, r->placement);
+    wait_flag(&r->go);                       // the creator publishes the handle and tid, and places the thread, first
     set_name_self(r->name);
     jmp_buf jb;
     if (_setjmp(jb) == 0) {
@@ -237,6 +236,7 @@ bool thread_start(const ThreadOptions& opt, ThreadFn fn, void* arg, ThreadHandle
     wait_flag(&r->tid_ready);
     if (handle) *handle = r;
     if (tid) *tid = r->tid;
+    place_rec(r, r->placement);              // before the thread runs, as on Windows: the caller can read the placement back at once
     __atomic_store_n(&r->go, 1u, __ATOMIC_RELEASE);
     posix::futex_wake_all(&r->go);
     return true;

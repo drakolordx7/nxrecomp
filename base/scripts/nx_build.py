@@ -132,7 +132,7 @@ class Driver:
         gen = self.libs + '_gen'
         src = os.path.join(self.base, 'recomp', 'game')
         extra = ['-DNX_GAME_DIR=' + self.gdir, '-DNX_GAME_EXEFS=' + os.path.join(self.data, 'game', 'exefs'), '-DNX_GAME_GEN=' + gen]
-        self.env.setdefault('SCCACHE_DIR', os.path.join(self.data, 'work', 'build', 'sccache', 'linux'))
+        self.env.setdefault('SCCACHE_DIR', os.path.expanduser('~/.cache/sccache-nx'))   # the distro's own disk: /mnt/d is slow for a cache
         ok = self.configure('lift + libraries', src, self.libs, extra, self.a.clean) and self.build('lift + libraries', self.libs, [self.game + '_modules'])
         if not ok:
             self.failed.append('library build')

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "data/hipc_vectors.h"
+#include "low_mem.h"
 #include "nxrt/hipc.h"
 #include "nxrt/ipc.h"
 #include "nxrt/kernel.h"
@@ -36,7 +37,6 @@ constexpr uint32_t kSfci = 0x49434653u;
 constexpr uint32_t kSfco = 0x4F434653u;
 constexpr uint32_t kStub = nxrt::kernel::kStubService;
 constexpr uint32_t kMsgWords = 0x100 / 4;
-constexpr uint64_t kAddr39 = 1ull << 39;
 
 uint32_t g_copy_handle = 0;   // handed back as a copy handle by test:svc command 7 when non-zero
 
@@ -289,18 +289,20 @@ NXTEST(buffers_round_trip_through_a_and_b) {
     fresh();
     const uint32_t h = get_service(connect("sm:"), "test:svc");
     REQUIRE(h != 0);
-    std::vector<char> src = {'h', 'e', 'l', 'l', 'o', ',', ' ', 'n', 'x', 'r', 't'};
-    std::vector<char> dst(src.size(), 0);
-    CHECK_MSG(reinterpret_cast<uint64_t>(src.data()) < kAddr39 && reinterpret_cast<uint64_t>(dst.data()) < kAddr39,
-              "host buffers above 39 bits cannot be described in a message");
+    // A message names a buffer by a 39-bit address, which a Linux stack or heap is above: the buffers come from the low test arena.
+    const std::string text = "hello, nxrt";
+    char* const src = static_cast<char*>(nxtest::low_alloc(text.size()));
+    char* const dst = static_cast<char*>(nxtest::low_alloc(text.size()));
+    REQUIRE(src != nullptr && dst != nullptr);
+    std::memcpy(src, text.data(), text.size());
     Message m = cmif(6);
-    m.send.push_back(BufDesc{reinterpret_cast<uint64_t>(src.data()), src.size(), 0});
-    m.recv.push_back(BufDesc{reinterpret_cast<uint64_t>(dst.data()), dst.size(), 0});
+    m.send.push_back(BufDesc{reinterpret_cast<uint64_t>(src), text.size(), 0});
+    m.recv.push_back(BufDesc{reinterpret_cast<uint64_t>(dst), text.size(), 0});
     Buf b;
     CHECK_EQ(send_msg(b, h, m), 0u);
     Reply r = reply_of(b);
     CHECK_EQ(result_of(r), 0u);
-    CHECK(std::string(dst.begin(), dst.end()) == "HELLO, NXRT");
+    CHECK(std::string(dst, text.size()) == "HELLO, NXRT");
 }
 
 NXTEST(returned_object_is_a_session_and_copy_handle_comes_back) {

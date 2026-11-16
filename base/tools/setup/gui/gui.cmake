@@ -1,20 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The setup window (nx_setup), included from tools/setup/CMakeLists.txt. SDL3 + Dear ImGui (base/ui, nxui): one program for Windows and Linux.
-# NXS_GUI_LEGACY (Windows only, off) builds the old plain Win32 window (gui/main_win32.cpp) instead, under the same name, until the new one is
-# confirmed. NXS_GUI_SIM builds either against gui/sim_pipeline.cpp (fake progress, Windows) instead of the real core.
+# NXS_GUI_SIM builds it against gui/sim_pipeline.cpp (fake progress) instead of the real core.
 option(NXS_GUI_SIM "Build the GUI against gui/sim_pipeline.cpp (fake progress) instead of the real core" OFF)
-if(WIN32)
-    option(NXS_GUI_LEGACY "Build the old Win32 setup window instead of the SDL3 + Dear ImGui one" OFF)
-else()
-    set(NXS_GUI_LEGACY OFF)
-endif()
 set(_nxs_gui "${CMAKE_CURRENT_LIST_DIR}")
-if(NXS_GUI_LEGACY)
-    set(_nxs_gui_main ${_nxs_gui}/main_win32.cpp)
-else()
-    include("${_nxs_gui}/../../../ui/nxui.cmake")
-    set(_nxs_gui_main ${_nxs_gui}/main_ui.cpp)
-endif()
+include("${_nxs_gui}/../../../ui/nxui.cmake")
+set(_nxs_gui_main ${_nxs_gui}/main_ui.cpp)
 set(_nxs_gui_srcs ${_nxs_gui_main})
 if(NXS_GUI_SIM)
     list(APPEND _nxs_gui_srcs ${_nxs_gui}/sim_pipeline.cpp)
@@ -29,13 +19,9 @@ if(NXS_GUI_SIM)
 else()
     target_link_libraries(nx_setup PRIVATE nxs_core)
 endif()
-if(NXS_GUI_LEGACY)
-    target_link_libraries(nx_setup PRIVATE comctl32 uxtheme dwmapi shlwapi ole32 shell32)
-else()
-    target_link_libraries(nx_setup PRIVATE nxui)
-    if(WIN32)
-        target_link_options(nx_setup PRIVATE /ENTRY:mainCRTStartup)   # a GUI program with main(), not WinMain
-    endif()
+target_link_libraries(nx_setup PRIVATE nxui)
+if(WIN32)
+    target_link_options(nx_setup PRIVATE /ENTRY:mainCRTStartup)   # a GUI program with main(), not WinMain
 endif()
 target_compile_definitions(nx_setup PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
 target_compile_options(nx_setup PRIVATE ${NXS_WARN})

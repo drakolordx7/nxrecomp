@@ -68,7 +68,7 @@ The manifest's optional `setup_hook` names a CMake file in the game folder (Metr
 tool (texture list, shader program scan, ini lines); without it the tool only extracts. The file formats the runtime and the setup tool share
 (BC7 cache key, `programs.bin`, shader pack) are `formats/nx_formats.h` and its Python twin, checked by `python formats/test_formats.py`.
 
-## Linux x86-64 (work in progress)
+## Linux x86-64
 
 One codebase for both systems: `cmake/nx_platform.cmake` is the one place that decides the platform (`NX_PLATFORM` win32|linux) and holds every
 flag, library name and source folder that differs; a build rule is fixed once. Platform code lives in `runtime/src/os/win32` and
@@ -118,9 +118,9 @@ bash release.sh <game> <version> --linux        (builds in WSL, packs the zip an
 ```
 
 `<id>-<version>-linux-x86_64.tar.xz` holds one folder with: the exe, `libastcdec-{avx2,sse4.1,sse2}-shared.so`, the five FFmpeg `.so` files
-(`libavcodec.so.62` ...), `<id>_setup_cli`, `<id>_launcher` (a placeholder script that says how to start the game until a launcher is built),
+(`libavcodec.so.62` ...), `<id>_setup` (the setup window), `<id>_setup_cli`, `<id>_launcher` (the launcher), all three the same SDL3 + Dear ImGui programs as on Windows,
 the shader pack, the templates, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, `licenses/`, `fonts/`, `prompts/` and `MANIFEST.sha256`. SDL3 is linked into
-the exe (static), so no SDL file ships. The ELF audit (`make_release.py`): x86-64 only; `DT_NEEDED` limited to glibc (`libc`, `libm`, `libdl`,
+each program (static), so no SDL file ships; `make_release.py` refuses a release without the launcher or the setup window. The ELF audit (`make_release.py`): x86-64 only; `DT_NEEDED` limited to glibc (`libc`, `libm`, `libdl`,
 `libpthread`, `librt`, `libutil`, the loader), `libvulkan`, the X11/xcb/Wayland/xkbcommon client libraries and the libraries shipped beside it
 (`libstdc++` and `libgcc_s` are refused: they are linked statically); RPATH/RUNPATH only `$ORIGIN`; glibc symbol versions up to 2.35
 (`MAX_GLIBC`, the build box); no local build paths in the programs (WSL spelling included).
@@ -137,7 +137,9 @@ built in `nx-linux`, ctest, a headless boot when the exe exists; it prints `LINU
 
 ### Launcher and setup window
 
-The launcher (`NXRT_BUILD_LAUNCHER`, on by default) is the same SDL3 + Dear ImGui program on both systems (`base/ui` is the shell, `runtime/apps/launcher` the pages; the setup window `tools/setup/gui/main_ui.cpp` uses the same shell); `-DNXRT_LAUNCHER_LEGACY=ON` (Windows) builds the old Win32 launcher in its place, `-DNXS_GUI_LEGACY=ON` the old setup window. With `NXUI_SHOT=<file.bmp>` set, either program saves its window after a few frames and exits (a test aid; `SDL_VIDEO_DRIVER=offscreen SDL_RENDER_DRIVER=software` runs it headless).
+The launcher (`NXRT_BUILD_LAUNCHER`, on by default) is the same SDL3 + Dear ImGui program on both systems (`base/ui` is the shell, `runtime/apps/launcher` the pages; the setup window `tools/setup/gui/main_ui.cpp` uses the same shell). With `NXUI_SHOT=<file.bmp>` set, either program saves its window after a few frames and exits (a test aid; `SDL_VIDEO_DRIVER=offscreen SDL_RENDER_DRIVER=software` runs it headless).
+
+Test and automation aids (the same on both systems; the scripts `games/mpr/launcher_e2e.py` and `cleanroom_rc.py` use them, no window messages are involved): `<id>_launcher --auto-save` loads `controls.ini` through the pages and saves it back without a window; `--auto-report <file>` writes the folder state (`state=ready|not_ready`, `summary`, `settings`, `pages`, ...) as `key=value` lines without a window; `--auto-press setup|play` presses that button on the first frame; `--page <n>` opens a tab; `--game`, `--setup-args`, `--game-args`, `--auto-play`, `--auto-prepare` and `--no-prepare` as before. The setup window takes `--auto-start --exit-when-done --no-message-box`.
 
 The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy in `NX/build/textures/linux`.
 

@@ -1,16 +1,15 @@
 ## kind	name	offset in main	note. Single source of the hook-site addresses: NX/addrs.py writes recomp/main.sites and runtime/hwaoc_addrs.h from this file.
 ## kinds: entry / mid / inline = hook site the runtime hooks by name; spare = site that a name is also used for; trace / traceinline = site of a diagnostic ([hwaoc] trace_fns, trace_at: no name);
 ## fn / data = address the runtime calls or reads. A line starting with a single # is copied to recomp/main.sites; ## lines stay here.
-## No hook site yet (M1): the data rows are the frame-rate patch sites of update 1.4.1 from docs/RESEARCH.md (seedds/nxnative), not yet checked on our ELF.
+## Frame-rate data of update 1.4.1 from docs/RESEARCH.md (seedds/nxnative), checked on our ELF (hwaoc-fps, docs/FRAMESTEP.md).
 data	kDeviceConfig	0x8d9ae0	KTGL device config built at start-up ({1920, 1080, 3, 9, 5, interval 2, ...})
-data	kTaskFps	0x1670124	task frame rate
-data	kObjectStep	0x16702d0	per-object step
-data	kFrameRateBlock	0x26a2280	frame-rate block {30, 2, 30, 30.0}
-data	kDevicePointer	0x2bb0798	KTGL device pointer
+data	kTaskFps	0x1670124	KIDS frame task: where its two fps paths join (nxnative's patch site; not hooked here)
+data	kObjectStep	0x16702d0	KIDS frame task: ldr w8,[x23,#0x34], the frame-rate object's step (nxnative's patch site; not hooked here)
+data	kFrameRateBlock	0x26a2280	frame-rate block {fps, interval (60 Hz vsyncs per update), fps, float fps} = {30, 2, 30, 30.0}
+data	kDevicePointer	0x2bb0798	KTGL device pointer (+0x32d0: the device frame rate, 59.94 / interval)
 data	kFps5994	0x1ef8ddc	59.94 constant
 ## ---- M7 keyboard and mouse (branch hwaoc-kbm): keep these rows together; the resolution and frame-rate streams add their own sections ----
-# M7 keyboard and mouse (hwaoc-kbm): the frame boundary play mode is pumped from, and the camera's stick-rate returns the mouse adds to.
-entry	kFrameTask	0x166fff0	KTGL frame task: frame pacing wait, then the system per-frame update (polls nn::hid keyboard and mouse); play mode's frame boundary
+# M7 keyboard and mouse (hwaoc-kbm): main-thread sites that serve the window (the frame boundary, kFrameTask below, runs on a worker), and the camera's stick-rate returns the mouse adds to.
 mid	kMainYield	0xff4f28	KTGL job wait (ff4c90), after its nn::os::YieldThread call: the guest main thread spins here while the game boots and loads: the window is served from it then
 mid	kMainRender	0x17c98a0	in battle the guest main thread sits in the call at 0x17c989c of sub_17C9800 (a ring-slot loop that waits on a function-pointer call, then stores per-slot results) and comes back once a frame: a main-thread site for play mode to serve the window from; the frame task above runs on a worker
 fn	kCamYawRate	0xfb0cd0	camera yaw rate from the right stick x: float(pad, speed), radians per camera update (pad struct +8, dead zone 68 of 127, game invert option)
@@ -22,3 +21,145 @@ mid	kCamYawRet1	0xfbadb4	camera mode 2 (sub_FBAD10): s0 = yaw rate
 mid	kCamPitchRet1	0xfbadc8	camera mode 2: s0 = pitch rate
 mid	kCamYawRet2	0xfd3fec	camera mode 3 (sub_FD3F40): s0 = yaw rate
 mid	kCamPitchRet2	0xfd4000	camera mode 3: s0 = pitch rate
+
+## ---- frame step (hwaoc-fps, docs/FRAMESTEP.md, runtime/hwaoc_timestep.cpp) ----
+entry	kFrameTask	0x166fff0	KIDS frame task (once per update, before the scene): Info::frame_update, the base's frame boundary
+mid	kTaskWait	0x1670230	KIDS frame task: udiv x26,x24,x20 (period = tick frequency / fps): x20 = huge, the game's own 1/fps wait does not hold
+mid	kTaskHead	0x16702b0	KIDS frame task, after the wait (every path): per-update ticks, the frame-rate block and the device frame rate
+mid	kObjStep	0x16702dc	KIDS frame task: w8 / s0 = the frame-rate object's two steps (x23 = the object, +0x48 its fps), [x19,#0x18] stored
+mid	kClockStep	0x1670414	KIDS frame task, no frame-rate object: s0 / w8 = 1 / fps or the measured time, [x19,#0x18] stored
+mid	kCutFrame	0x857d80	scene update: after add w10,w10,#1 (an event cutscene's frame, 30 fps frames)
+mid	kCutLeft	0x857da4	scene update: after sub w10,w10,#1 (the event cutscene's frames left)
+mid	kFpsRecip	0xb09ad4	after ucvtf s1,s1 of the block's fps (+8): s1 = 1 / step
+## The block's interval read as a float multiplier: ldr s/w <- interval; ucvtf s<reg>; the site is the instruction after the ucvtf (s<reg> = 60 Hz ticks of this update, fractional).
+## Generated from IDA (every load of the interval whose ucvtf+4 is reached only by fall-through); the register is in runtime/hwaoc_timestep_sites.h.
+mid	kTick_1bab0	0x1bab0	interval as float: s0
+mid	kTick_1badc	0x1badc	interval as float: s0
+mid	kTick_1ef08	0x1ef08	interval as float: s1
+mid	kTick_2e6e4	0x2e6e4	interval as float: s0
+mid	kTick_4af60	0x4af60	interval as float: s1
+mid	kTick_534f8	0x534f8	interval as float: s1
+mid	kTick_66714	0x66714	interval as float: s0
+mid	kTick_687ec	0x687ec	interval as float: s0
+mid	kTick_6e5b4	0x6e5b4	interval as float: s1
+mid	kTick_6e80c	0x6e80c	interval as float: s1
+mid	kTick_7a178	0x7a178	interval as float: s1
+mid	kTick_7ff5c	0x7ff5c	interval as float: s1
+mid	kTick_862f0	0x862f0	interval as float: s1
+mid	kTick_91b14	0x91b14	interval as float: s2
+mid	kTick_9980c	0x9980c	interval as float: s0
+mid	kTick_a1b04	0xa1b04	interval as float: s1
+mid	kTick_a1b34	0xa1b34	interval as float: s2
+mid	kTick_a6a88	0xa6a88	interval as float: s1
+mid	kTick_a70f8	0xa70f8	interval as float: s1
+mid	kTick_c567c	0xc567c	interval as float: s0
+mid	kTick_ebc3c	0xebc3c	interval as float: s2
+mid	kTick_11fc2c	0x11fc2c	interval as float: s2
+mid	kTick_1214d4	0x1214d4	interval as float: s2
+mid	kTick_12210c	0x12210c	interval as float: s2
+mid	kTick_122cec	0x122cec	interval as float: s2
+mid	kTick_124468	0x124468	interval as float: s2
+mid	kTick_12b4c8	0x12b4c8	interval as float: s2
+mid	kTick_12b598	0x12b598	interval as float: s2
+mid	kTick_12b6ec	0x12b6ec	interval as float: s2
+mid	kTick_12b84c	0x12b84c	interval as float: s3
+mid	kTick_12b8f4	0x12b8f4	interval as float: s2
+mid	kTick_12b938	0x12b938	interval as float: s2
+mid	kTick_12b9a0	0x12b9a0	interval as float: s2
+mid	kTick_12b9d8	0x12b9d8	interval as float: s2
+mid	kTick_12ba1c	0x12ba1c	interval as float: s2
+mid	kTick_12ba68	0x12ba68	interval as float: s2
+mid	kTick_12bab4	0x12bab4	interval as float: s2
+mid	kTick_12bb00	0x12bb00	interval as float: s2
+mid	kTick_12bb4c	0x12bb4c	interval as float: s2
+mid	kTick_12bb94	0x12bb94	interval as float: s2
+mid	kTick_12bbdc	0x12bbdc	interval as float: s2
+mid	kTick_12bc24	0x12bc24	interval as float: s2
+mid	kTick_12bd10	0x12bd10	interval as float: s0
+mid	kTick_12bd70	0x12bd70	interval as float: s0
+mid	kTick_12bdd4	0x12bdd4	interval as float: s0
+mid	kTick_12be38	0x12be38	interval as float: s2
+mid	kTick_12be78	0x12be78	interval as float: s2
+mid	kTick_12beb0	0x12beb0	interval as float: s2
+mid	kTick_12bee8	0x12bee8	interval as float: s2
+mid	kTick_12bf20	0x12bf20	interval as float: s2
+mid	kTick_12bf58	0x12bf58	interval as float: s2
+mid	kTick_12c058	0x12c058	interval as float: s0
+mid	kTick_12c1c8	0x12c1c8	interval as float: s2
+mid	kTick_12c20c	0x12c20c	interval as float: s2
+mid	kTick_12c258	0x12c258	interval as float: s1
+mid	kTick_12c280	0x12c280	interval as float: s1
+mid	kTick_12c29c	0x12c29c	interval as float: s1
+mid	kTick_12c2b8	0x12c2b8	interval as float: s1
+mid	kTick_12c2d4	0x12c2d4	interval as float: s1
+mid	kTick_12c2f0	0x12c2f0	interval as float: s1
+mid	kTick_12c30c	0x12c30c	interval as float: s1
+mid	kTick_12c328	0x12c328	interval as float: s1
+mid	kTick_12c344	0x12c344	interval as float: s1
+mid	kTick_12c480	0x12c480	interval as float: s1
+mid	kTick_12c508	0x12c508	interval as float: s1
+mid	kTick_12c5e8	0x12c5e8	interval as float: s0
+mid	kTick_130de4	0x130de4	interval as float: s2
+mid	kTick_130e48	0x130e48	interval as float: s2
+mid	kTick_13d678	0x13d678	interval as float: s0
+mid	kTick_13dbd8	0x13dbd8	interval as float: s0
+mid	kTick_141b6c	0x141b6c	interval as float: s0
+mid	kTick_144cbc	0x144cbc	interval as float: s1
+mid	kTick_144d10	0x144d10	interval as float: s3
+mid	kTick_147820	0x147820	interval as float: s1
+mid	kTick_14ca2c	0x14ca2c	interval as float: s2
+mid	kTick_14cb5c	0x14cb5c	interval as float: s0
+mid	kTick_14ee58	0x14ee58	interval as float: s2
+mid	kTick_153b7c	0x153b7c	interval as float: s1
+mid	kTick_15ec9c	0x15ec9c	interval as float: s1
+mid	kTick_15ecc4	0x15ecc4	interval as float: s1
+mid	kTick_15eda0	0x15eda0	interval as float: s1
+mid	kTick_1625dc	0x1625dc	interval as float: s2
+mid	kTick_1637f4	0x1637f4	interval as float: s2
+mid	kTick_163b4c	0x163b4c	interval as float: s1
+mid	kTick_163d2c	0x163d2c	interval as float: s2
+mid	kTick_16cfa0	0x16cfa0	interval as float: s0
+mid	kTick_16de1c	0x16de1c	interval as float: s0
+mid	kTick_16fdc8	0x16fdc8	interval as float: s0
+mid	kTick_16fe18	0x16fe18	interval as float: s1
+mid	kTick_18f0a0	0x18f0a0	interval as float: s0
+mid	kTick_19eb1c	0x19eb1c	interval as float: s0
+mid	kTick_19f354	0x19f354	interval as float: s0
+mid	kTick_1a2284	0x1a2284	interval as float: s2
+mid	kTick_1a22c8	0x1a22c8	interval as float: s2
+mid	kTick_1a2308	0x1a2308	interval as float: s0
+mid	kTick_1a2d14	0x1a2d14	interval as float: s1
+mid	kTick_1a2d74	0x1a2d74	interval as float: s1
+mid	kTick_1a2dd0	0x1a2dd0	interval as float: s1
+mid	kTick_1ac884	0x1ac884	interval as float: s1
+mid	kTick_1ad5fc	0x1ad5fc	interval as float: s2
+mid	kTick_1b0440	0x1b0440	interval as float: s0
+mid	kTick_1b59f4	0x1b59f4	interval as float: s1
+mid	kTick_1c4344	0x1c4344	interval as float: s1
+mid	kTick_1de6dc	0x1de6dc	interval as float: s1
+mid	kTick_71a274	0x71a274	interval as float: s0
+mid	kTick_71a2ac	0x71a2ac	interval as float: s0
+mid	kTick_71c6d8	0x71c6d8	interval as float: s0
+mid	kTick_71c8c8	0x71c8c8	interval as float: s0
+mid	kTick_71cc7c	0x71cc7c	interval as float: s0
+mid	kTick_787fd0	0x787fd0	interval as float: s1
+mid	kTick_859264	0x859264	interval as float: s0
+mid	kTick_85dd3c	0x85dd3c	interval as float: s0
+mid	kTick_86a42c	0x86a42c	interval as float: s0
+mid	kTick_86d050	0x86d050	interval as float: s1
+mid	kTick_8c2f00	0x8c2f00	interval as float: s1
+mid	kTick_f9da94	0xf9da94	interval as float: s0
+mid	kTick_fa8418	0xfa8418	interval as float: s1
+# M7 display (branch hwaoc-res; runtime/hwaoc_display.cpp): output and scene size, dynamic resolution, camera aspect (Hor+).
+#   the KTGL device is created from a config on the stack ({1920, 1080, 3, 9, 5, interval 2, 9, 0, 1920, 1080, ...}): [0] [1] the display
+#   (swapchain, vi layer, 2D layout) size, [8] [9] a second size pair (0 = the first)
+entry	kDeviceCreate	0x17c5b60	KTGL device create (x0 device, x1 config: u32 width, height, ..., [8] width, [9] height)
+#   right after it the 3D scene's render size {1440, 810} is stored into the graphics system ([x20 + 0x368], x8 = height << 32 | width)
+mid	kSceneSize	0x8d9b14	str x8, [x20, #0x368]: x8 = scene width | height << 32
+#   dynamic resolution: the scene height in force (qword_2780B78, 567..810 docked) over 810.0 is the scene scale written to the view ([x9 + 0x11c]);
+#   the hooks load 810 into s0 before the ucvtf so the scale stays 1.0 (the full scene size) unless [display] dynamic_resolution is on
+mid	kDynResScaleA	0x85d108	ucvtf s0, s0 (s0 = the dynamic scene height)
+mid	kDynResScaleB	0x85e240	ucvtf s0, s0 (the same in the second view setup)
+#   KTGL camera projection: [cam + 320] near, [+324] far, [+328] vertical FOV (radians), [+332] aspect (16/9 from the camera defaults),
+#   [+344] bit 0 orthographic, bit 1 reversed depth; writes the projection matrix at [cam + 192]
+entry	kCameraProjection	0x18a1080	KTGL camera projection update (x0 camera)

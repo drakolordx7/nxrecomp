@@ -137,7 +137,7 @@ def make_pe(imports=(), delay=()):
 def reset_state():
     """make_release keeps the flavour in module globals: back to the Windows demo game, no FFmpeg pins, for the tests that call the audit directly."""
     mr.set_game(_GAME_DIR)
-    mr.FFMPEG_FILES, mr.FFMPEG_HASHES, mr.LAUNCHER_PLACEHOLDER = (), {}, False
+    mr.FFMPEG_FILES, mr.FFMPEG_HASHES = (), {}
 
 
 class BuildTests(unittest.TestCase):
@@ -580,7 +580,7 @@ LROOT = 'demo-test-linux-x86_64'
 LBUILD = 'build/' + mr.nxpaths.CHECKOUT_NAME + '/linux/demo_relpkg'
 LINUX_ASTC = ('libastcdec-avx2-shared.so', 'libastcdec-sse2-shared.so', 'libastcdec-sse4.1-shared.so')
 LINUX_EXPECTED = sorted([
-    'demo', *LINUX_ASTC, *FFMPEG_SOS, 'demo_setup_cli', 'demo_launcher', 'shader_cache.demoshc', 'README.txt', 'HELP.txt', 'controls.ini',
+    'demo', *LINUX_ASTC, *FFMPEG_SOS, 'demo_setup', 'demo_setup_cli', 'demo_launcher', 'shader_cache.demoshc', 'README.txt', 'HELP.txt', 'controls.ini',
     'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
 ])
@@ -600,6 +600,8 @@ class LinuxBuildTests(unittest.TestCase):
         for n in LINUX_ASTC + FFMPEG_SOS:
             self.put(LBUILD + '/' + n, make_elf(needed=['libc.so.6', 'libm.so.6'], runpath=['$ORIGIN'], glibc=[(2, 17)], soname=n))
         self.put('build/setup-demo-linux/bin/demo_setup_cli', make_elf(needed=['libc.so.6'], glibc=[(2, 34)]))
+        self.put('build/setup-demo-linux/bin/demo_setup', make_elf(needed=['libc.so.6'], glibc=[(2, 34)]))
+        self.put(LBUILD + '/demo_launcher', make_elf(needed=['libc.so.6'], glibc=[(2, 34)]))
 
     def put(self, rel, data):
         write(os.path.join(self.repo, *rel.split('/')), data)
@@ -626,7 +628,7 @@ class LinuxBuildTests(unittest.TestCase):
         for m in members:
             rel = m.name[len(LROOT) + 1:]
             self.assertEqual((m.uid, m.gid, m.mtime), (0, 0, 1767225600), m.name)
-            programs = rel in ('demo', 'demo_setup_cli', 'demo_launcher') or rel.startswith('lib')
+            programs = rel in ('demo', 'demo_setup', 'demo_setup_cli', 'demo_launcher') or rel.startswith('lib')
             self.assertEqual(m.mode, 0o755 if programs else 0o644, m.name)
         self.assertFalse(any(m.name.endswith(('.exe', '.dll')) for m in members))
         with open(tpath + '.sha256', encoding='utf-8') as f:
@@ -640,25 +642,19 @@ class LinuxBuildTests(unittest.TestCase):
         self.assertEqual(self.run_build()[0], 0)
         self.assertEqual(first, sha(os.path.join(self.out, LROOT + '.tar.xz')))
 
-    def test_missing_launcher_ships_a_placeholder_script_and_a_built_one_ships_as_is(self):
-        self.assertEqual(self.run_build()[0], 0)
-        with tarfile.open(os.path.join(self.out, LROOT + '.tar.xz')) as t:
-            text = t.extractfile(LROOT + '/demo_launcher').read().decode()
-        self.assertTrue(text.startswith('#!/bin/sh'))
-        self.assertIn('./demo_setup_cli', text)
-        shutil.rmtree(self.out)
-        real = make_elf(needed=['libc.so.6'])
+    def test_the_launcher_and_the_setup_window_ship_as_built_and_are_required(self):
+        real = make_elf(needed=['libc.so.6'], glibc=[(2, 34)])
         self.put(LBUILD + '/demo_launcher', real)
         self.assertEqual(self.run_build()[0], 0)
         with tarfile.open(os.path.join(self.out, LROOT + '.tar.xz')) as t:
             self.assertEqual(t.extractfile(LROOT + '/demo_launcher').read(), real)
-
-    def test_the_setup_gui_and_windows_files_are_not_shipped(self):
-        self.put('build/setup-demo-linux/bin/demo_setup', make_elf(needed=['libc.so.6']))
-        self.assertEqual(self.run_build()[0], 0)
-        with tarfile.open(os.path.join(self.out, LROOT + '.tar.xz')) as t:
-            names = t.getnames()
-        self.assertNotIn(LROOT + '/demo_setup', names)
+            self.assertIn(LROOT + '/demo_setup', t.getnames())
+        shutil.rmtree(self.out)
+        os.remove(os.path.join(self.repo, *(LBUILD + '/demo_launcher').split('/')))
+        code, log = self.run_build()
+        self.assertEqual(code, 2, log)
+        self.assertIn('demo_launcher not found', log)
+        self.assertEqual(self.leftovers(), [])
 
     def refused(self, rel, data, needle):
         self.put(rel, data)

@@ -171,7 +171,7 @@ def build_cmds(g, libs):
         drv = [sys.executable, os.path.join(g.base, 'scripts', 'nx_build.py'), g.name, '--game', g.id, '--libs-at', g.libs]
         if libs:
             cmds.append(('game libraries (scripts/nx_build.py --libs)', ' '.join('"%s"' % c for c in drv + ['--libs', '--no-exe']),
-                         {'SCCACHE_DIR': os.path.join(g.data, 'work', 'build', 'sccache', 'linux')}, g.dir))
+                         {'SCCACHE_DIR': os.path.expanduser('~/.cache/sccache-nx')}, g.dir))
         cmds.append(('%s (scripts/nx_build.py)' % os.path.basename(g.exe), ' '.join('"%s"' % c for c in drv), {}, g.dir))
         return cmds
     if libs:

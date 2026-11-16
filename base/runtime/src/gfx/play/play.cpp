@@ -1113,6 +1113,10 @@ bool start(const StartOptions& opt) {
     {
         int ww = 1600, wh = 900;
         if (st.window) platform::pixel_size(&ww, &wh);
+        else if (opt.renderer) {   // headless: the offscreen image's size stands for the window (game_main.cpp reads the same keys)
+            ww = static_cast<int>(config_get_int("boot", "headless_width", 1920));
+            wh = static_cast<int>(config_get_int("boot", "headless_height", 1080));
+        }
         if (ww <= 0 || wh <= 0) { ww = st.settings.display.width; wh = st.settings.display.height; }
         display_tuning(st.settings.display);
         if (gp && gp->install_render) gp->install_render(mem::kMainBase, st.settings, ww, wh);
