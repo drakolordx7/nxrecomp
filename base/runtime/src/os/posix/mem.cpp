@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -17,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 
 #ifndef MAP_FIXED_NOREPLACE
@@ -125,6 +127,39 @@ bool query_maps(uint64_t addr, Region* out) {
     return true;
 }
 
+// The views section_map made, by address: commit() of a reserved view page must make the page usable through every other view of the same
+// section (the Windows contract in mem.h), and a Linux view is only a mapping of the memfd with its own protection.
+struct View {
+    uint64_t size, off;
+    uint64_t dev, ino;      // identifies the section (a file descriptor number can be reused)
+};
+std::mutex g_views_mu;
+std::map<uint64_t, View> g_views;
+
+// After [s, e) (inside one view) became accessible as `p`: the pages of the same section range that other views still hold reserved follow.
+void commit_other_views(uint64_t s, uint64_t e, Prot p) {
+    std::lock_guard<std::mutex> lk(g_views_mu);
+    auto it = g_views.upper_bound(s);
+    if (it == g_views.begin()) return;
+    --it;
+    const View self = it->second;
+    const uint64_t self_at = it->first;
+    if (s < self_at || e > self_at + self.size) return;
+    const uint64_t o0 = self.off + (s - self_at), o1 = self.off + (e - self_at);
+    std::atomic<uint8_t>* sh = shadow();
+    for (auto& kv : g_views) {
+        const View& v = kv.second;
+        if (kv.first == self_at || v.dev != self.dev || v.ino != self.ino) continue;
+        const uint64_t lo = std::max(o0, v.off), hi = std::min(o1, v.off + v.size);
+        if (lo >= hi) continue;
+        const uint64_t a0 = kv.first + (lo - v.off), a1 = kv.first + (hi - v.off);
+        for (uint64_t a = a0; a < a1; a += kPage) {
+            if (!tracked(a) || !sh || sh[(a - kTrackedLo) / kPage].load(std::memory_order_relaxed) != kReserved) continue;
+            if (mprotect(reinterpret_cast<void*>(a), kPage, prot_flags(p)) == 0) sh[(a - kTrackedLo) / kPage].store(code_of(p), std::memory_order_relaxed);
+        }
+    }
+}
+
 }  // namespace
 
 bool reserve_fixed(uint64_t addr, uint64_t size) {
@@ -154,6 +189,7 @@ bool commit(uint64_t addr, uint64_t size, Prot p) {
     if (s == e) return true;
     if (mprotect(reinterpret_cast<void*>(s), e - s, prot_flags(p)) != 0) return false;
     shadow_set(s, e, code_of(p));
+    if (p != Prot::None && tracked_range(s, e)) commit_other_views(s, e, p);
     return true;
 }
 
@@ -270,10 +306,19 @@ uint64_t section_map(const Section& s, uint64_t offset, uint64_t size, uint64_t 
     }
     const uint64_t a = reinterpret_cast<uint64_t>(v);
     shadow_set(a, a + size, p == Prot::None ? kReserved : code_of(p));
+    struct stat st;
+    if (fstat(static_cast<int>(s.native), &st) == 0) {
+        std::lock_guard<std::mutex> lk(g_views_mu);
+        g_views[a] = View{size, offset, static_cast<uint64_t>(st.st_dev), static_cast<uint64_t>(st.st_ino)};
+    }
     return a;
 }
 
 bool section_unmap(uint64_t view, uint64_t size) {
+    {
+        std::lock_guard<std::mutex> lk(g_views_mu);
+        g_views.erase(view);
+    }
     if (munmap(reinterpret_cast<void*>(view), size) != 0) return false;
     shadow_set(view, view + size, kFree);
     return true;

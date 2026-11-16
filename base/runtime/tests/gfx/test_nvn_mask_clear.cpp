@@ -129,7 +129,7 @@ bool make_rig(Rig& r) {
         std::printf("    device: %s\n", err.c_str());
         return false;
     }
-    CHECK(r.dev->validation_enabled());   // the zero counts below mean something only with the layer on
+    CHECK(nxtest::validation_ok(r.dev->validation_enabled()));   // the zero counts below mean something only with the layer on
     return r.mc.init(*r.dev);
 }
 

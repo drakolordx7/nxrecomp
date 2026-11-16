@@ -25,8 +25,8 @@ The prompt icon pack prompts/prompt_icons.pak and its licence prompts/LICENSE-Ke
 read from --prompts-dir (default <base>/runtime/assets/prompts).
 Windows: the launcher (<id>_launcher.exe) is read from --launcher (default: next to --exe) and ships in the release root beside the game exe, the
 ASTC decoder DLLs, the five FFmpeg DLLs and the setup tools (<id>_setup.exe, <id>_setup_cli.exe). Linux: the exe, the ASTC decoder and FFmpeg .so
-files (built with -DNXRT_FFMPEG_BUNDLED=ON, found through an $ORIGIN rpath), the setup cli and the launcher when one was built, else a small
-placeholder script <id>_launcher that explains how to start the game. Names are those in game.json `files` (Linux: without .exe).
+files (built with -DNXRT_FFMPEG_BUNDLED=ON, found through an $ORIGIN rpath), the setup window, the setup cli and the launcher (the same SDL3 +
+Dear ImGui programs as on Windows). Names are those in game.json `files` (Linux: without .exe).
 FFmpeg: tools/release/ffmpeg_pins.json names the files and their SHA-256 (Windows; the archives are pinned in runtime/cmake/ffmpeg.cmake).
 
 Exit codes: 0 built and audited; 1 an I/O error; 2 a missing input or a bad option; 3 refused by the audit.
@@ -73,7 +73,6 @@ DLL_GLOB = 'astcdec-*-shared.dll'     # the ASTC decoder libraries next to the e
 DLL_COUNT = 3
 FFMPEG_FILES = ()                     # the FFmpeg libraries this flavour ships next to the exe (tools/release/ffmpeg_pins.json)
 FFMPEG_HASHES = {}                    # their pinned SHA-256 (None: not measured yet, only the audit applies)
-LAUNCHER_PLACEHOLDER = False          # Linux without a built launcher: the shipped <id>_launcher is a script (no size rule)
 EXEC_RULE = ('.so',)                  # Linux: files with these in their name are libraries (mode 755 in the tar, ELF audit)
 # glibc symbol versions a shipped binary may need: the oldest system the release runs on. The build box (Ubuntu 22.04) has 2.35.
 MAX_GLIBC = (2, 35)
@@ -157,7 +156,7 @@ def set_game(game_dir, platform=WINDOWS):
     else:
         SETUP_GLOB = nxpaths.exe_stem(rel['setup_glob'])
         EXE_NAME = nxpaths.exe_name(files['exe'], 'linux')
-        SETUP_EXES = (nxpaths.exe_name(files['setup_cli'], 'linux'),)      # the setup GUI is Windows only
+        SETUP_EXES = (nxpaths.exe_name(files['setup'], 'linux'), nxpaths.exe_name(files['setup_cli'], 'linux'))
         LAUNCHER_NAME = nxpaths.exe_name(files['launcher'], 'linux')
         DLL_GLOB = 'libastcdec-*-shared.so'
     LEAK_FILES = (EXE_NAME, LAUNCHER_NAME) + SETUP_EXES
@@ -258,7 +257,7 @@ def parse_args(argv):
     ap.add_argument('--version', help='version in the names (default: today plus git describe --always --dirty)')
     ap.add_argument('--exe', help='the game exe of the package build (default NX/build/<game folder name>/relpkg/<exe>, made by runtime/scripts/build_game_exe.ps1 -Release; '
                                   'Linux: NX/build/<name>/linux/<id>_relpkg/<exe>); the astcdec and FFmpeg libraries come from its folder')
-    ap.add_argument('--launcher', help='the launcher exe (default: the one in the folder of --exe; Linux: a placeholder script when there is none)')
+    ap.add_argument('--launcher', help='the launcher exe (default: the one in the folder of --exe)')
     ap.add_argument('--setup-bin', help='folder with the setup exes (default NX/build/setup-<id>/bin; Linux: setup-<id>-linux/bin)')
     ap.add_argument('--shader-pack', help='translated shader pack, copied under the shader_pack name of game.json '
                                           '(default <game>/work/setup_test/<shader_pack>)')
@@ -327,7 +326,6 @@ def plan_items(o):
             raise UsageError('%s not found: %s' % (what, path))
         return path
 
-    global LAUNCHER_PLACEHOLDER
     exe = need(o.exe, EXE_NAME)
     items = [(EXE_NAME, exe)]
     dlls = sorted(glob.glob(os.path.join(glob.escape(os.path.dirname(exe)), DLL_GLOB)))
@@ -338,11 +336,7 @@ def plan_items(o):
         items.append((name, need(os.path.join(os.path.dirname(exe), name), 'FFmpeg library %s' % name)))
     for name in SETUP_EXES:
         items.append((name, need(os.path.join(o.setup_bin, name), name)))
-    LAUNCHER_PLACEHOLDER = PLATFORM == LINUX and not os.path.isfile(o.launcher)
-    if LAUNCHER_PLACEHOLDER:         # no Linux launcher yet: a script that says how to start the game
-        items.append((LAUNCHER_NAME, launcher_placeholder()))
-    else:
-        items.append((LAUNCHER_NAME, need(o.launcher, LAUNCHER_NAME)))
+    items.append((LAUNCHER_NAME, need(o.launcher, LAUNCHER_NAME)))
     if o.shader_pack:
         items.append((PACK_NAME, need(o.shader_pack, 'shader pack')))
     def template(name):          # templates/linux/<name> first on Linux, then templates/<name>
@@ -387,19 +381,6 @@ def plan_items(o):
     if dups:
         raise UsageError('two sources map to the same release path: %s' % ', '.join(dups))
     return items
-
-
-def launcher_placeholder():
-    """The script shipped as <id>_launcher on Linux until a launcher is built: it only explains and starts nothing by itself."""
-    setup = SETUP_EXES[-1]
-    lines = ['#!/bin/sh',
-             '# Placeholder: the launcher is not available on Linux yet.',
-             'echo "The launcher is not available on Linux yet."',
-             'echo "1. ./%s --input <your dump> --out <game folder>     (once; --help lists the options)"' % setup,
-             'echo "2. ./%s     (settings: %s next to it)"' % (EXE_NAME, GAME_INI),
-             'exit 1',
-             '']
-    return '\n'.join(lines).encode('utf-8')
 
 
 def deny_hashes(dirs):
@@ -756,8 +737,6 @@ def size_problem(rel, size):
     elif '/' not in rel and fnmatch.fnmatch(rel.lower(), SETUP_GLOB):
         key = 'setup'
     elif rel == LAUNCHER_NAME:
-        if LAUNCHER_PLACEHOLDER:
-            return None
         key = 'launcher'
     elif rel == PACK_NAME:
         key = 'pack'
@@ -857,13 +836,8 @@ def stage(items, folder):
     for rel, src in items:
         dst = os.path.join(folder, *rel.split('/'))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if isinstance(src, bytes):                       # generated content (the Linux launcher placeholder)
-            with open(dst, 'wb') as f:
-                f.write(src)
-            origins[rel] = 'generated placeholder'
-        else:
-            shutil.copyfile(src, dst)
-            origins[rel] = src
+        shutil.copyfile(src, dst)
+        origins[rel] = src
     return origins
 
 

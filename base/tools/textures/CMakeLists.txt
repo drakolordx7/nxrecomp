@@ -24,6 +24,7 @@ else()
     find_program(A2B_ISPC NAMES ispc HINTS "${TP}/ispc" DOC "Intel ISPC compiler (BSD-3)")
     set(A2B_ISPC_OS linux)
     set(A2B_OBJ_EXT o)
+    set(A2B_ISPC_PIC --pic)     # the objects are linked into PIE executables
     if(NOT A2B_ISPC)
         message(WARNING "astc2bc7: ispc not found (put it on PATH or pass -DA2B_ISPC=): bc7e cannot be built")
     endif()
@@ -48,7 +49,7 @@ add_custom_command(
     OUTPUT ${BC7E_OBJS} ${BC7E_OUT}/bc7e_ispc.h
     COMMAND ${A2B_ISPC} -O2 ${BC7E_SRC} -o ${BC7E_OUT}/bc7e.${A2B_OBJ_EXT} -h ${BC7E_OUT}/bc7e_ispc.h
             --target=sse4-i32x4,avx2-i32x8,avx512skx-x16 --arch=x86-64 --target-os=${A2B_ISPC_OS}
-            --opt=fast-math --opt=disable-assertions --woff
+            --opt=fast-math --opt=disable-assertions --woff ${A2B_ISPC_PIC}
     DEPENDS ${BC7E_SRC}
     COMMENT "ispc bc7e.ispc")
 add_library(bc7e_ispc STATIC ${BC7E_OBJS})

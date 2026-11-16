@@ -666,6 +666,14 @@ NXTEST(mod_names_longer_than_a_romfs_allows_are_skipped_with_one_warning) {
     Env e;
     std::string long_name;
     for (int i = 0; i < 100; i++) long_name += "\xE4\xB8\xAD";   // 300 bytes of UTF-8, 100 characters on disk
+    {   // a 300-byte name needs a file system that counts characters (NTFS: 255 UTF-16 units); Linux file systems allow 255 bytes
+        TempTree probe_dir;
+        std::ofstream probe(probe_dir.root / stdfs::u8path(long_name), std::ios::binary);
+        if (!probe.good()) {
+            nxtest::skip("this file system limits a file name to 255 bytes: the 300-byte name cannot exist on disk");
+            return;
+        }
+    }
     e.mod("M/romfs/ok.bin", "ok");
     e.mod("M/romfs/" + long_name + ".bin", "long");
     Cap cap;

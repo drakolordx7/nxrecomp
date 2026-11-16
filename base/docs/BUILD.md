@@ -118,9 +118,9 @@ bash release.sh <game> <version> --linux        (builds in WSL, packs the zip an
 ```
 
 `<id>-<version>-linux-x86_64.tar.xz` holds one folder with: the exe, `libastcdec-{avx2,sse4.1,sse2}-shared.so`, the five FFmpeg `.so` files
-(`libavcodec.so.62` ...), `<id>_setup_cli`, `<id>_launcher` (a placeholder script that says how to start the game until a launcher is built),
+(`libavcodec.so.62` ...), `<id>_setup` (the setup window), `<id>_setup_cli`, `<id>_launcher` (the launcher), all three the same SDL3 + Dear ImGui programs as on Windows,
 the shader pack, the templates, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, `licenses/`, `fonts/`, `prompts/` and `MANIFEST.sha256`. SDL3 is linked into
-the exe (static), so no SDL file ships. The ELF audit (`make_release.py`): x86-64 only; `DT_NEEDED` limited to glibc (`libc`, `libm`, `libdl`,
+each program (static), so no SDL file ships; `make_release.py` refuses a release without the launcher or the setup window. The ELF audit (`make_release.py`): x86-64 only; `DT_NEEDED` limited to glibc (`libc`, `libm`, `libdl`,
 `libpthread`, `librt`, `libutil`, the loader), `libvulkan`, the X11/xcb/Wayland/xkbcommon client libraries and the libraries shipped beside it
 (`libstdc++` and `libgcc_s` are refused: they are linked statically); RPATH/RUNPATH only `$ORIGIN`; glibc symbol versions up to 2.35
 (`MAX_GLIBC`, the build box); no local build paths in the programs (WSL spelling included).
