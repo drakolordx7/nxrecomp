@@ -75,13 +75,63 @@ flag, library name and source folder that differs; a build rule is fixed once. P
 `runtime/src/os/posix` (see `runtime/include/nxrt/os/README.md`), picked up by a glob.
 
 Toolchain: clang (23), lld, Ninja, CMake 3.25+ (`cmake/linux-clang.cmake`; `NX_CLANG_VERSION` picks another LLVM version). SDL3 is built from
-source: X11, Wayland, PipeWire, Pulse and ALSA development packages (and `libxtst-dev`) must be installed.
+source (statically): X11, Wayland, PipeWire, Pulse and ALSA development packages (and `libxtst-dev`) must be installed. The ASTC transcoder
+(`tools/textures`) and with it the runtime's gfx and the setup tool need Intel `ispc` (BSD-3, v1.32.0 like the Windows copy): on PATH, or in
+`NX/toolchain/ispc/bin`, or `--ispc FILE` / env `NX_ISPC` (`NX/build/textures/linux` also works for the runtime: a prebuilt `libastc2bc7.a`).
+
+### One command: `wt.py`
+
+The Linux counterpart of `wt.ps1` is `base/scripts/nx_build.py` (all the logic, Python 3 stdlib only); `wt.py` is the entry point on both
+systems and takes the same options. In WSL (distro `nx-linux`, NX at `/mnt/d/...`) or from Windows with `--linux`:
 
 ```
-cmake --preset linux-release -B <dir> [-DNXRT_GAME_DIRS="<games/mpr>;<games/ap>"]        (run in base/runtime; -DNXRT_DEPS_DIR=<archive cache>)
-ninja -C <dir> -k 0
+python3 wt.py <name> [--game <id>] [--libs] [--test <ctest regex>] [--no-exe] [--setup] [--release --version V] [--clean] [--dry-run]
+python  wt.py <name> --linux ...        (Windows: runs the same inside WSL; env NX_WSL_DISTRO, default nx-linux)
+pwsh    wt.ps1 <name> -Linux ...        (the same, from the stream script)
 ```
 
-The same presets exist in `runtime/cmake/game_project` (game exe; `-DGAME_LIB_DIR` holds `lib<id>_<module>.a`) and `recomp/game` (lift). The
-launcher is Windows only for now (`NXRT_BUILD_LAUNCHER`). FFmpeg (movies; `runtime/cmake/ffmpeg.cmake`): Windows fetches the pinned BtbN LGPL shared build into the archive cache and copies its DLLs next to every exe; Linux uses the system packages (`libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev`, FFmpeg 4.4 or newer), or `-DNXRT_FFMPEG_BUNDLED=ON` fetches the same pinned build as `.so` files that are copied next to the exe ($ORIGIN rpath; what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy
-in `NX/build/textures/linux`. Much of the runtime still includes `windows.h` and does not compile on Linux yet.
+| What | Where |
+| --- | --- |
+| runtime + tests | `NX/build/<name>/linux/runtime` (`cmake --preset linux-release`, then `ninja -k 0`; `--test .` runs ctest) |
+| game exe | `NX/build/<name>/linux/<id>/<files.exe without .exe>` (`<id>_relpkg` with `--release`: `NXRT_RELEASE=ON`, FFmpeg bundled) |
+| lifted libraries | `NX/games/<id>/work/build/linux/<id>[_<name>]` (`lib<id>_<module>.a`; `--libs` lifts them, generated sources in `..._gen`) |
+| setup tool | `NX/build/setup-<id>-linux/bin` (`--setup`; the CLI and the tests; the GUI is Windows only) |
+| runs | `games/<id>/work/run_linux[_<name>]` (`boot.py --game <id>` on Linux: same options and test-run rules; `playtest_linux`) |
+
+`<name>` is a worktree (`NX/wt/<name>`) or `main`; the presets of the three CMake projects (`runtime`, `runtime/cmake/game_project`,
+`recomp/game`, `tools/setup`) set the toolchain and are meant to be used with `-B <dir>` as above. The launcher is Windows only for now
+(`NXRT_BUILD_LAUNCHER`). FFmpeg (movies; `runtime/cmake/ffmpeg.cmake`): Windows fetches the pinned BtbN LGPL shared build into the archive cache and
+copies its DLLs next to every exe; Linux uses the system packages (`libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev`,
+FFmpeg 4.4 or newer), or `-DNXRT_FFMPEG_BUNDLED=ON` fetches the same pinned build as `.so` files that are copied next to the exe ($ORIGIN rpath;
+what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. Much of the runtime still includes `windows.h` and does not compile on
+Linux until the diag and gfx streams merge; the setup tool does (`python3 wt.py main --game <id> --setup --test`, 14 of 16 test groups
+need nothing else: `shadercache` wants the Python module `zstandard`, `texcache` a real ispc build).
+
+### Setup tool and release on Linux
+
+`<id>_setup_cli` builds and runs on Linux (`fileio`, `keys`, `log`, `shadercache` and the CLI use `std::filesystem` and POSIX calls behind
+`_WIN32` checks; keys are looked up in `~/.config` and `~/.local/share` of yuzu, Eden, suyu, Sudachi, Citron and Ryujinx, `~/.switch`, next to the
+program and in the current folder).
+
+```
+python tools/release/make_release.py --game games/<id> --platform linux-x86_64 --exe NX/build/<name>/linux/<id>_relpkg/<id> --setup-bin NX/build/setup-<id>-linux/bin
+bash release.sh <game> <version> --linux        (builds in WSL, packs the zip and the tarball side by side)
+```
+
+`<id>-<version>-linux-x86_64.tar.xz` holds one folder with: the exe, `libastcdec-{avx2,sse4.1,sse2}-shared.so`, the five FFmpeg `.so` files
+(`libavcodec.so.62` ...), `<id>_setup_cli`, `<id>_launcher` (a placeholder script that says how to start the game until a launcher is built),
+the shader pack, the templates, `LICENSE`, `THIRD_PARTY_NOTICES.txt`, `licenses/`, `fonts/`, `prompts/` and `MANIFEST.sha256`. SDL3 is linked into
+the exe (static), so no SDL file ships. The ELF audit (`make_release.py`): x86-64 only; `DT_NEEDED` limited to glibc (`libc`, `libm`, `libdl`,
+`libpthread`, `librt`, `libutil`, the loader), `libvulkan`, the X11/xcb/Wayland/xkbcommon client libraries and the libraries shipped beside it
+(`libstdc++` and `libgcc_s` are refused: they are linked statically); RPATH/RUNPATH only `$ORIGIN`; glibc symbol versions up to 2.35
+(`MAX_GLIBC`, the build box); no local build paths in the programs (WSL spelling included).
+
+Windows releases ship the five FFmpeg DLLs next to the exe. They are built with mingw against the UCRT, so the CRT-import rule that protects
+our own binaries (`vcruntime*`, `msvcp*`, `ucrtbase`, `api-ms-win-crt-*` refused) would refuse them; `tools/release/ffmpeg_pins.json` lists them by
+file name and SHA-256 and only a file that matches both is let through. Updating FFmpeg means changing `runtime/cmake/ffmpeg.cmake` and that file
+together (a test compares the archive hashes). The Linux `.so` hashes are `null` until the first bundled build is measured
+(`make_release.py --print-ffmpeg-pins <folder>`); until then they pass through the same ELF audit as our own files.
+
+The merge batch check (`bash batch_test.sh <game>`) ends with a Linux pass (`linux_check.py`): runtime, tests, game module and exe
+built in `nx-linux`, ctest, a headless boot when the exe exists; it prints `LINUX OK`, `LINUX SUSPECT` or `LINUX SKIPPED` with the reason
+(a Linux build that does not link yet is SKIPPED with its first errors).

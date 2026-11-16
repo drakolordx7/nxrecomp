@@ -1,19 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "log.h"
 
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <ctime>
 #include <mutex>
 
 #include "common.h"
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 
 #ifndef NXS_VERSION
 #define NXS_VERSION "dev"
@@ -30,7 +24,11 @@ LogLevel g_sink_min = LogLevel::Info;
 bool log_open(const std::string& utf8_path) {
     std::lock_guard lk(g_mu);
     if (g_file) { std::fclose(g_file); g_file = nullptr; }
+#ifdef _WIN32
     g_file = _wfopen(widen(utf8_path).c_str(), L"ab");
+#else
+    g_file = std::fopen(utf8_path.c_str(), "ab");
+#endif
     if (g_file) { std::fprintf(g_file, NXS_EXE_NAME " %s\n", NXS_VERSION); std::fflush(g_file); }
     return g_file != nullptr;
 }
@@ -52,12 +50,19 @@ void logf(LogLevel level, const char* fmt, ...) {
     va_start(ap, fmt);
     std::vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    SYSTEMTIME t;
-    GetLocalTime(&t);
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t secs = std::chrono::system_clock::to_time_t(now);
+    const int ms = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000);
+    std::tm t{};
+#ifdef _WIN32
+    localtime_s(&t, &secs);
+#else
+    localtime_r(&secs, &t);
+#endif
     static const char* names[] = {"DEBUG", "INFO ", "WARN ", "ERROR"};
     char line[4300];
-    std::snprintf(line, sizeof line, "%04d-%02d-%02d %02d:%02d:%02d.%03d [%s] %s\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
-                  t.wSecond, t.wMilliseconds, names[static_cast<int>(level)], buf);
+    std::snprintf(line, sizeof line, "%04d-%02d-%02d %02d:%02d:%02d.%03d [%s] %s\n", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                  t.tm_hour, t.tm_min, t.tm_sec, ms, names[static_cast<int>(level)], buf);
     std::function<void(LogLevel, const std::string&)> sink;
     {
         std::lock_guard lk(g_mu);

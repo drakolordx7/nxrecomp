@@ -8,6 +8,14 @@
 #include <string_view>
 #include <vector>
 
+#ifndef _WIN32
+#include <cwchar>
+// Game setup hooks written on Windows compare file extensions with the MSVC spelling.
+#ifndef _wcsicmp
+#define _wcsicmp wcscasecmp
+#endif
+#endif
+
 namespace nxs {
 
 using u8 = uint8_t;

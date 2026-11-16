@@ -1,0 +1,28 @@
+{
+  "comment": "The FFmpeg build the runtime links (runtime/cmake/ffmpeg.cmake pins the same archives by SHA-256; test_make_release.py checks they agree). make_release.py ships these files next to the exe and lets the Windows audit pass their dynamic UCRT imports only when the file name and SHA-256 are the pinned ones. A null hash (Linux, until the first bundled build is measured: python tools/release/make_release.py --print-ffmpeg-pins <folder with the .so files>) still needs the ELF audit to pass.",
+  "tag": "autobuild-2026-10-31-12-59",
+  "version": "n8.1.3-27-g8dca1586f4",
+  "license_file": "licenses/LICENSE.FFmpeg.txt",
+  "windows-x64": {
+    "archive": "ffmpeg-n8.1.3-27-g8dca1586f4-win64-lgpl-shared-8.1.zip",
+    "archive_sha256": "5cef7bc48e513f3cee7c881e8b2999d835541edb1846c3e89443a67f8f8556ab",
+    "files": {
+      "avcodec-62.dll": "71ad4d3a1b158d88b4c00e8c2e1eded880e9a8a791a3bf9ba65fd053120470d9",
+      "avformat-62.dll": "56bbe329fb585b673cebf3d8859a963ec26f1057afd27fbf07b8871d59600001",
+      "avutil-60.dll": "46ad06470515bf0f9a0f8f560470c725002c22decc6d7c2ae7ea836b5d941950",
+      "swresample-6.dll": "790d6feb953be3118560afe6f5faafc1e254f947229699f40f95d70034eecf62",
+      "swscale-9.dll": "2cc756f813f2ec5ebd6f67f7c019dfb5ff66b015cbdf0c1c313fec19feb93507"
+    }
+  },
+  "linux-x86_64": {
+    "archive": "ffmpeg-n8.1.3-27-g8dca1586f4-linux64-lgpl-shared-8.1.tar.xz",
+    "archive_sha256": "493e89a48da02b9a7d217b60f7f60c3c917c9bed73459d8a106e5e987da082ef",
+    "files": {
+      "libavcodec.so.62": null,
+      "libavformat.so.62": null,
+      "libavutil.so.60": null,
+      "libswresample.so.6": null,
+      "libswscale.so.9": null
+    }
+  }
+}

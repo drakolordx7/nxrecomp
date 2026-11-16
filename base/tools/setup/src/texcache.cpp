@@ -211,8 +211,8 @@ TexCachePlan texcache_plan(const AstcTexture& info, const u8* tiled, size_t tile
 }
 
 std::string texcache_path(const std::string& cache_dir_utf8, u64 key) {
-    const std::filesystem::path p = std::filesystem::path(widen(cache_dir_utf8)) / nxfmt::bc7_cache_rel_path(key);
-    return narrow(p.wstring());
+    const std::filesystem::path p = fs_path(cache_dir_utf8) / nxfmt::bc7_cache_rel_path(key);
+    return path_utf8(p);
 }
 
 bool texcache_level0(const AstcTexture& info, const u8* tiled, size_t tiled_len, TexLevel0& out) {
@@ -458,7 +458,7 @@ std::vector<u8> texcache_build_file(const AstcTexture& info, const TexCachePlan&
 
 bool texcache_file_valid(const std::string& path_utf8, const TexCachePlan& plan, TexCacheKind* kind_out) {
     if (!plan.ok) return false;
-    std::ifstream f(std::filesystem::path(widen(path_utf8)), std::ios::binary);
+    std::ifstream f(fs_path(path_utf8), std::ios::binary);
     if (!f) return false;
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();

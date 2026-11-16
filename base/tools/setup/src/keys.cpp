@@ -2,15 +2,18 @@
 #include "keys.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
-#include <fstream>
-#include <iterator>
+#include <filesystem>
 #include <set>
+#include <system_error>
 #include <vector>
 
 #include "crypto.h"
+#include "fileio.h"
 #include "log.h"
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -20,6 +23,7 @@
 #include <windows.h>
 #include <objbase.h>
 #include <shlobj.h>
+#endif
 
 namespace nxs {
 namespace {
@@ -61,58 +65,53 @@ void ecb_decrypt(const u8 key[16], const void* in, void* out, size_t n) {
     Aes128Ecb(key).decrypt(in, out, n);
 }
 
-bool read_text_file(const std::string& utf8_path, std::string& out) {
-    const std::wstring wpath = widen(utf8_path);
-    const DWORD attr = GetFileAttributesW(wpath.c_str());
-    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY)) return false;
-    std::ifstream f(wpath, std::ios::binary);
-    if (!f) return false;
-    out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    return !f.bad();
-}
-
 bool file_exists(const std::string& utf8_path) {
-    const DWORD attr = GetFileAttributesW(widen(utf8_path).c_str());
-    return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+    std::error_code ec;
+    return std::filesystem::is_regular_file(fs_path(utf8_path), ec);
 }
 
 std::string full_path(const std::string& utf8) {
-    const std::wstring w = widen(utf8);
-    const DWORD need = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
-    if (need == 0) return utf8;
-    std::wstring out(need, L'\0');
-    const DWORD got = GetFullPathNameW(w.c_str(), need, out.data(), nullptr);
-    if (got == 0 || got >= need) return utf8;
-    out.resize(got);
-    return narrow(out);
+    std::error_code ec;
+    const std::filesystem::path abs = std::filesystem::absolute(fs_path(utf8), ec);
+    return ec ? utf8 : path_utf8(abs.lexically_normal());
 }
 
-std::string roaming_appdata() {
+std::string env_var(const char* name) {
+#ifdef _WIN32
+    const wchar_t* v = _wgetenv(widen(name).c_str());   // the wide environment: a user name outside the ANSI code page survives
+    return v ? narrow(v) : std::string();
+#else
+    const char* v = std::getenv(name);
+    return v ? std::string(v) : std::string();
+#endif
+}
+
+// The per-user config folder the emulators keep their keys under: %APPDATA% (Roaming) on Windows, $XDG_CONFIG_HOME or ~/.config elsewhere.
+std::string config_dir() {
+#ifdef _WIN32
     PWSTR p = nullptr;
     std::string out;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &p)) && p) out = narrow(p);
     if (p) CoTaskMemFree(p);
     return out;
+#else
+    const std::string xdg = env_var("XDG_CONFIG_HOME");
+    if (!xdg.empty()) return xdg;
+    const std::string home = env_var("HOME");
+    return home.empty() ? std::string() : home + "/.config";
+#endif
 }
 
-std::string env_var(const wchar_t* name) {
-    const DWORD n = GetEnvironmentVariableW(name, nullptr, 0);
-    if (n == 0) return {};
-    std::wstring w(n, L'\0');
-    const DWORD m = GetEnvironmentVariableW(name, w.data(), n);
-    if (m == 0 || m >= n) return {};
-    w.resize(m);
-    return narrow(w);
-}
-
-std::string exe_folder() {
-    std::vector<wchar_t> buf(32768);
-    const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
-    if (n == 0 || n >= buf.size()) return {};
-    const std::wstring path(buf.data(), n);
-    const size_t slash = path.find_last_of(L"\\/");
-    if (slash == std::wstring::npos) return {};
-    return narrow(path.substr(0, slash));
+// The per-user data folder (yuzu and its forks keep keys under .local/share on Linux): $XDG_DATA_HOME or ~/.local/share. Empty on Windows.
+std::string data_dir() {
+#ifdef _WIN32
+    return {};
+#else
+    const std::string xdg = env_var("XDG_DATA_HOME");
+    if (!xdg.empty()) return xdg;
+    const std::string home = env_var("HOME");
+    return home.empty() ? std::string() : home + "/.local/share";
+#endif
 }
 
 }  // namespace
@@ -291,27 +290,43 @@ std::vector<KeyFileCandidate> find_key_files() {
         if (path.empty()) return;
         const std::string full = full_path(path);
         if (!file_exists(full)) return;
-        if (!seen.insert(lower(full)).second) return;
+#ifdef _WIN32
+        if (!seen.insert(lower(full)).second) return;   // Windows paths do not differ by case
+#else
+        if (!seen.insert(full).second) return;
+#endif
         found.push_back({full, source});
     };
 
-    const std::string appdata = roaming_appdata();
-    if (!appdata.empty()) {
-        consider(appdata + "\\yuzu\\keys\\prod.keys", "yuzu");
-        consider(appdata + "\\eden\\keys\\prod.keys", "Eden");
-        consider(appdata + "\\suyu\\keys\\prod.keys", "suyu");
-        consider(appdata + "\\sudachi\\keys\\prod.keys", "Sudachi");
-        consider(appdata + "\\citron\\keys\\prod.keys", "Citron");
-        consider(appdata + "\\Ryujinx\\system\\prod.keys", "Ryujinx");
+    const std::string cfg = config_dir();
+    if (!cfg.empty()) {
+        consider(path_join(cfg, "yuzu/keys/prod.keys"), "yuzu");
+        consider(path_join(cfg, "eden/keys/prod.keys"), "Eden");
+        consider(path_join(cfg, "suyu/keys/prod.keys"), "suyu");
+        consider(path_join(cfg, "sudachi/keys/prod.keys"), "Sudachi");
+        consider(path_join(cfg, "citron/keys/prod.keys"), "Citron");
+        consider(path_join(cfg, "Ryujinx/system/prod.keys"), "Ryujinx");
     }
-    const std::string profile = env_var(L"USERPROFILE");
-    if (!profile.empty()) consider(profile + "\\.switch\\prod.keys", "~/.switch");
-    const std::string exe = exe_folder();
+    const std::string data = data_dir();
+    if (!data.empty()) {   // Linux: yuzu, Eden and their forks keep the keys under ~/.local/share
+        consider(path_join(data, "yuzu/keys/prod.keys"), "yuzu");
+        consider(path_join(data, "eden/keys/prod.keys"), "Eden");
+        consider(path_join(data, "suyu/keys/prod.keys"), "suyu");
+        consider(path_join(data, "sudachi/keys/prod.keys"), "Sudachi");
+        consider(path_join(data, "citron/keys/prod.keys"), "Citron");
+    }
+#ifdef _WIN32
+    const std::string profile = env_var("USERPROFILE");
+#else
+    const std::string profile = env_var("HOME");
+#endif
+    if (!profile.empty()) consider(path_join(profile, ".switch/prod.keys"), "~/.switch");
+    const std::string exe = exe_dir();
     if (!exe.empty()) {
-        consider(exe + "\\prod.keys", "next to the program");
-        consider(exe + "\\keys\\prod.keys", "next to the program");
+        consider(path_join(exe, "prod.keys"), "next to the program");
+        consider(path_join(path_join(exe, "keys"), "prod.keys"), "next to the program");
     }
-    consider(".\\prod.keys", "current folder");
+    consider("prod.keys", "current folder");
     return found;
 }
 

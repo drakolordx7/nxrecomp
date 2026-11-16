@@ -14,6 +14,7 @@
 #include "project_root.h"
 #include "common.h"
 #include "crypto.h"
+#include "fileio.h"
 #include "keys.h"
 
 using namespace nxs;
@@ -27,16 +28,16 @@ const char* kRealTitle = kRealTitleStr.c_str();
 
 std::string temp_path(const std::string& name) {
     const std::filesystem::path p = std::filesystem::temp_directory_path() / ("nxs_test_keys_" + name);
-    return narrow(p.wstring());
+    return path_utf8(p);
 }
 
 void write_text(const std::string& utf8_path, const std::string& content) {
-    std::ofstream f(widen(utf8_path), std::ios::binary | std::ios::trunc);
+    std::ofstream f(fs_path(utf8_path), std::ios::binary | std::ios::trunc);
     f.write(content.data(), static_cast<std::streamsize>(content.size()));
 }
 
 std::string read_all(const std::string& utf8_path) {
-    std::ifstream f(widen(utf8_path), std::ios::binary);
+    std::ifstream f(fs_path(utf8_path), std::ios::binary);
     return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
 }
 
@@ -161,7 +162,7 @@ void test_parser() {
     write_text(path, text);
     KeySet ks;
     ks.load_file(path);
-    std::filesystem::remove(widen(path));
+    std::filesystem::remove(fs_path(path));
 
     CHECK_EQ(ks.count(), static_cast<size_t>(5));          // master_key_00, aes_kek..., max_len, titlekek_00, last_one
     CHECK_EQ(ks.title_key_count(), static_cast<size_t>(1));
@@ -185,7 +186,7 @@ void test_parser() {
 
     std::string msg;
     const std::string missing = temp_path("does_not_exist.keys");
-    std::filesystem::remove(widen(missing));
+    std::filesystem::remove(fs_path(missing));
     CHECK(throws_error([&] { KeySet k; k.load_file(missing); }, Fail::Keys, msg));
     CHECK(msg.find("Cannot read the keys file") != std::string::npos);
 
@@ -200,8 +201,8 @@ void test_parser() {
     msg.clear();
     CHECK(throws_error([&] { KeySet k; k.load_file(empty); }, Fail::Keys, msg));
 
-    std::filesystem::remove(widen(garbage));
-    std::filesystem::remove(widen(empty));
+    std::filesystem::remove(fs_path(garbage));
+    std::filesystem::remove(fs_path(empty));
 }
 
 void test_merge() {
@@ -214,8 +215,8 @@ void test_merge() {
     KeySet ks;
     ks.load_file(a);
     ks.load_file(b);
-    std::filesystem::remove(widen(a));
-    std::filesystem::remove(widen(b));
+    std::filesystem::remove(fs_path(a));
+    std::filesystem::remove(fs_path(b));
 
     CHECK_EQ(ks.count(), static_cast<size_t>(3));
     CHECK(ks.has("master_key_00"));                        // from the first file
@@ -231,7 +232,7 @@ void test_derivation() {
     write_text(src_file, synthetic_text(s));
     KeySet derived;
     derived.load_file(src_file);
-    std::filesystem::remove(widen(src_file));
+    std::filesystem::remove(fs_path(src_file));
 
     CHECK(derived.key_area_key(0, 0x0a) == e.kaak_app_0a);
     CHECK(derived.titlekek(0x0a) == e.titlekek_0a);
@@ -243,7 +244,7 @@ void test_derivation() {
                              lo(e.titlekek_0a) + "\nheader_key = " + hex_encode(e.header.data(), 32) + "\n");
     KeySet pre;
     pre.load_file(pre_file);
-    std::filesystem::remove(widen(pre_file));
+    std::filesystem::remove(fs_path(pre_file));
     CHECK(pre.key_area_key(0, 0x0a) == e.kaak_app_0a);
     CHECK(pre.titlekek(0x0a) == e.titlekek_0a);
     CHECK(pre.header_key() == e.header);
@@ -253,7 +254,7 @@ void test_derivation() {
     write_text(explicit_file, synthetic_text(s) + "titlekek_0a = " + lo(pattern(30)) + "\n");
     KeySet explicit_ks;
     explicit_ks.load_file(explicit_file);
-    std::filesystem::remove(widen(explicit_file));
+    std::filesystem::remove(fs_path(explicit_file));
     CHECK(explicit_ks.titlekek(0x0a) == pattern(30));
     CHECK(explicit_ks.titlekek(0x0a) != e.titlekek_0a);
 }
@@ -267,7 +268,7 @@ void test_missing_keys() {
     write_text(file, synthetic_text(s));
     KeySet ks;
     ks.load_file(file);
-    std::filesystem::remove(widen(file));
+    std::filesystem::remove(fs_path(file));
 
     std::string msg;
     CHECK(throws_error([&] { (void)ks.titlekek(0x0b); }, Fail::Keys, msg));
@@ -284,7 +285,7 @@ void test_missing_keys() {
     write_text(no_master, synthetic_text(s, "master_key_00") + "master_key_0a = " + lo(s.mk0a) + "\n");
     KeySet nm;
     nm.load_file(no_master);
-    std::filesystem::remove(widen(no_master));
+    std::filesystem::remove(fs_path(no_master));
     msg.clear();
     CHECK(throws_error([&] { (void)nm.header_key(); }, Fail::Keys, msg));
     CHECK(msg.find("master_key_00") != std::string::npos);
@@ -294,7 +295,7 @@ void test_missing_keys() {
     write_text(no_src, synthetic_text(s, "aes_kek_generation_source"));
     KeySet ns;
     ns.load_file(no_src);
-    std::filesystem::remove(widen(no_src));
+    std::filesystem::remove(fs_path(no_src));
     msg.clear();
     CHECK(throws_error([&] { (void)ns.key_area_key(0, 0x0a); }, Fail::Keys, msg));
     CHECK(msg.find("aes_kek_generation_source") != std::string::npos);
@@ -354,7 +355,7 @@ std::string derive_only_text(const std::string& real_text) {
 }
 
 void test_real_data() {
-    if (!std::filesystem::exists(std::filesystem::path(widen(kRealProd)))) {
+    if (!std::filesystem::exists(std::filesystem::path(fs_path(kRealProd)))) {
         std::printf("real data: SKIPPED, %s does not exist\n", kRealProd);
         return;
     }
@@ -379,7 +380,7 @@ void test_real_data() {
     write_text(derive_path, derive_only_text(read_all(kRealProd)));
     KeySet derived;
     derived.load_file(derive_path);
-    std::filesystem::remove(widen(derive_path));
+    std::filesystem::remove(fs_path(derive_path));
 
     const std::array<u8, 32> hr = real.header_key();
     const std::array<u8, 32> hd = derived.header_key();
@@ -407,7 +408,7 @@ void test_real_data() {
         }
     }
 
-    if (std::filesystem::exists(std::filesystem::path(widen(kRealTitle)))) {
+    if (std::filesystem::exists(std::filesystem::path(fs_path(kRealTitle)))) {
         KeySet titles;
         titles.load_file(kRealTitle);
         std::printf("real title.keys: %s\n", titles.describe().c_str());
@@ -436,7 +437,7 @@ void test_find_key_files() {
     for (const KeyFileCandidate& c : found) std::printf("  source: %s\n", c.source.c_str());
 
     CHECK(sibling_title_keys("D:\\nonexistent_folder_for_test\\prod.keys").empty());
-    if (std::filesystem::exists(std::filesystem::path(widen(kRealProd)))) {
+    if (std::filesystem::exists(std::filesystem::path(fs_path(kRealProd)))) {
         CHECK(!sibling_title_keys(kRealProd).empty());
     }
 }

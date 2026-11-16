@@ -2,9 +2,12 @@
 import contextlib
 import hashlib
 import io
+import json
 import os
+import re
 import shutil
 import struct
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -14,8 +17,11 @@ import make_release as mr
 
 ROOT = 'demo-test-windows-x64'
 MANIFEST = mr.MANIFEST
+FFMPEG_DLLS = ('avcodec-62.dll', 'avformat-62.dll', 'avutil-60.dll', 'swresample-6.dll', 'swscale-9.dll')
+FFMPEG_SOS = ('libavcodec.so.62', 'libavformat.so.62', 'libavutil.so.60', 'libswresample.so.6', 'libswscale.so.9')
+UCRT = 'api-ms-win-crt-runtime-l1-1-0.dll'          # what the mingw-built FFmpeg DLLs import: allowed for the pinned files only
 EXPECTED = sorted([
-    'demo.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll',
+    'demo.exe', 'astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll', *FFMPEG_DLLS,
     'demo_setup.exe', 'demo_setup_cli.exe', 'demo_launcher.exe', 'shader_cache.demoshc', 'README.txt', 'HELP.txt', 'controls.ini',
     'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
     'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
@@ -51,6 +57,13 @@ def make_fake_repo(root):
     w(BUILD_DEMO + '/relpkg/demo.map', b'MAP fake, must never ship')
     for n in ('astcdec-avx2-shared.dll', 'astcdec-sse2-shared.dll', 'astcdec-sse4.1-shared.dll'):
         w(BUILD_DEMO + '/relpkg/' + n, b'MZ fake dll')
+    win_pins = {}
+    for n in FFMPEG_DLLS:
+        data = make_pe(['kernel32.dll', UCRT]) + n.encode()
+        w(BUILD_DEMO + '/relpkg/' + n, data)
+        win_pins[n] = hashlib.sha256(data).hexdigest()
+    w('base/tools/release/ffmpeg_pins.json', json.dumps({'windows-x64': {'files': win_pins},
+                                                          'linux-x86_64': {'files': {n: None for n in FFMPEG_SOS}}}).encode())
     w('build/setup-demo/bin/demo_setup.exe', b'MZ fake setup')
     w('build/setup-demo/bin/demo_setup_cli.exe', b'MZ fake setup cli')
     w(BUILD_DEMO + '/relpkg/demo_launcher.exe', b'MZ fake launcher')
@@ -121,10 +134,17 @@ def make_pe(imports=(), delay=()):
     return head + bytes(0x200 - len(head)) + sec
 
 
+def reset_state():
+    """make_release keeps the flavour in module globals: back to the Windows demo game, no FFmpeg pins, for the tests that call the audit directly."""
+    mr.set_game(_GAME_DIR)
+    mr.FFMPEG_FILES, mr.FFMPEG_HASHES, mr.LAUNCHER_PLACEHOLDER = (), {}, False
+
+
 class BuildTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix='demo-release-test-')
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(reset_state)
         self.repo = make_fake_repo(os.path.join(self.tmp, 'repo'))
         self.out = os.path.join(self.tmp, 'out')
         self.prompts = make_fake_prompts(os.path.join(self.tmp, 'prompts'))
@@ -411,6 +431,67 @@ class BuildTests(unittest.TestCase):
                 self.assertNotIn('crt-import', log)
 
 
+    def test_pinned_ffmpeg_dll_may_import_the_ucrt_but_our_binaries_may_not(self):
+        code, log = self.run_build()
+        self.assertEqual(code, 0, log)                       # the fixture FFmpeg DLLs import the UCRT and are pinned
+        self.assertNotIn('crt-import', log)
+        write(os.path.join(self.repo, *EXE_REL.split('/')), make_pe(['kernel32.dll', UCRT]))
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('crt-import: demo.exe imports ' + UCRT, log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_ffmpeg_dll_that_is_not_the_pinned_build_is_refused(self):
+        dll = os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'avcodec-62.dll')
+        write(dll, make_pe(['kernel32.dll', UCRT]) + b'a different build')
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('ffmpeg-pin: avcodec-62.dll is not the pinned FFmpeg build', log)
+        self.assertIn('crt-import: avcodec-62.dll imports ' + UCRT, log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+    def test_the_pin_does_not_cover_another_file_name(self):
+        dll = os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'astcdec-avx2-shared.dll')
+        write(dll, read_bytes(os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'avcodec-62.dll')))   # same bytes, not a pinned name
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn('crt-import: astcdec-avx2-shared.dll imports ' + UCRT, log)
+
+    def test_missing_ffmpeg_dll_or_pins_are_usage_errors(self):
+        os.remove(os.path.join(self.repo, *BUILD_DEMO.split('/'), 'relpkg', 'swscale-9.dll'))
+        code, log = self.run_build()
+        self.assertEqual(code, 2, log)
+        self.assertIn('swscale-9.dll', log)
+        os.remove(os.path.join(self.repo, 'base', 'tools', 'release', 'ffmpeg_pins.json'))
+        code, log = self.run_build()
+        self.assertEqual(code, 2, log)
+        self.assertIn('FFmpeg pins not found', log)
+        self.assertEqual(self.leftovers(self.out), [])
+
+
+def real_pins():
+    with open(os.path.join(mr.BASE, 'tools', 'release', 'ffmpeg_pins.json'), encoding='utf-8') as f:
+        return json.load(f)
+
+
+class FfmpegPinTests(unittest.TestCase):
+    def test_pins_file_names_the_same_archives_as_the_cmake_that_fetches_them(self):
+        pins = real_pins()
+        with open(os.path.join(mr.BASE, 'runtime', 'cmake', 'ffmpeg.cmake'), encoding='utf-8') as f:
+            cmake = f.read()
+        for plat in (mr.WINDOWS, mr.LINUX):
+            self.assertIn(pins[plat]['archive_sha256'], cmake, plat)
+        self.assertIn(pins['version'], cmake)
+        self.assertIn(pins['tag'], cmake)
+
+    def test_every_windows_file_is_pinned_by_hash(self):
+        pins = real_pins()
+        files = pins[mr.WINDOWS]['files']
+        self.assertEqual(sorted(files), sorted(FFMPEG_DLLS))
+        for name, h in files.items():
+            self.assertRegex(h, r'^[0-9a-f]{64}$', name)
+
+
 class LauncherSizeRuleTests(unittest.TestCase):
     def test_launcher_size_limits_are_the_shipped_rule(self):
         self.assertIn('outside the allowed', mr.size_problem('demo_launcher.exe', 100 * mr.KIB - 1))
@@ -447,6 +528,203 @@ class PeImportTests(unittest.TestCase):
         self.assertEqual(zip_problems, [])
         self.assertEqual(a.problems, ['crt-import: demo.exe imports vcruntime140.dll',
                                       'crt-import: demo.exe imports msvcp140.dll'])
+
+
+def make_elf(needed=(), rpath=(), runpath=(), glibc=(), cxx=(), machine=62, soname=None):
+    """A minimal ELF64 x86-64 shared object: one PT_LOAD over the whole file, a PT_DYNAMIC with DT_NEEDED / RPATH / RUNPATH / SONAME / STRTAB and a
+    version-needs table naming libc.so.6 with the GLIBC_x.y versions (and GLIBCXX_ / CXXABI_ names for `cxx`)."""
+    strs, offs = bytearray(b'\0'), {}
+
+    def add(text):
+        if text not in offs:
+            offs[text] = len(strs)
+            strs.extend(text.encode() + b'\0')
+        return offs[text]
+
+    needed_o = [add(n) for n in needed]
+    rpath_o, runpath_o = [add(':'.join(rpath))] if rpath else [], [add(':'.join(runpath))] if runpath else []
+    soname_o = add(soname) if soname else None
+    versions = ['GLIBC_%d.%d' % v for v in glibc] + list(cxx)
+    file_o = add('libc.so.6')
+    ver_o = [add(v) for v in versions]
+    base = 0x100
+    dynstr_at = base
+    verneed_at = (dynstr_at + len(strs) + 7) & ~7
+    verneed = b''
+    if versions:
+        verneed = struct.pack('<HHIII', 1, len(versions), file_o, 16, 0)
+        for i, vo in enumerate(ver_o):
+            verneed += struct.pack('<IHHII', 0, 0, 0, vo, 16 if i + 1 < len(ver_o) else 0)
+    dynamic_at = (verneed_at + len(verneed) + 15) & ~15
+    dyn = [(1, o) for o in needed_o] + [(15, o) for o in rpath_o] + [(29, o) for o in runpath_o] + [(5, dynstr_at)]
+    if soname_o is not None:
+        dyn.append((14, soname_o))
+    if versions:
+        dyn += [(0x6FFFFFFE, verneed_at), (0x6FFFFFFF, 1)]
+    dyn.append((0, 0))
+    dynamic = b''.join(struct.pack('<qQ', t, v) for t, v in dyn)
+    total = dynamic_at + len(dynamic)
+    ehdr = b'\x7fELF' + bytes([2, 1, 1, 0]) + bytes(8) + struct.pack('<HHIQQQIHHHHHH', 3, machine, 1, 0, 64, 0, 0, 64, 56, 2, 0, 0, 0)
+    ph = struct.pack('<IIQQQQQQ', 1, 5, 0, 0, 0, total, total, 0x1000)
+    ph += struct.pack('<IIQQQQQQ', 2, 6, dynamic_at, dynamic_at, dynamic_at, len(dynamic), len(dynamic), 8)
+    out = bytearray(total)
+    out[:len(ehdr)] = ehdr
+    out[64:64 + len(ph)] = ph
+    out[dynstr_at:dynstr_at + len(strs)] = strs
+    out[verneed_at:verneed_at + len(verneed)] = verneed
+    out[dynamic_at:dynamic_at + len(dynamic)] = dynamic
+    return bytes(out)
+
+
+LROOT = 'demo-test-linux-x86_64'
+LBUILD = 'build/' + mr.nxpaths.CHECKOUT_NAME + '/linux/demo_relpkg'
+LINUX_ASTC = ('libastcdec-avx2-shared.so', 'libastcdec-sse2-shared.so', 'libastcdec-sse4.1-shared.so')
+LINUX_EXPECTED = sorted([
+    'demo', *LINUX_ASTC, *FFMPEG_SOS, 'demo_setup_cli', 'demo_launcher', 'shader_cache.demoshc', 'README.txt', 'HELP.txt', 'controls.ini',
+    'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'licenses/LICENSE.astc-encoder.Apache-2.0', 'licenses/LICENSE.zstd',
+    'fonts/DejaVuSans.ttf', 'prompts/prompt_icons.pak', 'prompts/LICENSE-Kenney-InputPrompts.txt', MANIFEST,
+])
+GOOD_EXE = dict(needed=['libc.so.6', 'libm.so.6', 'libpthread.so.0', 'libdl.so.2', 'libvulkan.so.1', 'libavcodec.so.62'], runpath=['$ORIGIN'],
+                glibc=[(2, 2), (2, 17), (2, 34)])
+
+
+class LinuxBuildTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='demo-release-linux-')
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.addCleanup(reset_state)
+        self.repo = make_fake_repo(os.path.join(self.tmp, 'repo'))
+        self.out = os.path.join(self.tmp, 'out')
+        self.prompts = make_fake_prompts(os.path.join(self.tmp, 'prompts'))
+        self.put(LBUILD + '/demo', make_elf(**GOOD_EXE))
+        for n in LINUX_ASTC + FFMPEG_SOS:
+            self.put(LBUILD + '/' + n, make_elf(needed=['libc.so.6', 'libm.so.6'], runpath=['$ORIGIN'], glibc=[(2, 17)], soname=n))
+        self.put('build/setup-demo-linux/bin/demo_setup_cli', make_elf(needed=['libc.so.6'], glibc=[(2, 34)]))
+
+    def put(self, rel, data):
+        write(os.path.join(self.repo, *rel.split('/')), data)
+
+    def run_build(self, extra=(), hook=None):
+        argv = ['--game', os.path.join(self.repo, 'games', 'demo'), '--base', os.path.join(self.repo, 'base'), '--out', self.out,
+                '--version', 'test', '--prompts-dir', self.prompts, '--platform', 'linux-x86_64'] + list(extra)
+        buf = io.StringIO()
+        with mock.patch.dict(mr.SIZE_RULES, TINY_RULES), mock.patch.dict(os.environ, {'NX_ROOT': self.repo}), \
+                contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            code = mr.main(argv, stage_hook=hook)
+        return code, buf.getvalue()
+
+    def leftovers(self):
+        return sorted(n for n in os.listdir(self.out) if n.startswith('demo-')) if os.path.isdir(self.out) else []
+
+    def test_tarball_holds_the_linux_files_with_programs_executable(self):
+        code, log = self.run_build()
+        self.assertEqual(code, 0, log)
+        tpath = os.path.join(self.out, LROOT + '.tar.xz')
+        with tarfile.open(tpath) as t:
+            members = t.getmembers()
+        self.assertEqual([m.name for m in members], sorted(LROOT + '/' + r for r in LINUX_EXPECTED))
+        for m in members:
+            rel = m.name[len(LROOT) + 1:]
+            self.assertEqual((m.uid, m.gid, m.mtime), (0, 0, 1767225600), m.name)
+            programs = rel in ('demo', 'demo_setup_cli', 'demo_launcher') or rel.startswith('lib')
+            self.assertEqual(m.mode, 0o755 if programs else 0o644, m.name)
+        self.assertFalse(any(m.name.endswith(('.exe', '.dll')) for m in members))
+        with open(tpath + '.sha256', encoding='utf-8') as f:
+            self.assertEqual(f.read(), '%s  %s\n' % (sha(tpath), LROOT + '.tar.xz'))
+        self.assertFalse(os.path.exists(os.path.join(self.out, LROOT + '.zip')))
+
+    def test_tarball_is_deterministic(self):
+        self.assertEqual(self.run_build()[0], 0)
+        first = sha(os.path.join(self.out, LROOT + '.tar.xz'))
+        shutil.rmtree(self.out)
+        self.assertEqual(self.run_build()[0], 0)
+        self.assertEqual(first, sha(os.path.join(self.out, LROOT + '.tar.xz')))
+
+    def test_missing_launcher_ships_a_placeholder_script_and_a_built_one_ships_as_is(self):
+        self.assertEqual(self.run_build()[0], 0)
+        with tarfile.open(os.path.join(self.out, LROOT + '.tar.xz')) as t:
+            text = t.extractfile(LROOT + '/demo_launcher').read().decode()
+        self.assertTrue(text.startswith('#!/bin/sh'))
+        self.assertIn('./demo_setup_cli', text)
+        shutil.rmtree(self.out)
+        real = make_elf(needed=['libc.so.6'])
+        self.put(LBUILD + '/demo_launcher', real)
+        self.assertEqual(self.run_build()[0], 0)
+        with tarfile.open(os.path.join(self.out, LROOT + '.tar.xz')) as t:
+            self.assertEqual(t.extractfile(LROOT + '/demo_launcher').read(), real)
+
+    def test_the_setup_gui_and_windows_files_are_not_shipped(self):
+        self.put('build/setup-demo-linux/bin/demo_setup', make_elf(needed=['libc.so.6']))
+        self.assertEqual(self.run_build()[0], 0)
+        with tarfile.open(os.path.join(self.out, LROOT + '.tar.xz')) as t:
+            names = t.getnames()
+        self.assertNotIn(LROOT + '/demo_setup', names)
+
+    def refused(self, rel, data, needle):
+        self.put(rel, data)
+        code, log = self.run_build()
+        self.assertEqual(code, 3, log)
+        self.assertIn(needle, log)
+        self.assertEqual(self.leftovers(), [])
+
+    def test_elf_audit_refuses_shared_cxx_runtime_and_unlisted_libraries(self):
+        self.refused(LBUILD + '/demo', make_elf(**dict(GOOD_EXE, needed=GOOD_EXE['needed'] + ['libstdc++.so.6'])),
+                     'elf-needed: demo needs libstdc++.so.6 (the C++ runtime must be linked statically)')
+        self.refused(LBUILD + '/demo', make_elf(**dict(GOOD_EXE, needed=GOOD_EXE['needed'] + ['libSDL3.so.0'])), 'elf-needed: demo needs libSDL3.so.0')
+        self.refused(LBUILD + '/demo', make_elf(**dict(GOOD_EXE, cxx=['GLIBCXX_3.4.29'])), 'needs the shared C++ runtime (GLIBCXX_3.4.29)')
+
+    def test_elf_audit_refuses_absolute_rpath_new_glibc_and_wrong_arch(self):
+        self.refused(LBUILD + '/demo', make_elf(**dict(GOOD_EXE, runpath=['/mnt/d/AI/build/lib'])), 'elf-rpath: demo has the search path /mnt/d/AI/build/lib')
+        self.refused(LBUILD + '/demo', make_elf(**dict(GOOD_EXE, glibc=[(2, 17), (2, 36)])), 'elf-glibc: demo needs GLIBC_2.36')
+        self.refused(LBUILD + '/demo', make_elf(**dict(GOOD_EXE, machine=183)), 'elf-arch: demo is not an x86-64 file')
+
+    def test_elf_audit_lets_a_file_need_the_libraries_shipped_beside_it_only(self):
+        self.refused(LBUILD + '/libavcodec.so.62', make_elf(needed=['libc.so.6', 'libavutil.so.99'], runpath=['$ORIGIN']),
+                     'elf-needed: libavcodec.so.62 needs libavutil.so.99')
+
+    def test_unreadable_elf_is_a_warning_only(self):
+        self.put(LBUILD + '/libswscale.so.9', b'\x7fELF but cut short')
+        code, log = self.run_build()
+        self.assertEqual(code, 0, log)
+        self.assertIn('libswscale.so.9 is not a readable ELF64 file', log)
+
+    def test_wsl_spelling_of_the_checkout_path_in_the_exe_is_a_leak(self):
+        root = mr._leak_patterns()
+        self.assertTrue(any(p.startswith(b'/mnt/') for p in root) or mr.BASE[1:2] != ':')
+        data = make_elf(**GOOD_EXE) + b'built in /mnt/' + mr.BASE[0].lower().encode() + mr.BASE[2:].replace(os.sep, '/').encode() + b'\0'
+        if mr.BASE[1:2] == ':':
+            self.refused(LBUILD + '/demo', data, 'paths: demo contains')
+
+    def test_print_ffmpeg_pins_lists_the_hashes_of_the_files_in_a_folder(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = mr.main(['--print-ffmpeg-pins', os.path.join(self.repo, *LBUILD.split('/')), '--platform', 'linux-x86_64',
+                            '--base', os.path.join(self.repo, 'base')])
+        self.assertEqual(code, 0)
+        files = json.loads(buf.getvalue())['linux-x86_64']['files']
+        self.assertEqual(sorted(files), sorted(FFMPEG_SOS))
+        self.assertEqual(files['libavcodec.so.62'], sha(os.path.join(self.repo, *LBUILD.split('/'), 'libavcodec.so.62')))
+
+
+class ElfReaderTests(unittest.TestCase):
+    def test_reader_returns_needed_rpath_soname_and_the_highest_glibc(self):
+        info = mr.elf_info(make_elf(needed=['libc.so.6', 'libm.so.6'], rpath=['$ORIGIN', '/x'], runpath=['$ORIGIN/lib'], glibc=[(2, 2), (2, 34), (2, 17)],
+                                    cxx=['CXXABI_1.3'], soname='libfoo.so.1'))
+        self.assertEqual(info['needed'], ['libc.so.6', 'libm.so.6'])
+        self.assertEqual(info['rpath'], ['$ORIGIN', '/x', '$ORIGIN/lib'])
+        self.assertEqual(info['soname'], 'libfoo.so.1')
+        self.assertEqual(info['glibc'], (2, 34))
+        self.assertEqual(info['cxx'], ['CXXABI_1.3'])
+        self.assertEqual(info['machine'], 62)
+
+    def test_reader_gives_none_for_data_that_is_not_a_readable_elf(self):
+        self.assertIsNone(mr.elf_info(b''))
+        self.assertIsNone(mr.elf_info(b'MZ plain text'))
+        self.assertIsNone(mr.elf_info(make_elf(needed=['libc.so.6'])[:100]))
+
+    def test_reader_handles_a_file_with_no_dynamic_section_data(self):
+        info = mr.elf_info(make_elf())
+        self.assertEqual((info['needed'], info['rpath'], info['glibc']), ([], [], None))
 
 
 if __name__ == '__main__':

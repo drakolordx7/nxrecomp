@@ -1,14 +1,14 @@
-# The setup tool: first-run setup of one game (dump -> game folder), built for the game named by NX_GAME_DIR. Windows x64, clang-cl + Ninja.
+# The setup tool: first-run setup of one game (dump -> game folder), built for the game named by NX_GAME_DIR. Windows x64 (clang-cl + Ninja)
+# and Linux x86-64 (clang + Ninja: cmake --preset linux-release -DNX_GAME_DIR=...; the CLI and the tests; the GUI is Windows only).
 # The base installer extracts the dump; what only one game needs (its texture list, program list, ini lines: src/game_setup.h) is that
 # game's hook, a CMake file the manifest names ("setup_hook") and this file includes.
 #   pwsh -File tools\setup\scripts\build.ps1 [-Clean]
 cmake_minimum_required(VERSION 3.20)
-# Static MSVC runtime (/MT): players need no Visual C++ Redistributable. Set before project() so every target below, third-party code
-# included, uses it; the libraries this one links must agree (a mismatch is a link error).
-if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
+# The platform (cmake/nx_platform.cmake; before project(): the static MSVC runtime /MT is set there on Windows, so players need no Visual C++
+# Redistributable; the libraries this one links must agree).
+include("${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nx_platform.cmake")
 project(nx_setup C CXX)
+nx_platform_setup()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -17,6 +17,8 @@ set(NXS_VERSION "dev" CACHE STRING "release version shown by the setup programs"
 add_compile_definitions(NXS_VERSION="${NXS_VERSION}")
 enable_testing()
 
+# nx_game.cmake first: the subprojects below include it too (from their own scope), which would leave its lists unset here (include_guard)
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nx_game.cmake)
 # Libraries from the S4 tools (built in-tree, not installed): ASTC->BC7 transcoder and Tegra tiling.
 set(NXS_TEXTURES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../textures CACHE PATH "tools/textures")
 set(NXS_TILING_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../tiling CACHE PATH "tools/tiling")
@@ -24,7 +26,11 @@ add_subdirectory(${NXS_TEXTURES_DIR} ${CMAKE_BINARY_DIR}/textures EXCLUDE_FROM_A
 add_subdirectory(${NXS_TILING_DIR} ${CMAKE_BINARY_DIR}/tiling EXCLUDE_FROM_ALL)
 
 set(S ${CMAKE_CURRENT_SOURCE_DIR}/src)
-set(NXS_WARN /W3 -Wno-unused-parameter)
+if(NX_PLATFORM STREQUAL "win32")
+    set(NXS_WARN /W3 -Wno-unused-parameter)
+else()
+    set(NXS_WARN -Wall -Wno-unused-parameter -Wno-missing-field-initializers)
+endif()
 
 function(nxs_lib name)
     set(srcs "")
@@ -40,7 +46,6 @@ endfunction()
 # The game this setup is built for (src/game.h): its title id, builds and file names, from its manifest <NX_GAME_DIR>/game.json
 # (base cmake/nx_game.cmake), generated into nx_game.h and read by src/game_profile.cpp. The setup programs are named after the
 # manifest (files.setup, files.setup_cli: <id>_setup.exe, <id>_setup_cli.exe); their file properties show its product name.
-include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nx_game.cmake)
 include(${CMAKE_CURRENT_SOURCE_DIR}/../../recomp/cmake/nx_toolchain.cmake)   # NX_PYTHON
 set(NX_GAME_DIR "" CACHE PATH "the game folder (games/<id>) whose manifest game.json the setup tool is built for")
 if(NOT NX_GAME_DIR)
@@ -67,7 +72,13 @@ nxs_lib(nxs_fs pfs.cpp romfs.cpp)
 target_link_libraries(nxs_fs PUBLIC nxs_base nxs_crypto)
 # The rest of the core (keys, NCA, containers, the generic texture cache, shader cache, pipeline) lives in nxs_core.
 nxs_lib(nxs_core keys.cpp bktr.cpp nca.cpp container.cpp nso.cpp texcache.cpp shadercache.cpp pipeline.cpp ncz.cpp)
-target_link_libraries(nxs_core PUBLIC nxs_base nxs_crypto nxs_fs tegra_tiling astc2bc7 shlwapi ole32 shell32)
+target_link_libraries(nxs_core PUBLIC nxs_base nxs_crypto nxs_fs tegra_tiling astc2bc7)
+if(NX_PLATFORM STREQUAL "win32")
+    target_link_libraries(nxs_core PUBLIC shlwapi ole32 shell32)
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(nxs_core PUBLIC Threads::Threads)
+endif()
 # miniz 3.1.2 (MIT, third_party/miniz, from the official release): zlib inflate, for the game hooks that read zlib streams (a hook links miniz_lib)
 add_library(miniz_lib STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz/miniz.c)
 target_include_directories(miniz_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz)
@@ -75,15 +86,21 @@ target_compile_definitions(miniz_lib PRIVATE _CRT_SECURE_NO_WARNINGS)
 add_dependencies(nxs_core astc2bc7_cli)   # builds the three astcenc decoder DLLs next to the executables
 # BC5 encoder (rgbcx) and the reference BC7 decoder (the oracle's): two-channel normal maps and the RGBA8 fallback of texcache.cpp
 set(BC7_TP ${NXS_TEXTURES_DIR}/third_party/bc7enc_rdo)
+if(NOT EXISTS "${BC7_TP}/rgbcx.cpp" AND NX_ROOT)   # third_party/ is local only: a worktree reads the main checkout's
+    set(BC7_TP "${NX_ROOT}/base/tools/textures/third_party/bc7enc_rdo")
+endif()
 target_sources(nxs_core PRIVATE ${BC7_TP}/rgbcx.cpp ${BC7_TP}/bc7decomp_ref.cpp)
 target_include_directories(nxs_core PRIVATE ${BC7_TP})
 
 # zstd (BSD-3-Clause; tools/setup/scripts/fetch_zstd.ps1 puts it in third_party/zstd): NCZ/NSZ/XCZ support and shader packs
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/zstd.h)
-    file(GLOB ZSTD_SRC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/common/*.c
-         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/compress/*.c ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib/decompress/*.c)
+set(NXS_ZSTD ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd)
+if(NOT EXISTS ${NXS_ZSTD}/lib/zstd.h AND NX_ROOT AND EXISTS ${NX_ROOT}/base/tools/setup/third_party/zstd/lib/zstd.h)   # local only: a worktree reads the main checkout's
+    set(NXS_ZSTD ${NX_ROOT}/base/tools/setup/third_party/zstd)
+endif()
+if(EXISTS ${NXS_ZSTD}/lib/zstd.h)
+    file(GLOB ZSTD_SRC ${NXS_ZSTD}/lib/common/*.c ${NXS_ZSTD}/lib/compress/*.c ${NXS_ZSTD}/lib/decompress/*.c)
     add_library(zstd_lib STATIC ${ZSTD_SRC})
-    target_include_directories(zstd_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/lib)
+    target_include_directories(zstd_lib PUBLIC ${NXS_ZSTD}/lib)
     target_compile_definitions(zstd_lib PRIVATE ZSTD_DISABLE_ASM=1 _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(nxs_core PUBLIC zstd_lib)
     target_compile_definitions(nxs_core PUBLIC NXS_HAVE_ZSTD=1)
@@ -141,25 +158,27 @@ foreach(isa avx2 sse4.1 sse2)
     add_custom_command(TARGET nx_setup_cli POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:nx_setup_cli>)
 endforeach()
-option(NXS_GUI_SIM "Build the GUI against gui/sim_pipeline.cpp (fake progress) instead of the real core" OFF)
-if(NXS_GUI_SIM)
-    add_executable(nx_setup WIN32 gui/main_win32.cpp gui/sim_pipeline.cpp gui/setup.rc)
-    target_link_libraries(nx_setup PRIVATE nxs_base)
-else()
-    add_executable(nx_setup WIN32 gui/main_win32.cpp gui/setup.rc)
-    target_link_libraries(nx_setup PRIVATE nxs_core)
-endif()
-target_link_libraries(nx_setup PRIVATE comctl32 uxtheme dwmapi shlwapi ole32 shell32)
-target_compile_definitions(nx_setup PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
-target_compile_options(nx_setup PRIVATE ${NXS_WARN})
-target_include_directories(nx_setup PRIVATE ${S})
-target_link_options(nx_setup PRIVATE /MANIFEST:NO)   # gui/setup.rc carries the manifest
-set_target_properties(nx_setup PROPERTIES OUTPUT_NAME "${NXS_EXE}")
-set_source_files_properties(gui/setup.rc PROPERTIES COMPILE_DEFINITIONS "NXS_RC_EXE=\"${NXS_EXE}\";NXS_RC_PRODUCT=\"${NXS_PRODUCT}\""
-    INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/generated" OBJECT_DEPENDS "${CMAKE_BINARY_DIR}/generated/setup.manifest")
-if(NOT NXS_GUI_SIM)
-    foreach(isa avx2 sse4.1 sse2)
-        add_custom_command(TARGET nx_setup POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:nx_setup>)
-    endforeach()
+if(NX_PLATFORM STREQUAL "win32")
+    option(NXS_GUI_SIM "Build the GUI against gui/sim_pipeline.cpp (fake progress) instead of the real core" OFF)
+    if(NXS_GUI_SIM)
+        add_executable(nx_setup WIN32 gui/main_win32.cpp gui/sim_pipeline.cpp gui/setup.rc)
+        target_link_libraries(nx_setup PRIVATE nxs_base)
+    else()
+        add_executable(nx_setup WIN32 gui/main_win32.cpp gui/setup.rc)
+        target_link_libraries(nx_setup PRIVATE nxs_core)
+    endif()
+    target_link_libraries(nx_setup PRIVATE comctl32 uxtheme dwmapi shlwapi ole32 shell32)
+    target_compile_definitions(nx_setup PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
+    target_compile_options(nx_setup PRIVATE ${NXS_WARN})
+    target_include_directories(nx_setup PRIVATE ${S})
+    target_link_options(nx_setup PRIVATE /MANIFEST:NO)   # gui/setup.rc carries the manifest
+    set_target_properties(nx_setup PROPERTIES OUTPUT_NAME "${NXS_EXE}")
+    set_source_files_properties(gui/setup.rc PROPERTIES COMPILE_DEFINITIONS "NXS_RC_EXE=\"${NXS_EXE}\";NXS_RC_PRODUCT=\"${NXS_PRODUCT}\""
+        INCLUDE_DIRECTORIES "${CMAKE_BINARY_DIR}/generated" OBJECT_DEPENDS "${CMAKE_BINARY_DIR}/generated/setup.manifest")
+    if(NOT NXS_GUI_SIM)
+        foreach(isa avx2 sse4.1 sse2)
+            add_custom_command(TARGET nx_setup POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:nx_setup>)
+        endforeach()
+    endif()
 endif()

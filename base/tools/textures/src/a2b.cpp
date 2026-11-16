@@ -2,10 +2,17 @@
 // Uses: ARM astcenc 5.7.0 (Apache-2.0) through per-ISA DLLs, bc7e.ispc from bc7enc_rdo (Apache-2.0, Binomial LLC).
 #include "astc2bc7.h"
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <intrin.h>
+#else
+#include <cpuid.h>
+#include <dlfcn.h>
+#include <immintrin.h>
+#include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -23,7 +30,7 @@ namespace {
 
 // ---------------------------------------------------------------- astcenc DLL dispatch
 struct AstcApi {
-    HMODULE module = nullptr;
+    void* module = nullptr;   // HMODULE / dlopen handle
     const char* isa = nullptr;
     decltype(&astcenc_config_init) config_init = nullptr;
     decltype(&astcenc_context_alloc) context_alloc = nullptr;
@@ -32,65 +39,109 @@ struct AstcApi {
     decltype(&astcenc_get_error_string) error_string = nullptr;
 };
 
+#ifndef _WIN32
+__attribute__((target("xsave"))) unsigned long long xgetbv_xsave() { return _xgetbv(0); }
+#endif
+
 AstcApi g_astc;
 std::mutex g_astc_mutex;
 std::once_flag g_bc7e_once;
 
+void cpuid(int leaf, int sub, int r[4]) {
+#ifdef _WIN32
+    __cpuidex(r, leaf, sub);
+#else
+    unsigned a = 0, b = 0, c = 0, d = 0;
+    __cpuid_count(leaf, sub, a, b, c, d);
+    r[0] = (int)a; r[1] = (int)b; r[2] = (int)c; r[3] = (int)d;
+#endif
+}
+
+unsigned long long xcr0() {
+#ifdef _WIN32
+    return _xgetbv(0);
+#else
+    return xgetbv_xsave();
+#endif
+}
+
 bool cpu_has_avx2() {
     int r[4];
-    __cpuid(r, 0);
+    cpuid(0, 0, r);
     if (r[0] < 7) return false;
-    __cpuid(r, 1);
+    cpuid(1, 0, r);
     const bool osxsave = (r[2] >> 27) & 1, avx = (r[2] >> 28) & 1, f16c = (r[2] >> 29) & 1, fma = (r[2] >> 12) & 1;
     const bool popcnt = (r[2] >> 23) & 1;
     if (!(osxsave && avx && f16c && fma && popcnt)) return false;
-    if ((_xgetbv(0) & 6) != 6) return false;  // OS saves YMM state
-    __cpuidex(r, 7, 0);
+    if ((xcr0() & 6) != 6) return false;  // OS saves YMM state
+    cpuid(7, 0, r);
     return (r[1] >> 5) & 1;                   // AVX2
 }
 
 bool cpu_has_sse41() {
     int r[4];
-    __cpuid(r, 1);
+    cpuid(1, 0, r);
     return ((r[2] >> 19) & 1) && ((r[2] >> 23) & 1);  // SSE4.1 + POPCNT
 }
 
-std::wstring exe_dir() {
+// The folder of the running executable and the astcenc decoder libraries (astcdec-<isa>-shared.dll, libastcdec-<isa>-shared.so) in it.
+std::string exe_dir() {
+#ifdef _WIN32
     wchar_t buf[MAX_PATH * 2];
     DWORD n = GetModuleFileNameW(nullptr, buf, (DWORD)(sizeof buf / sizeof buf[0]));
     std::wstring s(buf, n);
     size_t p = s.find_last_of(L"\\/");
-    return p == std::wstring::npos ? L"." : s.substr(0, p);
+    std::wstring d = p == std::wstring::npos ? L"." : s.substr(0, p);
+    int len = WideCharToMultiByte(CP_UTF8, 0, d.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    std::string out(len > 0 ? len - 1 : 0, '\0');
+    if (len > 1) WideCharToMultiByte(CP_UTF8, 0, d.c_str(), -1, out.data(), len, nullptr, nullptr);
+    return out;
+#else
+    char buf[4096];
+    const ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    if (n <= 0) return ".";
+    std::string s(buf, (size_t)n);
+    const size_t p = s.find_last_of('/');
+    return p == std::string::npos ? "." : s.substr(0, p);
+#endif
 }
 
-std::wstring widen(const char* s) {
-    int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
-    std::wstring w(n > 0 ? n - 1 : 0, L'\0');
-    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s, -1, w.data(), n);
-    return w;
-}
-
-bool load_isa(const std::wstring& dir, const char* isa, AstcApi& api) {
-    std::wstring path = dir + L"\\astcdec-" + widen(isa) + L"-shared.dll";
+bool load_isa(const std::string& dir, const char* isa, AstcApi& api) {
+#ifdef _WIN32
+    std::string utf8 = dir + "\\astcdec-" + isa + "-shared.dll";
+    int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
+    std::wstring path(n > 0 ? n - 1 : 0, L'\0');
+    if (n > 1) MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, path.data(), n);
     HMODULE m = LoadLibraryW(path.c_str());
+#define NXA2B_SYM(m, name) GetProcAddress(m, name)
+#else
+    const std::string path = dir + "/libastcdec-" + isa + "-shared.so";
+    void* m = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+#define NXA2B_SYM(m, name) dlsym(m, name)
+#endif
     if (!m) return false;
-    api.module = m;
+    api.module = (void*)m;
     api.isa = isa;
-    api.config_init = (decltype(api.config_init))GetProcAddress(m, "astcenc_config_init");
-    api.context_alloc = (decltype(api.context_alloc))GetProcAddress(m, "astcenc_context_alloc");
-    api.decompress = (decltype(api.decompress))GetProcAddress(m, "astcenc_decompress_image");
-    api.context_free = (decltype(api.context_free))GetProcAddress(m, "astcenc_context_free");
-    api.error_string = (decltype(api.error_string))GetProcAddress(m, "astcenc_get_error_string");
+    api.config_init = (decltype(api.config_init))NXA2B_SYM(m, "astcenc_config_init");
+    api.context_alloc = (decltype(api.context_alloc))NXA2B_SYM(m, "astcenc_context_alloc");
+    api.decompress = (decltype(api.decompress))NXA2B_SYM(m, "astcenc_decompress_image");
+    api.context_free = (decltype(api.context_free))NXA2B_SYM(m, "astcenc_context_free");
+    api.error_string = (decltype(api.error_string))NXA2B_SYM(m, "astcenc_get_error_string");
     if (api.config_init && api.context_alloc && api.decompress && api.context_free && api.error_string) return true;
+#ifdef _WIN32
     FreeLibrary(m);
+#else
+    dlclose(m);
+#endif
     api = AstcApi{};
     return false;
 }
+#undef NXA2B_SYM
 
 a2b_status ensure_astc(const char* dll_dir) {
     std::lock_guard<std::mutex> lock(g_astc_mutex);
     if (g_astc.module) return A2B_OK;
-    std::wstring dir = dll_dir ? widen(dll_dir) : exe_dir();
+    std::string dir = dll_dir ? std::string(dll_dir) : exe_dir();
     std::vector<const char*> order;
     if (cpu_has_avx2()) order.push_back("avx2");
     if (cpu_has_sse41()) order.push_back("sse4.1");
@@ -137,7 +188,7 @@ const char* a2b_status_string(a2b_status s) {
         case A2B_ERR_ARGS: return "bad arguments";
         case A2B_ERR_SIZE: return "buffer size does not match dimensions";
         case A2B_ERR_UNSUPPORTED: return "unsupported format";
-        case A2B_ERR_NO_ASTC_LIB: return "astcdec-*-shared.dll not found";
+        case A2B_ERR_NO_ASTC_LIB: return "the astcdec-*-shared decoder libraries (.dll / .so) were not found";
         case A2B_ERR_DECODE: return "astcenc decode error";
     }
     return "?";
