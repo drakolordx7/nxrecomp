@@ -105,6 +105,16 @@ pwsh -File tools\setup\scripts\build.ps1 -Game games\<id> -Test   # CMake + Ninj
 You need Visual Studio Build Tools, LLVM (clang-cl), CMake and Ninja. The program is plain Win32 so it does not depend on
 a graphics driver and works on a machine whose driver is not set up yet. Licences of the parts it uses are in `THIRD_PARTY.md`.
 
+On Linux x86-64 the command line tool and the tests build too (the window is Windows only). It needs clang, lld, CMake, Ninja, Python 3 and Intel `ispc`
+(for the texture encoder) on PATH:
+
+```sh
+python3 wt.py main --game <id> --setup --test      # from NX; or: cmake --preset linux-release -DNX_GAME_DIR=games/<id>  (in tools/setup)
+```
+
+Output is `build/setup-<id>-linux/bin/<id>_setup_cli`. It looks for `prod.keys` in `~/.config` and `~/.local/share` (yuzu, Eden, suyu, Sudachi, Citron,
+Ryujinx), `~/.switch`, next to the program and in the current folder; Ctrl+C stops it the same way as on Windows.
+
 ## Structure: base installer and game hook (developers)
 
 The tool is built for one game (`-Game <games/id>`, CMake `NX_GAME_DIR`; its manifest `game.json` gives the title id, the supported

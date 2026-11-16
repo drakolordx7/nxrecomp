@@ -12,6 +12,7 @@
 #include <zstd.h>
 #endif
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -19,6 +20,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <chrono>
 #include <cstdio>
@@ -122,9 +127,11 @@ std::string build_pack_bytes(const std::vector<PackEntry>& entries) {
     return out + records + data;
 }
 
-// Runs exe with args (already quoted). Returns the exit code, or -1 if the process could not be started.
-int run_process(const std::wstring& exe, const std::wstring& args) {
-    std::wstring cmd = L"\"" + exe + L"\" " + args;
+// Runs exe with args. Returns the exit code, or -1 if the process could not be started.
+int run_process(const std::string& exe, const std::vector<std::string>& args) {
+#ifdef _WIN32
+    std::wstring cmd = L"\"" + widen(exe) + L"\"";
+    for (const std::string& a : args) cmd += L" \"" + widen(a) + L"\"";
     std::vector<wchar_t> buf(cmd.begin(), cmd.end());
     buf.push_back(L'\0');
     STARTUPINFOW si{};
@@ -137,24 +144,23 @@ int run_process(const std::wstring& exe, const std::wstring& args) {
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return static_cast<int>(code);
-}
-
-void remove_tree(const std::wstring& dir) {
-    WIN32_FIND_DATAW fd{};
-    HANDLE h = FindFirstFileW((dir + L"\\*").c_str(), &fd);
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
-            std::wstring name = fd.cFileName;
-            if (name == L"." || name == L"..") continue;
-            std::wstring full = dir + L"\\" + name;
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                remove_tree(full);
-            else
-                DeleteFileW(full.c_str());
-        } while (FindNextFileW(h, &fd));
-        FindClose(h);
+#else
+    std::vector<std::string> argv_s{exe};
+    argv_s.insert(argv_s.end(), args.begin(), args.end());
+    std::vector<char*> argv;
+    for (std::string& a : argv_s) argv.push_back(a.data());
+    argv.push_back(nullptr);
+    const pid_t pid = fork();
+    if (pid < 0) return -1;
+    if (pid == 0) {
+        execv(exe.c_str(), argv.data());
+        _exit(127);
     }
-    RemoveDirectoryW(dir.c_str());
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status) == 127 ? -1 : WEXITSTATUS(status);
+    return 1;
+#endif
 }
 
 // ---- fileio.h
@@ -208,20 +214,29 @@ void test_fileio(const std::string& root) {
     CHECK(same_content(o, "new"));
 
     CHECK(free_disk_bytes(root) > 0);
-    CHECK(free_disk_bytes(path_join(root, "no\\such\\deep\\folder")) > 0);
+    CHECK(free_disk_bytes(path_join(root, "no/such/deep/folder")) > 0);
+#ifdef _WIN32
     CHECK_EQ(path_join("D:\\a", "b.txt"), std::string("D:\\a\\b.txt"));
     CHECK_EQ(path_join("D:\\a\\", "\\b"), std::string("D:\\a\\b"));
+#else
+    CHECK_EQ(path_join("/a", "b.txt"), std::string("/a/b.txt"));
+    CHECK_EQ(path_join("/a/", "/b"), std::string("/a/b"));
+#endif
     CHECK_EQ(path_join("", "b"), std::string("b"));
     std::string sized = path_join(root, "size.txt");
     CHECK(write_text_file_atomic(sized, "12345"));
     CHECK(file_size_is(sized, 5));
     CHECK(!file_size_is(sized, 4));
     CHECK(!file_size_is(root, 0));
-    std::string deep = path_join(root, "d1\\d2\\d3");
+    std::string deep = path_join(root, "d1/d2/d3");
     CHECK(create_dirs(deep));
     CHECK(create_dirs(deep));
     CHECK(path_exists(deep));
+#ifdef _WIN32
     CHECK(path_exists(path_join(exe_dir(), "test_shadercache.exe")));
+#else
+    CHECK(path_exists(path_join(exe_dir(), "test_shadercache")));
+#endif
 }
 
 // ---- shadercache.h
@@ -353,18 +368,17 @@ void test_pack_source(const std::string& root) {
 #endif
 
     // A pack built by make_shader_pack.py from the folder, when Python can be started.
-    const std::wstring py = nxs_test::python_exe().wstring();
-    const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
-    if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
-        std::printf("SKIP python pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
+    const std::string py = path_utf8(nxs_test::python_exe());
+    const std::string script = path_utf8((std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred());
+    if (!path_exists(py) || !path_exists(script)) {
+        std::printf("SKIP python pack check: %s or %s is not present\n", py.c_str(), script.c_str());
         return;
     }
     const std::string src = path_join(root, "src");
     const std::string py_pack = path_join(root, "py.mprshc");
-    const std::wstring args = L"\"" + script + L"\" \"" + widen(src) + L"\" \"" + widen(py_pack) + L"\"";
-    int code = run_process(py, args);
+    int code = run_process(py, {script, src, py_pack});
     if (code < 0) {
-        std::printf("SKIP python pack check: could not start %s\n", narrow(py).c_str());
+        std::printf("SKIP python pack check: could not start %s\n", py.c_str());
         return;
     }
     CHECK_EQ(code, 0);
@@ -456,18 +470,17 @@ void test_zstd_pack(const std::string& root) {
     CHECK(!path_exists(path_join(hash_dest, files[2].name)));
 
     // A pack built by make_shader_pack.py --zstd from the folder, when Python can be started.
-    const std::wstring py = nxs_test::python_exe().wstring();
-    const std::wstring script = (std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred().wstring();
-    if (!path_exists(narrow(py)) || !path_exists(narrow(script))) {
-        std::printf("SKIP python zstd pack check: %s or %s is not present\n", narrow(py).c_str(), narrow(script).c_str());
+    const std::string py = path_utf8(nxs_test::python_exe());
+    const std::string script = path_utf8((std::filesystem::path(__FILE__).parent_path().parent_path() / "scripts" / "make_shader_pack.py").make_preferred());
+    if (!path_exists(py) || !path_exists(script)) {
+        std::printf("SKIP python zstd pack check: %s or %s is not present\n", py.c_str(), script.c_str());
         return;
     }
     const std::string src = path_join(root, "src");
     const std::string py_pack = path_join(root, "py_zstd.mprshc");
-    const std::wstring args = L"\"" + script + L"\" \"" + widen(src) + L"\" \"" + widen(py_pack) + L"\" --zstd";
-    const int code = run_process(py, args);
+    const int code = run_process(py, {script, src, py_pack, "--zstd"});
     if (code < 0) {
-        std::printf("SKIP python zstd pack check: could not start %s\n", narrow(py).c_str());
+        std::printf("SKIP python zstd pack check: could not start %s\n", py.c_str());
         return;
     }
     CHECK_EQ(code, 0);
@@ -499,15 +512,13 @@ int run_install(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     if (argc >= 4 && std::string(argv[1]) == "install") return run_install(argc, argv);
-    wchar_t tmp[MAX_PATH + 1];
-    DWORD n = GetTempPathW(MAX_PATH + 1, tmp);
-    if (n == 0 || n > MAX_PATH) {
+    std::error_code tec;
+    const std::string base = path_utf8(std::filesystem::temp_directory_path(tec));
+    if (tec || base.empty()) {
         std::printf("FAIL: no temp folder\n");
         return 1;
     }
-    std::string base = narrow(std::wstring(tmp, n));
-    std::string root = path_join(base, "nxs_shc_test_" + std::to_string(GetCurrentProcessId()) + "_" +
-                                           std::to_string(GetTickCount64()));
+    const std::string root = path_join(base, "nxs_shc_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     if (!create_dirs(root)) {
         std::printf("FAIL: cannot create temp folder %s\n", root.c_str());
         return 1;
@@ -520,6 +531,6 @@ int main(int argc, char** argv) {
     test_zstd_pack(root);
 #endif
 
-    remove_tree(widen(root));
+    std::filesystem::remove_all(fs_path(root), tec);
     return TEST_SUMMARY("test_shadercache");
 }

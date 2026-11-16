@@ -45,8 +45,8 @@ DiskEstimate disk_estimate_of(const SetupOptions& o, const std::string& shader_s
     DiskEstimate e;
     if (o.hook && o.hook->disk_estimate) e = o.hook->disk_estimate();
     std::error_code ec;
-    if (!e.shader_cache && !shader_src.empty() && std::filesystem::is_regular_file(widen(shader_src), ec))
-        e.shader_cache = std::filesystem::file_size(widen(shader_src), ec);
+    if (!e.shader_cache && !shader_src.empty() && std::filesystem::is_regular_file(fs_path(shader_src), ec))
+        e.shader_cache = std::filesystem::file_size(fs_path(shader_src), ec);
     return e;
 }
 
@@ -319,8 +319,7 @@ std::unique_ptr<Opened> open_dump(const SetupOptions& o) {
 }
 
 u64 bytes_missing(const std::string& dir, const std::string& rel, u64 size) {
-    std::string path = path_join(dir, rel);
-    for (char& c : path) if (c == '/') c = '\\';
+    const std::string path = native_path(path_join(dir, rel));
     return file_size_is(path, size) ? 0 : size;
 }
 
@@ -358,11 +357,6 @@ std::string sha_of_file(const std::string& path, const std::function<bool()>& ca
     return sha_of_storage(*open_file_storage(path), cancelled);
 }
 
-std::string to_win(std::string p) {
-    for (char& c : p) if (c == '/') c = '\\';
-    return p;
-}
-
 // Relative output path, '/' separated and lower case (Windows names do not differ by case).
 std::string lower_rel(std::string s) {
     for (char& c : s) c = c == '\\' ? '/' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -374,15 +368,15 @@ std::string lower_rel(std::string s) {
 int remove_files_not_in(const std::string& out, const std::vector<std::string>& subs, const std::set<std::string>& keep) {
     namespace fs = std::filesystem;
     int n = 0;
-    const fs::path root(widen(out));
+    const fs::path root(fs_path(out));
     for (const std::string& sub : subs) {
         std::error_code ec;
-        const fs::path top = root / widen(sub);
+        const fs::path top = root / fs_path(sub);
         if (!fs::is_directory(top, ec)) continue;
         std::vector<fs::path> dirs;
         for (fs::recursive_directory_iterator it(top, ec), end; !ec && it != end; it.increment(ec)) {
             if (it->is_directory(ec)) { dirs.push_back(it->path()); continue; }
-            const std::string rel = lower_rel(narrow(it->path().lexically_relative(root).wstring()));
+            const std::string rel = lower_rel(path_utf8(it->path().lexically_relative(root)));
             if (!keep.count(rel) && fs::remove(it->path(), ec)) ++n;
         }
         std::sort(dirs.begin(), dirs.end(), [](const fs::path& a, const fs::path& b) { return a.native().size() > b.native().size(); });
@@ -425,7 +419,7 @@ bool shader_install_present(const SetupOptions& o, State& st) {
     std::string ini;
     if (!read_text_file(path_join(o.out_dir, o.profile.game_ini), ini) || ini.find("shader_cache = shader_cache/spirv") == std::string::npos)
         return false;
-    return path_exists(path_join(path_join(o.out_dir, "shader_cache\\spirv"), "results.tsv"));
+    return path_exists(path_join(path_join(o.out_dir, "shader_cache/spirv"), "results.tsv"));
 }
 
 bool shaders_wanted(const SetupOptions& o) { return *o.profile.shader_pack || !o.shader_cache_src.empty(); }
@@ -467,7 +461,7 @@ bool read_programs_file(const std::string& path, std::vector<nxfmt::ProgramHashe
 // verify_output asks for a rescan).
 void write_program_list(const SetupOptions& o, const std::function<bool()>& cancelled) {
     if (!o.hook || !o.hook->program_list) return;
-    const std::string path = to_win(path_join(o.out_dir, "shader_cache\\programs.bin"));
+    const std::string path = native_path(path_join(o.out_dir, "shader_cache/programs.bin"));
     if (!o.verify_output) {
         std::vector<nxfmt::ProgramHashes> have;
         if (read_programs_file(path, have) && !have.empty()) {
@@ -621,7 +615,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                 st.set_meta("textures_done", "");
                 st.set_meta("rebuild", "1");
                 std::error_code ec;
-                std::filesystem::remove(widen(to_win(path_join(o.out_dir, "shader_cache\\programs.bin"))), ec);
+                std::filesystem::remove(fs_path(native_path(path_join(o.out_dir, "shader_cache/programs.bin"))), ec);
             }
         }
         const bool rebuild = st.get_meta("rebuild") == "1";
@@ -666,7 +660,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             std::atomic<u64> done{0};
             for (const PfsEntry& e : d->exefs->entries()) {
                 const std::string rel = "exefs/" + e.name;
-                const std::string dest = to_win(path_join(o.out_dir, rel));
+                const std::string dest = native_path(path_join(o.out_dir, rel));
                 StoragePtr src = d->exefs->open_file(e);
                 std::string sha;
                 if (file_is_done(dest, rel, e.size, st, verify_out, src.get(), cancelled, sha)) {
@@ -692,15 +686,15 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             for (auto& f : d->rom->files()) order.push_back({d->rom.get(), &f, &romfs_dir});
             std::sort(order.begin(), order.end(), [](const Job& a, const Job& b) { return a.f->offset < b.f->offset; });
             create_dirs(path_join(o.out_dir, "romfs"));
-            for (const std::string& dir : d->rom->dirs()) create_dirs(to_win(path_join(path_join(o.out_dir, "romfs"), dir)));
+            for (const std::string& dir : d->rom->dirs()) create_dirs(native_path(path_join(path_join(o.out_dir, "romfs"), dir)));
             for (auto& a : d->aoc) {
                 const size_t first = order.size();
                 for (auto& f : a.rom->files()) order.push_back({a.rom.get(), &f, &a.dir});
                 std::sort(order.begin() + first, order.end(), [](const Job& x, const Job& y) { return x.f->offset < y.f->offset; });
                 total += a.rom->total_file_bytes();
-                const std::string top = to_win(path_join(o.out_dir, a.dir));
+                const std::string top = native_path(path_join(o.out_dir, a.dir));
                 create_dirs(top);
-                for (const std::string& dir : a.rom->dirs()) create_dirs(to_win(path_join(top, dir)));
+                for (const std::string& dir : a.rom->dirs()) create_dirs(native_path(path_join(top, dir)));
             }
             t0 = begin(Stage::Romfs, total, "bytes");
             std::atomic<size_t> next{0};
@@ -719,7 +713,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                         if (i >= order.size()) return;
                         const RomfsFile& f = *order[i].f;
                         const std::string rel = *order[i].dir + "/" + f.path;
-                        const std::string dest = to_win(path_join(o.out_dir, rel));
+                        const std::string dest = native_path(path_join(o.out_dir, rel));
                         StoragePtr src = order[i].fs->open_file(f);
                         std::string sha;
                         if (file_is_done(dest, rel, f.size, st, verify_out, src.get(), [&] { return stop.load() || cancelled(); }, sha)) {
@@ -776,7 +770,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
                 if (have != want_marker && path_exists(cache_dir)) {
                     NXS_LOGI("The texture cache was made by an older converter: rebuilding it.");
                     std::error_code ec;
-                    for (std::filesystem::directory_iterator it(widen(cache_dir), ec), end; !ec && it != end; it.increment(ec))
+                    for (std::filesystem::directory_iterator it(fs_path(cache_dir), ec), end; !ec && it != end; it.increment(ec))
                         if (it->is_directory()) std::filesystem::remove_all(it->path(), ec);
                     prev.clear();
                     st.set_meta("textures_done", "");
@@ -829,7 +823,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             const std::string src = find_shader_source(o);
             t0 = begin(Stage::ShaderCache, 0, "files");
             if (src.empty() && shader_install_present(o, st)) {
-                NXS_LOGI("No shader pack given; keeping the shaders already installed in shader_cache\\spirv.");
+                NXS_LOGI("No shader pack given; keeping the shaders already installed in shader_cache/spirv.");
                 shaders = true;
             } else if (src.empty() && !shaders_wanted(o)) {
                 NXS_LOGI("This game ships no shader pack; no shaders to install.");
@@ -839,7 +833,7 @@ SetupReport run_setup(const SetupOptions& o, Reporter& r) {
             } else {
                 bool announced = false;
                 ShaderInstallResult sr = install_shader_cache(
-                    src, path_join(o.out_dir, "shader_cache\\spirv"), o.verify_output,
+                    src, path_join(o.out_dir, "shader_cache/spirv"), o.verify_output,
                     [&](u64 done, u64 total) {
                         if (!announced) { announced = true; r.stage_begin(Stage::ShaderCache, stage_name(Stage::ShaderCache), total, "files"); }
                         r.stage_progress(done);

@@ -17,12 +17,14 @@ foreach(t programs texcache)
     nxs_test_in(${_mpr_setup}/tests ${t} nxs_core)
 endforeach()
 
-# nx_texq: real-data BC7 quality probe (texq.cpp, scripts/check_texquality.py); uses the oracle's reference BC7 decoder.
-add_executable(nx_texq ${_mpr_setup}/texq.cpp)
-target_include_directories(nx_texq PRIVATE ${NXS_SRC} ${BC7_TP} ${_mpr_setup})
-target_link_libraries(nx_texq PRIVATE nxs_core)
-target_compile_definitions(nx_texq PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
-foreach(isa avx2 sse4.1 sse2)
-    add_custom_command(TARGET nx_texq POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:nx_texq>)
-endforeach()
+if(NX_PLATFORM STREQUAL "win32")   # texq.cpp has a wmain entry point
+    # nx_texq: real-data BC7 quality probe (texq.cpp, scripts/check_texquality.py); uses the oracle's reference BC7 decoder.
+    add_executable(nx_texq ${_mpr_setup}/texq.cpp)
+    target_include_directories(nx_texq PRIVATE ${NXS_SRC} ${BC7_TP} ${_mpr_setup})
+    target_link_libraries(nx_texq PRIVATE nxs_core)
+    target_compile_definitions(nx_texq PRIVATE _CRT_SECURE_NO_WARNINGS UNICODE _UNICODE)
+    foreach(isa avx2 sse4.1 sse2)
+        add_custom_command(TARGET nx_texq POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:astcdec-${isa}-shared> $<TARGET_FILE_DIR:nx_texq>)
+    endforeach()
+endif()

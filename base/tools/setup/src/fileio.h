@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Small file helpers shared by the pipeline: atomic writes (write to "<name>.part", rename when complete), size and existence
-// checks, folder creation, free disk space, UTF-8 path helpers. Plain Win32; paths are UTF-8 everywhere.
+// checks, folder creation, free disk space, UTF-8 path helpers. Win32 and POSIX; paths are UTF-8 everywhere.
 #pragma once
 #include <array>
+#include <filesystem>
 #include <string>
 
 #include "common.h"
@@ -32,7 +33,7 @@ public:
 private:
     std::string final_path_;
     std::string part_path_;
-    void* handle_ = nullptr;   // a Win32 HANDLE, kept as void* so windows.h stays out of this header
+    void* handle_ = nullptr;   // a Win32 HANDLE (the file descriptor + 1 on POSIX), kept as void* so no system header is needed here
     u64 bytes_ = 0;
     bool finished_ = false;
     Sha256 sha_;
@@ -51,8 +52,14 @@ bool read_text_file(const std::string& utf8, std::string& out);
 // Writes content through AtomicFileWriter. False on any failure (the old file, if any, is kept).
 bool write_text_file_atomic(const std::string& utf8, const std::string& content);
 
-// Joins with one '\\' between the parts; extra separators at the join are removed. An empty part is skipped.
+// Joins with one native separator ('\\' on Windows, '/' elsewhere) between the parts; extra separators at the join are removed. An empty
+// part is skipped.
 std::string path_join(const std::string& a, const std::string& b);
+// The path with '/' turned into the native separator (Windows: '\\'; elsewhere unchanged).
+std::string native_path(std::string p);
+// UTF-8 string <-> std::filesystem::path (the portable replacement of widen() / narrow(path.wstring())).
+std::filesystem::path fs_path(const std::string& utf8);
+std::string path_utf8(const std::filesystem::path& p);
 // Folder of the running executable, UTF-8, without a trailing separator.
 std::string exe_dir();
 

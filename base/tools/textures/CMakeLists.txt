@@ -59,6 +59,10 @@ target_include_directories(bc7e_ispc INTERFACE ${BC7E_OUT})
 add_library(astc2bc7 STATIC src/a2b.cpp ${BC7E_OUT}/bc7e_ispc.h)
 target_include_directories(astc2bc7 PUBLIC include PRIVATE ${TP}/astc-encoder/Source)
 target_link_libraries(astc2bc7 PUBLIC bc7e_ispc)
+if(NX_PLATFORM STREQUAL "linux")
+    find_package(Threads REQUIRED)
+    target_link_libraries(astc2bc7 PUBLIC Threads::Threads ${CMAKE_DL_LIBS})   # the decoder libraries are dlopen'ed
+endif()
 target_compile_definitions(astc2bc7 PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_compile_options(astc2bc7 PRIVATE ${NX_RT_COMPILE_OPTIONS})
 

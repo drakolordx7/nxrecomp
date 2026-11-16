@@ -10,16 +10,9 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 
 #include "crypto.h"
 #include "fileio.h"
@@ -136,16 +129,19 @@ std::vector<Item> scan_folder(const std::string& src) {
         u64 size;
     };
     std::vector<Raw> raw;
-    WIN32_FIND_DATAW fd{};
-    HANDLE h = FindFirstFileW(widen(path_join(src, "*")).c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) fail(Fail::Input, "Cannot read the folder \"%s\".", src.c_str());
-    do {
-        std::string name = narrow(fd.cFileName);
-        if (name == "." || name == "..") continue;
-        u64 size = (static_cast<u64>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
-        raw.push_back({name, (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, size});
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
+    {
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::directory_iterator it(fs_path(src), ec), end;
+        if (ec) fail(Fail::Input, "Cannot read the folder \"%s\".", src.c_str());
+        for (; it != end; it.increment(ec)) {
+            if (ec) fail(Fail::Input, "Cannot read the folder \"%s\".", src.c_str());
+            std::error_code e2;
+            const bool is_dir = it->is_directory(e2);
+            const u64 size = is_dir ? 0 : static_cast<u64>(it->file_size(e2));
+            raw.push_back({path_utf8(it->path().filename()), is_dir, e2 ? 0 : size});
+        }
+    }
 
     bool has_results = std::any_of(raw.begin(), raw.end(), [](const Raw& r) { return r.name == kResults; });
     if (!has_results) fail(Fail::Input, "%s does not contain a shader cache (results.tsv is missing)", src.c_str());
@@ -257,9 +253,9 @@ bool dest_matches(const std::string& path, const std::array<u8, 32>& digest) {
 ShaderInstallResult install_shader_cache(const std::string& src_utf8, const std::string& dest_dir_utf8, bool verify,
                                          const std::function<void(u64 done, u64 total)>& progress,
                                          const std::function<bool()>& cancelled) {
-    DWORD attr = GetFileAttributesW(widen(src_utf8).c_str());
-    if (attr == INVALID_FILE_ATTRIBUTES) fail(Fail::Input, "Cannot find the shader cache at \"%s\".", src_utf8.c_str());
-    const bool folder = (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    std::error_code src_ec;
+    if (!std::filesystem::exists(fs_path(src_utf8), src_ec)) fail(Fail::Input, "Cannot find the shader cache at \"%s\".", src_utf8.c_str());
+    const bool folder = std::filesystem::is_directory(fs_path(src_utf8), src_ec);
 
     std::vector<Item> items;
     StoragePtr pack;

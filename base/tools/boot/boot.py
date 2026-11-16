@@ -8,6 +8,8 @@ takes the game and the base from the worktree NX\wt\NAME instead (a worktree is 
 The exe, the lifted libraries, the RomFS and the run folder follow base docs\BUILD.md:
   exe    NX\build\<checkout name>\<id>\release\<files.exe of game.json>   (checkout name: main, or the worktree's name: NX\build\x\mpr)
   libs   NX\games\<id>\work\build\<id>_<name> when it exists (a worktree's own lift), else ...\work\build\<id>
+  Linux (the same script under python3): exe NX/build/<name>/linux/<id>/<files.exe without .exe>, libs NX/games/<id>/work/build/linux/<id>[_<name>];
+  the build is base scripts/nx_build.py (docs/BUILD.md); a detached run gets its own session
   run    NX\games\<id>\work\run (--run NAME: work\run_NAME), log <files.log of game.json>, previous log <log>.prev
   data   game\ and work\ are read from NX\games\<id> of the main checkout (a worktree has none), or from the game folder when it holds them
 The test-run rules (scripts\testrun_env.py: headless, 1280x720, NXRT_NVN_POOL_MIRROR=off, NXRT_AUDIO_SINK=paced) and a timeout apply. What one game needs on
@@ -41,16 +43,33 @@ Other tools start a game the same way through this module (sys.path: base\tools\
 launch() adds the data env of every run of that game (RomFS, save folder, shader cache, BC7 cache, regions file, the presets' env), the
 exe's --log and --exefs; the caller adds only what is its own. Presets key "regions" names the guest-address table for scripted runs.
 """
-import argparse, json, os, re, subprocess, sys, time, collections
+import argparse, importlib.util, json, os, re, shutil, subprocess, sys, time, collections
 
 BASE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(BASE_ROOT, 'scripts'))
-import nxpaths
+# base/scripts/nxpaths.py under its own name: nxpaths.py (the `import nxpaths` of live.py, playtest.py) must not shadow it
+_spec = importlib.util.spec_from_file_location('nx_base_paths', os.path.join(BASE_ROOT, 'scripts', 'nxpaths.py'))
+nxpaths = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(nxpaths)
 from testrun_env import testrun_env
 
-NX = nxpaths.NX_ROOT        # the main checkout: games\<id>\game and work (the data), build\ and wt (a worktree has none)
-CXXFILT = os.path.join(os.environ.get('LLVM_BIN') or os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'LLVM', 'bin'),
-                       'llvm-cxxfilt.exe')
+IS_WIN = nxpaths.IS_WINDOWS
+NX = nxpaths.NX_ROOT        # the main checkout: games/<id>/game and work (the data), build/ and wt (a worktree has none)
+
+
+def find_cxxfilt():
+    """llvm-cxxfilt (Windows: LLVM_BIN, else Program Files; Linux: PATH, versioned names too) or c++filt; None when there is none."""
+    if IS_WIN:
+        d = os.environ.get('LLVM_BIN') or os.path.join(os.environ.get('ProgramFiles', 'C:/Program Files'), 'LLVM', 'bin')
+        return os.path.join(d, 'llvm-cxxfilt.exe')
+    for n in ['llvm-cxxfilt'] + ['llvm-cxxfilt-%d' % v for v in range(25, 17, -1)] + ['c++filt']:
+        p = shutil.which(n)
+        if p:
+            return p
+    return None
+
+
+CXXFILT = find_cxxfilt()
 annotate = lambda text: text      # replaced by the game's own address namer (load_addrname)
 
 
@@ -81,18 +100,21 @@ class Game:
         own_data = os.path.isdir(os.path.join(self.dir, 'game')) or os.path.isdir(os.path.join(self.dir, 'work'))
         self.data = self.dir if own_data else os.path.join(NX, 'games', self.id)
         self.base = os.path.abspath(base or os.path.join(self.checkout, 'base'))
-        self.build_dir = os.path.join(NX, 'build', self.name, self.id, 'release')
+        # Windows: build/<name>/<id>/release. Linux: build/<name>/linux/<id> (base scripts/nx_build.py)
+        self.build_dir = os.path.join(nxpaths.build_dir(self.name), self.id) if not IS_WIN else os.path.join(NX, 'build', self.name, self.id, 'release')
         files = self.man.get('files', {})
-        self.exe_name = files.get('exe', self.id + '.exe')
+        self.exe_name = nxpaths.exe_name(files.get('exe', self.id + '.exe'))      # the manifest spells Windows names; no .exe on Linux
         self.exe = os.path.abspath(exe) if exe else os.path.join(self.build_dir, self.exe_name)
         if os.path.isdir(self.exe):
             self.exe = os.path.join(self.exe, self.exe_name)
         self.exe_dir = os.path.dirname(self.exe)
         self.log_name = files.get('log', self.id + '.log')
-        libs = os.path.join(self.data, 'work', 'build', self.id)
-        own = os.path.join(self.data, 'work', 'build', self.id + '_' + topic) if topic else ''
+        lib_root = os.path.join(self.data, 'work', 'build') if IS_WIN else os.path.join(self.data, 'work', 'build', 'linux')
+        libs = os.path.join(lib_root, self.id)
+        own = os.path.join(lib_root, self.id + '_' + topic) if topic else ''
         self.libs = os.path.abspath(lib_dir) if lib_dir else (own if own and os.path.isdir(own) else libs)
-        self.run = os.path.join(self.data, 'work', 'run_' + run if run else 'run')
+        run_base = 'run' if IS_WIN else 'run_linux'        # Linux runs keep their own folder (saves, logs) beside the Windows one
+        self.run = os.path.join(self.data, 'work', run_base + '_' + run if run else run_base)
         pf = os.path.join(self.dir, 'tools', 'boot', 'presets.json')
         self.presets = json.load(open(pf, encoding='utf-8')) if os.path.isfile(pf) else {}
 
@@ -129,7 +151,7 @@ def sh(cmd, **kw):
 
 def demangle(text):
     names = set(re.findall(r'\b_Z[A-Za-z0-9_$.]+', text))
-    if not names or not os.path.exists(CXXFILT):
+    if not names or not CXXFILT or not (os.path.exists(CXXFILT) or shutil.which(CXXFILT)):
         return text
     try:
         out = subprocess.run([CXXFILT] + sorted(names), capture_output=True, text=True, timeout=30).stdout.splitlines()
@@ -145,6 +167,13 @@ def demangle(text):
 def build_cmds(g, libs):
     """[(label, command line, env additions, cwd)]: the lift (with --libs) and the exe build of base docs\\BUILD.md."""
     cmds = []
+    if not IS_WIN:      # Linux: the one driver, base scripts/nx_build.py (libraries and exe)
+        drv = [sys.executable, os.path.join(g.base, 'scripts', 'nx_build.py'), g.name, '--game', g.id, '--libs-at', g.libs]
+        if libs:
+            cmds.append(('game libraries (scripts/nx_build.py --libs)', ' '.join('"%s"' % c for c in drv + ['--libs', '--no-exe']),
+                         {'SCCACHE_DIR': os.path.join(g.data, 'work', 'build', 'sccache', 'linux')}, g.dir))
+        cmds.append(('%s (scripts/nx_build.py)' % os.path.basename(g.exe), ' '.join('"%s"' % c for c in drv), {}, g.dir))
+        return cmds
     if libs:
         bg = os.path.join(g.base, 'recomp', 'scripts', 'build_game.cmd')
         cmds.append(('game libraries (recomp\\scripts\\build_game.cmd)', '"%s" "%s"' % (bg, g.dir),
@@ -218,9 +247,13 @@ def launch(g, env=None, args=(), run_dir=None, cwd=None, stdout=None, detach=Fal
     e = dict(os.environ)
     e.update(game_env(g))
     e.update(env or {})
-    flags = 0x00000008 | 0x00000200 if detach else 0            # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen(command(g, args, run_dir), cwd=cwd or run_dir, env=e, stdout=stdout, stderr=subprocess.STDOUT if stdout else None,
-                         creationflags=flags)
+    kw = {}
+    if detach:
+        if IS_WIN:
+            kw['creationflags'] = 0x00000008 | 0x00000200       # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        else:
+            kw['start_new_session'] = True                      # its own session: it outlives this tool, no terminal signals
+    p = subprocess.Popen(command(g, args, run_dir), cwd=cwd or run_dir, env=e, stdout=stdout, stderr=subprocess.STDOUT if stdout else None, **kw)
     return Run(p, os.path.join(run_dir, g.log_name))
 
 

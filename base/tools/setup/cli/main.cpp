@@ -2,13 +2,19 @@
 // <id>_setup_cli: the setup as a command line tool (automation, headless machines, support).
 #include <atomic>
 #include <chrono>
+#include <atomic>
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 
+#include "fileio.h"
 #include "pipeline.h"
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -16,6 +22,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#endif
 
 #ifndef NXS_VERSION
 #define NXS_VERSION "dev"
@@ -26,6 +33,7 @@ using namespace nxs;
 namespace {
 
 std::atomic<bool> g_cancel{false};
+#ifdef _WIN32
 BOOL WINAPI on_ctrl(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT) {
         g_cancel = true;
@@ -33,6 +41,17 @@ BOOL WINAPI on_ctrl(DWORD type) {
     }
     return FALSE;
 }
+void install_cancel_handler() { install_cancel_handler(); }
+#else
+void on_signal(int) { g_cancel = true; }   // a lock-free atomic store: allowed in a signal handler
+void install_cancel_handler() {
+    struct sigaction sa{};
+    sa.sa_handler = on_signal;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+}
+#endif
 
 void usage() {
     std::puts(
@@ -128,10 +147,7 @@ std::vector<std::string> split_commas(const std::string& s) {
 
 }  // namespace
 
-int wmain(int argc, wchar_t** wargv) {
-    SetConsoleOutputCP(CP_UTF8);
-    std::vector<std::string> args;
-    for (int i = 1; i < argc; ++i) args.push_back(narrow(wargv[i]));
+int run_cli(const std::vector<std::string>& args) {
     SetupOptions o;
     bool check = false, find_keys = false;
     for (size_t i = 0; i < args.size(); ++i) {
@@ -142,7 +158,7 @@ int wmain(int argc, wchar_t** wargv) {
         };
         if (a == "--input") {
             const std::string v = val();
-            if (GetFileAttributesW(widen(v).c_str()) != INVALID_FILE_ATTRIBUTES) o.input_paths.push_back(v);   // a name with a comma
+            if (path_exists(v)) o.input_paths.push_back(v);   // a name with a comma
             else for (auto& p : split_commas(v)) o.input_paths.push_back(p);
         }
         else if (a == "--out") o.out_dir = val();
@@ -168,7 +184,7 @@ int wmain(int argc, wchar_t** wargv) {
     }
     if (setup_inputs(o).empty() || (o.out_dir.empty() && !check)) { usage(); return 1; }
     if (o.bc7_quality < 0 || o.bc7_quality > 6) { std::fprintf(stderr, "--quality must be 0..6\n"); return 1; }
-    SetConsoleCtrlHandler(on_ctrl, TRUE);
+    install_cancel_handler();
 
     ConsoleReporter rep;
     log_set_sink([&](LogLevel lv, const std::string& m) { rep.log((lv == LogLevel::Warn ? "warning: " : lv == LogLevel::Error ? "error: " : "") + m); },
@@ -198,3 +214,16 @@ int wmain(int argc, wchar_t** wargv) {
         return 1;
     }
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t** wargv) {
+    SetConsoleOutputCP(CP_UTF8);
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i) args.push_back(narrow(wargv[i]));
+    return run_cli(args);
+}
+#else
+int main(int argc, char** argv) {   // arguments are UTF-8 already
+    return run_cli(std::vector<std::string>(argv + 1, argv + argc));
+}
+#endif
