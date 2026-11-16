@@ -9,6 +9,7 @@
 
 #include "nxrt/diag.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/eh.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/runtime.h"
@@ -25,6 +26,7 @@ uint64_t& X(::Ctx* c, int n) { return c->x[n]; }
 
 void svc_exit_process(::Ctx* c) {
     NXLOG_I("svc", "svcExitProcess from thread %s", current_thread() ? current_thread()->name.c_str() : "?");
+    NXLOG_I("svc", "guest backtrace of svcExitProcess:\n%s", eh::guest_backtrace(c, 24).c_str());
     NXLOG_I("runtime", "state at svcExitProcess:\n%s", summary().c_str());
     log_flush();
     ExitProcess(0);

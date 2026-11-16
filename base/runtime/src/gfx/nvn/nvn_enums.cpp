@@ -323,7 +323,7 @@ VkImageViewType vk_view_type(int nvn_texture_target) {
         case NVN_TEXTURE_TARGET_RECTANGLE: return VK_IMAGE_VIEW_TYPE_2D;
         case NVN_TEXTURE_TARGET_CUBEMAP: return VK_IMAGE_VIEW_TYPE_CUBE;
         case NVN_TEXTURE_TARGET_CUBEMAP_ARRAY: return VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
-        case NVN_TEXTURE_TARGET_BUFFER: return VK_IMAGE_VIEW_TYPE_1D;
+        case NVN_TEXTURE_TARGET_BUFFER: return VK_IMAGE_VIEW_TYPE_2D;   // a one-row 2D image (vk_image_type)
         default: note_unknown(); return VK_IMAGE_VIEW_TYPE_2D;
     }
 }
