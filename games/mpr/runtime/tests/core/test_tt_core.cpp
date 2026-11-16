@@ -6,7 +6,10 @@
 // memory-region hashing, the warp sequence (host functions registered at the guest addresses of the real functions) and @shot.
 #include "test_framework.h"
 
-#include <windows.h>
+#include <filesystem>
+
+#include "nxrt/os/mem.h"
+#include "nxrt/os/time.h"
 
 #include <cmath>
 #include <cstdio>
@@ -68,9 +71,9 @@ struct Rig {
 
     explicit Rig(const char* name) {
         cur = this;
-        out = std::string("tt_test_out\\") + name;
-        mgr = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x4f0000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        cgs = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x101000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        out = std::string("tt_test_out/") + name;
+        mgr = static_cast<uint8_t*>(nxrt::os::mem::alloc(0x4f0000));
+        cgs = static_cast<uint8_t*>(nxrt::os::mem::alloc(0x101000));
         tt_guid_to_bytes(kWorld, gs);
         std::memcpy(worlds, gs, 16);
         tt_guid_to_bytes(kAreaA, worlds + 0x10);
@@ -94,8 +97,8 @@ struct Rig {
     }
     void set_loader_queue(int32_t n) { std::memcpy(loader + 0xe8, &n, 4); }      // the load list count
     ~Rig() {
-        VirtualFree(mgr, 0, MEM_RELEASE);
-        VirtualFree(cgs, 0, MEM_RELEASE);
+        nxrt::os::mem::free(mgr, 0x4f0000);
+        nxrt::os::mem::free(cgs, 0x101000);
         cur = nullptr;
     }
     static void put(uint8_t* where, const void* ptr) { const uint64_t v = reinterpret_cast<uint64_t>(ptr); std::memcpy(where, &v, 8); }
@@ -144,8 +147,8 @@ std::string slurp(const std::string& p) {
 void spit(const std::string& p, const std::string& t) { std::ofstream f(p, std::ios::binary); f << t; }
 
 std::string scriptfile(const char* name, const std::string& text) {
-    CreateDirectoryA("tt_test_out", nullptr);
-    const std::string p = std::string("tt_test_out\\") + name;
+    std::filesystem::create_directories("tt_test_out");
+    const std::string p = std::string("tt_test_out/") + name;
     spit(p, text);
     return p;
 }
@@ -226,25 +229,25 @@ NXTEST(script_runs_and_passes) {
     run_frames(r, 200);
     CHECK(finished());
     CHECK_EQ(r.exit_code_seen, 0);
-    const std::string res = slurp(r.out + "\\result.json");
+    const std::string res = slurp(r.out + "/result.json");
     CHECK(res.find("\"verdict\":\"pass\"") != std::string::npos);
     CHECK(res.find("\"label\":\"walked\"") != std::string::npos);
     // UP held for 20 frames (+ the frame the hold takes effect): y = 0.5 per frame
     CHECK(std::fabs(r.xf[7] - 10.0f) < 0.01f);
     CHECK(std::fabs(r.xf[11] - 0.375f) < 1e-6f);
-    CHECK(!hashes_of(slurp(r.out + "\\trace.jsonl")).empty());
+    CHECK(!hashes_of(slurp(r.out + "/trace.jsonl")).empty());
     shutdown();
 }
 
 NXTEST(replay_of_a_recording_is_bit_identical) {
     Rig a("rec");
     const std::string s = scriptfile("session.nxs", kSession);
-    const std::string rec = "tt_test_out\\session.nxin";
+    const std::string rec = "tt_test_out/session.nxin";
     begin(a, {{"script", s}, {"deterministic", "1"}, {"record", rec}});
     run_frames(a, 200);
     REQUIRE(a.exit_code_seen == 0);
     const uint64_t chain_script = chain_hash();
-    const auto trace_script = hashes_of(slurp(a.out + "\\trace.jsonl"));
+    const auto trace_script = hashes_of(slurp(a.out + "/trace.jsonl"));
     shutdown();
     CHECK(slurp(rec).find("# nxin 1") == 0);
 
@@ -256,7 +259,7 @@ NXTEST(replay_of_a_recording_is_bit_identical) {
         run_frames(b, 300);
         CHECK_EQ(b.exit_code_seen, 0);
         chain_replay[i] = chain_hash();
-        traces[i] = hashes_of(slurp(b.out + "\\trace.jsonl"));
+        traces[i] = hashes_of(slurp(b.out + "/trace.jsonl"));
         CHECK(std::fabs(b.xf[7] - 10.0f) < 0.01f);       // the replay moved the player the same way
         shutdown();
     }
@@ -275,7 +278,7 @@ NXTEST(two_script_runs_have_the_same_final_hash) {
         run_frames(r, 200);
         CHECK_EQ(r.exit_code_seen, 0);
         h[i] = chain_hash();
-        CHECK(slurp(r.out + "\\result.json").find("\"final_hash\":\"") != std::string::npos);
+        CHECK(slurp(r.out + "/result.json").find("\"final_hash\":\"") != std::string::npos);
         shutdown();
     }
     CHECK_EQ(h[0], h[1]);
@@ -289,7 +292,7 @@ void register_warp_fakes() {
     nxrt::fn_register(kBase + 0x40a820, fake_continue);
     nxrt::fn_register(kBase + 0xb01cc8, fake_gis);
     nxrt::fn_register(kBase + 0x410544, fake_quit);
-    spit("tt_test_out\\regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
+    spit("tt_test_out/regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
 }
 const char* kWarpScript = "2\n@warp frig frig_b\n@assert area == frig_b\n@pass\n";
 }
@@ -302,9 +305,9 @@ NXTEST(warp_runs_the_practice_mod_sequence) {
     nxrt::fn_register(kBase + 0x40a820, fake_continue);
     nxrt::fn_register(kBase + 0xb01cc8, fake_gis);
     nxrt::fn_register(kBase + 0x410544, fake_quit);
-    spit("tt_test_out\\regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
+    spit("tt_test_out/regions.tsv", std::string("# test table\nfrig\t") + kWorld + "\t\nfrig_b\t" + kWorld + "\t" + kAreaB + "\n");
     const std::string s = scriptfile("warp.nxs", "2\n@warp frig frig_b\n@assert area == frig_b\n@assert world == frig\n@pass\n");
-    begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}});
+    begin(r, {{"script", s}, {"regions", "tt_test_out/regions.tsv"}});
     run_frames(r, 100);
     CHECK_EQ(r.exit_code_seen, 0);
     CHECK_EQ(r.warp_calls, 1);                              // SetCurrentWorldId once, ContinueWithNewInitialState got the right arguments
@@ -324,7 +327,7 @@ NXTEST(warp_waits_for_the_idle_resource_loader) {
     r.set_loader_queue(3);
     register_warp_fakes();
     const std::string s = scriptfile("warpgate.nxs", kWarpScript);
-    begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}});
+    begin(r, {{"script", s}, {"regions", "tt_test_out/regions.tsv"}});
     run_frames(r, 60);
     CHECK_EQ(r.warp_calls, 0);                              // still busy: no warp
     CHECK(!finished());
@@ -349,8 +352,8 @@ NXTEST(warp_gate_can_be_turned_off_and_gives_up_after_its_limit) {
         r.set_loader_queue(5);                              // busy for the whole run
         register_warp_fakes();
         const std::string s = scriptfile("warpgate2.nxs", kWarpScript);
-        if (mode == 0) begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}, {"warp_wait_loader", "0"}});
-        else begin(r, {{"script", s}, {"regions", "tt_test_out\\regions.tsv"}, {"warp_loader_max_ms", "0"}});
+        if (mode == 0) begin(r, {{"script", s}, {"regions", "tt_test_out/regions.tsv"}, {"warp_wait_loader", "0"}});
+        else begin(r, {{"script", s}, {"regions", "tt_test_out/regions.tsv"}, {"warp_loader_max_ms", "0"}});
         run_frames(r, 100);
         CHECK_EQ(r.warp_calls, 1);
         CHECK_EQ(r.exit_code_seen, 0);

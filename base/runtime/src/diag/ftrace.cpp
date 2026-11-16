@@ -4,10 +4,6 @@
 //   # zone <id> <name>        # thread <index> <os tid> <name>        <t_ns> <dur_ns> <thread index> <zone id> <arg>
 #include "nxrt/ftrace.h"
 
-#include <windows.h>
-
-#include <intrin.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -19,6 +15,9 @@
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/log.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 
 namespace nxrt::ft {
 
@@ -54,16 +53,11 @@ size_t g_threads_written = 0;
 bool g_started = false;
 thread_local int t_index = -1;
 
-uint64_t qpc_freq() {
-    static const uint64_t f = [] { LARGE_INTEGER x; QueryPerformanceFrequency(&x); return static_cast<uint64_t>(x.QuadPart); }();
-    return f;
-}
-
 int thread_index() {
     if (t_index >= 0) return t_index;
     const uint16_t i = g_next_thread.fetch_add(1);
     if (i >= kMaxThreads) { t_index = static_cast<int>(kMaxThreads - 1); return t_index; }
-    g_thread_tids[i] = GetCurrentThreadId();
+    g_thread_tids[i] = os::thread_current_id();
     t_index = i;
     return t_index;
 }
@@ -87,7 +81,7 @@ void flush_locked() {
 
 void writer_main() {
     while (!g_stop.load()) {
-        for (int i = 0; i < 10 && !g_stop.load(); ++i) Sleep(100);
+        for (int i = 0; i < 10 && !g_stop.load(); ++i) os::sleep_ms(100);
         std::lock_guard<std::mutex> lk(g_mu);
         flush_locked();
     }
@@ -95,12 +89,7 @@ void writer_main() {
 
 }
 
-uint64_t now_ns() {
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    const uint64_t q = static_cast<uint64_t>(c.QuadPart), f = qpc_freq();
-    return (q / f) * 1000000000ull + ((q % f) * 1000000000ull) / f;
-}
+uint64_t now_ns() { return os::monotonic_ns(); }
 
 uint16_t zone_id(const char* name) {
     std::lock_guard<std::mutex> lk(g_mu);
@@ -139,16 +128,14 @@ std::thread g_sampler;
 // [prof] stall_ms = N: when no frame was presented for N ms, dump every thread's stack to <trace>.stacks (up to 4 times per stall).
 struct CpuSnap {
     std::vector<ThreadRecord> th;
-    std::vector<uint64_t> cyc;
+    std::vector<uint64_t> cpu_ns;   // CPU time each thread has used
 };
 
 CpuSnap take_snap() {
     CpuSnap s;
     std::vector<ThreadRecord> recs = diag_threads_dup();   // private handles: an unregistering thread cannot close ours mid-query
     for (const ThreadRecord& r : recs) {
-        ULONG64 c = 0;
-        if (r.host_handle) QueryThreadCycleTime(static_cast<HANDLE>(r.host_handle), &c);
-        s.cyc.push_back(c);
+        s.cpu_ns.push_back(r.host_handle ? os::thread_cpu_time_ns(r.host_handle) : 0);
     }
     s.th = recs;
     for (ThreadRecord& r : s.th) r.host_handle = nullptr;
@@ -156,26 +143,14 @@ CpuSnap take_snap() {
     return s;
 }
 
-double tsc_per_ns() {
-    LARGE_INTEGER a, b;
-    QueryPerformanceCounter(&a);
-    const unsigned long long c0 = __rdtsc();
-    Sleep(60);
-    QueryPerformanceCounter(&b);
-    const unsigned long long c1 = __rdtsc();
-    const double ns = static_cast<double>(b.QuadPart - a.QuadPart) * 1e9 / static_cast<double>(qpc_freq());
-    return ns > 0 ? static_cast<double>(c1 - c0) / ns : 3.0;
-}
-
 void sampler_main(std::string path) {
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return;
-    const double tpn = tsc_per_ns();
     uint64_t handled_frame = 0, prev_frame = 0;
     int dumps = 0;
     CpuSnap snap = take_snap();
     while (!g_stop.load()) {
-        Sleep(3);
+        os::sleep_ms(3);
         const uint64_t last = g_last_frame.load();
         if (!last) continue;
         if (last != handled_frame) {
@@ -185,8 +160,8 @@ void sampler_main(std::string path) {
                 std::vector<std::pair<double, std::string>> v;
                 for (size_t i = 0; i < now.th.size(); ++i)
                     for (size_t j = 0; j < snap.th.size(); ++j)
-                        if (now.th[i].host_tid == snap.th[j].host_tid && now.cyc[i] >= snap.cyc[j]) {
-                            v.emplace_back(static_cast<double>(now.cyc[i] - snap.cyc[j]) / tpn / 1e6, now.th[i].name);
+                        if (now.th[i].host_tid == snap.th[j].host_tid && now.cpu_ns[i] >= snap.cpu_ns[j]) {
+                            v.emplace_back(static_cast<double>(now.cpu_ns[i] - snap.cpu_ns[j]) / 1e6, now.th[i].name);
                             break;
                         }
                 std::sort(v.begin(), v.end(), [](auto& a, auto& b) { return a.first > b.first; });
@@ -226,10 +201,10 @@ void start_from_config() {
     const std::string path = config_get_str("prof", "trace", "");
     if (path.empty()) return;
     g_cap = static_cast<size_t>(config_get_int("prof", "trace_events", 6000000));
-    g_ev = static_cast<Ev*>(VirtualAlloc(nullptr, g_cap * sizeof(Ev), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    g_ev = static_cast<Ev*>(os::mem::alloc(g_cap * sizeof(Ev), os::mem::Prot::RW));
     if (!g_ev) return;
     g_file = std::fopen(path.c_str(), "wb");
-    if (!g_file) { VirtualFree(g_ev, 0, MEM_RELEASE); g_ev = nullptr; return; }
+    if (!g_file) { os::mem::free(g_ev, g_cap * sizeof(Ev)); g_ev = nullptr; return; }
     g_started = true;
     g_on.store(true);
     g_writer = std::thread(writer_main);

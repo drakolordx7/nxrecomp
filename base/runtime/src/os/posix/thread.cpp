@@ -9,11 +9,14 @@
 //    lowered. A new thread starts with the nice of the thread that created it. Adjacent bands differ by about a factor 1.5 to 2 in CPU
 //    share under contention, not by strict preemption as on Windows; a ready thread of a lower band still runs.
 //  * Dynamic priority boost: there is none to switch off (the placement flag is ignored).
-//  * Thread suspension and the system-wide thread states (thread_run_states): not provided.
+//  * Thread suspension: there is none. thread_sample interrupts the thread with a real-time signal instead (see the end of this file).
+//  * The system-wide thread states (thread_run_states): not provided.
 #include "nxrt/os/thread.h"
 
 #include <pthread.h>
 #include <sched.h>
+#include <signal.h>
+#include <ucontext.h>
 #include <setjmp.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -31,9 +34,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 #include "futex.h"
+#include "unwind.h"
+#include "nxrt/os/fault.h"
 
 namespace nxrt::os {
 namespace {
@@ -466,6 +472,115 @@ bool thread_run_states(std::vector<ThreadRunState>& out) {
 bool thread_run_states_supported() { return false; }
 
 void thread_boost_audio() { thread_set_band(thread_current(), PriorityBand::Highest); }
+
+// ---- sampling another thread ---------------------------------------------------------------------------------------------------
+// One request at a time (g_sample_mu). The sampled thread runs on_sample on its own stack (SA_RESTART | SA_NODEFER, no alternate stack), reads
+// the registers from the signal context, walks its stack with the unwinder into the slot and wakes the requester through a futex word.
+// A thread that does not answer within kSampleWaitNs (blocked signals, uninterruptible sleep) counts as NoSuspend.
+
+namespace {
+
+constexpr size_t kSlotFrames = 96;
+constexpr int64_t kSampleWaitNs = 200ll * 1000 * 1000;
+
+struct SampleSlot {
+    u32 target_tid;       // the thread that is asked (0: nobody)
+    u32 done;             // futex word: 1 once the slot is filled
+    size_t max;
+    size_t n;
+    uint64_t pc, sp, fp;
+    uint64_t frames[kSlotFrames];
+};
+
+SampleSlot g_slot;
+std::mutex g_sample_mu;
+std::once_flag g_sample_once;
+
+int sample_signal() { return SIGRTMIN + 3; }   // SIGRTMIN itself is the first one the C library leaves to programs
+
+void on_sample(int, siginfo_t*, void* uc_) {
+    const int saved_errno = errno;
+    SampleSlot& s = g_slot;
+    if (__atomic_load_n(&s.target_tid, __ATOMIC_ACQUIRE) == static_cast<u32>(syscall(SYS_gettid))) {
+        const ucontext_t* uc = static_cast<const ucontext_t*>(uc_);
+        s.pc = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RIP]);
+        s.sp = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RSP]);
+        s.fp = static_cast<uint64_t>(uc->uc_mcontext.gregs[REG_RBP]);
+        size_t n = detail::unwind_from_handler(s.pc, s.frames, s.max);
+        if (n == 0) {
+            s.frames[0] = s.pc;
+            n = 1;
+        }
+        s.n = n;
+        __atomic_store_n(&s.target_tid, 0u, __ATOMIC_RELAXED);
+        __atomic_store_n(&s.done, 1u, __ATOMIC_RELEASE);
+        posix::futex_wake_all(&s.done);
+    }
+    errno = saved_errno;
+}
+
+void install_sampler() {
+    struct sigaction sa;
+    std::memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = on_sample;
+    sa.sa_flags = SA_SIGINFO | SA_RESTART | SA_NODEFER;
+    sigemptyset(&sa.sa_mask);
+    sigaction(sample_signal(), &sa, nullptr);
+}
+
+}  // namespace
+
+SampleResult thread_sample(ThreadHandle h, ThreadSample* out, uint64_t* frames, size_t max_frames) {
+    *out = ThreadSample{};
+    if (!h) return SampleResult::NoSuspend;
+    Rec* r = static_cast<Rec*>(h);
+    if (__atomic_load_n(&r->done, __ATOMIC_ACQUIRE)) return SampleResult::NoSuspend;
+    std::call_once(g_sample_once, install_sampler);
+    fault_thread_init();                                 // the code-byte probe below goes through os::guard
+    std::lock_guard<std::mutex> lk(g_sample_mu);
+    SampleSlot& s = g_slot;
+    s.max = std::min<size_t>(max_frames, kSlotFrames);
+    s.n = 0;
+    __atomic_store_n(&s.done, 0u, __ATOMIC_RELAXED);
+    __atomic_store_n(&s.target_tid, r->tid, __ATOMIC_RELEASE);
+    if (syscall(SYS_tgkill, getpid(), static_cast<pid_t>(r->tid), sample_signal()) != 0) {
+        __atomic_store_n(&s.target_tid, 0u, __ATOMIC_RELAXED);
+        return SampleResult::NoSuspend;
+    }
+    timespec t0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    while (!__atomic_load_n(&s.done, __ATOMIC_ACQUIRE)) {
+        timespec t1;
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        const int64_t used = static_cast<int64_t>(t1.tv_sec - t0.tv_sec) * 1000000000ll + (t1.tv_nsec - t0.tv_nsec);
+        if (used >= kSampleWaitNs) {
+            __atomic_store_n(&s.target_tid, 0u, __ATOMIC_RELAXED);
+            if (!__atomic_load_n(&s.done, __ATOMIC_ACQUIRE)) return SampleResult::NoSuspend;
+            break;
+        }
+        posix::futex_wait(&s.done, 0, kSampleWaitNs - used);
+    }
+    out->pc = s.pc;
+    out->sp = s.sp;
+    out->fp = s.fp;
+    out->nframes = std::min(s.n, s.max);
+    std::memcpy(frames, s.frames, out->nframes * sizeof(uint64_t));
+    // A thread stopped in a system call sits at the syscall instruction (0F 05) when the kernel will restart it, just after it otherwise.
+    uint8_t b[2] = {0, 0};
+    out->in_syscall = (out->pc >= 2 && guard::read(reinterpret_cast<const void*>(out->pc - 2), b, 2) && b[0] == 0x0F && b[1] == 0x05) ||
+                      (guard::read(reinterpret_cast<const void*>(out->pc), b, 2) && b[0] == 0x0F && b[1] == 0x05);
+    return SampleResult::Ok;
+}
+
+size_t process_thread_count() {
+    DIR* d = opendir("/proc/self/task");
+    if (!d) return 0;
+    size_t n = 0;
+    while (dirent* e = readdir(d))
+        if (e->d_name[0] != '.') n++;
+    closedir(d);
+    return n;
+}
 
 size_t process_handle_count() {
     DIR* d = opendir("/proc/self/fd");

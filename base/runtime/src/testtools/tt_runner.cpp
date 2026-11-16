@@ -2,14 +2,13 @@
 // The scripted-run executor (S5): runs the steps of a parsed script (tt_script.h) one frame boundary at a time.
 // Each call to Runner::frame is one frame; a step that blocks consumes the frame, a step that does not lets the next one run in the
 // same call. Failure and pass call tt::end_run (exit code 1 / 0).
-#include <windows.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 #include <chrono>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <thread>
@@ -19,9 +18,18 @@
 #include "nxrt/ftrace.h"
 #include "nxrt/game.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/time.h"
 #include "tt_internal.h"
 
 namespace nxrt::tt::detail {
+
+namespace {
+void remove_file(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::remove(os::fs::native_path(path), ec);
+}
+}  // namespace
 
 namespace {
 std::string tt_guid_text_safe(const uint8_t id[16], bool have) { return have ? tt_guid_to_text(id) : std::string(); }
@@ -148,7 +156,7 @@ bool Runner::write_live_status(uint64_t k, const GameState& s, bool valid, const
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         f << out;
     }
-    return MoveFileExA(tmp.c_str(), fin.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;       // fails while a reader has the old file open: the caller retries
+    return os::fs::rename_replace(tmp, fin);       // fails while a reader has the old file open: the caller retries
 }
 
 bool Runner::poll_live(uint64_t k, const GameState& s, bool valid) {
@@ -201,8 +209,8 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
     mouse_x_ = mouse_y_ = 0;       // the impulse lasts for the frame of the step that sets it
     if (!live_path_.empty()) {         // express lane of live mode: a file <live>.shot holding a name asks for a screenshot now, whatever step is running
         const std::string abort_req = live_path_ + ".abort";       // drops every step that has not finished (a wait that can never be met), releases the pad
-        if (GetFileAttributesA(abort_req.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            DeleteFileA(abort_req.c_str());
+        if (os::fs::exists(abort_req)) {
+            remove_file(abort_req);
             NXLOG_W("tt", "live: abort requested, dropping %zu pending steps", script_.steps.size() - idx_);
             idx_ = script_.steps.size();
             started_ = false;
@@ -212,10 +220,10 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
             stick_override_ = false;
         }
         const std::string req = live_path_ + ".shot";
-        if (GetFileAttributesA(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        if (os::fs::exists(req)) {
             std::string name;
             { std::ifstream f(req, std::ios::binary); std::getline(f, name); }
-            DeleteFileA(req.c_str());
+            remove_file(req);
             while (!name.empty() && (name.back() == 13 || name.back() == ' ')) name.pop_back();
             std::string why;
             if (!name.empty() && !take_shot(name, &why)) NXLOG_W("tt", "live shot %s: %s", name.c_str(), why.c_str());
@@ -281,14 +289,14 @@ void Runner::frame(uint64_t k, const GameState& s, bool valid, ::Ctx* c) {
                 advance();
                 continue;
             case StepKind::WaitLog: {
-                const uint64_t now_ms = GetTickCount64();
+                const uint64_t now_ms = os::tick_ms();
                 if (first) start_ms_ = now_ms;
                 if (log_watch_seen(static_cast<int>(st.count))) { advance(); continue; }
                 if (static_cast<double>(now_ms - start_ms_) >= st.x * 1000.0) { fail(st, "timeout after " + std::to_string(static_cast<int64_t>(st.x)) + " s waiting for a log line matching " + st.text); return; }
                 return;
             }
             case StepKind::WaitMs: {
-                const uint64_t now_ms = GetTickCount64();
+                const uint64_t now_ms = os::tick_ms();
                 if (first) start_ms_ = now_ms;
                 if (static_cast<double>(now_ms - start_ms_) >= st.x) { advance(); continue; }
                 return;

@@ -3,11 +3,10 @@
 // Freeze watchdog (declared in nxrt/diag.h): a thread that notices when diag_frame_tick() stops advancing and then dumps
 // every registered thread's host stack and guest registers to the log and a report file. It also honours a
 // "dump_threads" request file next to the exe.
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -23,8 +22,11 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/symbols.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/symbols.h"
-#include "stackwalk.h"
 
 namespace nxrt {
 namespace {
@@ -46,7 +48,7 @@ struct ThreadDump {
     Status status = Status::NoSuspend;
     bool have_guest = false;
     uint64_t guest_lr = 0, guest_sp = 0, guest_fp = 0;
-    uint64_t cpu_user_ms = 0, cpu_kernel_ms = 0;   // CPU time the thread has used so far: two dumps tell a busy thread from a waiting one
+    uint64_t cpu_ms = 0;   // CPU time the thread has used so far (user + kernel): two dumps tell a busy thread from a waiting one
     size_t nframes = 0;
     uint64_t frames[kMaxFrames] = {};
 };
@@ -60,8 +62,8 @@ void appendf(std::string& out, const char* fmt, ...) {
     if (n > 0) out.append(b, static_cast<size_t>(n) < sizeof b ? static_cast<size_t>(n) : sizeof b - 1);
 }
 
-// Phase one. The registry snapshot and every allocation happen before the first thread is suspended. While a thread is
-// suspended nothing allocates and nothing logs, because the suspended thread may hold the heap or the log lock.
+// Phase one. The registry snapshot and every allocation happen before the first thread is sampled. While a thread is
+// stopped nothing allocates and nothing logs, because the suspended thread may hold the heap or the log lock.
 void collect_threads(std::vector<ThreadDump>& out) {
     // Private handle duplicates (made under the registry lock): a thread unregistering mid-dump cannot close or recycle ours.
     std::vector<ThreadRecord> recs = diag_threads_dup();
@@ -69,7 +71,7 @@ void collect_threads(std::vector<ThreadDump>& out) {
         std::vector<ThreadRecord>& v;
         ~Release() { diag_threads_release(v); }   // runs on every path; CloseHandle does not allocate, and all threads are resumed by then
     } release{recs};
-    const DWORD self = GetCurrentThreadId();
+    const os::ThreadId self = os::thread_current_id();
     out.clear();
     out.reserve(recs.size());
     for (ThreadRecord& r : recs) {
@@ -78,45 +80,29 @@ void collect_threads(std::vector<ThreadDump>& out) {
         out.back().rec = r;
     }
     for (ThreadDump& d : out) {
-        HANDLE h = static_cast<HANDLE>(d.rec.host_handle);
-        if (h) {
-            FILETIME created, exited, kernel_t, user_t;
-            if (GetThreadTimes(h, &created, &exited, &kernel_t, &user_t)) {
-                d.cpu_kernel_ms = ((static_cast<uint64_t>(kernel_t.dwHighDateTime) << 32) | kernel_t.dwLowDateTime) / 10000;
-                d.cpu_user_ms = ((static_cast<uint64_t>(user_t.dwHighDateTime) << 32) | user_t.dwLowDateTime) / 10000;
-            }
-        }
-        if (h == nullptr || SuspendThread(h) == static_cast<DWORD>(-1)) {
+        os::ThreadHandle h = d.rec.host_handle;
+        if (h) d.cpu_ms = os::thread_cpu_time_ns(h) / 1000000ull;
+        os::ThreadSample ts;
+        uint64_t frames[kMaxFrames];
+        const os::SampleResult res = os::thread_sample(h, &ts, frames, kMaxFrames);
+        if (res == os::SampleResult::NoSuspend) {
             d.status = Status::NoSuspend;
             continue;
         }
-        CONTEXT tc{};
-        tc.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-        uint64_t frames[kMaxFrames];
-        size_t n = 0;
-        const bool got = GetThreadContext(h, &tc) != 0;
-        if (got) n = detail::capture_stack(&tc, frames, kMaxFrames);
-        bool have_guest = false;
-        uint64_t glr = 0, gsp = 0, gfp = 0;
-        if (got && d.rec.ctx) {
-            ::Ctx* c = d.rec.ctx;
-            glr = lr(c);
-            gsp = sp(c);
-            gfp = fp(c);
-            have_guest = true;
-        }
-        ResumeThread(h);
-        if (!got) {
+        if (res == os::SampleResult::NoContext) {
             d.status = Status::NoContext;
             continue;
         }
         d.status = Status::Ok;
-        d.nframes = n;
-        std::memcpy(d.frames, frames, n * sizeof(uint64_t));
-        d.have_guest = have_guest;
-        d.guest_lr = glr;
-        d.guest_sp = gsp;
-        d.guest_fp = gfp;
+        d.nframes = ts.nframes;
+        std::memcpy(d.frames, frames, ts.nframes * sizeof(uint64_t));
+        if (d.rec.ctx) {
+            ::Ctx* c = d.rec.ctx;
+            d.guest_lr = lr(c);
+            d.guest_sp = sp(c);
+            d.guest_fp = fp(c);
+            d.have_guest = true;
+        }
     }
     for (ThreadDump& d : out) d.rec.host_handle = nullptr;
 }
@@ -131,9 +117,9 @@ std::string format_threads(const std::vector<ThreadDump>& threads) {
         out += " guest_tid=";
         appendf(out, "%llu", static_cast<unsigned long long>(d.rec.guest_tid));
         out += '\n';
-        appendf(out, "  cpu: user %llu ms, kernel %llu ms\n", static_cast<unsigned long long>(d.cpu_user_ms), static_cast<unsigned long long>(d.cpu_kernel_ms));
+        appendf(out, "  cpu: %llu ms\n", static_cast<unsigned long long>(d.cpu_ms));
         if (d.status == Status::NoSuspend) {
-            out += "  (could not suspend)\n";
+            out += "  (could not stop the thread)\n";
             continue;
         }
         if (d.status == Status::NoContext) {
@@ -232,10 +218,11 @@ std::string emit_dump(const std::string& report_path, const std::string& header)
     return text;
 }
 
-std::string exe_path() {
-    char b[4096];
-    const DWORD n = GetModuleFileNameA(nullptr, b, sizeof b);
-    return std::string(b, n);
+std::string exe_path() { return os::process::exe_path(); }
+
+void remove_file(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::remove(os::fs::native_path(path), ec);
 }
 
 std::string exe_dir(const std::string& path) {
@@ -260,7 +247,7 @@ struct Control {
     double threshold_s = 0;
     uint32_t poll_ms = 250;
     std::string report_path;   // "" = no file
-    std::string request_path;  // <exe dir>\dump_threads
+    std::string request_path;  // <exe dir>/dump_threads
     void (*on_fire)(const char* dump, void* user) = nullptr;
     void* user = nullptr;
 };
@@ -291,11 +278,11 @@ void run_loop(Control* c) {
             last_change = now;
             fired = false;
         }
-        // <exe dir>\dump_threads (whichever process sees it first) or <exe dir>\dump_threads.<pid> (this process only)
-        const std::string own_request = c->request_path + "." + std::to_string(GetCurrentProcessId());
-        const bool own = GetFileAttributesA(own_request.c_str()) != INVALID_FILE_ATTRIBUTES;
-        if (own || GetFileAttributesA(c->request_path.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            DeleteFileA(own ? own_request.c_str() : c->request_path.c_str());
+        // <exe dir>/dump_threads (whichever process sees it first) or <exe dir>/dump_threads.<pid> (this process only)
+        const std::string own_request = c->request_path + "." + std::to_string(os::process::pid());
+        const bool own = os::fs::exists(own_request);
+        if (own || os::fs::exists(c->request_path)) {
+            remove_file(own ? own_request : c->request_path);
             std::string header;
             appendf(header, "THREAD DUMP REQUESTED (frame count %llu)", static_cast<unsigned long long>(frames));
             emit_dump(c->report_path, header);
@@ -343,7 +330,7 @@ void watchdog_start(const WatchdogOptions& opt) {
     c.threshold_s = secs;
     c.poll_ms = opt.poll_ms ? opt.poll_ms : 1;
     c.report_path = opt.report_path ? std::string(opt.report_path) : default_report_path(exe);
-    c.request_path = exe_dir(exe) + "\\dump_threads";
+    c.request_path = exe_dir(exe) + "/dump_threads";
     c.on_fire = opt.on_fire;
     c.user = opt.user;
     {

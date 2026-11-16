@@ -2,10 +2,6 @@
 // Gauges and the soak sampler (declared in nxrt/gauge.h).
 #include "nxrt/gauge.h"
 
-#include <windows.h>
-#include <psapi.h>
-#include <tlhelp32.h>
-
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -17,6 +13,9 @@
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/procinfo.h"
+#include "nxrt/os/time.h"
 
 namespace nxrt {
 namespace {
@@ -35,15 +34,8 @@ constexpr size_t kRing = 1 << 16;
 std::atomic<uint64_t> g_ring_n{0};
 std::atomic<uint64_t> g_ring[kRing];
 
-uint64_t qpc() {
-    LARGE_INTEGER v;
-    QueryPerformanceCounter(&v);
-    return (uint64_t)v.QuadPart;
-}
-double qpc_freq() {
-    static double f = [] { LARGE_INTEGER v; QueryPerformanceFrequency(&v); return (double)v.QuadPart; }();
-    return f;
-}
+uint64_t qpc() { return os::monotonic_ns(); }       // the frame ring keeps nanoseconds
+constexpr double qpc_freq() { return 1e9; }
 
 struct Sampler {
     std::mutex ctl;
@@ -56,18 +48,6 @@ struct Sampler {
 Sampler& smp() {
     static Sampler* s = new Sampler;
     return *s;
-}
-
-uint32_t thread_count() {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
-    THREADENTRY32 te;
-    te.dwSize = sizeof te;
-    uint32_t n = 0;
-    const DWORD pid = GetCurrentProcessId();
-    if (Thread32First(snap, &te)) do { if (te.th32OwnerProcessID == pid) n++; } while (Thread32Next(snap, &te));
-    CloseHandle(snap);
-    return n;
 }
 
 void run(double interval_s, double t0) {
@@ -97,22 +77,16 @@ void run(double interval_s, double t0) {
             p99 = dt[std::min(dt.size() - 1, (size_t)(dt.size() * 0.99))];
             mx = dt.back();
         }
-        PROCESS_MEMORY_COUNTERS_EX pm{};
-        pm.cb = sizeof pm;
-        GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pm, sizeof pm);
-        DWORD handles = 0;
-        GetProcessHandleCount(GetCurrentProcess(), &handles);
-        FILETIME c, e, k, u;
-        GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
-        const double cpu_ms = (((uint64_t)k.dwHighDateTime << 32 | k.dwLowDateTime) + ((uint64_t)u.dwHighDateTime << 32 | u.dwLowDateTime)) / 10000.0;
+        os::ProcessStats ps;
+        os::process_stats(&ps);
+        const double cpu_ms = ps.cpu_ms;
         char buf[640];
         snprintf(buf, sizeof buf,
                  "{\"t\":%.1f,\"frame\":%llu,\"win_frames\":%llu,\"ft_p50\":%.3f,\"ft_p99\":%.3f,\"ft_max\":%.2f,\"ws\":%llu,\"private\":%llu,\"peak_ws\":%llu,"
-                 "\"pagefile\":%llu,\"handles\":%lu,\"threads\":%u,\"gdi\":%lu,\"user\":%lu,\"cpu_ms\":%.0f",
-                 now - t0, (unsigned long long)diag_frame_count(), (unsigned long long)window_frames, p50, p99, mx, (unsigned long long)pm.WorkingSetSize,
-                 (unsigned long long)pm.PrivateUsage, (unsigned long long)pm.PeakWorkingSetSize, (unsigned long long)pm.PagefileUsage, (unsigned long)handles,
-                 thread_count(), (unsigned long)GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS), (unsigned long)GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS),
-                 cpu_ms);
+                 "\"pagefile\":%llu,\"handles\":%u,\"threads\":%u,\"gdi\":%u,\"user\":%u,\"cpu_ms\":%.0f",
+                 now - t0, (unsigned long long)diag_frame_count(), (unsigned long long)window_frames, p50, p99, mx, (unsigned long long)ps.working_set,
+                 (unsigned long long)ps.private_bytes, (unsigned long long)ps.peak_working_set, (unsigned long long)ps.commit_bytes, ps.handles,
+                 ps.threads, ps.gdi, ps.user, cpu_ms);
         std::string line = buf;
         for (auto& kv : gauge_read_all()) {
             snprintf(buf, sizeof buf, ",\"%s\":%lld", kv.first.c_str(), (long long)kv.second);
@@ -164,7 +138,7 @@ void soak_start() {
     Sampler& s = smp();
     std::lock_guard<std::mutex> g(s.ctl);
     if (s.th.joinable()) return;
-    s.f = fopen(path.c_str(), "ab");
+    s.f = os::fs::fopen(path, "ab");
     if (!s.f) {
         NXLOG_W("diag", "soak: cannot open %s", path.c_str());
         return;

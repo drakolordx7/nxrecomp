@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Crash handler (declared in nxrt/diag.h): an unhandled-exception filter that writes the "HOST EXCEPTION" report, plus a
-// vectored handler that catches stack overflow on a fresh helper thread. Guest traps (0xE0000001 / 0xE0000002) arrive at
-// the unhandled filter like any other exception. The layout of the report follows crash_build_report() in diag.h.
+// Crash handler (declared in nxrt/diag.h): the reporter of last resort of the fault layer (os::fault_set_unhandled) that writes the "HOST
+// EXCEPTION" report. It sees access violations that nothing repaired or guarded, stack overflows, guest traps and the other exceptions the
+// host delivers (Windows: any; Linux: SIGILL, SIGFPE, SIGABRT). A stack overflow is reported from a helper thread: the faulting thread has
+// no stack to spare. Where the host has no machine context (a guest trap on Linux) the stack of the calling thread stands in. The layout of
+// the report follows crash_build_report() in diag.h and is the same on both systems; the Linux header maps the signal to the Windows
+// exception code and adds a "signal" line. Windows minidumps are not written (the OS reporting handles that); on Linux the OS writes a core
+// file when the report is followed by the default action (CrashOptions::hand_to_system).
 // Idea from smo-recomp runtime/core/hostrt.c crash_filter; written here from scratch.
 #include "nxrt/diag.h"
 
-#include <windows.h>
-
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <cstdint>
@@ -16,42 +19,47 @@
 #include <vector>
 
 #include "nxrt/abi.h"
+#include "nxrt/config.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fault.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/mem.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/symbols.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/symbols.h"
-#include "stackwalk.h"
 
 namespace nxrt {
 namespace {
 
-constexpr DWORD kTrapCode = 0xE0000001u;
-constexpr DWORD kUntranslatedCode = 0xE0000002u;
-constexpr DWORD kGuestBreakCode = 0xE0000003u;   // svcBreak / svcReturnFromException (svc_thread.cpp)
+constexpr uint32_t kTrapCode = os::kTrapUnresolved;
+constexpr uint32_t kUntranslatedCode = os::kTrapUntranslated;
+constexpr uint32_t kGuestBreakCode = os::kTrapBreak;   // svcBreak / svcReturnFromException (svc_thread.cpp)
+constexpr uint32_t kAccessViolationCode = 0xC0000005u;
+constexpr uint32_t kStackOverflowCode = 0xC00000FDu;
 constexpr size_t kMaxHostFrames = 32;
 constexpr int kMaxGuestFrames = 24;
-constexpr DWORD kOverflowWaitMs = 30000;
+constexpr uint32_t kOverflowWaitMs = 30000;
 
 std::mutex g_install_mu;
 bool g_installed = false;
-LPTOP_LEVEL_EXCEPTION_FILTER g_prev_filter = nullptr;
-void* g_veh = nullptr;
 
 bool g_path_given = false;  // false: default "<exe>_crash.txt" next to the exe; true with "" : no file
 std::string g_path;
 bool g_terminate = true;
+bool g_hand_to_system = false;
 uint32_t g_exit_code = 4;
 void (*g_on_report)(const char*, void*) = nullptr;
 void* g_user = nullptr;
 
 std::atomic<bool> g_in_handler{false};
-std::atomic<bool> g_overflow_reported{false};
 std::atomic<uint32_t> g_reports{0};
 
-// Stack overflow: the faulting thread has no stack left, so its record and context are copied into these statics and a
-// helper thread builds the report from them.
-EXCEPTION_RECORD g_ov_rec{};
-CONTEXT g_ov_ctx{};
-DWORD g_ov_tid = 0;
+// Stack overflow: the report is built by a helper thread from what the faulting thread captured before waiting for it.
+os::FaultInfo g_ov_fi{};
+uint64_t g_ov_frames[kMaxHostFrames] = {};
+size_t g_ov_n = 0;
 
 #if defined(__clang__) || defined(__GNUC__)
 __attribute__((format(printf, 2, 3)))
@@ -74,31 +82,11 @@ void appendf(std::string& out, const char* fmt, ...) {
     va_end(ap2);
 }
 
-// True when every byte of [addr, addr+n) is committed, readable and not a guard page. Never faults.
-bool readable(uint64_t addr, uint64_t n) {
-    if (n == 0) return true;
-    uint64_t p = addr;
-    const uint64_t end = addr + n;
-    if (end < addr) return false;
-    const DWORD kReadable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
-                            PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
-    while (p < end) {
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (!VirtualQuery(reinterpret_cast<LPCVOID>(static_cast<uintptr_t>(p)), &mbi, sizeof mbi)) return false;
-        if (mbi.State != MEM_COMMIT) return false;
-        if (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) return false;
-        if (!(mbi.Protect & kReadable)) return false;
-        const uint64_t next = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(mbi.BaseAddress)) + mbi.RegionSize;
-        if (next <= p) return false;
-        p = next;
-    }
-    return true;
-}
+// True when every byte of [addr, addr+n) is committed and readable. Never faults.
+bool readable(uint64_t addr, uint64_t n) { return n == 0 || os::mem::is_accessible(addr, n); }
 
 std::string default_report_path() {
-    char exe[1024] = {};
-    DWORD n = GetModuleFileNameA(nullptr, exe, sizeof exe);
-    std::string p(exe, n < sizeof exe ? n : sizeof exe - 1);
+    std::string p = os::process::exe_path();
     size_t slash = p.find_last_of("\\/");
     size_t dot = p.find_last_of('.');
     if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p.erase(dot);
@@ -106,18 +94,43 @@ std::string default_report_path() {
 }
 
 bool write_file(const std::string& path, const std::string& text) {
-    HANDLE h = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD done = 0;
-    BOOL ok = WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &done, nullptr);
-    CloseHandle(h);
-    return ok && done == text.size();
+    std::FILE* f = os::fs::fopen(path, "wb");
+    if (!f) return false;
+    const size_t done = std::fwrite(text.data(), 1, text.size(), f);
+    std::fclose(f);
+    return done == text.size();
 }
 
-std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD tid) {
+// The Windows exception code the header shows. Linux signals are mapped to the nearest one; the native number is on the "signal" line.
+uint32_t header_code(const os::FaultInfo& fi, const char** signal_name) {
+    *signal_name = nullptr;
+    const bool is_signal = fi.code != 0 && fi.code < 0x100;   // a Linux signal number
+    if (is_signal) {
+        switch (fi.code) {
+            case 4: *signal_name = "SIGILL"; break;
+            case 6: *signal_name = "SIGABRT"; break;
+            case 7: *signal_name = "SIGBUS"; break;
+            case 8: *signal_name = "SIGFPE"; break;
+            case 11: *signal_name = "SIGSEGV"; break;
+            default: *signal_name = "signal"; break;
+        }
+    }
+    switch (fi.kind) {
+        case os::FaultKind::AccessViolation: return kAccessViolationCode;
+        case os::FaultKind::StackOverflow: return kStackOverflowCode;
+        case os::FaultKind::GuestTrap: return fi.code;
+        case os::FaultKind::Other:
+            if (!is_signal) return fi.code;
+            return fi.code == 4 ? 0xC000001Du : fi.code == 8 ? 0xC0000094u : fi.code == 6 ? 0x40000015u : 0xC0000005u;
+    }
+    return fi.code;
+}
+
+std::string build_report(const os::FaultInfo& fi, const uint64_t* frames, size_t nframes) {
     g_reports.fetch_add(1, std::memory_order_relaxed);
     std::string out;
-    const uint64_t rip = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(rec->ExceptionAddress));
+    const uint64_t rip = fi.pc;
+    const uint32_t tid = fi.tid;
     const std::vector<ThreadRecord> threads = diag_threads();
 
     std::string tname = "unregistered";
@@ -131,27 +144,29 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
         }
         if (!gctx && t.ctx) gctx = t.ctx;
     }
-    if (tid == GetCurrentThreadId()) gctx = diag_thread_ctx();
+    if (tid == os::thread_current_id()) gctx = diag_thread_ctx();
     if (gctx && !readable(reinterpret_cast<uint64_t>(gctx), sizeof(::Ctx))) gctx = nullptr;
 
+    const char* signal_name = nullptr;
+    const uint32_t code = header_code(fi, &signal_name);
     const char* code_name = nullptr;
-    if (rec->ExceptionCode == kTrapCode) code_name = "GUEST TRAP";
-    else if (rec->ExceptionCode == kUntranslatedCode) code_name = "UNTRANSLATED INSTRUCTION";
-    else if (rec->ExceptionCode == kGuestBreakCode) code_name = "GUEST BREAK (svcBreak)";
+    if (fi.kind == os::FaultKind::GuestTrap) {
+        if (code == kTrapCode) code_name = "GUEST TRAP";
+        else if (code == kUntranslatedCode) code_name = "UNTRANSLATED INSTRUCTION";
+        else if (code == kGuestBreakCode) code_name = "GUEST BREAK (svcBreak)";
+    }
     if (code_name) {
-        appendf(out, "HOST EXCEPTION 0x%08lX (%s) at host address 0x%llx on thread %s (tid %lu)\n",
-                static_cast<unsigned long>(rec->ExceptionCode), code_name, static_cast<unsigned long long>(rip),
-                tname.c_str(), static_cast<unsigned long>(tid));
+        appendf(out, "HOST EXCEPTION 0x%08lX (%s) at host address 0x%llx on thread %s (tid %lu)\n", static_cast<unsigned long>(code), code_name,
+                static_cast<unsigned long long>(rip), tname.c_str(), static_cast<unsigned long>(tid));
     } else {
-        appendf(out, "HOST EXCEPTION 0x%08lX at host address 0x%llx on thread %s (tid %lu)\n",
-                static_cast<unsigned long>(rec->ExceptionCode), static_cast<unsigned long long>(rip), tname.c_str(),
-                static_cast<unsigned long>(tid));
+        appendf(out, "HOST EXCEPTION 0x%08lX at host address 0x%llx on thread %s (tid %lu)\n", static_cast<unsigned long>(code),
+                static_cast<unsigned long long>(rip), tname.c_str(), static_cast<unsigned long>(tid));
     }
     appendf(out, "  in %s\n", symbols_describe(rip).c_str());
-    if (rec->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2) {
-        const ULONG_PTR kind = rec->ExceptionInformation[0];
-        const char* what = kind == 0 ? "reading" : kind == 1 ? "writing" : kind == 8 ? "executing" : "accessing";
-        appendf(out, "  %s address 0x%llx\n", what, static_cast<unsigned long long>(rec->ExceptionInformation[1]));
+    if (signal_name) appendf(out, "  %s (signal %u)\n", signal_name, static_cast<unsigned>(fi.code));
+    if (fi.kind == os::FaultKind::AccessViolation) {
+        const char* what = fi.is_exec ? "executing" : fi.is_write ? "writing" : "reading";
+        appendf(out, "  %s address 0x%llx\n", what, static_cast<unsigned long long>(fi.addr));
     }
 
     if (const uint64_t g = guest_function_of(rip))
@@ -187,8 +202,6 @@ std::string build_report(const EXCEPTION_RECORD* rec, const CONTEXT* cx, DWORD t
         out += "\n";
     }
 
-    uint64_t frames[kMaxHostFrames] = {};
-    const size_t nframes = detail::capture_stack(cx, frames, kMaxHostFrames);
     out += "host call stack (innermost first):\n";
     if (!nframes) out += "  (none)\n";
     for (size_t i = 0; i < nframes; ++i) appendf(out, "  %s\n", symbols_describe(frames[i]).c_str());
@@ -242,46 +255,38 @@ void emit(const std::string& text) {
 [[noreturn]] void second_exception() {
     std::fputs("nxrt: second exception inside the crash handler, terminating\n", stderr);
     std::fflush(stderr);
-    TerminateProcess(GetCurrentProcess(), g_exit_code);
-    for (;;) Sleep(1000);
+    os::terminate(g_exit_code);
 }
 
-LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep) {
-    if (ep && ep->ExceptionRecord && ep->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW &&
-        g_overflow_reported.exchange(false))
-        return EXCEPTION_CONTINUE_SEARCH;
+void overflow_thread(void*) {
+    emit(build_report(g_ov_fi, g_ov_frames, g_ov_n));
+    if (g_terminate) os::terminate(g_exit_code);
+}
+
+os::FaultResult on_fault(const os::FaultInfo& fi, void*) {
     if (g_in_handler.exchange(true)) second_exception();
-    if (!ep || !ep->ExceptionRecord || !ep->ContextRecord) {
-        g_in_handler = false;
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    emit(build_report(ep->ExceptionRecord, ep->ContextRecord, GetCurrentThreadId()));
-    if (g_terminate) TerminateProcess(GetCurrentProcess(), g_exit_code);
-    g_in_handler = false;
-    return EXCEPTION_CONTINUE_SEARCH;
-}
-
-DWORD WINAPI overflow_thread(LPVOID) {
-    emit(build_report(&g_ov_rec, &g_ov_ctx, g_ov_tid));
-    if (g_terminate) TerminateProcess(GetCurrentProcess(), g_exit_code);
-    return 0;
-}
-
-LONG WINAPI crash_vectored(EXCEPTION_POINTERS* ep) {
-    if (!ep || !ep->ExceptionRecord || !ep->ContextRecord) return EXCEPTION_CONTINUE_SEARCH;
-    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_STACK_OVERFLOW) return EXCEPTION_CONTINUE_SEARCH;
-    if (g_in_handler.exchange(true)) second_exception();
-    g_ov_rec = *ep->ExceptionRecord;
-    g_ov_ctx = *ep->ContextRecord;
-    g_ov_tid = GetCurrentThreadId();
-    HANDLE th = CreateThread(nullptr, 0, overflow_thread, nullptr, 0, nullptr);
-    if (th) {
-        WaitForSingleObject(th, kOverflowWaitMs);
-        CloseHandle(th);
-        g_overflow_reported = true;
+    uint64_t frames[kMaxHostFrames] = {};
+    const size_t n = os::symbols::capture_fault(fi, frames, kMaxHostFrames);   // on the faulting thread: it is the one whose stack this is
+    if (fi.kind == os::FaultKind::StackOverflow) {
+        g_ov_fi = fi;
+        g_ov_fi.native = nullptr;
+        g_ov_n = n;
+        std::copy(frames, frames + n, g_ov_frames);
+        os::ThreadOptions to;
+        to.name = "crash-report";
+        to.stack_bytes = 1 << 20;
+        os::ThreadHandle h = nullptr;
+        os::ThreadId id = 0;
+        if (os::thread_start(to, overflow_thread, nullptr, &h, &id)) {
+            os::thread_join(h, kOverflowWaitMs);
+            os::thread_close(h);
+        }
+    } else {
+        emit(build_report(fi, frames, n));
+        if (g_terminate && !g_hand_to_system) os::terminate(g_exit_code);
     }
     g_in_handler = false;
-    return EXCEPTION_CONTINUE_SEARCH;
+    return os::FaultResult::Continue;
 }
 
 }
@@ -291,30 +296,33 @@ void crash_install(const CrashOptions& opt) {
     g_path_given = opt.report_path != nullptr;
     g_path = opt.report_path ? opt.report_path : "";
     g_terminate = opt.terminate;
+    g_hand_to_system = opt.hand_to_system || config_get_bool("diag", "crash_core", false);
     g_exit_code = opt.exit_code;
     g_on_report = opt.on_report;
     g_user = opt.user;
     if (g_installed) return;
-    g_prev_filter = SetUnhandledExceptionFilter(crash_filter);
-    ULONG guarantee = 64 * 1024;  // stack reserved for the handlers if the thread overflows
-    SetThreadStackGuarantee(&guarantee);
-    g_veh = AddVectoredExceptionHandler(0, crash_vectored);
+    os::fault_thread_init();             // Windows: reserves stack for the handler of an overflowing thread; Linux: the alternate stack
+    os::symbols::prepare();              // loads the symbol table now, not inside a fault handler
+    os::fault_set_unhandled(on_fault, nullptr);
     g_installed = true;
 }
 
 void crash_uninstall() {
     std::lock_guard<std::mutex> lk(g_install_mu);
     if (!g_installed) return;
-    SetUnhandledExceptionFilter(g_prev_filter);
-    if (g_veh) RemoveVectoredExceptionHandler(g_veh);
-    g_veh = nullptr;
+    os::fault_set_unhandled(nullptr, nullptr);
     g_installed = false;
 }
 
-std::string crash_build_report(void* exception_pointers) {
-    auto* ep = static_cast<EXCEPTION_POINTERS*>(exception_pointers);
-    if (!ep || !ep->ExceptionRecord || !ep->ContextRecord) return "HOST EXCEPTION: no exception information\n";
-    return build_report(ep->ExceptionRecord, ep->ContextRecord, GetCurrentThreadId());
+bool crash_installed() {
+    std::lock_guard<std::mutex> lk(g_install_mu);
+    return g_installed;
+}
+
+std::string crash_build_report(const os::FaultInfo& fi) {
+    uint64_t frames[kMaxHostFrames] = {};
+    const size_t n = os::symbols::capture_fault(fi, frames, kMaxHostFrames);
+    return build_report(fi, frames, n);
 }
 
 uint32_t crash_exceptions_reported() { return g_reports.load(std::memory_order_relaxed); }

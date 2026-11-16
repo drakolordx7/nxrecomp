@@ -7,10 +7,13 @@
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/diag.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 #include "nxrt/symbols.h"
 
-#include <windows.h>
-#include <intrin.h>
+#include <filesystem>
 
 #include <atomic>
 #include <chrono>
@@ -27,24 +30,16 @@ NXTEST_GROUP(watchdog)
 using namespace std::chrono;
 
 // A busy host function the dump must name (symbolised through the linker map).
-extern "C" __declspec(noinline) void watchdog_test_spin(volatile bool* stop) {
-    while (!*stop) _mm_pause();
+extern "C" __attribute__((noinline)) void watchdog_test_spin(volatile bool* stop) {
+    while (!*stop) nxrt::os::cpu_relax();
 }
 
 namespace {
 
-std::string exe_dir() {
-    char b[4096];
-    DWORD n = GetModuleFileNameA(nullptr, b, sizeof b);
-    std::string p(b, n);
-    size_t s = p.find_last_of("\\/");
-    return s == std::string::npos ? std::string(".") : p.substr(0, s);
-}
+std::string exe_dir() { return nxrt::os::process::exe_dir(); }
 
 std::string temp_file(const char* tag) {
-    char dir[MAX_PATH];
-    DWORD n = GetTempPathA(MAX_PATH, dir);
-    return std::string(dir, n) + "nxrt_wd_" + tag + ".txt";
+    return (std::filesystem::temp_directory_path() / (std::string("nxrt_wd_") + tag + ".txt")).string();
 }
 
 std::string read_file(const std::string& path) {
@@ -58,7 +53,7 @@ std::string read_file(const std::string& path) {
     return out;
 }
 
-bool file_exists(const std::string& p) { return GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES; }
+bool file_exists(const std::string& p) { return nxrt::os::fs::exists(p); }
 
 bool has(const std::string& s, const char* sub) { return s.find(sub) != std::string::npos; }
 
@@ -114,7 +109,7 @@ struct Worker {
         } else {
             while (!stop) {
                 counter++;
-                Sleep(1);
+                nxrt::os::sleep_ms(1);
             }
         }
         nxrt::diag_unregister_thread();
@@ -328,7 +323,7 @@ NXTEST(dump_names_symbolised_host_function) {
 }
 
 NXTEST(dump_request_file_writes_dump) {
-    const std::string req = exe_dir() + "\\dump_threads";
+    const std::string req = exe_dir() + "/dump_threads";
     const std::string rep = temp_file("request");
     std::remove(rep.c_str());
     FILE* f = std::fopen(req.c_str(), "wb");
