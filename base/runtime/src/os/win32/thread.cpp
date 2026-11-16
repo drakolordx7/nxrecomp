@@ -103,6 +103,15 @@ bool thread_set_band(ThreadHandle h, PriorityBand band) {
     return thread_place(h, p);
 }
 
+bool thread_set_efficiency(ThreadHandle h, bool eco) {
+    if (!h) return false;
+    THREAD_POWER_THROTTLING_STATE st = {};
+    st.Version = THREAD_POWER_THROTTLING_CURRENT_VERSION;
+    st.ControlMask = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+    st.StateMask = eco ? THREAD_POWER_THROTTLING_EXECUTION_SPEED : 0;   // 0 with the control bit set: explicitly not throttled
+    return SetThreadInformation(H(h), ThreadPowerThrottling, &st, sizeof st) != 0;
+}
+
 PriorityBand thread_get_band(ThreadHandle h) {
     const int v = GetThreadPriority(H(h));
     return v == THREAD_PRIORITY_ERROR_RETURN ? PriorityBand::Normal : static_cast<PriorityBand>(v);

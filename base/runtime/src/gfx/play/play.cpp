@@ -12,8 +12,6 @@
 #include "nxrt/lowlat.h"
 #include "nxrt/play.h"
 
-#include <windows.h>
-
 #include <SDL3/SDL_keyboard.h>
 #include <SDL3/SDL_keycode.h>
 #include <SDL3/SDL_scancode.h>
@@ -25,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -37,6 +36,8 @@
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/hooks.h"
 #include "nxrt/input.h"
@@ -371,7 +372,8 @@ std::mutex g_shot_mu;
 bool screenshot_request(const char* path, void*) {
     G& st = g();
     if (!st.renderer || !path) return false;
-    DeleteFileA(path);
+    std::error_code rm_ec;
+    std::filesystem::remove(std::filesystem::path(path), rm_ec);
     if (std::strstr(path, "nvntrace_")) nvn::backend_trace_next_frame();   // `@shot nvntrace_<name>`: also trace the frame that is captured
     {
         std::lock_guard<std::mutex> lk(g_shot_mu);
@@ -388,7 +390,7 @@ int screenshot_poll(const char* path, void*) {
     for (const ShotRequest& r : g_shot_requests) {
         if (r.path != path) continue;
         if (!st.renderer || st.renderer->stats().screenshots <= r.before) return 0;
-        const bool ok = GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+        const bool ok = os::fs::exists(path);
         std::erase_if(g_shot_requests, [&](const ShotRequest& q) { return q.path == path; });
         return ok ? 1 : -1;
     }
@@ -417,8 +419,7 @@ void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
     NXLOG_I(kTag, "audio at exit: %s", audio::stats_report().c_str());   // this path never closes the sink, which is where its counters are logged otherwise
     nxrt::log_flush();
     if (tt::enabled() && !tt::finished()) tt::end_run(code, verdict, message);     // writes result.json, then terminates
-    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
-    for (;;) Sleep(1000);
+    os::process::terminate(code);
 }
 
 namespace {
@@ -952,7 +953,7 @@ bool load() {
     pacing::add_cap_listener([](void* limiter, double fps) { static_cast<FrameLimiter*>(limiter)->set_target_fps(fps); }, &st.limiter);
     st.path = config_get_str("play", "controls", "controls.ini");
     std::string err;
-    const bool existed = GetFileAttributesA(st.path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    const bool existed = os::fs::exists(st.path);
     st.load_ok = load_settings(st.path, &st.settings, &err);
     if (!existed) {
         std::string e2;
@@ -963,10 +964,11 @@ bool load() {
         NXLOG_I(kTag, "settings loaded from %s (%zu bindings)", st.path.c_str(), st.settings.bindings.size());
     }
     // An older controls.ini got the newer factory bindings (play_config.cpp, kDefaultAdditions): keep the old file once as .bak, then
-    // write the upgraded one. CopyFileA with bFailIfExists = TRUE leaves an existing .bak alone.
+    // write the upgraded one. copy_file with skip_existing leaves an existing .bak alone.
     if (existed && st.load_ok && st.settings.migrated) {
         const std::string bak = st.path + ".bak";
-        if (CopyFileA(st.path.c_str(), bak.c_str(), TRUE)) NXLOG_I(kTag, "kept the previous %s as %s", st.path.c_str(), bak.c_str());
+        std::error_code cp_ec;
+        if (std::filesystem::copy_file(std::filesystem::path(st.path), std::filesystem::path(bak), std::filesystem::copy_options::skip_existing, cp_ec) && !cp_ec) NXLOG_I(kTag, "kept the previous %s as %s", st.path.c_str(), bak.c_str());
         std::string e3;
         if (save_settings(st.path, st.settings, &e3))
             NXLOG_I(kTag, "controls.ini updated to defaults revision %d (added: %s)", st.settings.defaults_rev,
@@ -1046,7 +1048,7 @@ bool start(const StartOptions& opt) {
         if (!st.selftest.parse(script, &err)) {
             NXLOG_E(kTag, "[play] selftest: %s", err.c_str());
             nxrt::log_flush();
-            TerminateProcess(GetCurrentProcess(), 2);
+            os::process::terminate(2);
         }
         NXLOG_I(kTag, "selftest script: %s", script.c_str());
     }

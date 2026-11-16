@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// The XAudio2 host sink (src/services/audio_xaudio2.cpp). Device-dependent cases skip when open() fails (no audio device).
+// The XAudio2 host sink (src/os/win32/audio_xaudio2.cpp; on Linux the factory returns null and the cases skip). Device-dependent cases skip when open() fails (no audio device).
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -40,7 +40,10 @@ NXTEST(xaudio2_factory_returns_sink) {
 
 NXTEST(xaudio2_stereo_100ms_queues_and_accepts_all) {
     auto s = audio::make_xaudio2_sink();
-    REQUIRE(s != nullptr);
+    if (!s) {
+        nxtest::skip("XAudio2 is Windows only");
+        return;
+    }
     if (!s->open(kRate, 2)) {
         nxtest::skip("no audio device");
         return;
@@ -62,7 +65,10 @@ NXTEST(xaudio2_stereo_100ms_queues_and_accepts_all) {
 
 NXTEST(xaudio2_overfill_drops_and_does_not_crash) {
     auto s = audio::make_xaudio2_sink();
-    REQUIRE(s != nullptr);
+    if (!s) {
+        nxtest::skip("XAudio2 is Windows only");
+        return;
+    }
     if (!s->open(kRate, 2)) {
         nxtest::skip("no audio device");
         return;
@@ -83,7 +89,10 @@ NXTEST(xaudio2_overfill_drops_and_does_not_crash) {
 
 NXTEST(xaudio2_reopen_six_channels) {
     auto s = audio::make_xaudio2_sink();
-    REQUIRE(s != nullptr);
+    if (!s) {
+        nxtest::skip("XAudio2 is Windows only");
+        return;
+    }
     if (!s->open(kRate, 2)) {
         nxtest::skip("no audio device");
         return;
@@ -103,7 +112,10 @@ NXTEST(xaudio2_reopen_six_channels) {
 
 NXTEST(xaudio2_double_close_is_safe) {
     auto s = audio::make_xaudio2_sink();
-    REQUIRE(s != nullptr);
+    if (!s) {
+        nxtest::skip("XAudio2 is Windows only");
+        return;
+    }
     s->close();   // never opened
     s->close();
     CHECK_EQ(s->queued_frames(), 0u);
@@ -116,7 +128,10 @@ NXTEST(xaudio2_double_close_is_safe) {
 
 NXTEST(xaudio2_rejects_bad_channel_count) {
     auto s = audio::make_xaudio2_sink();
-    REQUIRE(s != nullptr);
+    if (!s) {
+        nxtest::skip("XAudio2 is Windows only");
+        return;
+    }
     CHECK(!s->open(kRate, 4));
     CHECK_EQ(s->write(nullptr, 0), 0u);
 }

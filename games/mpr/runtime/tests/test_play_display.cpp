@@ -2,14 +2,13 @@
 // Play mode display options (play_display.h): the arithmetic (internal size, aspect, HUD cameras, field of view) and the entry hooks that
 // apply the options to game objects. The hooks are driven the way lifted code drives them (nx_hook_entry on the registered guest address)
 // against fake objects in host memory, with a fake module base.
-#include <windows.h>
-
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
 #include "test_framework.h"
+#include "guest_pages.h"
 
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/hooks.h"
@@ -40,7 +39,7 @@ void commit_globals() {
     static bool done = false;
     if (done) return;
     done = true;
-    CHECK(VirtualAlloc(reinterpret_cast<void*>(kBase + 0x20e7000), 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE) != nullptr);
+    CHECK(nxtest::commit_pages(kBase + 0x20e7000, 0x2000));
 }
 
 // The display settings plus the options Metroid Prime Remastered adds to them (mpr_settings.h), as one value the tests fill in.

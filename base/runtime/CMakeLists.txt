@@ -59,6 +59,8 @@ list(FILTER NXRT_SOURCES EXCLUDE REGEX "/src/os/(win32|posix)/")
 nx_platform_os_sources(NXRT_OS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/os")
 list(APPEND NXRT_SOURCES ${NXRT_OS_SOURCES})
 add_library(nxrt STATIC ${NXRT_SOURCES})
+include(cmake/sdl_dep.cmake)   # the audio sink (src/services/audio_sdl.cpp) plays through SDL on every platform
+target_link_libraries(nxrt PUBLIC SDL3::SDL3-static)
 # formats/nx_formats.h: the file formats shared with the setup tool (BC7 cache key and header, programs.bin)
 target_include_directories(nxrt PUBLIC include "${NX_BASE_DIR}/formats")
 if(EXISTS "${NXRT_RECOMP_INCLUDE}")

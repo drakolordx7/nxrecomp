@@ -6,8 +6,6 @@
 // in the game's buffers. Expected pixels come from the CPU (texel positions, a reference sampler, a BC1/BC7/RGBA8 decoder, the
 // astc2bc7 ASTC decode and a PSNR bound for the compressed cases). Texture coordinates use the NVN convention: v = 0 is the first
 // texel row, and the top row of the frame (window row 0) shows the quad's top edge.
-#include <windows.h>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -46,14 +44,14 @@ struct FreshBc7Cache {
     FreshBc7Cache() {
         static int n = 0;
         dir = std::filesystem::temp_directory_path() /
-              ("nxrt_scene_tex_cache_" + std::to_string(::GetCurrentProcessId()) + "_" + std::to_string(++n));
+              ("nxrt_scene_tex_cache_" + std::to_string(nxrt::os::process::pid()) + "_" + std::to_string(++n));
         std::filesystem::create_directories(dir);
         if (const char* e = std::getenv("NXRT_NVN_BC7_CACHE")) { old = e; had_old = true; }
-        _putenv_s("NXRT_NVN_BC7_CACHE", dir.string().c_str());
+        nxrt::os::process::setenv("NXRT_NVN_BC7_CACHE", dir.string().c_str());
         nxrt::nvn::be::nvn_settings_reload();   // the [nvn] settings are read once; take the change
     }
     ~FreshBc7Cache() {
-        _putenv_s("NXRT_NVN_BC7_CACHE", had_old ? old.c_str() : "");
+        nxrt::os::process::setenv("NXRT_NVN_BC7_CACHE", had_old ? old.c_str() : "");
         nxrt::nvn::be::nvn_settings_reload();
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);

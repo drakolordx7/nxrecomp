@@ -9,7 +9,7 @@ NXTEST_GROUP(gfx_present)
 using namespace gfxtest;
 
 NXTEST(present_mode_switching_and_resizing_with_a_window) {
-    DWORD handles_start = handle_count();
+    size_t handles_start = handle_count();
     SceneRunDesc d = base_desc();
     d.headless = false;
     d.width = 640;
@@ -58,13 +58,9 @@ NXTEST(no_handle_or_memory_growth_over_hundreds_of_swapchain_recreations) {
     d.frames = 700;
     d.overlay = true;
     d.overlay_visible_from_frame = 5;
-    DWORD h_start = 0, h_end = 0;
+    size_t h_start = 0, h_end = 0;
     double mb_start = 0, mb_end = 0;
-    auto private_mb = [] {
-        PROCESS_MEMORY_COUNTERS_EX pm = {sizeof pm};
-        GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pm), sizeof pm);
-        return static_cast<double>(pm.PrivateUsage) / (1024.0 * 1024.0);
-    };
+    auto private_mb = [] { return static_cast<double>(nxrt::os::mem::footprint()) / (1024.0 * 1024.0); };
     d.per_frame = [&](uint64_t frame, Renderer& r) {
         if (frame == 100) { h_start = handle_count(); mb_start = private_mb(); }
         if (frame == 699) { h_end = handle_count(); mb_end = private_mb(); }

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Host audio output for the audio services (S3c). The audio services (audren / audout) produce interleaved 16-bit PCM and
 // hand it to the active AudioSink; the sink is pulled by the host device clock. The default sink discards samples (silence), which
-// is also what runs under tests. src/services/audio_xaudio2.cpp provides the XAudio2 sink (selected with [audio] sink = xaudio2).
+// is also what runs under tests. src/services/audio_sdl.cpp provides the SDL3 sink, the default on every platform; src/os/win32/audio_xaudio2.cpp
+// the XAudio2 sink, a Windows-only fallback (selected with [audio] sink = xaudio2).
 // Options (all under [audio], see docs/CONFIG.md): wav_dump (tee every frame into a WAV file), volume (process-wide master volume)
-// and device (which output endpoint the XAudio2 sink plays on).
+// and device (which output device the sink plays on).
 #pragma once
 #include <cstdint>
 #include <cstdio>
@@ -62,11 +63,12 @@ public:
 };
 
 void set_sink(std::shared_ptr<AudioSink> s);
-// Never null. [audio] sink: auto (default: XAudio2 when it can open the default output device, else the null sink), xaudio2 (the same,
-// but a failure is a warning), paced (a simulated device), null (discard). With [audio] wav_dump set, the chosen sink is wrapped in
-// a WAV tee (make_wav_tee).
+// Never null. [audio] sink: auto or sdl (default: the SDL sink when it can open an output device, else the null sink), xaudio2 (Windows only:
+// the XAudio2 sink, falling back to SDL where it is missing or fails), paced (a simulated device), null (discard). With [audio] wav_dump set,
+// the chosen sink is wrapped in a WAV tee (make_wav_tee).
 std::shared_ptr<AudioSink> sink();
-std::shared_ptr<AudioSink> make_xaudio2_sink();       // src/services/audio_xaudio2.cpp; nullptr when XAudio2 is unavailable
+std::shared_ptr<AudioSink> make_sdl_sink();           // src/services/audio_sdl.cpp; the device is opened in open()
+std::shared_ptr<AudioSink> make_xaudio2_sink();       // src/os/win32/audio_xaudio2.cpp; nullptr when XAudio2 is unavailable (always on Linux)
 // A simulated device: consumes queued frames at the sample rate (times 1 + skew_ppm / 1e6) on the host clock, counts the times it
 // ran dry and the lowest and highest queue level. No output. [audio] sink = paced ([audio] paced_ppm sets the skew); what the tests and
 // the underrun checks run on when no audio device is present. src/services/audio_paced.cpp.
@@ -112,22 +114,23 @@ private:
     size_t header_size_ = 0;           // 44 for stereo, 68 for extensible
 };
 
-// Master volume, process wide: [audio] volume (0.0 to 1.0, default 1.0), clamped. XAudio2Sink applies it to its source voice.
+// Master volume, process wide: [audio] volume (0.0 to 1.0, default 1.0), clamped. The SDL and XAudio2 sinks apply it to their stream / source voice.
 void set_master_volume(float volume);   // clamped to [0, 1]; NaN is ignored
 float master_volume();
 
-// One line with the counters of the active sink, e.g. "sink xaudio2: written 4800, accepted 4800, ...".
+// One line with the counters of the active sink, e.g. "sink sdl: written 4800, accepted 4800, ...".
 std::string stats_report();
 // The same line for one sink, given its name and counters. Each sink's close() logs this.
 std::string format_stats(const char* sink_name, const SinkStats& s);
 
-// An active render endpoint. `id` is the endpoint id (what [audio] device accepts as an exact value); `name` is the friendly name.
+// An output device as SDL lists it. `id` is SDL's device id in decimal (what [audio] device accepts as an exact value; it is valid for this
+// run only); `name` is the device's name.
 struct OutputDevice {
-    std::wstring id;
+    std::string id;
     std::string name;
     bool is_default = false;
 };
-// The active render endpoints, in the system's order. Empty when there are none or enumeration fails. src/services/audio_devices.cpp.
+// The output devices, in SDL's order. Empty when there are none or the audio subsystem cannot start. src/services/audio_sdl.cpp.
 std::vector<OutputDevice> list_output_devices();
 
 }

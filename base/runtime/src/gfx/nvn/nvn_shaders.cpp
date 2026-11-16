@@ -14,8 +14,6 @@
 #include "nvn_debug.h"
 #include "nxrt/game/spirv_module.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -28,6 +26,7 @@
 #include <nxrt/ftrace.h>
 #include <nxrt/config.h>
 #include <nxrt/gauge.h>
+#include <nxrt/os/process.h>
 #include <nxrt/log.h>
 
 namespace nxrt::nvn::be {
@@ -937,12 +936,7 @@ bool ShaderCache::is_open() const {
 
 const std::string& ShaderCache::dir() const { return dir_; }
 
-static std::string exe_folder() {
-    char buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return {};
-    return std::filesystem::path(buf).parent_path().string();
-}
+static std::string exe_folder() { return nxrt::os::process::exe_dir(); }
 
 namespace {
 // Gauges (nxrt/gauge.h) for the process cache. Declared after the cache in shader_cache(), so it is destroyed before the cache.

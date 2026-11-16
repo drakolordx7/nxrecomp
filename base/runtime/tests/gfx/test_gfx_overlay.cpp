@@ -200,10 +200,10 @@ NXTEST(extra_panels_run_only_while_the_overlay_is_visible) {
 }
 
 NXTEST(configured_toggle_key) {
-    _putenv_s("NXRT_GFX_OVERLAY_KEY", "F9");
+    nxrt::os::process::setenv("NXRT_GFX_OVERLAY_KEY", "F9");
     Rig rig;
     const bool ok = rig.make(false);
-    _putenv_s("NXRT_GFX_OVERLAY_KEY", "");
+    nxrt::os::process::setenv("NXRT_GFX_OVERLAY_KEY", "");
     REQUIRE(ok);
     Overlay& o = *rig.overlay;
     CHECK_EQ(o.toggle_scancode(), static_cast<int>(SDL_SCANCODE_F9));

@@ -115,6 +115,7 @@ int nice_offset(PriorityBand b) {
         case PriorityBand::Normal: return 0;
         case PriorityBand::BelowNormal: return 5;
         case PriorityBand::Lowest: return 10;
+        case PriorityBand::Idle: return 19;
     }
     return 0;
 }
@@ -288,6 +289,8 @@ bool thread_set_band(ThreadHandle h, PriorityBand band) {
     p.band = band;
     return thread_place(h, p);
 }
+
+bool thread_set_efficiency(ThreadHandle, bool) { return false; }
 
 PriorityBand thread_get_band(ThreadHandle h) { return h ? static_cast<PriorityBand>(static_cast<Rec*>(h)->band.load()) : PriorityBand::Normal; }
 

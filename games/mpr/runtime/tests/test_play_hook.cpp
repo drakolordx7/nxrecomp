@@ -4,8 +4,6 @@
 // CActorMP1::SetTransform are stand-in guest functions registered at the real addresses. This proves the whole path of the raw mouse aim
 // (accumulated counts -> yaw on the transform through SetTransform, pitch in the free-look field after the game's function ran) without
 // the game having to reach gameplay.
-#include <windows.h>
-
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -13,6 +11,7 @@
 #include <vector>
 
 #include "test_framework.h"
+#include "guest_pages.h"
 
 #include "nxrt/config.h"
 #include "nxrt/dispatch.h"
@@ -69,7 +68,7 @@ void fake_set_transform(::Ctx* c) {
 // the stand-in for NSharedPlayerControls::GetGyroFreelookControl(CStateManager const&)
 void fake_gyro_freelook(::Ctx* c) { c->x[0] = g_w.gyro_freelook ? 1 : 0; }
 
-void commit(uint64_t a, size_t n) { VirtualAlloc(reinterpret_cast<void*>(a), n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
+void commit(uint64_t a, size_t n) { nxtest::commit_pages(a, n); }
 
 void setup() {
     if (g_w.ready) return;

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// XAudio2 host sink (S3c): an AudioSink that plays the guest's interleaved int16 PCM on the output device chosen by
+// XAudio2 host sink (S3c), Windows only and no longer the default (the SDL sink is, see src/services/audio_sdl.cpp): the fallback selected with
+// [audio] sink = xaudio2. An AudioSink that plays the guest's interleaved int16 PCM on the output device chosen by
 // [audio] device (the default device unless it names another one).
 // The engine, a mastering voice and one source voice are created in open(); write() copies the caller's frames into a small pool
 // of buffers and submits them; the voice callback (OnBufferEnd, on XAudio2's audio thread) returns the buffer to the pool. When the
@@ -8,6 +9,8 @@
 // voice carries the process master volume ([audio] volume), re-applied whenever it changes.
 #include <windows.h>
 #include <objbase.h>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <mmreg.h>
 #include <xaudio2.h>
 
@@ -26,6 +29,8 @@
 #include "nxrt/log.h"
 
 #pragma comment(lib, "xaudio2.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "uuid.lib")       // PKEY_Device_FriendlyName
 
 namespace nxrt::audio {
 namespace {
@@ -46,9 +51,72 @@ std::string lower_ascii(std::string s) {
     return s;
 }
 
-void log_devices(const std::vector<OutputDevice>& devices) {
+// An active render endpoint: its WASAPI id (what [audio] device accepts as an exact value for this sink) and friendly name.
+struct Endpoint {
+    std::wstring id;
+    std::string name;
+    bool is_default = false;
+};
+
+// The active render endpoints (IMMDeviceEnumerator), in the system's order. Empty when there are none or enumeration fails.
+std::vector<Endpoint> list_endpoints() {
+    std::vector<Endpoint> out;
+    // Balanced with CoUninitialize below. An existing COM mode on this thread (RPC_E_CHANGED_MODE) is kept.
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (com != S_OK && com != S_FALSE && com != RPC_E_CHANGED_MODE) return out;
+    const bool owns_com = com == S_OK || com == S_FALSE;
+
+    IMMDeviceEnumerator* en = nullptr;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&en))) && en) {
+        std::wstring default_id;
+        IMMDevice* def = nullptr;
+        if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eConsole, &def)) && def) {
+            LPWSTR id = nullptr;
+            if (SUCCEEDED(def->GetId(&id)) && id) {
+                default_id = id;
+                CoTaskMemFree(id);
+            }
+            def->Release();
+        }
+
+        IMMDeviceCollection* coll = nullptr;
+        if (SUCCEEDED(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &coll)) && coll) {
+            UINT count = 0;
+            coll->GetCount(&count);
+            for (UINT i = 0; i < count; i++) {
+                IMMDevice* dev = nullptr;
+                if (FAILED(coll->Item(i, &dev)) || !dev) continue;
+
+                Endpoint d;
+                LPWSTR id = nullptr;
+                if (SUCCEEDED(dev->GetId(&id)) && id) {
+                    d.id = id;
+                    CoTaskMemFree(id);
+                }
+                IPropertyStore* props = nullptr;
+                if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &props)) && props) {
+                    PROPVARIANT pv;
+                    PropVariantInit(&pv);
+                    if (SUCCEEDED(props->GetValue(PKEY_Device_FriendlyName, &pv)) && pv.vt == VT_LPWSTR) d.name = narrow(pv.pwszVal);
+                    PropVariantClear(&pv);
+                    props->Release();
+                }
+                d.is_default = !d.id.empty() && d.id == default_id;
+                out.push_back(std::move(d));
+                dev->Release();
+            }
+            coll->Release();
+        }
+        en->Release();
+    }
+
+    if (owns_com) CoUninitialize();
+    return out;
+}
+
+void log_devices(const std::vector<Endpoint>& devices) {
     if (devices.empty()) NXLOG_I("audio", "xaudio2: no active output endpoints");
-    for (const OutputDevice& d : devices) {
+    for (const Endpoint& d : devices) {
         NXLOG_I("audio", "xaudio2: output device%s: %s [%s]", d.is_default ? " (default)" : "", d.name.c_str(),
                 narrow(d.id).c_str());
     }
@@ -56,13 +124,13 @@ void log_devices(const std::vector<OutputDevice>& devices) {
 
 // The endpoint [audio] device asks for. "default" (or empty) is the default endpoint (empty id). Otherwise an exact endpoint id
 // wins, then the first endpoint whose friendly name contains the text (ASCII case-insensitive). No match: a warning and the default.
-std::wstring pick_device(const std::vector<OutputDevice>& devices, const std::string& want) {
+std::wstring pick_device(const std::vector<Endpoint>& devices, const std::string& want) {
     if (want.empty() || lower_ascii(want) == "default") return {};
-    for (const OutputDevice& d : devices) {
+    for (const Endpoint& d : devices) {
         if (narrow(d.id) == want) return d.id;
     }
     const std::string needle = lower_ascii(want);
-    for (const OutputDevice& d : devices) {
+    for (const Endpoint& d : devices) {
         if (lower_ascii(d.name).find(needle) != std::string::npos) return d.id;
     }
     NXLOG_W("audio", "xaudio2: [audio] device = %s matches no active output device; using the default device", want.c_str());
@@ -168,7 +236,7 @@ bool XAudio2Sink::open(uint32_t sample_rate, uint32_t channels) {
         return false;
     }
 
-    const std::vector<OutputDevice> devices = list_output_devices();
+    const std::vector<Endpoint> devices = list_endpoints();
     log_devices(devices);
     const std::wstring device_id = pick_device(devices, config_get_str("audio", "device", "default"));
     auto create_master = [this](const wchar_t* id) {

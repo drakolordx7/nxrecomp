@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <nxrt/config.h>
+#include <nxrt/os/process.h>
 
 #include "nvn_settings.h"
 #include "astc2bc7.h"
@@ -46,14 +47,7 @@ void fill_random(std::vector<uint8_t>& v, uint32_t seed) {
     for (uint8_t& b : v) b = static_cast<uint8_t>(rng());
 }
 
-void set_env(const char* name, const char* value) {
-#ifdef _WIN32
-    _putenv_s(name, value);
-#else
-    if (*value) setenv(name, value, 1);
-    else unsetenv(name);
-#endif
-}
+void set_env(const char* name, const char* value) { nxrt::os::process::setenv(name, value); }
 
 // The disk cache off for a test: no file may be written into the tree. A developer's environment setting is removed too.
 void no_cache() {
