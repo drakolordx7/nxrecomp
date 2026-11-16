@@ -1,22 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Kernel handle table (include/nxrt/kernel.h). Pattern from SuperMarioWonderRecomp runtime/src/kernel.cpp handle_add/get/close (MIT).
-#include <windows.h>
-
 #include <functional>
+#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 #include "nxrt/gauge.h"
 #include "nxrt/kernel.h"
+#include "nxrt/os/sync.h"
 
 namespace nxrt::kernel {
 namespace {
-SRWLOCK g_lock = SRWLOCK_INIT;
+os::SharedMutex g_lock;
 std::unordered_map<uint32_t, std::shared_ptr<KObject>> g_handles;
 uint32_t g_next = 0x10000;
 }
 
 uint32_t handle_add(std::shared_ptr<KObject> o) {
-    AcquireSRWLockExclusive(&g_lock);
+    std::lock_guard<os::SharedMutex> lk(g_lock);
     uint32_t h = 0;
     if (g_handles.size() < 0x3000) {          // Horizon's per-process handle table holds 0x400..0x3000 entries
         h = g_next;
@@ -24,7 +25,6 @@ uint32_t handle_add(std::shared_ptr<KObject> o) {
         if (g_next >= 0x40000000) g_next = 0x10000;
         g_handles[h] = std::move(o);
     }
-    ReleaseSRWLockExclusive(&g_lock);
     return h;
 }
 
@@ -33,37 +33,35 @@ std::shared_ptr<KObject> handle_get(uint32_t h) {
         KThread* t = current_thread();
         return t ? t->self.lock() : nullptr;
     }
-    AcquireSRWLockShared(&g_lock);
+    std::shared_lock<os::SharedMutex> lk(g_lock);
     auto it = g_handles.find(h);
-    std::shared_ptr<KObject> r = it == g_handles.end() ? nullptr : it->second;
-    ReleaseSRWLockShared(&g_lock);
-    return r;
+    return it == g_handles.end() ? nullptr : it->second;
 }
 
 void handle_close(uint32_t h) {
     std::shared_ptr<KObject> dying;   // destroyed outside the lock
-    AcquireSRWLockExclusive(&g_lock);
-    auto it = g_handles.find(h);
-    if (it != g_handles.end()) {
-        dying = std::move(it->second);
-        g_handles.erase(it);
+    {
+        std::lock_guard<os::SharedMutex> lk(g_lock);
+        auto it = g_handles.find(h);
+        if (it != g_handles.end()) {
+            dying = std::move(it->second);
+            g_handles.erase(it);
+        }
     }
-    ReleaseSRWLockExclusive(&g_lock);
 }
 
 size_t handle_count() {
-    AcquireSRWLockShared(&g_lock);
-    size_t n = g_handles.size();
-    ReleaseSRWLockShared(&g_lock);
-    return n;
+    std::shared_lock<os::SharedMutex> lk(g_lock);
+    return g_handles.size();
 }
 
 void handles_reset() {
     std::unordered_map<uint32_t, std::shared_ptr<KObject>> old;
-    AcquireSRWLockExclusive(&g_lock);
-    old.swap(g_handles);
-    g_next = 0x10000;
-    ReleaseSRWLockExclusive(&g_lock);
+    {
+        std::lock_guard<os::SharedMutex> lk(g_lock);
+        old.swap(g_handles);
+        g_next = 0x10000;
+    }
 }
 
 // ---- gauges (include/nxrt/gauge.h): live handles per object type ----
@@ -75,11 +73,10 @@ struct GaugeHook {
 };
 
 size_t count_type(ObjType t) {
-    AcquireSRWLockShared(&g_lock);
+    std::shared_lock<os::SharedMutex> lk(g_lock);
     size_t n = 0;
     for (const auto& kv : g_handles)
         if (kv.second->type() == t) n++;
-    ReleaseSRWLockShared(&g_lock);
     return n;
 }
 

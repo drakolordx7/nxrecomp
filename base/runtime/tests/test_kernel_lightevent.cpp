@@ -8,8 +8,6 @@
 //   manual-clear wait: sleeps while the state is 1; signal: 0 -> 2, or with state 1 SignalToAddress(SignalAndIncrementIfEqual, 1, count -1)
 // Every round trip must wake exactly the threads the protocol promises; a lost wake-up ends in the 20 s guard below. Worker threads never
 // CHECK: results go through atomics and the test thread checks after the join.
-#include <windows.h>
-
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -19,6 +17,7 @@
 #include <vector>
 
 #include "nxrt/kernel.h"
+#include "nxrt/os/time.h"
 #include "test_framework.h"
 
 NXTEST_GROUP(kernel_lightevent)
@@ -106,7 +105,7 @@ bool wait_for(F pred, int ms = 20000) {
     const auto limit = Clock::now() + std::chrono::milliseconds(ms);
     while (!pred()) {
         if (Clock::now() > limit) return false;
-        Sleep(0);
+        nxrt::os::sleep_ms(0);
     }
     return true;
 }
@@ -124,6 +123,7 @@ void auto_round_trips(const char* name, int waiters, int rounds) {
     e.auto_clear = 1;
     std::atomic<int> consumed{0};
     std::atomic<bool> stop{false};
+    std::atomic<int> exited{0};
     g_protocol_errors = 0;
     g_kernel_wakes = 0;
     std::vector<std::thread> ts;
@@ -131,22 +131,24 @@ void auto_round_trips(const char* name, int waiters, int rounds) {
         ts.emplace_back([&] {
             for (;;) {
                 wait_auto(e);
-                if (stop.load()) return;
+                if (stop.load()) {
+                    exited++;
+                    return;
+                }
                 consumed++;
             }
         });
     for (int r = 1; r <= rounds; r++) {
         signal_auto(e);
         if (!wait_for([&] { return consumed.load() >= r; })) give_up(name);
-        if (r % 7 == 0) Sleep(0);                                       // vary the interleaving: sometimes the waiters get to sleep first
+        if (r % 7 == 0) nxrt::os::sleep_ms(0);                                       // vary the interleaving: sometimes the waiters get to sleep first
     }
     stop = true;
     for (int i = 0; i < waiters; i++) signal_auto(e);                    // release every waiter for the exit check
-    std::vector<HANDLE> hs;
-    for (auto& t : ts) hs.push_back(static_cast<HANDLE>(t.native_handle()));
     bool joined = true;
     for (int tries = 0; tries < 2000; tries++) {                         // the exit wake-ups coalesce (an auto-clear signal while signaled is lost by design): keep signaling
-        if (WaitForMultipleObjects(static_cast<DWORD>(hs.size()), hs.data(), TRUE, 10) != WAIT_TIMEOUT) break;
+        if (exited.load() >= waiters) break;
+        nxrt::os::sleep_ms(10);
         signal_auto(e);
         if (tries == 1999) joined = false;
     }
@@ -187,7 +189,7 @@ NXTEST(manual_clear_signal_releases_every_waiter) {
         ts.emplace_back([&] {
             int seen = 0;
             while (!stop.load()) {
-                while (generation.load() == seen && !stop.load()) Sleep(0);   // wait for the next round to be opened
+                while (generation.load() == seen && !stop.load()) nxrt::os::sleep_ms(0);   // wait for the next round to be opened
                 if (stop.load()) return;
                 seen = generation.load();
                 arrived++;
@@ -197,7 +199,7 @@ NXTEST(manual_clear_signal_releases_every_waiter) {
         });
     for (int r = 1; r <= kRounds; r++) {
         generation = r;                                                     // open the round: the waiters go to wait on the (cleared) event
-        if (r % 3 == 0) Sleep(0);
+        if (r % 3 == 0) nxrt::os::sleep_ms(0);
         if (r % 2 == 0) {                                                   // signal before every waiter is in (the late ones must pass at once)
             signal_manual(e);
         } else {

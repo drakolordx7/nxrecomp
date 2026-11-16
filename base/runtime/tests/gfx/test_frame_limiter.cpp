@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_framework.h"
 
-#include <windows.h>
-#include <immintrin.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -13,6 +10,8 @@
 #include <vector>
 
 #include "nxrt/frame_limiter.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 
 NXTEST_GROUP(gfx_limiter)
 
@@ -29,7 +28,7 @@ constexpr double kRateTolerance = 0.005;  // 0.5 % on the mean rate
 
 void spin_ns(uint64_t ns) {
     const uint64_t end = FrameLimiter::now_ns() + ns;
-    while (FrameLimiter::now_ns() < end) _mm_pause();
+    while (FrameLimiter::now_ns() < end) nxrt::os::cpu_relax();
 }
 
 std::vector<uint64_t> run_frames(FrameLimiter& l, int n, double fps) {
@@ -48,17 +47,15 @@ double ns_to_ms(double ns) { return ns / 1e6; }
 // The limiter is meant for a game's render thread, which runs at high priority: the timing cases do too, so that other
 // processes on the machine (builds, other programs) do not preempt the measurement for tens of milliseconds.
 struct ScopedBoost {
-    DWORD old_class;
-    int old_prio;
+    nxrt::os::PriorityBand old_band;
     ScopedBoost() {
-        old_class = GetPriorityClass(GetCurrentProcess());
-        old_prio = GetThreadPriority(GetCurrentThread());
-        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+        old_band = nxrt::os::thread_get_band(nxrt::os::thread_current());
+        nxrt::os::process_set_priority(nxrt::os::ProcessPriority::High);
+        nxrt::os::thread_set_band(nxrt::os::thread_current(), nxrt::os::PriorityBand::TimeCritical);
     }
     ~ScopedBoost() {
-        SetThreadPriority(GetCurrentThread(), old_prio);
-        SetPriorityClass(GetCurrentProcess(), old_class);
+        nxrt::os::thread_set_band(nxrt::os::thread_current(), old_band);
+        nxrt::os::process_set_priority(nxrt::os::ProcessPriority::Normal);
     }
 };
 
@@ -139,7 +136,7 @@ NXTEST(stall_resync_no_burst) {
     FrameLimiter l;
     l.set_target_fps(fps);
     const std::vector<uint64_t> warm = run_frames(l, 30, fps);
-    Sleep(42);  // about 10 periods (41.7 ms) of stall
+    nxrt::os::sleep_ms(42);  // about 10 periods (41.7 ms) of stall
     const std::vector<uint64_t> after = run_frames(l, 21, fps);  // 20 intervals after the stall
 
     const double gap_periods = static_cast<double>(after[0] - warm.back()) / period_ns;
@@ -180,16 +177,15 @@ NXTEST(target_change_honoured_within_10_frames) {
 }
 
 NXTEST(no_handle_leak_100_limiters) {
-    DWORD before = 0, after = 0;
-    REQUIRE(GetProcessHandleCount(GetCurrentProcess(), &before));
+    const size_t before = nxrt::os::process_handle_count();
+    REQUIRE(before > 0);
     for (int i = 0; i < 100; ++i) {
         FrameLimiter l;
         l.set_target_fps(60.0);
         l.begin_frame();
     }
-    REQUIRE(GetProcessHandleCount(GetCurrentProcess(), &after));
-    std::printf("    process handles: before %lu, after 100 limiters %lu\n", static_cast<unsigned long>(before),
-                static_cast<unsigned long>(after));
+    const size_t after = nxrt::os::process_handle_count();
+    std::printf("    process handles: before %zu, after 100 limiters %zu\n", before, after);
     CHECK_EQ(after, before);
 }
 

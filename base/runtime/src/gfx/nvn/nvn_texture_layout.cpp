@@ -11,6 +11,7 @@
 //   * storage = layer stride * layers * samples. The layer stride is the untrimmed size of a layer: tegra trims the last
 //     level of a 3D texture, but the game's buffers are the untrimmed size (47 of 47 3D textures checked, SURVEY section 3).
 //   * alignment = 512 * level-0 block height in GOBs, at least 0x200 (Wonder's TILING.md; 0x200 is the minimum).
+//   * texel buffer (NVN_TEXTURE_TARGET_BUFFER): width elements of the format in one row, never tiled, one level; storage = width * bytes.
 //   * pitch-linear (NVN_TEXTURE_FLAGS_LINEAR): one level, pitch = builder stride, or the row size rounded up to 32 when the
 //     stride is 0; storage = pitch * rows * depth * layers * samples; alignment 0x1000.
 // The rules are cross-checked in tests/gfx/test_nvn_texture.cpp against an independent GOB formula, tegra::compute_layout,
@@ -80,7 +81,7 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     if (b.width <= 0 || b.height <= 0) return out;
 
     uint32_t w = static_cast<uint32_t>(b.width), h = static_cast<uint32_t>(b.height), d = 1, layers = 1;
-    bool is3d = false, multisample = false;
+    bool is3d = false, multisample = false, texel_buffer = false;
     const uint32_t depth_field = b.depth > 0 ? static_cast<uint32_t>(b.depth) : 0;
     switch (b.target) {
         case NVN_TEXTURE_TARGET_1D:
@@ -118,7 +119,11 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
             is3d = true;
             d = depth_field;
             break;
-        default:   // BUFFER and unknown targets have no texture layout
+        case NVN_TEXTURE_TARGET_BUFFER:   // a texel buffer: width elements in a row of buffer memory, no tiling, one level
+            h = 1;
+            texel_buffer = true;
+            break;
+        default:   // unknown targets have no texture layout
             return out;
     }
 
@@ -133,7 +138,15 @@ TexLayout compute_texture_layout(const TextureBuilderInfo& b) {
     out.levels = levels;
     out.layers = layers;
 
-    out.block_linear = (b.flags & NVN_TEXTURE_FLAGS_LINEAR) == 0;
+    out.block_linear = (b.flags & NVN_TEXTURE_FLAGS_LINEAR) == 0 && !texel_buffer;
+    if (texel_buffer) {
+        out.levels = 1;
+        out.pitch = blocks_x * bpb;
+        out.storage_size = out.pitch;
+        out.alignment = 0x10;
+        out.valid = true;
+        return out;
+    }
     if (!out.block_linear) {
         if (b.stride < 0 || (b.stride > 0 && static_cast<uint64_t>(b.stride) < blocks_x * bpb)) return out;
         out.levels = 1;

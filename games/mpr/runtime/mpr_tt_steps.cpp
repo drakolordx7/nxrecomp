@@ -31,8 +31,6 @@
 //                             logged with the writing instruction, the frame and the value (lines `watch:` in the log); off stops it and logs how many hits were seen
 // The state keys @assert and @mashuntil take (mpr_tt_probe.cpp): area world (ids, == and != only), igt health px py pz vx vy vz speed, state spd pitch cam
 // morph orbit camyaw campitch beam visor msl.
-#include <windows.h>
-
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -43,6 +41,7 @@
 #include <vector>
 
 #include "nxrt/config.h"
+#include "nxrt/os/time.h"
 #include "nxrt/log.h"
 #include "mpr_tt_probe.h"
 
@@ -252,12 +251,12 @@ StepStatus run_warp(StepRun& r) {
         w.wait_loader = config_get_bool("test", "warp_wait_loader", true);
         w.loader_max_ms = static_cast<uint64_t>(std::max<int64_t>(0, config_get_int("test", "warp_loader_max_ms", 30000)));
         w.gate_open = !w.wait_loader;
-        w.gate_start_ms = GetTickCount64();
+        w.gate_start_ms = os::tick_ms();
     }
     if (!w.warped && !w.gate_open) {
         uint32_t pending = 0;
         const detail::LoaderState ls = detail::loader_state(&pending);
-        const uint64_t waited = GetTickCount64() - w.gate_start_ms;
+        const uint64_t waited = os::tick_ms() - w.gate_start_ms;
         if (ls == detail::LoaderState::Unknown) {
             w.gate_open = true;                     // nothing readable to wait for (no game globals yet, or a test rig without them)
         } else if (ls == detail::LoaderState::Idle) {
@@ -353,7 +352,7 @@ MashState g_mash;
 
 StepStatus run_mash(StepRun& r) {
     const Step& st = r.step;
-    const uint64_t now_ms = GetTickCount64();
+    const uint64_t now_ms = os::tick_ms();
     if (r.first) g_mash = MashState{now_ms, now_ms, 0, false};
     const StateField* f = readable(r, st.text.c_str());
     if (f && std::memcmp(f->id, st.id, 16) == 0) { *r.press = 0; return StepStatus::Done; }

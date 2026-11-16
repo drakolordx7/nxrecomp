@@ -3,8 +3,6 @@
 // Info SVCs (include/nxrt/svc.h): GetInfo 0x29, GetSystemInfo 0x6F, GetResourceLimitLimitValue 0x30, GetResourceLimitCurrentValue 0x31,
 // GetResourceLimitPeakValue 0x37, GetProcessId 0x24, GetThreadId 0x25, GetProcessInfo 0x7C.
 // AArch64 columns per Switchbrew: inputs in x1.., result in w0, outputs in x1.
-#include <windows.h>
-
 #include "nxrt/abi.h"
 #include "nxrt/config.h"
 #include "nxrt/kernel.h"
@@ -12,6 +10,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/services.h"
 #include "nxrt/module.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/svc.h"
 
 namespace nxrt {
@@ -52,15 +51,12 @@ uint64_t user_exception_context() {
     return page;
 }
 
-// CPU time a thread has used, in system ticks. Win32 gives kernel + user time in 100 ns units; the split keeps the product in 64 bits.
-uint64_t thread_cpu_ticks(HANDLE h) {
+// CPU time a thread has used, in system ticks. The host gives kernel + user time in nanoseconds; the split keeps the product in 64 bits.
+uint64_t thread_cpu_ticks(os::ThreadHandle h) {
     if (!h) return 0;
-    FILETIME created{}, exited{}, kernel_time{}, user_time{};
-    if (!GetThreadTimes(h, &created, &exited, &kernel_time, &user_time)) return 0;
-    auto to_u64 = [](const FILETIME& f) { return (static_cast<uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
-    const uint64_t t100ns = to_u64(kernel_time) + to_u64(user_time);
-    constexpr uint64_t kUnitsPerSecond = 10000000;
-    return (t100ns / kUnitsPerSecond) * kernel::kTickHz + (t100ns % kUnitsPerSecond) * kernel::kTickHz / kUnitsPerSecond;
+    const uint64_t ns = os::thread_cpu_time_ns(h);
+    constexpr uint64_t kUnitsPerSecond = 1000000000;
+    return (ns / kUnitsPerSecond) * kernel::kTickHz + (ns % kUnitsPerSecond) * kernel::kTickHz / kUnitsPerSecond;
 }
 
 // Returns the result code; `out` receives the value (0 on error).
@@ -107,8 +103,8 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
             if (!t) return kernel::kOk;
             // nxrt pins each thread to its ideal core: that core reports the total, the other cores report 0.
             if (sub != kSubAllCores && static_cast<int64_t>(sub) != t->ideal_core) return kernel::kOk;
-            // The pseudo handle is GetCurrentThread() (the calling thread); any other handle uses the thread's own host handle.
-            out = thread_cpu_ticks(handle == kernel::kPseudoCurrentThread ? GetCurrentThread() : static_cast<HANDLE>(t->host_handle));
+            // The pseudo handle is the calling thread (os::thread_current); any other handle uses the thread's own host handle.
+            out = thread_cpu_ticks(handle == kernel::kPseudoCurrentThread ? os::thread_current() : t->host_handle);
             return kernel::kOk;
         }
         case 28:                                                              // AliasRegionExtraSize (18.0.0+): sub 0

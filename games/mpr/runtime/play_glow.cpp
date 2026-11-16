@@ -8,8 +8,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -28,6 +26,7 @@
 #include "nxrt/frame_limiter.h"
 #include "nxrt/hooks.h"
 #include "nxrt/log.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/tex_upload.h"
 #include "mpr_tint.h"
 #include "play_aim.h"
@@ -487,7 +486,7 @@ void glow_preview(const TweakSettings& t) {
 // the game's update and draw for the frame run on that same thread. From any other thread it is refused (S47).
 void glow_frame() {
     if (!g.base) return;
-    const uint32_t me = GetCurrentThreadId();
+    const uint32_t me = os::thread_current_id();
     uint32_t owner = g.table_thread.load(std::memory_order_acquire);
     if (owner == 0 && g.table_thread.compare_exchange_strong(owner, me, std::memory_order_acq_rel)) owner = me;
     if (owner != me) {

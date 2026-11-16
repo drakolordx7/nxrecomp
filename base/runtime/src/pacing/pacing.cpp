@@ -2,16 +2,14 @@
 // See include/nxrt/pacing.h.
 #include "nxrt/pacing.h"
 
-#include <windows.h>
-#include <emmintrin.h>
-
 #include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <vector>
 
 #include "nxrt/config.h"
-#include "nxrt/hires_wait.h"
+#include "nxrt/os/thread.h"
+#include "nxrt/os/time.h"
 
 namespace nxrt::pacing {
 
@@ -29,17 +27,7 @@ std::atomic<double> g_cap{0.0};
 std::atomic<int> g_boundary_paced{0};
 }  // namespace
 
-uint64_t now_ns() {
-    static const uint64_t freq = [] {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        return static_cast<uint64_t>(f.QuadPart);
-    }();
-    LARGE_INTEGER c;
-    QueryPerformanceCounter(&c);
-    const uint64_t q = static_cast<uint64_t>(c.QuadPart);
-    return (q / freq) * 1000000000ull + ((q % freq) * 1000000000ull) / freq;
-}
+uint64_t now_ns() { return os::monotonic_ns(); }
 
 const Config& config() {
     static const Config c = [] {
@@ -99,17 +87,17 @@ void Waiter::until_ns(uint64_t target) {
         if (remaining > margin) {
             const uint64_t coarse = remaining - margin;
             const uint64_t set_at = now_ns();
-            if (hires_wait_ns(static_cast<int64_t>(coarse))) {
+            if (os::sleep_precise_ns(static_cast<int64_t>(coarse))) {
                 const uint64_t woke = now_ns();
                 const uint64_t requested = set_at + coarse;
                 const double over = woke > requested ? static_cast<double>(woke - requested) : 0.0;
                 overshoot_ema_ns_ = overshoot_ema_ns_ * 0.875 + over * 0.125;
             } else {
-                Sleep(1);   // no high-resolution timer: no timeBeginPeriod
+                os::sleep_ms(1);   // no high-resolution timer: no timeBeginPeriod
             }
             continue;
         }
-        while (now_ns() < target) _mm_pause();
+        while (now_ns() < target) os::cpu_relax();
         return;
     }
 }
