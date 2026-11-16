@@ -1,24 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // S38: page write tracking (include/nxrt/write_watch.h).
-#ifdef _WIN32
-#include <windows.h>     // only the file-read case below (until nxrt/os/fs.h exists)
-#else
-#include <fcntl.h>
-#include <unistd.h>
-#endif
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "nxrt/memory.h"
 #include "nxrt/os/fault.h"
+#include "nxrt/os/fs.h"
 #include "nxrt/os/mem.h"
+#include "nxrt/os/process.h"
 #include "nxrt/write_watch.h"
 #include "test_framework.h"
 
@@ -96,33 +92,16 @@ NXTEST(file_read_into_armed_pages) {
     REQUIRE(r != nullptr);
     std::vector<uint8_t> data(3 * kPg);
     for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<uint8_t>(i * 7);
-#ifdef _WIN32
-    char tmp[MAX_PATH], path[MAX_PATH];
-    GetTempPathA(MAX_PATH, tmp);
-    GetTempFileNameA(tmp, "nww", 0, path);
-#else
-    char path[] = "/tmp/nwwXXXXXX";
-    { const int tfd = mkstemp(path); REQUIRE(tfd >= 0); close(tfd); }
-#endif
-    FILE* f = std::fopen(path, "wb");
+    const std::string path = (std::filesystem::temp_directory_path() / ("nww_" + std::to_string(nxrt::os::process::pid()) + ".bin")).string();
+    FILE* f = nxrt::os::fs::fopen(path, "wb");
     REQUIRE(f != nullptr);
     std::fwrite(data.data(), 1, data.size(), f);
     std::fclose(f);
     uint8_t* dst = reinterpret_cast<uint8_t*>(mem::kHeapBase + 8 * kPg);
     CHECK(ww::arm(r, 8, 3));
-#ifdef _WIN32
-    HANDLE h = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    REQUIRE(h != INVALID_HANDLE_VALUE);
-    auto os_read = [&] {
-        DWORD got = 0;
-        SetFilePointer(h, 0, nullptr, FILE_BEGIN);
-        return ReadFile(h, dst, static_cast<DWORD>(data.size()), &got, nullptr) && got == data.size();
-    };
-#else
-    const int h = open(path, O_RDONLY);
-    REQUIRE(h >= 0);
-    auto os_read = [&] { return pread(h, dst, data.size(), 0) == static_cast<ssize_t>(data.size()); };
-#endif
+    nxrt::os::fs::File h = nxrt::os::fs::File::open(path, nxrt::os::fs::kRead);
+    REQUIRE(h.ok());
+    auto os_read = [&] { return h.read_exact(0, dst, data.size()); };
     CHECK(!os_read());                                         // what the scope is for: the kernel cannot write read-only pages
     {
         const ww::OsWriteScope ws(dst, data.size());
@@ -132,13 +111,8 @@ NXTEST(file_read_into_armed_pages) {
     CHECK(std::memcmp(dst, data.data(), data.size()) == 0);
     CHECK(!ww::page_valid(r, 8));
     CHECK(ww::arm(r, 8, 3));                                   // the scope ended
-#ifdef _WIN32
-    CloseHandle(h);
-    DeleteFileA(path);
-#else
-    close(h);
-    unlink(path);
-#endif
+    h.close();
+    std::remove(path.c_str());
     teardown(r);
 }
 

@@ -44,8 +44,10 @@
 #include "nxrt/module.h"
 #include "nxrt/nvn.h"
 #include "nxrt/nvn_backend.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/os/fs.h"
 #include "nxrt/os/process.h"
+#include "nxrt/os/thread.h"
 #include "nxrt/nxmodule.h"
 #include "nxrt/platform.h"
 #include "nxrt/play.h"
@@ -112,7 +114,7 @@ std::unique_ptr<nxrt::gfx::Renderer> g_gfx_renderer;
     std::snprintf(msg, sizeof msg, fmt, a, b);
     nxrt::os::process::error_box(nxrt::game::info().title, msg);
 #endif
-    nxrt::os::process::terminate(1);
+    nxrt::os::terminate(1);
 }
 
 namespace os = nxrt::os;
@@ -179,6 +181,32 @@ int prepare_shaders_main(bool if_needed, int threads, const std::string& program
 
 
 }  // namespace
+
+// Steps 4 and 5 run on the guest main thread: on Windows the calling thread (the exe is linked with the big stack), on Linux a thread
+// os::run_with_stack makes with 128 MiB, since the process main thread's stack is the 8 MiB ulimit and the lifted code needs more.
+static int run_guest_main(void*) {
+    const uint64_t stack = static_cast<uint64_t>(nxrt::config_get_int("boot", "main_stack_kb", 1024)) << 10;
+    const uint32_t h = nxrt::kernel::main_thread_adopt(stack, "main");
+    if (!h) die("cannot create the main thread");
+    ::Ctx* ctx = nxrt::kernel::current_ctx();
+
+    // The entry module (rtld) is lifted from offset 0; a lift without an entry function is refused.
+    const uint64_t entry = kModules[0].nx->base;
+    if (!nxrt::fn_lookup(entry)) die("the lifted %s has no function at its entry: rebuild the game libraries", kModules[0].file);
+
+    // 5. the first instruction: the entry module at offset 0. x0 = 0 (the exception entry would be non-zero), x1 = the main thread's handle.
+    ctx->x[0] = 0;
+    ctx->x[1] = h;
+    ctx->x[30] = 0;
+    NXLOG_I("boot", "entering %s at 0x%llx (x1 = main thread handle 0x%x)", kModules[0].file, static_cast<unsigned long long>(entry), h);
+    nxrt::dispatch_call(ctx, entry);
+
+    NXLOG_I("boot", "the entry function returned (x0 = 0x%llx): ending the process", static_cast<unsigned long long>(ctx->x[0]));
+    nxrt::play::stop();
+    nxrt::kernel::main_thread_release();
+    nxrt::shutdown();
+    return static_cast<int>(ctx->x[0] & 0xff);
+}
 
 int main(int argc, char** argv) {
     NXRT_GAME_REGISTER();      // before anything reads it (nxrt::init, play mode, the services, the test tooling): docs/GAME_BOUNDARY.md
@@ -345,29 +373,6 @@ int main(int argc, char** argv) {
     nxrt::tt::start_timed_shots(static_cast<double>(nxrt::config_get_int("boot", "screenshot_at", 0)), static_cast<double>(nxrt::config_get_int("boot", "screenshot_every", 0)));
     nxrt::tt::start_wall_deadline(static_cast<double>(nxrt::config_get_int("boot", "max_seconds", 0)), deadline_report);
 
-    // 4. the main thread: [boot] main_stack_kb (1 MiB by default, the npdm's usual stack)
-    // TODO(linux, thread helper): on Linux the guest main thread must run on a thread with a big stack made by the os::thread layer (the process
-    // main thread's stack is the 8 MiB ulimit, the lifted code needs more, and Windows gets 64 MiB from the linker). When that layer lands, run this
-    // function's remainder (main_thread_adopt .. dispatch_call) on that thread and join it here, instead of adopting the calling thread.
-    const uint64_t stack = static_cast<uint64_t>(nxrt::config_get_int("boot", "main_stack_kb", 1024)) << 10;
-    const uint32_t h = nxrt::kernel::main_thread_adopt(stack, "main");
-    if (!h) die("cannot create the main thread");
-    ::Ctx* ctx = nxrt::kernel::current_ctx();
-
-    // The entry module (rtld) is lifted from offset 0; a lift without an entry function is refused.
-    const uint64_t entry = kModules[0].nx->base;
-    if (!nxrt::fn_lookup(entry)) die("the lifted %s has no function at its entry: rebuild the game libraries", kModules[0].file);
-
-    // 5. the first instruction: the entry module at offset 0. x0 = 0 (the exception entry would be non-zero), x1 = the main thread's handle.
-    ctx->x[0] = 0;
-    ctx->x[1] = h;
-    ctx->x[30] = 0;
-    NXLOG_I("boot", "entering %s at 0x%llx (x1 = main thread handle 0x%x)", kModules[0].file, static_cast<unsigned long long>(entry), h);
-    nxrt::dispatch_call(ctx, entry);
-
-    NXLOG_I("boot", "the entry function returned (x0 = 0x%llx): ending the process", static_cast<unsigned long long>(ctx->x[0]));
-    nxrt::play::stop();
-    nxrt::kernel::main_thread_release();
-    nxrt::shutdown();
-    return static_cast<int>(ctx->x[0] & 0xff);
+    // 4. the main thread: [boot] main_stack_kb (1 MiB by default, the npdm's usual stack), run through os::run_with_stack (see run_guest_main)
+    return os::run_with_stack(size_t{128} << 20, run_guest_main, nullptr);
 }

@@ -16,10 +16,6 @@
 // Lookup, per slot: a real dump file in [pl] font_dir (FontStandard.bfttf ... in BFTTF form, decrypted here) replaces its slot; otherwise the
 // first existing DejaVuSans.ttf of: [pl] font_dir, fonts\ next to the exe, assets\fonts\ under the working directory, the exe's folder.
 // When no TTF at all is found every slot still gets its 8-byte header with size 0 and a warning is logged once.
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +29,8 @@
 #include "nxrt/config.h"
 #include "nxrt/ipc.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
 #include "nxrt/services.h"
 #include "services_internal.h"
 
@@ -113,16 +111,7 @@ bool decode_bfttf(const std::vector<uint8_t>& raw, std::vector<uint8_t>& out) {
     return true;
 }
 
-std::filesystem::path exe_dir() {
-#ifdef _WIN32
-    char buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return {};
-    return std::filesystem::path(buf).parent_path();
-#else
-    return {};
-#endif
-}
+std::filesystem::path exe_dir() { return os::fs::native_path(os::process::exe_dir()); }
 
 std::vector<uint8_t> load_fallback(const std::filesystem::path& dir) {
     std::error_code ec;

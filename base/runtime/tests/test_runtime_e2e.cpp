@@ -2,8 +2,6 @@
 // End-to-end: runtime bring-up, the fixture module mapped and linked, lifted-code stand-ins calling the ABI functions the generated code
 // would call (call_indirect, host_import, guest_svc, guest_mrs, stx_diag), a guest thread started through SVCs, an IPC round trip to
 // sm: and a stub service, the unknown-SVC report, and the end-of-run summary.
-#include <windows.h>
-
 #include <atomic>
 #include <cstring>
 

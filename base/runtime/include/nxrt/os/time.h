@@ -3,6 +3,8 @@
 // waitable timer, timeBeginPeriod. Linux: clock_gettime, clock_nanosleep. See README.md in this folder for the rules of the layer.
 #pragma once
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace nxrt::os {
 
@@ -34,5 +36,22 @@ void wait_until_ns(uint64_t target_ns);
 // reference counted; Linux: nothing to do, timers are always fine). Calls must pair.
 void timer_resolution_acquire();
 void timer_resolution_release();
+
+// ---- the host's time zone -----------------------------------------------------------------------------------------------------------
+
+// One year of the host's local time rule: the offset from UTC in standard time and in daylight saving time (seconds, east positive) and the
+// two instants of the year at which the clocks change (seconds since the posix epoch, UTC). has_dst false: no change that year.
+struct HostZoneYear {
+    bool has_dst = false;
+    int32_t std_off = 0, dst_off = 0;
+    int64_t dst_start = 0, dst_end = 0;      // clocks go to dst_off at dst_start and back to std_off at dst_end (either may come first in the year)
+};
+struct HostZone {
+    std::string key;                         // Windows: the time zone key name ("W. Europe Standard Time"); Linux: the IANA name ("Europe/Berlin"); empty when unknown
+    std::vector<HostZoneYear> years;         // first_year .. last_year, in order
+};
+// Reads the host's zone for the years first_year..last_year (Windows: GetDynamicTimeZoneInformation and GetTimeZoneInformationForYear;
+// Linux: the C library's local time, probed at the year's changes). False when the host does not say.
+bool host_timezone(HostZone* out, int first_year, int last_year);
 
 }  // namespace nxrt::os
