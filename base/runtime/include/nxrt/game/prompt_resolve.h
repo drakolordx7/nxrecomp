@@ -31,7 +31,22 @@ struct PromptIcon {
     const char* pak;            // the archive under the RomFS folder: "Preload/MPR1/GuiSysMP1.pak"
     const char* front_uuid;     // a second copy of the icon (a game with a second set of UI textures: the one in front_pak), or nullptr
 };
+// A game that keeps its button icons in one block-compressed atlas texture instead of one small texture each: where the atlas is recognised and where
+// every icon sits in it (the runtime patches those cells, the rest of the atlas stays the game's).
+struct PromptAtlasCell {
+    Icon icon;                  // the game's icon this cell shows (an icon may have several cells; the "Pressed" icons are usually not in the atlas)
+    uint16_t x, y, w, h;        // the cell in texels: multiples of 4 (whole 4x4 blocks), inside the atlas; the whole cell is redrawn
+};
+struct PromptAtlas {
+    uint32_t width = 0, height = 0;      // the atlas texture's size
+    uint8_t bc = 3;                      // its block format: 1 (BC1), 3 (BC3 / DXT5) or 7 (BC7)
+    uint64_t storage_size = 0;           // the size of its tiled storage in the game's memory ...
+    uint64_t hash = 0;                   // ... and prompt_hash() of those bytes: how it is told from other textures of the same size
+    const PromptAtlasCell* cells = nullptr;
+    unsigned cell_count = 0;
+};
 struct PromptGame {
+    const PromptAtlas* atlas = nullptr;  // icons in an atlas (the fields below, which describe one texture per icon, are then not used)
     const PromptIcon* icons = nullptr;   // kIconCount entries in Icon order
     const char* front_pak = "";          // the archive of the second copies
     uint32_t icon_size = 0;              // width = height of the icon textures in pixels (single level)

@@ -5,12 +5,14 @@
 #include "prompts.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 #include "nxrt/config.h"
 #include "nxrt/game.h"
@@ -144,7 +146,7 @@ void scan_ids_locked(State& s) {
     if (s.ids_tried) return;
     s.ids_tried = true;
     const PromptGame* g = game::info().prompts;
-    if (!g || !g->scan) return;
+    if (!g || !g->scan || g->atlas) return;
     const std::string romfs = services::romfs_dir();
     const int found = g->scan(romfs, [](void* user, Icon ic, const uint8_t* buf, size_t size) {
         State& st = *static_cast<State*>(user);
@@ -154,10 +156,132 @@ void scan_ids_locked(State& s) {
     NXLOG_I(kTag, "recognised %d icon textures (%d icons, in-game and front end copies) in %s", found, kIconCount, romfs.c_str());
 }
 
+
+// ---- the atlas path (PromptGame::atlas): the icons are cells of one BC3 atlas whose alpha is the shape (the game tints it)
+
+// Redraws a pack icon into a w x h cell as an alpha mask: the icon's body opaque, its letters and details transparent, the way the game's own
+// glyphs are cut out (the game draws the alpha with its own tint). The icon is fitted into the cell, centred, bilinear.
+void mask_for_cell(const uint8_t* px, uint32_t pw, uint32_t ph, uint32_t w, uint32_t h, std::vector<uint8_t>& a) {
+    a.assign(static_cast<size_t>(w) * h, 0);
+    // the ink levels of this icon: luminance of its opaque texels, the 10th and 90th percentile
+    std::vector<float> lum;
+    for (uint32_t i = 0; i < pw * ph; ++i) {
+        const uint8_t* p = px + i * 4;
+        if (p[3] > 160) lum.push_back((0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]) / 255.f);
+    }
+    float lo = 0.f, hi = 1.f;
+    if (lum.size() > 8) {
+        std::sort(lum.begin(), lum.end());
+        lo = lum[lum.size() / 10];
+        hi = lum[lum.size() * 9 / 10];
+        if (hi - lo < 0.15f) { lo = 0.f; hi = std::max(hi, 0.5f); }
+    }
+    const float scale = std::min(static_cast<float>(w) / pw, static_cast<float>(h) / ph) * 0.92f;
+    const float ow = pw * scale, oh = ph * scale;
+    const float x0 = (w - ow) * 0.5f, y0 = (h - oh) * 0.5f;
+    auto sample = [&](float fx, float fy) {
+        fx = std::clamp(fx - 0.5f, 0.f, pw - 1.f);
+        fy = std::clamp(fy - 0.5f, 0.f, ph - 1.f);
+        const uint32_t ix = static_cast<uint32_t>(fx), iy = static_cast<uint32_t>(fy);
+        const uint32_t jx = std::min(ix + 1, pw - 1), jy = std::min(iy + 1, ph - 1);
+        const float tx = fx - ix, ty = fy - iy;
+        auto m = [&](uint32_t x, uint32_t y) {
+            const uint8_t* p = px + (static_cast<size_t>(y) * pw + x) * 4;
+            const float l = (0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2]) / 255.f;
+            return (p[3] / 255.f) * std::clamp((l - lo) / (hi - lo), 0.f, 1.f);
+        };
+        return (m(ix, iy) * (1 - tx) + m(jx, iy) * tx) * (1 - ty) + (m(ix, jy) * (1 - tx) + m(jx, jy) * tx) * ty;
+    };
+    for (uint32_t y = 0; y < h; ++y)
+        for (uint32_t x = 0; x < w; ++x) {
+            const float u = (x + 0.5f - x0) / scale, v = (y + 0.5f - y0) / scale;
+            if (u < 0 || v < 0 || u >= pw || v >= ph) continue;
+            a[static_cast<size_t>(y) * w + x] = static_cast<uint8_t>(std::clamp(sample(u, v), 0.f, 1.f) * 255.f + 0.5f);
+        }
+}
+
+// BC3 block of white texels with the given alpha (16 values, row-major): BC4 alpha with 8 levels, both colour endpoints white.
+void bc3_block_white(const uint8_t* alpha, uint8_t* out) {
+    uint8_t a0 = 0, a1 = 255;
+    for (int i = 0; i < 16; ++i) { a0 = std::max(a0, alpha[i]); a1 = std::min(a1, alpha[i]); }
+    uint64_t bits = 0;
+    if (a0 != a1) {
+        int pal[8];
+        pal[0] = a0;
+        pal[1] = a1;
+        for (int i = 2; i < 8; ++i) pal[i] = ((8 - i) * a0 + (i - 1) * a1) / 7;
+        for (int i = 0; i < 16; ++i) {
+            int best = 0, bd = 1 << 20;
+            for (int k = 0; k < 8; ++k) {
+                const int d = std::abs(pal[k] - alpha[i]);
+                if (d < bd) { bd = d; best = k; }
+            }
+            bits |= static_cast<uint64_t>(best) << (3 * i);
+        }
+    }
+    out[0] = a0;
+    out[1] = a1;
+    for (int i = 0; i < 6; ++i) out[2 + i] = static_cast<uint8_t>(bits >> (8 * i));
+    out[8] = out[9] = out[10] = out[11] = 0xff;     // colour endpoints: both white
+    out[12] = out[13] = out[14] = out[15] = 0;
+}
+
+bool atlas_dims(const PromptAtlas* at, const gfx::TexUploadReq& r) {
+    return at && r.bc == at->bc && r.width == at->width && r.height == at->height && r.tiled && r.tiled_size >= at->storage_size && !r.astc;
+}
+
+bool hook_patch(uint64_t id, uint32_t w, uint32_t h, uint8_t* blocks, void*) {
+    const PromptGame* g = game::info().prompts;
+    const PromptAtlas* at = g ? g->atlas : nullptr;
+    if (!at || id != 1 || at->bc != 3 || w != at->width || h != at->height) return false;
+    State& s = st();
+    std::lock_guard<std::mutex> lk(s.mu);
+    load_pack_locked(s);
+    const uint32_t bw = w / 4;
+    std::vector<uint8_t> a;
+    bool any = false;
+    for (unsigned i = 0; i < at->cell_count; ++i) {
+        const PromptAtlasCell& c = at->cells[i];
+        const std::string& name = s.names[static_cast<int>(c.icon)];
+        if (name.empty() || c.x % 4 || c.y % 4 || c.w % 4 || c.h % 4 || c.x + c.w > w || c.y + c.h > h) continue;
+        const uint8_t* px = s.pack.find(name);
+        if (!px && name.compare(0, 4, "kbm/") == 0) px = s.pack.find("kbm/any");
+        if (!px) continue;
+        mask_for_cell(px, s.pack.width(), s.pack.height(), c.w, c.h, a);
+        for (uint32_t by = 0; by < c.h / 4; ++by)
+            for (uint32_t bx = 0; bx < c.w / 4; ++bx) {
+                uint8_t blk[16];
+                for (int y = 0; y < 4; ++y)
+                    for (int x = 0; x < 4; ++x) blk[y * 4 + x] = a[static_cast<size_t>(by * 4 + y) * c.w + bx * 4 + x];
+                bc3_block_white(blk, blocks + (static_cast<size_t>(c.y / 4 + by) * bw + c.x / 4 + bx) * 16);
+            }
+        any = true;
+        if (s.hits++ < 40) NXLOG_I(kTag, "%s -> %s (atlas cell %u,%u)", icon_asset_name(c.icon), name.c_str(), c.x, c.y);
+    }
+    return any;
+}
+
 // The upload hook (nxrt/tex_upload.h): match recognises an icon texture by a hash of its storage and answers with the icon's number + 1; edit writes the
 // pack's picture for the icon's current name.
 uint64_t hook_match(const gfx::TexUploadReq& r, void*) {
     const PromptGame* g = game::info().prompts;
+    if (g && g->atlas) {
+        if (!atlas_dims(g->atlas, r)) return 0;
+        State& s = st();
+        {
+            std::lock_guard<std::mutex> lk(s.mu);
+            if (!s.any_name) return 0;
+        }
+        const uint64_t h = prompt_hash(r.tiled, static_cast<size_t>(g->atlas->storage_size));
+        if (h == g->atlas->hash) return 1;
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            NXLOG_I(kTag, "a %ux%u texture of the atlas's format is not the game's icon atlas (storage %zu, hash %016llx)", r.width, r.height, r.tiled_size,
+                    static_cast<unsigned long long>(h));
+        }
+        return 0;
+    }
     if (!g || g->icon_size == 0) return 0;
     const uint32_t kIconSize = g->icon_size;
     if (r.astc || r.width != kIconSize || r.height != kIconSize || !r.tiled) return 0;
@@ -239,6 +363,11 @@ void prompts_update(const Settings& settings, const PromptInputs& in) {
         gfx::TexUploadHooks h;
         h.match = &hook_match;
         h.edit = &hook_edit;
+        if (const PromptGame* g = game::info().prompts; g && g->atlas) {
+            h.patch_bc = &hook_patch;
+            h.patch_w = g->atlas->width;
+            h.patch_h = g->atlas->height;
+        }
         const int sub = gfx::texture_upload_subscribe(h);   // also asks for the icon textures to be uploaded again
         std::lock_guard<std::mutex> lk(s.mu);
         s.sub = sub;

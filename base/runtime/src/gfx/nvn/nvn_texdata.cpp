@@ -448,6 +448,9 @@ bool prepare_texture(const Texture& t, const TexCaps& caps, PreparedTexture& out
         if (fmt.vk == VK_FORMAT_BC7_SRGB_BLOCK && L.levels == 1 && L.layers == 1 && geo[0].d == 1 && geo[0].w <= 128 &&
             geo[0].h <= 128 && tex_edit_active() && tex_upload_bc7(t, geo[0].w, geo[0].h, lin))
             NXLOG_I(kTag, "texture %u: content replaced by the host (%ux%u BC7)", t.id, geo[0].w, geo[0].h);
+        else if (fmt.bc && L.levels == 1 && L.layers == 1 && geo[0].d == 1 && tex_edit_active() && tex_upload_patch_candidate(t) &&
+                 tex_upload_patch(t, geo[0].w, geo[0].h, lin))
+            NXLOG_I(kTag, "texture %u: blocks patched by the host (%ux%u %s)", t.id, geo[0].w, geo[0].h, fmt.name);
         out.data = std::move(lin);
         return true;
     }

@@ -13,6 +13,6 @@ add_library(nxrt_game_hwaoc_core STATIC "${_hw}/hwaoc_core.cpp")
 target_link_libraries(nxrt_game_hwaoc_core PUBLIC nxrt_game_hwaoc_data nxrt)
 
 if(TARGET nxrt_gfx)
-    add_library(nxrt_game_hwaoc STATIC "${_hw}/hwaoc_game.cpp" "${_hw}/hwaoc_play.cpp")
+    add_library(nxrt_game_hwaoc STATIC "${_hw}/hwaoc_game.cpp" "${_hw}/hwaoc_play.cpp" "${_hw}/hwaoc_prompts.cpp")
     target_link_libraries(nxrt_game_hwaoc PUBLIC nxrt_game_hwaoc_core nxrt_gfx)
 endif()

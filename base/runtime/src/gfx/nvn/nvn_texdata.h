@@ -60,6 +60,10 @@ VkFormat cache_entry_format(const Texture& t);
 // Texture upload hook (nxrt/tex_upload.h; nvn_tex_upload.cpp). A single-level BC7 sRGB texture of at most 128 x 128: when a subscriber answers for it,
 // replaces bc7 (the tight linear BC7 blocks of the w x h texture) with the encoded answer and returns true.
 bool tex_upload_bc7(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& bc7);
+// The block patch path (TexUploadHooks::patch_bc): `blocks` are the game's tight linear blocks of a single-level BC1 / BC3 / BC7 texture; true when a
+// subscriber changed them. The candidate test says whether a subscriber named this texture's size.
+bool tex_upload_patch(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& blocks);
+bool tex_upload_patch_candidate(const Texture& t);
 
 // The ASTC half of it. prepare_texture asks match for 2D ASTC textures it transcodes or decodes; for a
 // non-zero id it serves the kept data of (id, generation, format) or makes it (decode, the host's edit per level, encode at tex_edit_quality)

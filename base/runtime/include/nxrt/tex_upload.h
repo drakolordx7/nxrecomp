@@ -26,7 +26,8 @@ namespace nxrt::gfx {
 struct TexUploadReq {
     uint32_t width = 0, height = 0;   // level 0, texels
     uint32_t levels = 0;
-    bool astc = false;                // the game's texture is ASTC (block_w x block_h); false: a single-level BC7 sRGB texture
+    bool astc = false;                // the game's texture is ASTC (block_w x block_h); false: a single-level block-compressed texture (BC1, BC3 or BC7)
+    uint8_t bc = 0;                   // the block format when not ASTC: 1 (BC1), 3 (BC3 / DXT5) or 7 (BC7); 0 = not a block-compressed texture
     uint32_t block_w = 0, block_h = 0;   // ASTC block footprint (0 when not ASTC)
     bool srgb = false;
     const uint8_t* tiled = nullptr;   // the texture's storage in the game's memory exactly as the game wrote it (block-linear)
@@ -43,6 +44,13 @@ struct TexUploadHooks {
     // then 1, 2, ... of the same texture, on one thread. BC7: zeroed, to be filled whole. Returns false to leave the texture as the game's (BC7 only;
     // an ASTC level that returns false stays as decoded).
     bool (*edit)(uint64_t id, uint32_t level, uint32_t w, uint32_t h, uint8_t* rgba, void* user) = nullptr;
+    // Block patch, for the atlases a game keeps its button icons in: a single-level BC1, BC3 or BC7 texture of exactly patch_w x patch_h (0 x 0: none)
+    // that `match` took. `blocks` are the game's own 4x4 blocks, tight and linear (row after row; 8 bytes a block for BC1, 16 for BC3 and BC7), w x h
+    // texels: the callback rewrites the blocks it wants changed in place and returns true (false: the game's blocks stay). The runtime does not decode
+    // or encode anything for this path. A subscriber that sets patch_w / patch_h also gets the textures of that size uploaded again by
+    // texture_upload_changed (the other BC textures are left alone, there can be many).
+    bool (*patch_bc)(uint64_t id, uint32_t w, uint32_t h, uint8_t* blocks, void* user) = nullptr;
+    uint32_t patch_w = 0, patch_h = 0;
     void* user = nullptr;
 };
 

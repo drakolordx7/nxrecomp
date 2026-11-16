@@ -194,8 +194,10 @@ void textures_mark_bc7_candidates_dirty() {
         std::lock_guard<std::mutex> lk(g_mu);
         for (auto& kv : g_by_start) {
             Texture* t = kv.second;
-            if (t->destroyed.load() || !t->fmt || t->fmt->vk != VK_FORMAT_BC7_SRGB_BLOCK || t->levels != 1 || t->layers != 1) continue;
-            if (t->b.width > 128 || t->b.height > 128 || t->b.samples > 1) continue;
+            if (t->destroyed.load()) continue;
+            const bool small_bc7 = t->fmt && t->fmt->vk == VK_FORMAT_BC7_SRGB_BLOCK && t->levels == 1 && t->layers == 1 && t->b.width <= 128 && t->b.height <= 128 &&
+                                   t->b.samples <= 1;
+            if (!small_bc7 && !tex_upload_patch_candidate(*t)) continue;
             t->ref();
             hit.emplace_back(t);
         }

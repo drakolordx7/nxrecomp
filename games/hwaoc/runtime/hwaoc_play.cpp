@@ -14,6 +14,8 @@
 
 #include <atomic>
 #include <cstdio>
+#include <chrono>
+#include <thread>
 
 #include "nxrt/game/play_game.h"
 #include "nxrt/hooks.h"
@@ -42,6 +44,9 @@ struct H {
     GameHost* host = nullptr;
     uint32_t hooks[kSiteCount] = {};
     double pend_x = 0, pend_y = 0;           // counts taken from the host and not yet given to a camera update (guest main thread)
+    uint32_t wait_hook = 0, frame_hook = 0;
+    std::thread::id main_id;                 // the guest main thread: the one that installed us and owns the window
+    std::atomic<uint64_t> main_ticks{0};
     std::atomic<uint64_t> cam_calls{0};
     std::atomic<uint64_t> applied{0};
     double sum_yaw = 0, sum_pitch = 0;       // radians added so far (status line)
@@ -83,9 +88,28 @@ int cam_rate_hook(::Ctx* c, uint64_t, void* user) {
     return 0;
 }
 
+// Two sites that run on the guest main thread: the job wait loop the game boots and loads in (after its YieldThread call), and the per-frame wait of the
+// render-submit loop (sub_17C9800) the main thread sits in once the game runs. The frame update (the frame boundary of play mode) is a job on a worker thread,
+// and the window belongs to the main thread: the main thread's passes pump the window and run what the frame boundary queued for it (GameHost::main_tick).
+// Passes on other threads, and passes closer than 2 ms to the last one, return at once.
+int main_wait_hook(::Ctx*, uint64_t, void*) {
+    H& st = h();
+    if (!st.host || std::this_thread::get_id() != st.main_id) return 0;
+    static uint64_t last_ns = 0;
+    const uint64_t now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+    if (now - last_ns < 2000000) return 0;
+    last_ns = now;
+    st.main_ticks++;
+    st.host->main_tick();
+    return 0;
+}
+
 void install(uint64_t base, GameHost* host, const Settings&) {
     H& st = h();
     st.host = host;
+    st.main_id = std::this_thread::get_id();
+    st.wait_hook = hook_add_mid(base + addr::kMainYield, &main_wait_hook, nullptr);
+    st.frame_hook = hook_add_mid(base + addr::kMainRender, &main_wait_hook, nullptr);
     for (size_t i = 0; i < kSiteCount; ++i) st.hooks[i] = hook_add_mid(base + kSites[i].off, &cam_rate_hook, const_cast<Site*>(&kSites[i]));
     NXLOG_I("hwaoc", "mouse camera: %zu hooks on the camera's stick-rate returns", kSiteCount);
 }
@@ -95,6 +119,10 @@ void remove() {
     for (uint32_t& id : st.hooks) {
         if (id) hook_remove(id);
         id = 0;
+    }
+    for (uint32_t* id : {&st.wait_hook, &st.frame_hook}) {
+        if (*id) hook_remove(*id);
+        *id = 0;
     }
     st.host = nullptr;
 }
@@ -107,8 +135,8 @@ void status(GameStatus* out) { out->aim = h().cam_calls.load() ? "camera" : "no 
 
 void status_text(char* buf, size_t n) {
     H& st = h();
-    std::snprintf(buf, n, " cam(calls=%llu applied=%llu yaw=%.3f pitch=%.3f)", static_cast<unsigned long long>(st.cam_calls.load()),
-                  static_cast<unsigned long long>(st.applied.load()), st.sum_yaw, st.sum_pitch);
+    std::snprintf(buf, n, " cam(calls=%llu applied=%llu yaw=%.3f pitch=%.3f) main_ticks=%llu", static_cast<unsigned long long>(st.cam_calls.load()),
+                  static_cast<unsigned long long>(st.applied.load()), st.sum_yaw, st.sum_pitch, static_cast<unsigned long long>(st.main_ticks.load()));
 }
 
 }  // namespace

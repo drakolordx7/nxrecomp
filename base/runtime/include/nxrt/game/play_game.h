@@ -39,6 +39,11 @@ public:
     virtual void aim_applied(double dx, double dy) = 0;
     virtual double pitch_limit_deg() const = 0;                   // [play] pitch_limit_deg
     virtual bool log_status() const = 0;                          // [play] log_status
+    // For a game whose frame-boundary hook (Info::frame_update) does not run on the guest main thread (the thread that started play mode and owns
+    // the window): call this from a site that runs on the main thread about once per frame. It pumps the window's events (the frame boundary does
+    // it itself when it is on the main thread) and runs the window calls the frame boundary queued (mouse capture, cursor, window mode). On any
+    // other thread, or without a window, it does nothing.
+    virtual void main_tick() = 0;
 };
 
 // What play mode knows at one frame boundary.

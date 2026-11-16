@@ -2,6 +2,8 @@
 # Addresses are guest addresses: main base 0x7100000000 + the offset in the binary.
 # M7 keyboard and mouse (hwaoc-kbm): the frame boundary play mode is pumped from, and the camera's stick-rate returns the mouse adds to.
 entryhook 0x710166fff0   # KTGL frame task: frame pacing wait, then the system per-frame update (polls nn::hid keyboard and mouse); play mode's frame boundary
+midhook 0x7100ff4f28   # KTGL job wait (ff4c90), after its nn::os::YieldThread call: the guest main thread spins here while the game boots and loads: the window is served from it then
+midhook 0x71017c98a0   # in battle the guest main thread sits in the call at 0x17c989c of sub_17C9800 (a ring-slot loop that waits on a function-pointer call, then stores per-slot results) and comes back once a frame: a main-thread site for play mode to serve the window from; the frame task above runs on a worker
 midhook 0x7100fab238   # main battle camera update (sub_FAA1C0): s0 = yaw rate just returned (mov v8,v0 follows)
 midhook 0x7100fab24c   # main battle camera update: s0 = pitch rate just returned
 midhook 0x7100fbadb4   # camera mode 2 (sub_FBAD10): s0 = yaw rate

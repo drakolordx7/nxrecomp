@@ -121,6 +121,14 @@ gfx::TexUploadReq req_of(const Texture& t, const uint8_t* src) {
     r.block_w = t.fmt ? t.fmt->block_w : 0;
     r.block_h = t.fmt ? t.fmt->block_h : 0;
     r.srgb = t.fmt && t.fmt->srgb;
+    if (t.fmt && !t.fmt->astc) {
+        switch (t.fmt->vk) {
+            case VK_FORMAT_BC1_RGB_UNORM_BLOCK: case VK_FORMAT_BC1_RGB_SRGB_BLOCK: case VK_FORMAT_BC1_RGBA_UNORM_BLOCK: case VK_FORMAT_BC1_RGBA_SRGB_BLOCK: r.bc = 1; break;
+            case VK_FORMAT_BC3_UNORM_BLOCK: case VK_FORMAT_BC3_SRGB_BLOCK: r.bc = 3; break;
+            case VK_FORMAT_BC7_UNORM_BLOCK: case VK_FORMAT_BC7_SRGB_BLOCK: r.bc = 7; break;
+            default: break;
+        }
+    }
     r.tiled = src;
     r.tiled_size = static_cast<size_t>(t.storage_size);
     return r;
@@ -287,6 +295,39 @@ bool tex_upload_bc7(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_
     opt.threads = 1;
     opt.allow_opaque_mode6 = 0;
     return a2b_encode_bc7(w, h, rgba.data(), &opt, bc7.data(), bc7.size(), nullptr) == A2B_OK;
+}
+
+// The block patch path (TexUploadHooks::patch_bc): a single-level BC1, BC3 or BC7 texture of the size a subscriber named. false: the game's blocks stay.
+bool tex_upload_patch(const Texture& t, uint32_t w, uint32_t h, std::vector<uint8_t>& blocks) {
+    if (!tex_edit_active() || !t.mem) return false;
+    const std::vector<State::Sub> subs = subs_copy();
+    gfx::TexUploadReq req = req_of(t, t.mem);
+    if (!req.bc) return false;
+    const uint64_t id = match_subs(subs, req);
+    if (!id) return false;
+    const int handle = static_cast<int>(id >> kSlotShift);
+    for (const State::Sub& sub : subs) {
+        if (sub.handle != handle || !sub.hooks.patch_bc) continue;
+        struct Args { const State::Sub* sub; uint64_t id; uint32_t w, h; uint8_t* b; bool ok; } a{&sub, id & ((1ull << kSlotShift) - 1), w, h, blocks.data(), false};
+        nxrt::os::guard::call([](void* p) {
+            auto* x = static_cast<Args*>(p);
+            x->ok = x->sub->hooks.patch_bc(x->id, x->w, x->h, x->b, x->sub->hooks.user);
+        }, &a);
+        return a.ok;
+    }
+    return false;
+}
+
+// Whether a subscriber asks for the block patch of this texture (its size is the one the subscriber named): textures_mark_bc7_candidates_dirty.
+bool tex_upload_patch_candidate(const Texture& t) {
+    if (!t.fmt || t.fmt->astc || t.levels != 1 || t.layers != 1 || t.b.samples > 1) return false;
+    const gfx::TexUploadReq r = req_of(t, nullptr);
+    if (!r.bc) return false;
+    State& s = S();
+    std::lock_guard<std::mutex> lk(s.mu);
+    for (const State::Sub& sub : s.subs)
+        if (sub.hooks.patch_bc && sub.hooks.patch_w == r.width && sub.hooks.patch_h == r.height) return true;
+    return false;
 }
 
 void tex_edit_note(const Texture& t) {

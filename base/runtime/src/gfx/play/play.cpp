@@ -25,6 +25,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -227,6 +228,10 @@ struct G {
     std::atomic<uint64_t> frames{0}, pi_calls{0}, aim_frames{0}, events{0}, counts{0};
     std::atomic<double> aim_dx_sum{0}, aim_dy_sum{0};     // signed counts the aim applied (written on the main thread; the mouse feeder's log reads them)
     std::atomic<bool> thread_mismatch{false};
+    // Window calls made by the frame-boundary hook when it runs on another thread than the window's (a game whose frame update is a job on a worker
+    // thread): they run on the next main_tick() from the pump thread.
+    std::mutex ops_mu;
+    std::vector<std::function<void()>> ops;
 };
 
 // A real mouse's events reach SDL's queue in real time, whatever the frame rate. With [test] mouse_sdl_hz > 0 the counts a script's `mouse`
@@ -426,11 +431,21 @@ void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
 
 namespace {
 
+// Runs fn now when this is the pump thread (the one that owns the window), else on the pump thread's next main_tick().
+bool on_pump_thread_now() { return std::this_thread::get_id() == g().pump_thread; }
+void run_on_pump_thread(std::function<void()> fn) {
+    G& st = g();
+    if (on_pump_thread_now()) { fn(); return; }
+    std::lock_guard<std::mutex> lk(st.ops_mu);
+    st.ops.push_back(std::move(fn));
+}
+
 [[noreturn]] void quit_now(const char* why) { exit_process(0, "pass", why); }
 
 void set_window_mode(const std::string& mode) {
     G& st = g();
     if (!st.window) return;
+    if (!on_pump_thread_now()) { run_on_pump_thread([mode] { set_window_mode(mode); }); return; }
     const platform::FullscreenMode want = mode == "borderless" ? platform::FullscreenMode::Borderless
                                          : mode == "exclusive" ? platform::FullscreenMode::Exclusive
                                                                : platform::FullscreenMode::Windowed;
@@ -450,6 +465,7 @@ void set_window_mode(const std::string& mode) {
 void toggle_fullscreen() {
     G& st = g();
     if (!st.window) return;
+    if (!on_pump_thread_now()) { run_on_pump_thread([] { toggle_fullscreen(); }); return; }
     std::string target;
     if (platform::fullscreen_mode() == platform::FullscreenMode::Windowed)
         target = st.settings.display.window_mode == "exclusive" ? "exclusive" : "borderless";
@@ -666,7 +682,7 @@ void on_frame(double step_seconds) {
     if (!on_pump_thread && !st.warned_thread) {
         st.warned_thread = true;
         st.thread_mismatch.store(true);
-        NXLOG_W(kTag, "the frame-boundary hook runs on another thread than the one that started play mode: SDL events are not pumped");
+        NXLOG_W(kTag, "the frame-boundary hook runs on another thread than the one that started play mode: the window is served by the game calling GameHost::main_tick on the main thread");
     }
     if (st.window && on_pump_thread) platform::pump_events();
 
@@ -752,8 +768,10 @@ void on_frame(double step_seconds) {
         const bool want = st.capture_mouse && platform::focused() && !platform::minimized() && !overlay_visible && in_game &&
                           st.capture_state.load() == 0;
         if (want != platform::relative_mouse()) {
-            platform::set_relative_mouse(want);
-            if (want) input::mouse_delta_take();
+            run_on_pump_thread([want] {
+                platform::set_relative_mouse(want);
+                if (want) input::mouse_delta_take();
+            });
         }
     }
     st.engine->set_aux_sticks(gf.aux[0], gf.aux[1], gf.aux[2], gf.aux[3]);
@@ -771,7 +789,10 @@ void on_frame(double step_seconds) {
         geo.keep_aspect = st.settings.display.keep_aspect;
         if (const Act a = gp && gp->menu_frame ? gp->menu_frame(menu_up, geo) : Act::None; a != Act::None) st.engine->pulse(a, now);
         if (st.overlay && st.pointer_draw) st.overlay->set_pointer(menu_up && ptr.enabled() && ptr.cursor_visible(menu_up), ptr.x(), ptr.y(), true);
-        if (st.window && !platform::relative_mouse()) platform::set_cursor_visible(overlay_visible || !(ptr.enabled() && menu_up) || ptr.cursor_visible(menu_up));
+        if (st.window && !platform::relative_mouse()) {
+            const bool cursor = overlay_visible || !(ptr.enabled() && menu_up) || ptr.cursor_visible(menu_up);
+            run_on_pump_thread([cursor] { platform::set_cursor_visible(cursor); });
+        }
     }
     if (!in_game) input::mouse_delta_take();         // aim only counts what arrives while the game is playing
 
@@ -828,6 +849,17 @@ public:
     }
     double pitch_limit_deg() const override { return g().pitch_limit_deg; }
     bool log_status() const override { return g().log_status; }
+    void main_tick() override {
+        G& st = g();
+        if (!st.window || std::this_thread::get_id() != st.pump_thread) return;
+        platform::pump_events();
+        std::vector<std::function<void()>> ops;
+        {
+            std::lock_guard<std::mutex> lk(st.ops_mu);
+            ops.swap(st.ops);
+        }
+        for (auto& op : ops) op();
+    }
 };
 GameHostImpl g_game_host;
 GameHost& game_host_ref() { return g_game_host; }
