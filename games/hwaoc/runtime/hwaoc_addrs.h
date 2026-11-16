@@ -11,5 +11,15 @@ constexpr uint64_t kObjectStep = 0x16702d0;   // per-object step
 constexpr uint64_t kFrameRateBlock = 0x26a2280;   // frame-rate block {30, 2, 30, 30.0}
 constexpr uint64_t kDevicePointer = 0x2bb0798;   // KTGL device pointer
 constexpr uint64_t kFps5994 = 0x1ef8ddc;   // 59.94 constant
+constexpr uint64_t kFrameTask = 0x166fff0;   // KTGL frame task: frame pacing wait, then the system per-frame update (polls nn::hid keyboard and mouse); play mode's frame boundary
+constexpr uint64_t kCamYawRate = 0xfb0cd0;   // camera yaw rate from the right stick x: float(pad, speed), radians per camera update (pad struct +8, dead zone 68 of 127, game invert option)
+constexpr uint64_t kCamPitchRate = 0xfb0db0;   // camera pitch rate from the right stick y (pad struct +12)
+constexpr uint64_t kPadArray = 0x27838c0;   // pointer to the game's pad states, 368 bytes per pad (+0 buttons, +8/+12 right stick 0..254, +16/+20 left stick)
+constexpr uint64_t kCamYawRet0 = 0xfab238;   // main battle camera update (sub_FAA1C0): s0 = yaw rate just returned (mov v8,v0 follows)
+constexpr uint64_t kCamPitchRet0 = 0xfab24c;   // main battle camera update: s0 = pitch rate just returned
+constexpr uint64_t kCamYawRet1 = 0xfbadb4;   // camera mode 2 (sub_FBAD10): s0 = yaw rate
+constexpr uint64_t kCamPitchRet1 = 0xfbadc8;   // camera mode 2: s0 = pitch rate
+constexpr uint64_t kCamYawRet2 = 0xfd3fec;   // camera mode 3 (sub_FD3F40): s0 = yaw rate
+constexpr uint64_t kCamPitchRet2 = 0xfd4000;   // camera mode 3: s0 = pitch rate
 
 }
