@@ -27,10 +27,8 @@
 #include "nxrt/log.h"
 #include "services_internal.h"
 
-#include <windows.h>
-#include <bcrypt.h>
+#include "nxrt/os/process.h"
 
-#pragma comment(lib, "bcrypt")
 
 namespace nxrt::services {
 
@@ -97,21 +95,15 @@ MiscEvents& events() {
 }
 
 // ---- csrng ----------------------------------------------------------------------------------------------------------------------
-// GenerateRandomBytes(buffer<u8, 6> data): fills the output buffer from the Windows CSPRNG.
+// GenerateRandomBytes(buffer<u8, 6> data): fills the output buffer from the system CSPRNG.
 std::shared_ptr<Service> make_csrng() {
     return make_iface("csrng", [](Service& s) {
         s.add_cmd(0, "GenerateRandomBytes", [](Request& req, Response&) -> uint32_t {
             const ipc::Buffer b = req.out_buf(0);
-            uint64_t off = 0;
             if (kernel::rng_provided_fill(buf_mut(b), static_cast<size_t>(b.size))) return 0;      // a provider's stream (test tooling: seeded, so replays see the same numbers)
-            while (off < b.size) {
-                const uint64_t n = std::min<uint64_t>(b.size - off, 0x10000000ull);
-                const NTSTATUS st = BCryptGenRandom(nullptr, buf_mut(b) + off, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-                if (!BCRYPT_SUCCESS(st)) {
-                    NXLOG_E("csrng", "BCryptGenRandom failed: 0x%lX", static_cast<unsigned long>(st));
-                    return kNotSupported;
-                }
-                off += n;
+            if (!os::process::random_bytes(buf_mut(b), static_cast<size_t>(b.size))) {
+                NXLOG_E("csrng", "the system random source failed");
+                return kNotSupported;
             }
             NXLOG_D("csrng", "GenerateRandomBytes: %llu bytes", static_cast<unsigned long long>(b.size));
             return 0;

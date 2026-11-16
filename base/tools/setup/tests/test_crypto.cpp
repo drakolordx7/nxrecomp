@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Tests for crypto.h: AES-128 ECB / CTR / Nintendo XTS and SHA-1 / SHA-256 on Windows CNG.
+// Tests for crypto.h: AES-128 ECB / CTR / Nintendo XTS and SHA-1 / SHA-256 (self-contained, no system crypto library).
 #include "check.h"
 #include "crypto.h"
 

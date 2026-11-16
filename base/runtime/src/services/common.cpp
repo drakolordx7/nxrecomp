@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <set>
 
@@ -14,12 +15,9 @@
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/process.h"
 #include "nxrt/services.h"
 #include "services_internal.h"
-
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
 
 namespace nxrt::services {
 
@@ -175,31 +173,27 @@ int parse_region(const std::string& s, int def) {
     return def;
 }
 
-// The Windows display language as the closest Switch language, or false when Windows uses a language the Switch has none for.
-bool windows_language(Language& out) {
-    const LANGID id = GetUserDefaultUILanguage();
-    const WORD sub = SUBLANGID(id);
-    switch (PRIMARYLANGID(id)) {
-    case LANG_JAPANESE: out = Language::Japanese; return true;
-    case LANG_ENGLISH:
-        out = (sub == SUBLANG_ENGLISH_US || sub == SUBLANG_ENGLISH_CAN) ? Language::AmericanEnglish : Language::BritishEnglish;
-        return true;
-    case LANG_FRENCH: out = sub == SUBLANG_FRENCH_CANADIAN ? Language::CanadianFrench : Language::French; return true;
-    case LANG_GERMAN: out = Language::German; return true;
-    case LANG_ITALIAN: out = Language::Italian; return true;
-    case LANG_SPANISH:
-        out = (sub == SUBLANG_SPANISH || sub == SUBLANG_SPANISH_MODERN) ? Language::Spanish : Language::LatinAmericanSpanish;
-        return true;
-    case LANG_KOREAN: out = Language::Korean; return true;
-    case LANG_DUTCH: out = Language::Dutch; return true;
-    case LANG_PORTUGUESE: out = sub == SUBLANG_PORTUGUESE_BRAZILIAN ? Language::BrazilianPortuguese : Language::Portuguese; return true;
-    case LANG_RUSSIAN: out = Language::Russian; return true;
-    case LANG_CHINESE:
-        out = (sub == SUBLANG_CHINESE_TRADITIONAL || sub == SUBLANG_CHINESE_HONGKONG || sub == SUBLANG_CHINESE_MACAU)
-                  ? Language::TraditionalChinese : Language::SimplifiedChinese;
-        return true;
-    default: return false;
-    }
+// The system's display language (os::process::ui_language, a BCP 47 tag) as the closest Switch language, or false when it has none the Switch
+// has.
+bool system_language(Language& out) {
+    const std::string tag = lower(os::process::ui_language());
+    const size_t dash = tag.find_first_of("-_");
+    const std::string prim = tag.substr(0, dash);
+    const std::string rest = dash == std::string::npos ? std::string() : tag.substr(dash + 1);
+    auto starts = [&](const char* r) { return rest.compare(0, std::strlen(r), r) == 0; };
+    if (prim == "ja") out = Language::Japanese;
+    else if (prim == "en") out = (starts("us") || starts("ca") || rest.empty()) ? Language::AmericanEnglish : Language::BritishEnglish;
+    else if (prim == "fr") out = starts("ca") ? Language::CanadianFrench : Language::French;
+    else if (prim == "de") out = Language::German;
+    else if (prim == "it") out = Language::Italian;
+    else if (prim == "es") out = (rest.empty() || starts("es")) ? Language::Spanish : Language::LatinAmericanSpanish;
+    else if (prim == "ko") out = Language::Korean;
+    else if (prim == "nl") out = Language::Dutch;
+    else if (prim == "pt") out = starts("br") ? Language::BrazilianPortuguese : Language::Portuguese;
+    else if (prim == "ru") out = Language::Russian;
+    else if (prim == "zh") out = (starts("tw") || starts("hk") || starts("mo") || starts("hant")) ? Language::TraditionalChinese : Language::SimplifiedChinese;
+    else return false;
+    return true;
 }
 
 // A language the title supports: the wanted one, else its nearest sibling the title has (British for American English and so on), else
@@ -296,7 +290,7 @@ TitleProfile load_profile() {
     p.main_thread_priority = static_cast<int>(config_get_int("title", "main_thread_priority", p.main_thread_priority));
     p.main_thread_core = static_cast<int>(config_get_int("title", "main_thread_core", p.main_thread_core));
 
-    // Language: [system] language of the game ini, else the player's pick in controls.ini, else the Windows display language; "auto" or empty
+    // Language: [system] language of the game ini, else the player's pick in controls.ini, else the system display language; "auto" or empty
     // passes to the next. A language the title lacks falls to its nearest sibling, else American English.
     {
         std::string from = "[system] language";
@@ -304,7 +298,7 @@ TitleProfile load_profile() {
         if (want.empty() || lower(want) == "auto") want = controls_language(), from = "controls.ini language";
         Language l = Language::AmericanEnglish, pick;
         bool named = !want.empty() && lower(want) != "auto" && parse_language(want, l);
-        if (!named) from = windows_language(l) ? "Windows" : "default";
+        if (!named) from = system_language(l) ? "system" : "default";
         if (supported_or_sibling(l, p.supported_languages, pick)) p.language = pick;
         else p.language = Language::AmericanEnglish;
         if (!named && !want.empty() && lower(want) != "auto") NXLOG_W("services", "language '%s' is not a language name; using %s", want.c_str(), from.c_str());
@@ -364,9 +358,8 @@ std::string romfs_dir() { return config_get_str("fs", "romfs", "romfs"); }
 std::string save_dir() {
     std::string d = config_get_str("fs", "save_dir", "");
     if (!d.empty()) return d;
-    const char* appdata = std::getenv("APPDATA");
     const char* folder = game::info().save_folder;
-    return std::string(appdata && *appdata ? appdata : ".") + "\\" + (folder && *folder ? folder : "nxrt") + "\\save";
+    return os::process::default_save_dir(folder && *folder ? folder : "nxrt");
 }
 
 }

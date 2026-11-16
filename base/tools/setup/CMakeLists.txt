@@ -62,7 +62,7 @@ target_include_directories(nxs_base PRIVATE "${CMAKE_BINARY_DIR}/generated")
 # formats/nx_formats.h: the file formats shared with the runtime (BC7 cache key, programs.bin, shader pack)
 target_include_directories(nxs_base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../../formats)
 nxs_lib(nxs_crypto crypto.cpp fileio.cpp)
-target_link_libraries(nxs_crypto PUBLIC nxs_base bcrypt)
+target_link_libraries(nxs_crypto PUBLIC nxs_base)
 nxs_lib(nxs_fs pfs.cpp romfs.cpp)
 target_link_libraries(nxs_fs PUBLIC nxs_base nxs_crypto)
 # The rest of the core (keys, NCA, containers, the generic texture cache, shader cache, pipeline) lives in nxs_core.

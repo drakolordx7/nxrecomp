@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <nxrt/config.h>
+#include <nxrt/os/process.h>
 #include <nxrt/tex_upload.h>
 
 #include "nvn_settings.h"
@@ -29,7 +30,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-void set_env(const char* name, const char* value) { _putenv_s(name, value); }
+void set_env(const char* name, const char* value) { nxrt::os::process::setenv(name, value); }
 
 struct Built {
     Ref<Texture> tex;

@@ -5,7 +5,7 @@
 // Request bytes and expected reply bytes are written out from Switchbrew "Applet Manager services" and ScarletNX am.swipc, and from
 // Ryujinx for the result codes (module 128: result = module | description << 9), not read from the service.
 #include <filesystem>
-#include <windows.h>
+#include "nxrt/os/process.h"
 #include <cstring>
 
 #include "nxrt/config.h"
@@ -92,7 +92,7 @@ NXTEST(am_application_functions_fixed_replies) {
 
 NXTEST(am_ensure_save_data) {
     nxsvc::Env env;
-    const std::string dir = (std::filesystem::temp_directory_path() / ("nxrt_am_save_" + std::to_string(GetCurrentProcessId()))).string();
+    const std::string dir = (std::filesystem::temp_directory_path() / ("nxrt_am_save_" + std::to_string(nxrt::os::process::pid()))).string();
     std::filesystem::remove_all(dir);
     config_set("fs", "save_dir", dir.c_str());
     nxsvc::Session proxy = open_proxy();

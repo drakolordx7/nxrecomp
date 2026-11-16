@@ -14,7 +14,7 @@
 // fatal: ThrowFatal / ThrowFatalWithPolicy / ThrowFatalWithCpuContext write a crash report (<exe>_fatal.txt next to the exe, or
 // [fatal] report_path), log it at Error, signal the fatal event of fatal:p and terminate the process with exit code 5 unless
 // [fatal] terminate is false.
-#include <windows.h>
+#include "nxrt/os/process.h"
 
 #include <cstdio>
 #include <cstring>
@@ -276,9 +276,7 @@ uint64_t rd64(const uint8_t* p, size_t off) {
 }
 
 std::string default_report_path() {
-    char exe[1024] = {};
-    const DWORD n = GetModuleFileNameA(nullptr, exe, sizeof exe);
-    std::string p(exe, n < sizeof exe ? n : sizeof exe - 1);
+    std::string p = os::process::exe_path();
     const size_t slash = p.find_last_of("\\/");
     const size_t dot = p.find_last_of('.');
     if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) p.erase(dot);
@@ -380,7 +378,7 @@ uint32_t throw_fatal(uint64_t code, uint32_t policy, uint64_t pid, const uint8_t
         g.fatal_event.signal();
     }
     log_flush();
-    if (config_get_bool("fatal", "terminate", true)) TerminateProcess(GetCurrentProcess(), 5);
+    if (config_get_bool("fatal", "terminate", true)) os::process::terminate(5);
     return 0;
 }
 

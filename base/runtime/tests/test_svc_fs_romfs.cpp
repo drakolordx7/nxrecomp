@@ -5,9 +5,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <windows.h>
-#include <winioctl.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -23,6 +20,8 @@
 #include <vector>
 
 #include "../src/services/fs_romfs.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
 #include "test_framework.h"
 
 NXTEST_GROUP(svc_fs_romfs)
@@ -68,24 +67,16 @@ std::string utf8(const std::filesystem::path& p) {
     return std::string(reinterpret_cast<const char*>(u.data()), u.size());
 }
 
-// Host paths of 240 characters or more get the extended-length prefix.
-std::filesystem::path long_path(const std::filesystem::path& p) {
-    const std::wstring w = p.wstring();
-    if (w.size() < 240 || w.compare(0, 4, L"\\\\?\\") == 0) return p;
-    if (w.compare(0, 2, L"\\\\") == 0) return std::filesystem::path(L"\\\\?\\UNC\\" + w.substr(2));
-    return std::filesystem::path(L"\\\\?\\" + w);
-}
+// Host paths of 240 characters or more get what the platform needs to open them (os::fs::native_path).
+std::filesystem::path long_path(const std::filesystem::path& p) { return nxrt::os::fs::native_path(utf8(p)); }
 
-// The temp folder for one test, always in extended-length form so that 255-character names fit.
+// The temp folder for one test; its long children are opened through long_path so that 255-character names fit.
 struct TempTree {
     std::filesystem::path root;
     TempTree() {
         static std::atomic<unsigned> seq{0};
         std::error_code ec;
-        std::wstring base = std::filesystem::temp_directory_path(ec).wstring();
-        while (!base.empty() && base.back() == L'\\') base.pop_back();   // the temp path ends with a separator
-        root = std::filesystem::path(L"\\\\?\\" + base + L"\\nxrt_romfs_" + std::to_wstring(GetCurrentProcessId()) + L"_" +
-                                     std::to_wstring(seq++));
+        root = long_path(std::filesystem::temp_directory_path(ec) / ("nxrt_romfs_" + std::to_string(nxrt::os::process::pid()) + "_" + std::to_string(seq++)));
         std::filesystem::create_directories(root, ec);
     }
     ~TempTree() {
@@ -609,29 +600,21 @@ NXTEST(romfs_file_over_4gib) {
     TempTree t;
     const uint64_t kBig = 5ull << 30;
     const auto big = t.root / "a_big.bin";
-    HANDLE h = CreateFileW(big.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
+    nxrt::os::fs::File bf = nxrt::os::fs::File::open(utf8(big), nxrt::os::fs::kRead | nxrt::os::fs::kWrite | nxrt::os::fs::kCreate | nxrt::os::fs::kTruncate);
+    if (!bf.ok()) {
         nxtest::skip("cannot create the 5 GiB test file");
         return;
     }
     // sparse, so that the 5 GiB take no disk space; without sparse support the test is skipped rather than filling the volume
-    DWORD ret = 0;
-    const bool sparse = DeviceIoControl(h, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &ret, nullptr) != 0;
-    LARGE_INTEGER len{};
-    len.QuadPart = static_cast<LONGLONG>(kBig);
-    const bool sized = sparse && SetFilePointerEx(h, len, nullptr, FILE_BEGIN) && SetEndOfFile(h);
-    if (!sized) {
-        CloseHandle(h);
+    if (!bf.set_size(kBig, true)) {
+        bf.close();
         nxtest::skip("the volume does not take a sparse 5 GiB file");
         return;
     }
     // markers around the 4 GiB point of the file: image offset 0x100000000 is file offset 0xFFFFFE00
     const std::vector<uint8_t> marker = pattern(64, 99);
-    LARGE_INTEGER at{};
-    at.QuadPart = 0xFFFFFF00ll;
-    DWORD wrote = 0;
-    bool ok = SetFilePointerEx(h, at, nullptr, FILE_BEGIN) && WriteFile(h, marker.data(), 64, &wrote, nullptr) && wrote == 64;
-    CloseHandle(h);
+    const bool ok = bf.write_at(0xFFFFFF00ull, marker.data(), 64);
+    bf.close();
     CHECK(ok);
     const std::vector<uint8_t> after = pattern(4100, 5);
     {

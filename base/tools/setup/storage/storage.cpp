@@ -4,44 +4,35 @@
 #include <algorithm>
 #include <cstring>
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
 
 namespace nxs {
 namespace {
 
+// A file read through the standard library: portable, nothing here touches the operating system directly. Reads at an offset take a lock (one
+// stream, one position); the setup tool reads one file at a time in big blocks, where the lock costs nothing.
 class FileStorage final : public IStorage {
 public:
-    FileStorage(HANDLE h, u64 size) : h_(h), size_(size) {}
-    ~FileStorage() override { CloseHandle(h_); }
+    FileStorage(std::ifstream f, u64 size) : f_(std::move(f)), size_(size) {}
     u64 size() const override { return size_; }
     void read(u64 off, void* buf, size_t len) const override {
         if (off > size_ || len > size_ - off)
             fail(Fail::Input, "The file is shorter than it should be (read of %llu bytes at offset %llu past the end at %llu). "
                               "The dump is probably truncated or incomplete.",
                  (unsigned long long)len, (unsigned long long)off, (unsigned long long)size_);
-        u8* p = static_cast<u8*>(buf);
-        while (len > 0) {
-            DWORD chunk = static_cast<DWORD>(std::min<size_t>(len, 1u << 30));
-            OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(off);
-            ov.OffsetHigh = static_cast<DWORD>(off >> 32);
-            DWORD got = 0;
-            if (!ReadFile(h_, p, chunk, &got, &ov) || got == 0)
-                fail(Fail::Generic, "Reading the file failed (Windows error %lu at offset %llu).", GetLastError(),
-                     (unsigned long long)off);
-            p += got;
-            off += got;
-            len -= got;
-        }
+        if (len == 0) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        f_.clear();
+        f_.seekg(static_cast<std::streamoff>(off), std::ios::beg);
+        f_.read(static_cast<char*>(buf), static_cast<std::streamsize>(len));
+        if (static_cast<size_t>(f_.gcount()) != len)
+            fail(Fail::Generic, "Reading the file failed (at offset %llu).", (unsigned long long)off);
     }
 private:
-    HANDLE h_;
+    mutable std::ifstream f_;
+    mutable std::mutex mu_;
     u64 size_;
 };
 
@@ -75,15 +66,13 @@ private:
 }  // namespace
 
 StoragePtr open_file_storage(const std::string& utf8_path) {
-    HANDLE h = CreateFileW(widen(utf8_path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS, nullptr);
-    if (h == INVALID_HANDLE_VALUE) fail(Fail::Input, "Cannot open \"%s\" (Windows error %lu).", utf8_path.c_str(), GetLastError());
-    LARGE_INTEGER sz{};
-    if (!GetFileSizeEx(h, &sz)) {
-        CloseHandle(h);
-        fail(Fail::Generic, "Cannot get the size of \"%s\".", utf8_path.c_str());
-    }
-    return std::make_shared<FileStorage>(h, static_cast<u64>(sz.QuadPart));
+    const std::filesystem::path p(std::u8string(utf8_path.begin(), utf8_path.end()));
+    std::ifstream f(p, std::ios::binary);
+    if (!f) fail(Fail::Input, "Cannot open \"%s\".", utf8_path.c_str());
+    std::error_code ec;
+    const u64 size = static_cast<u64>(std::filesystem::file_size(p, ec));
+    if (ec) fail(Fail::Generic, "Cannot get the size of \"%s\".", utf8_path.c_str());
+    return std::make_shared<FileStorage>(std::move(f), size);
 }
 
 StoragePtr make_sub_storage(StoragePtr base, u64 off, u64 len) {

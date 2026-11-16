@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// AES-128 (ECB/CTR/XTS) and SHA-1/SHA-256 on top of Windows CNG (bcrypt.dll). No key bytes are ever logged.
+// AES-128 (ECB/CTR/XTS) and SHA-1/SHA-256, self-contained (no system crypto library: the same code runs on Windows and Linux). AES uses the
+// AES-NI instructions when the CPU has them and a table implementation otherwise. No key bytes are ever logged.
 #pragma once
 #include "common.h"
 
@@ -9,15 +10,18 @@ namespace nxs {
 class Aes128Ecb {
 public:
     explicit Aes128Ecb(const u8 key[16]);
-    ~Aes128Ecb();
+    ~Aes128Ecb() = default;
     Aes128Ecb(const Aes128Ecb&) = delete;
     Aes128Ecb& operator=(const Aes128Ecb&) = delete;
     // len must be a multiple of 16. in == out (in place) is allowed.
     void encrypt(const void* in, void* out, size_t len) const;
     void decrypt(const void* in, void* out, size_t len) const;
 private:
-    void* alg_ = nullptr;
-    void* key_ = nullptr;
+    alignas(16) u8 enc_[176];   // expanded round keys: AES-NI layout (16 bytes per round)
+    alignas(16) u8 dec_[176];
+    u32 soft_enc_[44];          // the table implementation's round keys (big-endian words)
+    u32 soft_dec_[44];
+    bool ni_ = false;
 };
 
 // AES-128-CTR in place. `counter` is the first 16-byte counter block; the whole block is a big-endian integer that is
@@ -32,26 +36,34 @@ void aes_xts_encrypt_nintendo(const u8 key1[16], const u8 key2[16], u64 first_se
 class Sha256 {
 public:
     Sha256();
-    ~Sha256();
+    ~Sha256() = default;
     Sha256(const Sha256&) = delete;
     Sha256& operator=(const Sha256&) = delete;
     void update(const void* data, size_t len);
     std::array<u8, 32> finish();   // after finish() the object is spent
 private:
-    void* alg_ = nullptr;
-    void* hash_ = nullptr;
+    void block(const u8* p);
+    u32 h_[8];
+    u8 buf_[64];
+    u64 total_ = 0;
+    size_t fill_ = 0;
+    bool done_ = false;
 };
 class Sha1 {
 public:
     Sha1();
-    ~Sha1();
+    ~Sha1() = default;
     Sha1(const Sha1&) = delete;
     Sha1& operator=(const Sha1&) = delete;
     void update(const void* data, size_t len);
     std::array<u8, 20> finish();
 private:
-    void* alg_ = nullptr;
-    void* hash_ = nullptr;
+    void block(const u8* p);
+    u32 h_[5];
+    u8 buf_[64];
+    u64 total_ = 0;
+    size_t fill_ = 0;
+    bool done_ = false;
 };
 std::array<u8, 32> sha256(const void* data, size_t len);
 std::array<u8, 20> sha1(const void* data, size_t len);

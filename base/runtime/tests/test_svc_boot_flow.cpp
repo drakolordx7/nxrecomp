@@ -2,7 +2,7 @@
 // Cross-service checks: every service in the title's Service Access Control list (game/exefs/main.npdm) answers, and the start-up
 // sequence the real game performed (am launch parameter -> acc -> EnsureSaveData -> fsp-srv OpenSaveDataFileSystem) agrees on the user id.
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
-#include <windows.h>
+#include "nxrt/os/process.h"
 
 #include <algorithm>
 #include <cstring>
@@ -47,7 +47,7 @@ NXTEST(sac_services_answer_an_unknown_command_without_crashing) {
 
 NXTEST(startup_user_id_agrees_between_am_acc_and_fs) {
     nxsvc::Env env;
-    const std::string dir = (std::filesystem::temp_directory_path() / ("nxrt_flow_" + std::to_string(GetCurrentProcessId()))).string();
+    const std::string dir = (std::filesystem::temp_directory_path() / ("nxrt_flow_" + std::to_string(nxrt::os::process::pid()))).string();
     std::filesystem::remove_all(dir);
     config_set("fs", "save_dir", dir.c_str());
     services::profile_reload();

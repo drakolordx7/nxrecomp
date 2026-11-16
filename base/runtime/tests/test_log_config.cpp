@@ -5,9 +5,10 @@
 #include "nxrt/config.h"
 #include "nxrt/log.h"
 
-#include <windows.h>
+#include "nxrt/os/process.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -38,10 +39,10 @@ struct SinkGuard {
 
 // Environment variables the module reads. An empty value removes the variable on Windows.
 void clear_env() {
-    _putenv_s("NXRT_LOG", "");
-    _putenv_s("NXRT_LOG_LEVEL", "");
-    _putenv_s("NXRT_LOG_PATH", "");
-    _putenv_s("NXRT_DIAG_WATCHDOG_SECONDS", "");
+    nxrt::os::process::setenv("NXRT_LOG", "");
+    nxrt::os::process::setenv("NXRT_LOG_LEVEL", "");
+    nxrt::os::process::setenv("NXRT_LOG_PATH", "");
+    nxrt::os::process::setenv("NXRT_DIAG_WATCHDOG_SECONDS", "");
 }
 
 // Log to nothing but the sink: no file, no stderr, empty config.
@@ -66,13 +67,12 @@ int count_containing(const std::vector<std::string>& lines, const char* needle) 
 }
 
 std::string temp_path(const char* name) {
-    char dir[MAX_PATH];
-    DWORD n = GetTempPathA(MAX_PATH, dir);
-    if (n == 0 || n >= MAX_PATH) return std::string();
-    char buf[MAX_PATH + 128];
-    std::snprintf(buf, sizeof buf, "%snxrt_test_%s_%lu.log", dir, name,
-                  static_cast<unsigned long>(GetCurrentProcessId()));
-    return buf;
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path(ec);
+    if (ec) return std::string();
+    char leaf[256];
+    std::snprintf(leaf, sizeof leaf, "nxrt_test_%s_%lu.log", name, static_cast<unsigned long>(nxrt::os::process::pid()));
+    return (dir / leaf).string();
 }
 
 void remove_log_files(const std::string& p) {
@@ -135,9 +135,12 @@ NXTEST(log_line_format_via_sink) {
     const std::string& line = cap.lines[0];
     CHECK(!line.empty() && line[0] == '[');
     CHECK(contains(line, " I t"));
-    char tid[32];
-    std::snprintf(tid, sizeof tid, " t%lu ", static_cast<unsigned long>(GetCurrentThreadId()));
-    CHECK(contains(line, tid));
+    {   // " t<thread id> ": the id itself is the platform's, so only its form is checked
+        const size_t at = line.find(" I t");
+        size_t e = at == std::string::npos ? at : at + 4;
+        while (e != std::string::npos && e < line.size() && line[e] >= '0' && line[e] <= '9') ++e;
+        CHECK(at != std::string::npos && e > at + 4 && e < line.size() && line[e] == ' ');
+    }
     CHECK(contains(line, " main] kernel: hello 5"));
     CHECK(cap.levels[0] == LogLevel::Info);
     CHECK(line.find('.') < line.find(" I t"));  // seconds with six decimals come first
@@ -288,17 +291,17 @@ NXTEST(log_prev_rotation_on_second_init) {
 NXTEST(log_env_level_overrides_options) {
     quiet_init(LogLevel::Error);
     CHECK(log_level() == LogLevel::Error);
-    _putenv_s("NXRT_LOG_LEVEL", "debug");
+    nxrt::os::process::setenv("NXRT_LOG_LEVEL", "debug");
     LogOptions o;
     o.path = "";
     o.level = LogLevel::Error;
     o.to_stderr = false;
     log_init(o);
     CHECK(log_level() == LogLevel::Debug);
-    _putenv_s("NXRT_LOG_LEVEL", "4");
+    nxrt::os::process::setenv("NXRT_LOG_LEVEL", "4");
     log_init(o);
     CHECK(log_level() == LogLevel::Trace);
-    _putenv_s("NXRT_LOG_LEVEL", "bogus");  // invalid: the option level is used
+    nxrt::os::process::setenv("NXRT_LOG_LEVEL", "bogus");  // invalid: the option level is used
     log_init(o);
     CHECK(log_level() == LogLevel::Error);
     clear_env();
@@ -310,7 +313,7 @@ NXTEST(log_env_path_overrides_options) {
     remove_log_files(p);
     clear_env();
     config_clear();
-    _putenv_s("NXRT_LOG", p.c_str());
+    nxrt::os::process::setenv("NXRT_LOG", p.c_str());
     LogOptions o;
     o.path = "";  // no file by option; the environment must still win
     o.to_stderr = false;
@@ -414,11 +417,11 @@ NXTEST(config_env_beats_ini_beats_default) {
     config_load_string("[diag]\nwatchdog_seconds = 10\n");
     CHECK(config_get_int("diag", "watchdog_seconds", 99) == 10);
     CHECK(std::string(config_source("diag", "watchdog_seconds")) == "ini");
-    _putenv_s("NXRT_DIAG_WATCHDOG_SECONDS", "30");
+    nxrt::os::process::setenv("NXRT_DIAG_WATCHDOG_SECONDS", "30");
     CHECK(config_get_int("diag", "watchdog_seconds", 99) == 30);
     CHECK(std::string(config_source("diag", "watchdog_seconds")) == "env");
     CHECK(config_has("diag", "watchdog_seconds"));
-    _putenv_s("NXRT_DIAG_WATCHDOG_SECONDS", "");
+    nxrt::os::process::setenv("NXRT_DIAG_WATCHDOG_SECONDS", "");
     CHECK(config_get_int("diag", "watchdog_seconds", 99) == 10);
     CHECK(config_get_int("diag", "missing", 99) == 99);
     CHECK(std::string(config_source("diag", "missing")) == "default");

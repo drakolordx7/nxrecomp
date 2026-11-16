@@ -2,7 +2,7 @@
 // Host-folder volumes (fs_volume.h): plain file operations, the journalled save semantics (copy on write, tombstones, two-phase commit,
 // recovery after a crash between the phases) and path hygiene.
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
-#include <windows.h>
+#include "nxrt/os/process.h"
 
 #include <cstring>
 #include <filesystem>
@@ -21,7 +21,7 @@ namespace {
 struct TempDir {
     stdfs::path p;
     explicit TempDir(const char* tag) {
-        p = stdfs::temp_directory_path() / (std::string("nxrt_fsv_") + tag + "_" + std::to_string(GetCurrentProcessId()));
+        p = stdfs::temp_directory_path() / (std::string("nxrt_fsv_") + tag + "_" + std::to_string(nxrt::os::process::pid()));
         std::error_code ec;
         stdfs::remove_all(p, ec);
         stdfs::create_directories(p, ec);
@@ -300,9 +300,9 @@ NXTEST(journal_crash_before_decision_changes_nothing) {
         CHECK_EQ(v.commit(), 0u);
         CHECK(put(v, "/f", "wip", false));
         // process killed with only a half written journal and no marker
-        std::ofstream(t.p / ("save.journal." + std::to_string(GetCurrentProcessId()))) << "W x\nR y\nD f\n";
+        std::ofstream(t.p / ("save.journal." + std::to_string(nxrt::os::process::pid()))) << "W x\nR y\nD f\n";
     }
-    stdfs::remove(t.p / ("save.journal." + std::to_string(GetCurrentProcessId())));
+    stdfs::remove(t.p / ("save.journal." + std::to_string(nxrt::os::process::pid())));
     Volume v(t.root("save"), true, false, 0);
     CHECK_EQ(read_all(v, "/f"), std::string("base"));
 }

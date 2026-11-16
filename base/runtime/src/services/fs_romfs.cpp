@@ -7,8 +7,6 @@
 #endif
 #include "fs_romfs.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -23,6 +21,7 @@
 #include "fs_mods.h"
 #include "nxrt/diag.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
 #include "nxrt/write_watch.h"
 
 namespace nxrt::services::fs {
@@ -37,7 +36,6 @@ constexpr uint64_t kFileFixed = 0x20;       // file entry without its name
 constexpr size_t kMaxName = 255;
 constexpr size_t kMaxPath = 0x300;          // SDK FS_MAX_PATH (0x301 with the terminator); the path counts its leading '/'
 constexpr size_t kOpenFiles = 16;
-constexpr size_t kLongPath = 240;           // host paths this long or longer get the \\?\ prefix
 
 uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) / a * a; }
 uint64_t pad4(size_t n) { return align_up(n, 4); }
@@ -69,37 +67,11 @@ uint64_t bucket_count(uint64_t n) {
     return c;
 }
 
-bool to_utf8(const std::wstring& w, std::string& out) {
-    out.clear();
-    if (w.empty()) return true;
-    const int n = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return false;
-    out.resize(static_cast<size_t>(n));
-    return WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, w.data(), static_cast<int>(w.size()), out.data(), n, nullptr, nullptr) == n;
-}
-
-bool to_wide(const std::string& s, std::wstring& out) {
-    out.clear();
-    if (s.empty()) return false;
-    const int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), static_cast<int>(s.size()), nullptr, 0);
-    if (n <= 0) return false;
-    out.resize(static_cast<size_t>(n));
-    return MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), static_cast<int>(s.size()), out.data(), n) == n;
-}
-
-// Host paths that may exceed MAX_PATH get the extended-length prefix. The input must already use backslashes.
-std::wstring long_path(std::wstring p) {
-    std::replace(p.begin(), p.end(), L'/', L'\\');
-    if (p.size() < kLongPath || p.compare(0, 4, L"\\\\?\\") == 0) return p;
-    if (p.compare(0, 2, L"\\\\") == 0) return L"\\\\?\\UNC\\" + p.substr(2);
-    return L"\\\\?\\" + p;
-}
-
 // One folder or file of the host tree. Layout fields are filled in once the tree is complete.
 struct Node {
     std::string name;
     std::string path;            // image path: "" for the root, "/a/b" otherwise
-    std::wstring host;
+    std::string host;   // UTF-8 (os::fs)
     bool is_dir = false;
     uint64_t size = 0;
     std::shared_ptr<const std::vector<uint8_t>> mem;   // files: content generated in memory (the host path is then unused)
@@ -116,22 +88,19 @@ struct Node {
 std::string shown(const Node& n) { return n.path.empty() ? std::string("/") : n.path; }
 
 bool scan(Node& dir, std::string& msg) {
-    std::error_code ec;
-    std::filesystem::directory_iterator it(std::filesystem::path(dir.host), ec);
-    if (ec) {
+    std::vector<os::fs::DirEntry> ents;
+    size_t bad = 0;
+    if (!os::fs::list_dir(dir.host, &ents, &bad)) {
         msg = "cannot read folder " + shown(dir);
         return false;
     }
-    const std::filesystem::directory_iterator end;
-    for (;;) {
-        if (ec) {
-            msg = "cannot read folder " + shown(dir);
-            return false;
-        }
-        if (it == end) break;
-        const std::filesystem::directory_entry& e = *it;
-        std::string name;
-        if (!to_utf8(e.path().filename().wstring(), name) || name.empty() || name.size() > kMaxName) {
+    if (bad) {
+        msg = "name cannot be stored in a RomFS (1 to 255 bytes of UTF-8): " + shown(dir) + "/ (a name is not valid UTF-8)";
+        return false;
+    }
+    for (const os::fs::DirEntry& e : ents) {
+        const std::string& name = e.name;
+        if (name.empty() || name.size() > kMaxName) {
             msg = "name cannot be stored in a RomFS (1 to 255 bytes of UTF-8): " + shown(dir) + "/" + name;
             return false;
         }
@@ -142,32 +111,21 @@ bool scan(Node& dir, std::string& msg) {
             msg = "path too long for a RomFS (0x300 bytes): " + k.path;
             return false;
         }
-        k.host = long_path(e.path().wstring());
-        std::error_code sec;
-        const std::filesystem::file_status st = e.symlink_status(sec);
-        if (sec) {
-            msg = "cannot stat " + k.path;
-            return false;
-        }
-        if (std::filesystem::is_symlink(st)) {
+        k.host = dir.host + "/" + name;
+        if (e.is_symlink) {
             msg = "symbolic link cannot be described: " + k.path;
             return false;
         }
-        if (std::filesystem::is_directory(st)) {
+        if (e.is_dir) {
             k.is_dir = true;
             if (!scan(k, msg)) return false;
-        } else if (std::filesystem::is_regular_file(st)) {
-            k.size = e.file_size(sec);
-            if (sec) {
-                msg = "cannot read the size of " + k.path;
-                return false;
-            }
+        } else if (e.is_file) {
+            k.size = e.size;
         } else {
             msg = "not a file or folder: " + k.path;
             return false;
         }
         dir.kids.push_back(std::move(k));
-        it.increment(ec);
     }
     // std::string's operator< compares unsigned char values, which is the byte order the RomFS hash tables expect.
     std::sort(dir.kids.begin(), dir.kids.end(), [](const Node& a, const Node& b) { return a.name < b.name; });
@@ -195,7 +153,7 @@ struct Segment {
 };
 
 struct FileRec {
-    std::wstring host;
+    std::string host;   // UTF-8 (os::fs)
     uint64_t size = 0;
     uint64_t image_off = 0;
     uint64_t src_off = 0;
@@ -289,7 +247,7 @@ bool apply_overlay(Node& root, const ModOverlay& ov, std::string& msg) {
                 added = true;
             }
             f->is_dir = false;
-            f->host = long_path(src->host);
+            f->host = src->host;
             f->size = src->size;
             f->src_off = src->offset;
             f->mem = src->mem;
@@ -302,20 +260,18 @@ bool apply_overlay(Node& root, const ModOverlay& ov, std::string& msg) {
 // Lays out the host folder: entries sorted by full path in each table, file data in that order, 16-byte aligned.
 bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const ModOverlay* mods) {
     std::string msg;
-    std::wstring wdir;
-    if (!to_wide(host_dir, wdir)) {
-        if (err) *err = "host folder name is empty or not valid UTF-8";
+    if (host_dir.empty()) {
+        if (err) *err = "host folder name is empty";
         return false;
     }
-    std::error_code ec;
-    const std::filesystem::path abs = std::filesystem::absolute(std::filesystem::path(wdir), ec);
-    if (ec || !std::filesystem::is_directory(abs, ec)) {
+    const std::string abs = os::fs::absolute(host_dir);
+    if (!os::fs::is_dir(abs)) {
         if (err) *err = "not a folder: " + host_dir;
         return false;
     }
     Node root;
     root.is_dir = true;
-    root.host = long_path(abs.wstring());
+    root.host = abs;
     if (!scan(root, msg) || (mods && !apply_overlay(root, *mods, msg))) {
         if (err) *err = msg;
         return false;
@@ -448,15 +404,9 @@ bool make_layout(const std::string& host_dir, Layout& L, std::string* err, const
     return true;
 }
 
-// One host file kept open. The box closes its handle when the last reader and the cache have let go of it.
+// One host file kept open. The box closes it when the last reader and the cache have let go of it.
 struct HandleBox {
-    HANDLE h = INVALID_HANDLE_VALUE;
-    HandleBox() = default;
-    HandleBox(const HandleBox&) = delete;
-    HandleBox& operator=(const HandleBox&) = delete;
-    ~HandleBox() {
-        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
-    }
+    os::fs::File f;
 };
 
 struct OpenSlot {
@@ -493,11 +443,9 @@ struct RomfsImage::Impl {
             }
         }
         const FileRec& f = l.files[idx];
-        HANDLE h = CreateFileW(f.host.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) return nullptr;
         auto box = std::make_shared<HandleBox>();
-        box->h = h;
+        box->f = os::fs::File::open(f.host, os::fs::kRead);
+        if (!box->f.ok()) return nullptr;
         if (cache.size() < kOpenFiles) {
             cache.push_back(OpenSlot{idx, ++tick, box});
         } else {
@@ -508,7 +456,7 @@ struct RomfsImage::Impl {
         return box;
     }
 
-    // Positioned reads (OVERLAPPED offset), so concurrent readers of one handle need no seek lock.
+    // Positioned reads, so concurrent readers of one handle need no seek lock.
     bool read_host(uint32_t idx, uint64_t ofs, uint8_t* out, uint64_t n) const {
         if (const auto& mem = l.files[idx].mem) {
             if (ofs > mem->size() || n > mem->size() - ofs) return false;
@@ -517,20 +465,9 @@ struct RomfsImage::Impl {
         }
         std::shared_ptr<HandleBox> box = acquire(idx);
         if (!box) return false;
-        const mem::ww::OsWriteScope ws(out, n);   // ReadFile fails on a page the write tracker made read-only
-        while (n > 0) {
-            const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(n, 1ull << 30));
-            OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(ofs & 0xFFFFFFFFull);
-            ov.OffsetHigh = static_cast<DWORD>(ofs >> 32);
-            DWORD got = 0;
-            // A short read means the file shrank since build(): an error, not zeros.
-            if (!ReadFile(box->h, out, chunk, &got, &ov) || got != chunk) return false;
-            out += chunk;
-            ofs += chunk;
-            n -= chunk;
-        }
-        return true;
+        const mem::ww::OsWriteScope ws(out, n);   // a read fails on a page the write tracker made read-only
+        // A short read means the file shrank since build(): an error, not zeros.
+        return box->f.read_exact(ofs, out, n);
     }
 };
 

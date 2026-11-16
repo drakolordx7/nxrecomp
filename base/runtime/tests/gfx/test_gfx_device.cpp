@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "nxrt/gfx.h"
+#include "nxrt/os/process.h"
 #include "nxrt/log.h"
 #include "test_framework.h"
 NXTEST_GROUP(gfx_device)
@@ -33,8 +34,8 @@ bool has_type(const Device& d, int type) {
 
 struct EnvOverride {
     std::string name;
-    EnvOverride(const char* n, const char* v) : name(n) { _putenv_s(n, v); }
-    ~EnvOverride() { _putenv_s(name.c_str(), ""); }
+    EnvOverride(const char* n, const char* v) : name(n) { nxrt::os::process::setenv(n, v); }
+    ~EnvOverride() { nxrt::os::process::setenv(name.c_str(), ""); }
 };
 
 }  // namespace
