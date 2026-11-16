@@ -1,52 +1,85 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# The pre-game launcher (apps/launcher): plain Win32, static runtime, no installer. It edits controls.ini with the same settings code the game uses
-# (the nxrt_settings library, gfx.cmake), starts the setup tool for the first-time setup
-# and starts the game exe. Included from gfx.cmake (needs the SDL3 target). Its branding and factory settings are those of one game module:
-# the data library (names, controls.ini defaults) and the launcher resources (cmake/game_exe.cmake builds <id>_launcher per game).
-# Without a game the base builds nxrt_launcher, unbranded and without resources.
-# Windows only for now (NXRT_BUILD_LAUNCHER defaults to OFF elsewhere: the Linux launcher is a separate decision); with the option off this file
-# defines nothing, and the games' `if(TARGET nxrt_launcher_core)` guards skip their launcher pages.
+# The pre-game launcher (apps/launcher): SDL3 + Dear ImGui (base/ui, nxui), the same program on Windows and Linux, static runtime, no installer.
+# It edits controls.ini with the same settings code the game uses (the nxrt_settings library, gfx.cmake), starts the setup tool for the
+# first-time setup and starts the game exe. Included from gfx.cmake (needs the SDL3 target). Its branding and factory settings are those of
+# one game module: the data library (names, controls.ini defaults) and the launcher resources (cmake/game_exe.cmake builds <id>_launcher per
+# game). Without a game the base builds nxrt_launcher, unbranded and without resources.
+# With the option off this file defines nothing, and the games' `if(TARGET nxrt_launcher_core)` guards skip their launcher pages.
+#
+# NXRT_LAUNCHER_LEGACY (Windows only, off): build the old plain Win32 launcher (apps/launcher/legacy, include/nxrt/game/launcher_ui_win32.h, a game's
+# pages in its legacy/ folder) in place of the new one, under the same names, until the new one is confirmed. The game's launcher pages library
+# is the one that matches (a game's CMake picks its files by NXRT_LAUNCHER_LEGACY).
+option(NXRT_BUILD_LAUNCHER "Build the launcher (apps/launcher, SDL3 + Dear ImGui) and its tests" ON)
 if(NX_PLATFORM STREQUAL "win32")
-    set(_nxrt_launcher_default ON)
+    option(NXRT_LAUNCHER_LEGACY "Build the old Win32 launcher instead of the new SDL3 + Dear ImGui one" OFF)
 else()
-    set(_nxrt_launcher_default OFF)
+    set(NXRT_LAUNCHER_LEGACY OFF)
 endif()
-option(NXRT_BUILD_LAUNCHER "Build the launcher (apps/launcher, plain Win32) and its tests" ${_nxrt_launcher_default})
 if(NOT NXRT_BUILD_LAUNCHER)
     return()
 endif()
-set(NXRT_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/apps/launcher")
-add_library(nxrt_launcher_core STATIC
-    "${NXRT_LAUNCHER_DIR}/keymap_win.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp"
-    "${NXRT_LAUNCHER_DIR}/pad_capture.cpp")
-# The public SDK (include/nxrt/game) is all a game module sees; the base's own tests reach the private headers through their own INCLUDES.
-target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_DIR}")
-target_compile_definitions(nxrt_launcher_core PUBLIC UNICODE _UNICODE)
-target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings)
-if(NX_PLATFORM STREQUAL "win32")
-    target_link_libraries(nxrt_launcher_core PUBLIC shell32 shlwapi)
+set(NXRT_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/apps/launcher" CACHE INTERNAL "the launcher sources (nxrt_add_launcher runs in the game project)")
+
+if(NXRT_LAUNCHER_LEGACY)
+    # ---- the old Win32 launcher ------------------------------------------------------------------------------------------------------
+    set(NXRT_LAUNCHER_SRC "${NXRT_LAUNCHER_DIR}/legacy")
+    add_library(nxrt_launcher_core STATIC
+        "${NXRT_LAUNCHER_SRC}/keymap_win.cpp" "${NXRT_LAUNCHER_SRC}/game_info.cpp" "${NXRT_LAUNCHER_SRC}/bindings_edit.cpp"
+        "${NXRT_LAUNCHER_DIR}/pad_capture.cpp")
+    target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_SRC}" "${NXRT_LAUNCHER_DIR}")
+    target_compile_definitions(nxrt_launcher_core PUBLIC UNICODE _UNICODE NXRT_LAUNCHER_LEGACY=1)
+    target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings shell32 shlwapi)
+    set(NXRT_LAUNCHER_APP_SOURCES
+        "${NXRT_LAUNCHER_SRC}/main.cpp" "${NXRT_LAUNCHER_SRC}/ui.cpp" "${NXRT_LAUNCHER_SRC}/page_display.cpp" "${NXRT_LAUNCHER_SRC}/page_controls.cpp"
+        "${NXRT_LAUNCHER_SRC}/page_keys.cpp" "${NXRT_LAUNCHER_SRC}/page_pad.cpp" "${NXRT_LAUNCHER_SRC}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
+    set(NXRT_LAUNCHER_APP_LIBS comctl32 uxtheme dwmapi shlwapi ole32 shell32 CACHE INTERNAL "")
+    set(NXRT_LAUNCHER_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher_legacy")
+else()
+    # ---- the SDL3 + Dear ImGui launcher ---------------------------------------------------------------------------------------------------
+    include("${NX_BASE_DIR}/ui/nxui.cmake")
+    # The few host calls the launcher makes (processes, files, time) without the rest of the runtime.
+    add_library(nxrt_launcher_os STATIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/process.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/fs.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/os/${NX_OS_DIR}/time.cpp")
+    target_include_directories(nxrt_launcher_os PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_features(nxrt_launcher_os PUBLIC cxx_std_20)
+    nx_platform_target_system_libs(nxrt_launcher_os)
+
+    add_library(nxrt_launcher_core STATIC
+        "${NXRT_LAUNCHER_DIR}/form.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp" "${NXRT_LAUNCHER_DIR}/pad_capture.cpp")
+    # The public SDK (include/nxrt/game) is all a game module sees; the base's own tests reach the private headers through their own INCLUDES.
+    target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_DIR}")
+    target_compile_definitions(nxrt_launcher_core PUBLIC NXRT_EXE_SUFFIX="${NX_EXE_SUFFIX}")
+    target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings nxrt_launcher_os)
+    set(NXRT_LAUNCHER_APP_SOURCES
+        "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/page_view.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
+        "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
+    set(NXRT_LAUNCHER_APP_LIBS nxui CACHE INTERNAL "")
+    set(NXRT_LAUNCHER_TEST_DIR "")
 endif()
-set(NXRT_LAUNCHER_APP_SOURCES
-    "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
-    "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
 
 # nxrt_add_launcher(<target> [VERSION <v>] [GAME_LIB <lib> REGISTER <function>] [RC <file>] [OUTPUT_NAME <name>] [OUTPUT_DIR <dir>])
 # The launcher exe. VERSION is the release version it shows ("dev" for local builds). GAME_LIB/REGISTER: the game module's data library and
-# its register function, called at the top of WinMain. RC: the resource script (version info, manifest).
+# its register function, called at the top of main. RC: the resource script (version info, manifest; Windows).
 function(nxrt_add_launcher target)
     cmake_parse_arguments(A "" "VERSION;GAME_LIB;REGISTER;RC;OUTPUT_NAME;OUTPUT_DIR" "" ${ARGN})
     if(NOT A_VERSION)
         set(A_VERSION "dev")
     endif()
-    add_executable(${target} WIN32 ${NXRT_LAUNCHER_APP_SOURCES} ${A_RC})
-    target_link_libraries(${target} PRIVATE nxrt_launcher_core)
     if(NX_PLATFORM STREQUAL "win32")
-        target_link_libraries(${target} PRIVATE comctl32 uxtheme dwmapi shlwapi ole32 shell32)
+        add_executable(${target} WIN32 ${NXRT_LAUNCHER_APP_SOURCES} ${A_RC})
+    else()
+        add_executable(${target} ${NXRT_LAUNCHER_APP_SOURCES} ${A_RC})
     endif()
-    target_compile_definitions(${target} PRIVATE NXRT_VERSION="${A_VERSION}")
+    target_include_directories(${target} PRIVATE "${NXRT_LAUNCHER_DIR}")
+    target_link_libraries(${target} PRIVATE nxrt_launcher_core ${NXRT_LAUNCHER_APP_LIBS})
+    target_compile_definitions(${target} PRIVATE NXRT_VERSION="${A_VERSION}" ${NX_RT_COMPILE_DEFINITIONS})   # (the project of a game exe is outside the runtime folder: the Windows header switches are not inherited)
     if(A_GAME_LIB)
         target_link_libraries(${target} PRIVATE ${A_GAME_LIB})
         target_compile_definitions(${target} PRIVATE NXRT_LAUNCHER_GAME_REGISTER=${A_REGISTER})
+    endif()
+    if(NX_PLATFORM STREQUAL "win32" AND NOT NXRT_LAUNCHER_LEGACY)
+        target_link_options(${target} PRIVATE /ENTRY:mainCRTStartup)   # a GUI program with main(), not WinMain
     endif()
     if(A_RC AND NX_PLATFORM STREQUAL "win32")
         target_link_options(${target} PRIVATE /MANIFEST:NO)   # the resource script carries the manifest
@@ -62,7 +95,15 @@ endfunction()
 nxrt_add_launcher(nxrt_launcher)
 
 if(NXRT_BUILD_TESTS)
-    file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/*.cpp")
+    if(NXRT_LAUNCHER_LEGACY)
+        # the old launcher: its key-message test, and the SDL pad test the two launchers share
+        file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${NXRT_LAUNCHER_TEST_DIR}/*.cpp")
+        list(APPEND NXRT_LAUNCHER_TEST_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/test_pad_capture.cpp")
+        set(_nxrt_launcher_test_inc "${NXRT_LAUNCHER_DIR}/legacy" "${NXRT_LAUNCHER_DIR}")
+    else()
+        file(GLOB NXRT_LAUNCHER_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/launcher/*.cpp")
+        set(_nxrt_launcher_test_inc "${NXRT_LAUNCHER_DIR}")
+    endif()
     nxrt_add_test_exe(nxrt_launcher_tests SOURCES ${NXRT_LAUNCHER_TEST_SOURCES} LINK nxrt_launcher_core nxrt_fixture_game
-                      REGISTER nxrt_register_fixture_game INCLUDES "${NXRT_LAUNCHER_DIR}")
+                      REGISTER nxrt_register_fixture_game INCLUDES ${_nxrt_launcher_test_inc})
 endif()

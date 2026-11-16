@@ -33,8 +33,8 @@ int slider_pos(double rad) {
     return static_cast<int>(std::clamp(steps_raw(rad), static_cast<long>(kMin), static_cast<long>(kMax)));
 }
 
-std::wstring sens_text(int pos) {
-    return std::to_wstring(pos / 10) + L"." + std::to_wstring(pos % 10);
+std::string sens_text(int pos) {
+    return std::to_string(pos / 10) + "." + std::to_string(pos % 10);
 }
 
 // The button icon drop-down, in the order it shows. The list index is what the page reads and writes; the enum value is what is saved.
@@ -47,55 +47,52 @@ bool same_steps(const Settings& s) {
 
 class ControlsPage : public Page {
 public:
-    const wchar_t* title() const override { return L"Controls"; }
+    const char* title() const override { return "Controls"; }
 
     void build(Form& f) override {
-        f.heading(L"Mouse");
+        f.heading("Mouse");
         yaw_ = f.slider(
-            L"Horizontal sensitivity", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.yaw_rad); },
+            "Horizontal sensitivity", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.yaw_rad); },
             [this](Settings& s, int pos) {
                 if (pos != yaw0_) s.mouse.yaw_rad = rad_per_count(pos / 10.0);
             },
             sens_text, [this]() { follow(yaw_, pitch_); });
         pitch_ = f.slider(
-            L"Vertical sensitivity", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.pitch_rad); },
+            "Vertical sensitivity", kMin, kMax, [](const Settings& s) { return slider_pos(s.mouse.pitch_rad); },
             [this](Settings& s, int pos) {
                 if (pos != pitch0_) s.mouse.pitch_rad = rad_per_count(pos / 10.0);
             },
             sens_text, [this]() { follow(pitch_, yaw_); });
         f.checkbox(
-            L"Use the same sensitivity for both", [](const Settings& s) { return same_steps(s); },
+            "Use the same sensitivity for both", [](const Settings& s) { return same_steps(s); },
             [](Settings&, bool) {},   // not saved: only the two sliders are
             [this]() { linked_ = !linked_; });
         f.checkbox(
-            L"Invert vertical aim", [](const Settings& s) { return s.mouse.invert_y; },
-            [](Settings& s, bool v) { s.mouse.invert_y = v; });
+            "Invert vertical aim", [](const Settings& s) { return s.mouse.invert_y; }, [](Settings& s, bool v) { s.mouse.invert_y = v; });
         f.checkbox(
-            L"Invert horizontal aim", [](const Settings& s) { return s.mouse.invert_x; },
-            [](Settings& s, bool v) { s.mouse.invert_x = v; });
+            "Invert horizontal aim", [](const Settings& s) { return s.mouse.invert_x; }, [](Settings& s, bool v) { s.mouse.invert_x = v; });
         if (const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary(); v && v->cycle) {
-            wheel_label_ = game_text(v->label_wheel_cycles, L"Mouse wheel cycles");
             f.checkbox(
-                wheel_label_.c_str(), [](const Settings& s) { return s.mouse.wheel_cycles; },
+                game_text(v->label_wheel_cycles, "Mouse wheel cycles"), [](const Settings& s) { return s.mouse.wheel_cycles; },
                 [](Settings& s, bool v) { s.mouse.wheel_cycles = v; });
         }
         f.checkbox(
-            L"Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
+            "Mouse pointer in menus (cursor, hover, click)", [](const Settings& s) { return s.mouse.menu_cursor; },
             [](Settings& s, bool v) { s.mouse.menu_cursor = v; });
         rows_.build(f, nxrt::play::OptTab::Mouse);
         rows_.build(f, nxrt::play::OptTab::Pad);
 
-        f.heading(L"Button prompts");
+        f.heading("Button prompts");
         f.combo(
-            L"Button icons", {L"Automatic (follows what you use)", L"Keyboard and mouse", L"Xbox", L"PlayStation", L"Switch (the game's own)"},
+            "Button icons", {"Automatic (follows what you use)", "Keyboard and mouse", "Xbox", "PlayStation", "Switch (the game's own)"},
             [](const Settings& s) {
                 for (int i = 0; i < kStyleCount; ++i)
                     if (kStyles[i] == s.prompts.style) return i;
                 return 0;
             },
             [](Settings& s, int i) { s.prompts.style = kStyles[std::clamp(i, 0, kStyleCount - 1)]; });
-        f.hint(L"Automatic shows keyboard and mouse icons until you use a controller, then that controller's icons.", 2);
-        f.text_row(L"Controller", host()->controller_connected() ? L"Connected" : L"None detected");
+        f.hint("Automatic shows keyboard and mouse icons until you use a controller, then that controller's icons.");
+        pad_text_ = f.text_row("Controller", "None detected");
     }
 
     void load(const Settings& s) override {
@@ -104,24 +101,23 @@ public:
         linked_ = same_steps(s);
         Page::load(s);
         rows_.load(s);
+        state_changed();
+    }
+
+    void state_changed() override {
+        if (pad_text_ && host()) pad_text_->set_text(host()->controller_connected() ? "Connected" : "None detected");
     }
 
 private:
-    void follow(HWND from, HWND to) {
-        if (!linked_ || syncing_) return;
-        syncing_ = true;
-        SendMessageW(to, TBM_SETPOS, TRUE, SendMessageW(from, TBM_GETPOS, 0, 0));
-        // The page handles this scroll message the same way as a drag, so the value text of `to` is redrawn.
-        SendMessageW(hwnd(), WM_HSCROLL, MAKEWPARAM(TB_THUMBPOSITION, 0), reinterpret_cast<LPARAM>(to));
-        syncing_ = false;
+    void follow(Row* from, Row* to) {
+        if (!linked_) return;
+        to->set_value(from->value());
     }
 
-    HWND yaw_ = nullptr, pitch_ = nullptr;
+    Row *yaw_ = nullptr, *pitch_ = nullptr, *pad_text_ = nullptr;
     int yaw0_ = 0, pitch0_ = 0;
-    std::wstring wheel_label_;
     GameOptionRows rows_;
     bool linked_ = false;                      // the "same for both" box (not saved)
-    bool syncing_ = false;
 };
 
 }  // namespace

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Keyboard tab, logic part: the rows of the list and the edits that keep every action at two keys. No Windows code here, so the
+// Keyboard tab, logic part: the rows of the list and the edits that keep every action at two keys. No window-system code here, so the
 // tests can run it alone. Only the factory layer ([bindings.all]) is edited. The game's other context sections are
 // left alone.
 #pragma once
@@ -12,8 +12,8 @@ namespace nxl {
 
 struct KeyRow {
     nxrt::play::Act act;
-    const wchar_t* label;   // "Jump"
-    const wchar_t* group;   // "Combat"
+    const char* label;   // "Jump"
+    const char* group;   // "Combat"
 };
 
 const std::vector<KeyRow>& key_rows();
@@ -36,6 +36,6 @@ void clear_slot(nxrt::play::Settings& s, nxrt::play::Act a, int slot);
 void reset_shown_bindings(nxrt::play::Settings& s);
 
 // The name of the action on the list, or an empty string for an action without a row.
-std::wstring act_label(nxrt::play::Act a);
+std::string act_label(nxrt::play::Act a);
 
 }  // namespace nxl

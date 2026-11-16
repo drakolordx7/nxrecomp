@@ -20,39 +20,7 @@ using nxrt::play::GlowMode;
 using nxrt::play::GlowRgb;
 using nxrt::play::TweakSettings;
 
-constexpr const wchar_t* kSwatchClass = L"NxlGlowSwatch";
-
-// A plain rectangle in one colour (GWLP_USERDATA holds the COLORREF).
-LRESULT CALLBACK swatch_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_PAINT) {
-        PAINTSTRUCT ps;
-        HDC dc = BeginPaint(hwnd, &ps);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        HBRUSH b = CreateSolidBrush(static_cast<COLORREF>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)));
-        FillRect(dc, &rc, b);
-        DeleteObject(b);
-        FrameRect(dc, &rc, GetSysColorBrush(COLOR_WINDOWFRAME));
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    if (msg == WM_ERASEBKGND) return 1;
-    return DefWindowProcW(hwnd, msg, wp, lp);
-}
-
-void register_swatch(HINSTANCE inst) {
-    static bool done = false;
-    if (done) return;
-    WNDCLASSEXW wc{};
-    wc.cbSize = sizeof wc;
-    wc.lpfnWndProc = &swatch_proc;
-    wc.hInstance = inst;
-    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.lpszClassName = kSwatchClass;
-    done = RegisterClassExW(&wc) != 0;
-}
-
-std::wstring byte_text(int v) { return std::to_wstring(v); }
+std::string byte_text(int v) { return std::to_string(v); }
 
 // The part's drop-down: 0 follows the glow colour, 1 the game's own; a part with its own colour (only in the file) shows as 0 and is kept.
 int part_index(GlowMode m) { return m == GlowMode::Off ? 1 : 0; }
@@ -63,53 +31,48 @@ void set_part(nxrt::play::GlowPart* p, int i) {
 
 class TweaksPage : public Page {
 public:
-    const wchar_t* title() const override { return L"Tweaks"; }
+    const char* title() const override { return "Tweaks"; }
 
     void build(Form& f) override {
-        register_swatch(host()->env().inst);
         // the page does not scroll: the three colours side by side, the glow (S44), the suit's paint and the arm cannon's paint (S45)
-        f.heading(L"Glow and paint colours");
+        f.heading("Glow and paint colours");
         f.compact(true);
         f.columns(3);
         f.checkbox(
-            L"Glow colour", [](const Settings& s) { return mpr_settings(s).tweaks.glow_on; }, [](Settings& s, bool v) { mpr_settings(s).tweaks.glow_on = v; },
-            [this]() { update_swatches(); });
+            "Glow colour", [](const Settings& s) { return mpr_settings(s).tweaks.glow_on; }, [](Settings& s, bool v) { mpr_settings(s).tweaks.glow_on = v; });
         f.checkbox(
-            L"Suit colour", [](const Settings& s) { return mpr_settings(s).tweaks.suit_color_on; }, [](Settings& s, bool v) { mpr_settings(s).tweaks.suit_color_on = v; },
-            [this]() { update_swatches(); });
+            "Suit colour", [](const Settings& s) { return mpr_settings(s).tweaks.suit_color_on; }, [](Settings& s, bool v) { mpr_settings(s).tweaks.suit_color_on = v; });
         f.checkbox(
-            L"Arm cannon colour", [](const Settings& s) { return mpr_settings(s).tweaks.gun_color_on; }, [](Settings& s, bool v) { mpr_settings(s).tweaks.gun_color_on = v; },
-            [this]() { update_swatches(); });
+            "Arm cannon colour", [](const Settings& s) { return mpr_settings(s).tweaks.gun_color_on; }, [](Settings& s, bool v) { mpr_settings(s).tweaks.gun_color_on = v; });
         rgb_rows(f, {&glow_, &suit_, &gun_}, {&TweakSettings::glow, &TweakSettings::suit_color, &TweakSettings::gun_color});
-        reset_id_ = f.button(L"Reset the glow", 150, true);
-        reset_paint_id_ = f.button(L"Reset the paint", 150, true);
+        reset_id_ = f.button("Reset the glow", 150, true);
+        reset_paint_id_ = f.button("Reset the paint", 150, true);
         f.compact(false);
         f.columns(1);
-        f.hint(L"Glow: the morph ball's glow (stripes, inner glow, boost glow, trail, light), the arm cannon's charge glow and lit panels, and the suit's lights; the colour multiplies the game's glow. Paint: the suit (the morph ball follows it) and the arm cannon's shell, black to white, keeping the game's shading and detail; the visor and the lights keep their colours. Off: the game's own.", 4, true);
+        f.hint("Glow: the morph ball's glow (stripes, inner glow, boost glow, trail, light), the arm cannon's charge glow and lit panels, and the suit's lights; the colour multiplies the game's glow. Paint: the suit (the morph ball follows it) and the arm cannon's shell, black to white, keeping the game's shading and detail; the visor and the lights keep their colours. Off: the game's own.", true);
 
-        f.heading(L"Glow per part");
+        f.heading("Glow per part");
         f.columns(3);
         f.combo(
-            L"Suit", {L"Glow colour", L"The game's own"}, [](const Settings& s) { return part_index(mpr_settings(s).tweaks.suit.mode); },
+            "Suit", {"Glow colour", "The game's own"}, [](const Settings& s) { return part_index(mpr_settings(s).tweaks.suit.mode); },
             [](Settings& s, int i) { set_part(&mpr_settings(s).tweaks.suit, i); });
         f.combo(
-            L"Morph ball", {L"Glow colour", L"The game's own"}, [](const Settings& s) { return part_index(mpr_settings(s).tweaks.ball.mode); },
+            "Morph ball", {"Glow colour", "The game's own"}, [](const Settings& s) { return part_index(mpr_settings(s).tweaks.ball.mode); },
             [](Settings& s, int i) { set_part(&mpr_settings(s).tweaks.ball, i); });
         f.combo(
-            L"Arm cannon", {L"Glow colour", L"The game's own"}, [](const Settings& s) { return part_index(mpr_settings(s).tweaks.gun.mode); },
+            "Arm cannon", {"Glow colour", "The game's own"}, [](const Settings& s) { return part_index(mpr_settings(s).tweaks.gun.mode); },
             [](Settings& s, int i) { set_part(&mpr_settings(s).tweaks.gun, i); });
         f.columns(1);
-        f.hint(L"A part can also get its own glow colour in controls.ini: [tweaks] suit_glow, ball_glow or gun_glow = R,G,B.", 1, true);
+        f.hint("A part can also get its own glow colour in controls.ini: [tweaks] suit_glow, ball_glow or gun_glow = R,G,B.", true);
     }
 
     void load(const Settings& s) override {
         loaded_ = s;
         Page::load(s);
-        update_swatches();
     }
 
-    bool command(int id, int code, HWND) override {
-        if ((id != reset_id_ && id != reset_paint_id_) || code != BN_CLICKED) return false;
+    bool command(int id) override {
+        if (id != reset_id_ && id != reset_paint_id_) return false;
         Settings s = loaded_;
         store(&s);
         const TweakSettings def;
@@ -126,16 +89,14 @@ public:
             mpr_settings(s).tweaks.gun_color = def.gun_color;
         }
         Page::load(s);
-        update_swatches();
         host()->changed();
         return true;
     }
 
-    void rebuilt() override { update_swatches(); }
-
 private:
     struct RgbRows {
-        HWND r = nullptr, g = nullptr, b = nullptr, swatch = nullptr;
+        Row *r = nullptr, *g = nullptr, *b = nullptr;
+        uint32_t rgb() const { return (uint32_t(r ? r->value() : 255) << 16) | (uint32_t(g ? g->value() : 255) << 8) | uint32_t(b ? b->value() : 255); }
     };
     using RgbField = GlowRgb TweakSettings::*;
 
@@ -154,33 +115,16 @@ private:
 
     // Red, Green and Blue sliders (0..255) and a swatch for each colour, one colour per column of the form (rows fill left to right).
     void rgb_rows(Form& f, std::initializer_list<RgbRows*> rows, std::initializer_list<RgbField> fields) {
-        const wchar_t* names[3] = {L"Red", L"Green", L"Blue"};
+        const char* names[3] = {"Red", "Green", "Blue"};
         for (int ch = 0; ch < 3; ++ch) {
             auto field = fields.begin();
             for (RgbRows* r : rows) {
-                HWND h = f.slider(names[ch], 0, 255, channel_get(*field, ch), channel_set(*field, ch), byte_text, [this]() { update_swatches(); });
+                Row* h = f.slider(names[ch], 0, 255, channel_get(*field, ch), channel_set(*field, ch), byte_text);
                 (ch == 0 ? r->r : ch == 1 ? r->g : r->b) = h;
                 ++field;
             }
         }
-        for (RgbRows* r : rows) {
-            const RECT sw = f.custom_row(L"Colour", 28);
-            const int swatch_w = std::min<int>(sw.right - sw.left, host()->env().S(160));
-            r->swatch = f.create(kSwatchClass, L"", WS_CHILD | WS_VISIBLE, sw.left, sw.top, swatch_w, sw.bottom - sw.top);
-        }
-    }
-
-    static void update_swatch(const RgbRows& rows) {
-        if (!rows.swatch) return;
-        auto pos = [](HWND h) { return h ? static_cast<int>(SendMessageW(h, TBM_GETPOS, 0, 0)) : 255; };
-        const COLORREF c = RGB(pos(rows.r), pos(rows.g), pos(rows.b));
-        SetWindowLongPtrW(rows.swatch, GWLP_USERDATA, static_cast<LONG_PTR>(c));
-        InvalidateRect(rows.swatch, nullptr, FALSE);
-    }
-    void update_swatches() {
-        update_swatch(glow_);
-        update_swatch(suit_);
-        update_swatch(gun_);
+        for (RgbRows* r : rows) f.swatch("Colour", [r]() { return r->rgb(); }, 28);
     }
 
     RgbRows glow_, suit_, gun_;

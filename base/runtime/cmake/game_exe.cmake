@@ -8,8 +8,8 @@
 #                   launcher pages of its own), with the same resource templates
 # VERSION is the release version ("0.1.0"; default "dev") shown by both programs and in their file properties. NXRT_RELEASE (runtime
 # CMakeLists.txt) builds the package flavour: a Windows GUI program that looks for ./exefs, with no build paths in it.
-# Linux: the libraries are lib<id>_<module>.a (cmake/nx_platform.cmake), there are no resources or manifests, and the launcher is not built
-# (NXRT_BUILD_LAUNCHER, cmake/launcher.cmake).
+# Linux: the libraries are lib<id>_<module>.a (cmake/nx_platform.cmake) and there are no resources or manifests; the launcher is the same
+# SDL3 + Dear ImGui program as on Windows (NXRT_BUILD_LAUNCHER, cmake/launcher.cmake).
 # Both land in the build folder's top level, next to the ASTC decoder DLLs and fonts\ (the shared-font fallback).
 include_guard(GLOBAL)
 get_filename_component(_nxrt_gad "${CMAKE_CURRENT_LIST_DIR}/../apps/game" ABSOLUTE)
@@ -132,8 +132,13 @@ function(nxrt_add_game_exe id)
         set(_launcher_reg nxrt_register_game_${id}_data)
     endif()
     if(NXRT_BUILD_LAUNCHER)
-        nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB ${_launcher_lib} REGISTER ${_launcher_reg}
-                          RC "${gen}/${launcher_stem}.rc" OUTPUT_NAME "${launcher_stem}" OUTPUT_DIR "${out}")
-        set_source_files_properties("${gen}/${launcher_stem}.rc" PROPERTIES OBJECT_DEPENDS "${gen}/${launcher_stem}.manifest")
+        if(NX_PLATFORM STREQUAL "win32")
+            nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB ${_launcher_lib} REGISTER ${_launcher_reg}
+                              RC "${gen}/${launcher_stem}.rc" OUTPUT_NAME "${launcher_stem}" OUTPUT_DIR "${out}")
+            set_source_files_properties("${gen}/${launcher_stem}.rc" PROPERTIES OBJECT_DEPENDS "${gen}/${launcher_stem}.manifest")
+        else()
+            nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB ${_launcher_lib} REGISTER ${_launcher_reg}
+                              OUTPUT_NAME "${launcher_stem}" OUTPUT_DIR "${out}")
+        endif()
     endif()
 endfunction()

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Display tab: window mode and size, frame rate limit, VSync, field of view, HDR and low latency. Extras tab: HDR, low latency and the frame rate counter.
-// This page is the pattern for the others: build() describes the rows, the Form moves values between the controls and Settings.
+// Display tab: window mode and size, frame rate limit, VSync, field of view. Extras tab: HDR, low latency, the frame rate counter, shader
+// preparation and the rows the registered game adds. This page is the pattern for the others: build() describes the rows, the Form moves
+// values between the rows and Settings.
 #include <algorithm>
 #include <cmath>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "game_info.h"
+#include "input_label.h"
 #include "nxrt/game.h"
 #include "pages.h"
 
@@ -29,7 +32,7 @@ constexpr int kSizeCount = static_cast<int>(sizeof kSizes / sizeof kSizes[0]);
 const int kCaps[] = {0, 30, 60, 72, 90, 120, 144, 165, 240, 360};
 constexpr int kCapCount = static_cast<int>(sizeof kCaps / sizeof kCaps[0]);
 
-const wchar_t* const kModeNames[] = {L"Windowed", L"Borderless fullscreen", L"Exclusive fullscreen"};
+const char* const kModeNames[] = {"Windowed", "Borderless fullscreen", "Exclusive fullscreen"};
 const char* const kModeKeys[] = {"windowed", "borderless", "exclusive"};
 
 int size_index(int w, int h) {
@@ -44,19 +47,19 @@ int cap_index(int fps) {
     return kCapCount;    // a value from the file that is not in the list
 }
 
-std::wstring fov_text(int v) {
-    if (v == 0) return L"Game default";
-    return (v > 0 ? L"+" : L"-") + std::to_wstring(std::abs(v)) + L"°";
+std::string fov_text(int v) {
+    if (v == 0) return "Game default";
+    return (v > 0 ? "+" : "-") + std::to_string(std::abs(v)) + "\xC2\xB0";   // degree sign
 }
 
 class DisplayPage : public Page {
 public:
-    const wchar_t* title() const override { return L"Display"; }
+    const char* title() const override { return "Display"; }
 
     void build(Form& f) override {
-        f.heading(L"Window");
+        f.heading("Window");
         f.combo(
-            L"Window mode", {kModeNames[0], kModeNames[1], kModeNames[2]},
+            "Window mode", {kModeNames[0], kModeNames[1], kModeNames[2]},
             [](const Settings& s) {
                 for (int i = 0; i < 3; ++i)
                     if (s.display.window_mode == kModeKeys[i]) return i;
@@ -64,138 +67,90 @@ public:
             },
             [](Settings& s, int i) { s.display.window_mode = kModeKeys[std::clamp(i, 0, 2)]; });
 
-        std::vector<std::wstring> sizes;
-        for (const Size& z : kSizes) sizes.push_back(std::to_wstring(z.w) + L" x " + std::to_wstring(z.h));
-        sizes.push_back(L"Custom");
+        std::vector<std::string> sizes;
+        for (const Size& z : kSizes) sizes.push_back(std::to_string(z.w) + " x " + std::to_string(z.h));
+        sizes.push_back("Custom");
         size_combo_ = f.combo(
-            L"Window size", sizes, [](const Settings& s) { return size_index(s.display.width, s.display.height); },
+            "Window size", sizes, [](const Settings& s) { return size_index(s.display.width, s.display.height); },
             [](Settings&, int) {},   // the width and height boxes below carry the value
             [this]() { size_chosen(); });
-        {
-            const RECT r = f.custom_row(L"Custom size", 24);
-            const Env& env = host()->env();
-            const int bw = env.S(80), lw = env.S(24);
-            width_edit_ = f.create(L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, r.left, r.top, bw, env.S(24), &width_id_, WS_EX_CLIENTEDGE);
-            f.create(L"STATIC", L"x", SS_CENTER | SS_NOPREFIX, r.left + bw, r.top + env.S(4), lw, env.S(18));
-            height_edit_ = f.create(L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP, r.left + bw + lw, r.top, bw, env.S(24), &height_id_, WS_EX_CLIENTEDGE);
-            SendMessageW(width_edit_, EM_LIMITTEXT, 5, 0);
-            SendMessageW(height_edit_, EM_LIMITTEXT, 5, 0);
-            f.create(L"STATIC", L"pixels", SS_LEFT | SS_NOPREFIX, r.left + 2 * bw + lw + env.S(8), r.top + env.S(4), env.S(70), env.S(18));
-        }
-        f.hint(L"The size of the game window. Fullscreen modes use your desktop resolution.");
+        width_ = f.number_pair(
+            "Custom size", 320, 16384, [](const Settings& s) { return s.display.width; }, [](Settings& s, int v) { s.display.width = v; },
+            [](const Settings& s) { return s.display.height; }, [](Settings& s, int v) { s.display.height = v; }, [this]() { size_typed(); }, "pixels");
+        f.hint("The size of the game window. Fullscreen modes use your desktop resolution.");
 
-        f.heading(L"Frame rate");
-        std::vector<std::wstring> caps;
-        for (int c : kCaps) caps.push_back(c == 0 ? L"Unlimited" : std::to_wstring(c) + L" fps");
-        caps.push_back(L"Custom (from controls.ini)");
+        f.heading("Frame rate");
         cap_combo_ = f.combo(
-            L"Frame rate limit", caps, [](const Settings& s) { return cap_index(s.display.fps_cap); },
+            "Frame rate limit", cap_items(kCapCount, 0), [](const Settings& s) { return cap_index(s.display.fps_cap); },
             [this](Settings& s, int i) { s.display.fps_cap = i < kCapCount ? kCaps[i] : custom_cap_; });
-        f.checkbox(L"VSync", [](const Settings& s) { return s.display.vsync; }, [](Settings& s, bool v) { s.display.vsync = v; });
-        f.hint(L"With VSync on, the display's refresh rate caps the frame rate. With G-Sync or FreeSync, leave it off and set a limit.", 2);
-        f.checkbox(L"Faster GPU memory (uses more video memory)", [](const Settings& s) { return s.display.fast_gpu_memory; },
+        f.checkbox("VSync", [](const Settings& s) { return s.display.vsync; }, [](Settings& s, bool v) { s.display.vsync = v; });
+        f.hint("With VSync on, the display's refresh rate caps the frame rate. With G-Sync or FreeSync, leave it off and set a limit.");
+        f.checkbox("Faster GPU memory (uses more video memory)", [](const Settings& s) { return s.display.fast_gpu_memory; },
                    [](Settings& s, bool v) { s.display.fast_gpu_memory = v; });
-        f.checkbox(L"Fewer GPU pipeline waits", [](const Settings& s) { return s.display.fewer_gpu_waits; },
+        f.checkbox("Fewer GPU pipeline waits", [](const Settings& s) { return s.display.fewer_gpu_waits; },
                    [](Settings& s, bool v) { s.display.fewer_gpu_waits = v; });
-        f.hint(L"Both raise the frame rate in the larger areas. Faster GPU memory keeps copies of the game's vertex data in video memory (up to 2 GiB; not on cards with less than 4 GiB). Both apply at the next start.", 2);
+        f.hint("Both raise the frame rate in the larger areas. Faster GPU memory keeps copies of the game's vertex data in video memory (up to 2 GiB; not on cards with less than 4 GiB). Both apply at the next start.");
 
-        f.heading(L"Picture");
+        f.heading("Picture");
         f.slider(
-            L"Field of view", -30, 40, [](const Settings& s) { return static_cast<int>(std::lround(s.display.fov_offset)); },
+            "Field of view", -30, 40, [](const Settings& s) { return static_cast<int>(std::lround(s.display.fov_offset)); },
             [](Settings& s, int v) { s.display.fov_offset = v; }, fov_text);
     }
 
     void load(const Settings& s) override {
         custom_cap_ = s.display.fps_cap;
         Page::load(s);
-        loading_boxes_ = true;
-        SetWindowTextW(width_edit_, std::to_wstring(s.display.width).c_str());
-        SetWindowTextW(height_edit_, std::to_wstring(s.display.height).c_str());
-        loading_boxes_ = false;
-        if (cap_index(s.display.fps_cap) == kCapCount) {
-            const std::wstring t = std::to_wstring(s.display.fps_cap) + L" fps (from controls.ini)";
-            SendMessageW(cap_combo_, CB_DELETESTRING, kCapCount, 0);
-            SendMessageW(cap_combo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(t.c_str()));
-            SendMessageW(cap_combo_, CB_SETCURSEL, kCapCount, 0);
-        }
+        // a frame rate from the file that is not in the list shows as its own last entry
+        cap_combo_->set_items(cap_items(kCapCount, cap_index(s.display.fps_cap) == kCapCount ? s.display.fps_cap : -1));
     }
 
 private:
-    void store(Settings* s) override {
-        Page::store(s);
-        s->display.width = read_box(width_edit_, 320, 16384);
-        s->display.height = read_box(height_edit_, 320, 16384);
+    static std::vector<std::string> cap_items(int count, int custom) {
+        std::vector<std::string> caps;
+        for (int i = 0; i < count; ++i) caps.push_back(kCaps[i] == 0 ? "Unlimited" : std::to_string(kCaps[i]) + " fps");
+        caps.push_back(custom > 0 ? std::to_string(custom) + " fps (from controls.ini)" : "Custom (from controls.ini)");
+        return caps;
     }
-
-    bool command(int id, int code, HWND) override {
-        if ((id == width_id_ || id == height_id_) && code == EN_CHANGE) {
-            if (!loading_boxes_) {
-                size_typed();
-                host()->changed();
-            }
-            return true;
-        }
-        return false;
-    }
-
-private:
-    static int read_box(HWND h, int lo, int hi) {
-        wchar_t t[16] = {};
-        GetWindowTextW(h, t, 15);
-        return std::clamp(_wtoi(t), lo, hi);
-    }
-
     void size_chosen() {
-        const int i = static_cast<int>(SendMessageW(size_combo_, CB_GETCURSEL, 0, 0));
+        const int i = size_combo_->value();
         if (i < 0 || i >= kSizeCount) return;
-        loading_boxes_ = true;
-        SetWindowTextW(width_edit_, std::to_wstring(kSizes[i].w).c_str());
-        SetWindowTextW(height_edit_, std::to_wstring(kSizes[i].h).c_str());
-        loading_boxes_ = false;
+        width_->set_value(kSizes[i].w);
+        row_after(width_)->set_value(kSizes[i].h);
     }
-    void size_typed() {
-        wchar_t w[16] = {}, h[16] = {};
-        GetWindowTextW(width_edit_, w, 15);
-        GetWindowTextW(height_edit_, h, 15);
-        SendMessageW(size_combo_, CB_SETCURSEL, size_index(_wtoi(w), _wtoi(h)), 0);
-    }
+    void size_typed() { size_combo_->set_value(size_index(width_->value(), row_after(width_)->value())); }
 
-    HWND size_combo_ = nullptr, width_edit_ = nullptr, height_edit_ = nullptr, cap_combo_ = nullptr;
-    int width_id_ = -1, height_id_ = -1;
-    bool loading_boxes_ = false;
+    Row *size_combo_ = nullptr, *width_ = nullptr, *cap_combo_ = nullptr;
     int custom_cap_ = 60;
 };
 
 class ExtrasPage : public Page {
 public:
-    const wchar_t* title() const override { return L"Extras"; }
+    const char* title() const override { return "Extras"; }
 
     void build(Form& f) override {
-        f.heading(L"Output");
+        f.heading("Output");
         f.combo(
-            L"HDR", {L"Off", L"Auto (when the display offers it)", L"On"},
-            [](const Settings& s) { return static_cast<int>(s.extras.hdr.mode); },
+            "HDR", {"Off", "Auto (when the display offers it)", "On"}, [](const Settings& s) { return static_cast<int>(s.extras.hdr.mode); },
             [](Settings& s, int i) { s.extras.hdr.mode = static_cast<extras::HdrMode>(std::clamp(i, 0, 2)); });
         f.combo(
-            L"Low latency", {L"Off", L"Auto (NVIDIA Reflex or AMD Anti-Lag 2)", L"On", L"Boost (Reflex)"},
+            "Low latency", {"Off", "Auto (NVIDIA Reflex or AMD Anti-Lag 2)", "On", "Boost (Reflex)"},
             [](const Settings& s) { return static_cast<int>(s.extras.latency.mode); },
             [](Settings& s, int i) { s.extras.latency.mode = static_cast<extras::LatencyMode>(std::clamp(i, 0, 3)); });
-        f.heading(L"Frame rate counter");
-        f.hint(L"A small box in a corner of the game with the frame rate and frame time. Top left keeps clear of the game's own text; the bottom corners sit over the menu prompts and the title screen's copyright line. F1 in the game opens the same options.", 1, true);
-        f.checkbox(L"Show the counter when the game starts", [](const Settings& s) { return s.fps.show; }, [](Settings& s, bool v) { s.fps.show = v; });
+        f.heading("Frame rate counter");
+        f.hint("A small box in a corner of the game with the frame rate and frame time. Top left keeps clear of the game's own text; the bottom corners sit over the menu prompts and the title screen's copyright line. F1 in the game opens the same options.", true);
+        f.checkbox("Show the counter when the game starts", [](const Settings& s) { return s.fps.show; }, [](Settings& s, bool v) { s.fps.show = v; });
         f.combo(
-            L"Corner", {L"Top left", L"Top right", L"Bottom left", L"Bottom right"}, [](const Settings& s) { return static_cast<int>(s.fps.corner); },
+            "Corner", {"Top left", "Top right", "Bottom left", "Bottom right"}, [](const Settings& s) { return static_cast<int>(s.fps.corner); },
             [](Settings& s, int i) { s.fps.corner = static_cast<Corner>(std::clamp(i, 0, 3)); });
         f.combo(
-            L"Detail", {L"Frame rate", L"Frame rate and frame time", L"Also the 1% low and the worst frame"},
+            "Detail", {"Frame rate", "Frame rate and frame time", "Also the 1% low and the worst frame"},
             [](const Settings& s) { return s.fps.detail; }, [](Settings& s, int i) { s.fps.detail = std::clamp(i, 0, 2); });
-        key_text_ = f.text_row(L"Hotkey in the game", L"");
-        key_button_ = f.button(L"Change...", 110);
-        f.heading(L"Shaders");
-        prep_hint_ = f.hint(L"Compiles the shaders now so the first hours of play do not stutter. Takes a few minutes.", 1, true);
-        const RECT r = f.custom_row(nullptr, 26);
-        prep_button_ = f.create(L"BUTTON", L"Prepare shaders", BS_PUSHBUTTON | WS_TABSTOP, r.left, r.top, host()->env().S(150),
-                                host()->env().S(26), &prep_id_);
+        key_text_ = f.text_row("Hotkey in the game", "");
+        key_button_ = f.button("Change...", 110);
+        f.heading("Shaders");
+        prep_hint_ = f.hint("Compiles the shaders now so the first hours of play do not stutter. Takes a few minutes.", true);
+        prep_id_ = f.button("Prepare shaders", 150, true);
+        prep_button_ = rows().back().get();
         rows_.build(f, nxrt::play::OptTab::Display);
         if (const GameLauncher* gl = nxrt::game::info().launcher; gl && gl->extras_rows) gl->extras_rows(f);
     }
@@ -204,15 +159,15 @@ public:
         fps_key_ = s.fps.key;
         Page::load(s);
         rows_.load(s);
-        SetWindowTextW(key_text_, input_label(fps_key_).c_str());
+        key_text_->set_text(input_label(fps_key_));
     }
 
     void state_changed() override {
         if (!prep_button_) return;
         const bool offered = host()->shader_prepare_offered();
-        ShowWindow(prep_hint_, offered ? SW_SHOW : SW_HIDE);
-        ShowWindow(prep_button_, offered ? SW_SHOW : SW_HIDE);
-        EnableWindow(prep_button_, !host()->shader_prepare_busy());
+        prep_hint_->set_visible(offered);
+        prep_button_->set_visible(offered);
+        prep_button_->set_enabled(!host()->shader_prepare_busy());
     }
 
     void store(Settings* s) override {
@@ -220,31 +175,32 @@ public:
         s->fps.key = fps_key_;
     }
 
-    bool command(int id, int code, HWND) override {
-        if (id == prep_id_ && code == BN_CLICKED) {
+    bool command(int id) override {
+        if (id == prep_id_) {
             host()->prepare_shaders_now();
             return true;
         }
-        if (id != key_button_ || code != BN_CLICKED) return false;
-        InputId in;
-        if (!capture_input(host()->window(), host()->env(), L"the frame rate counter", &in)) return true;
-        if (in.kind != InKind::Key) {
-            message(host()->window(), L"The counter hotkey has to be a keyboard key.", MB_OK | MB_ICONINFORMATION);
-            return true;
-        }
-        fps_key_ = in;
-        SetWindowTextW(key_text_, input_label(fps_key_).c_str());
-        host()->changed();
+        if (id != key_button_) return false;
+        host()->capture_input("the frame rate counter", [this](bool got, InputId in) {
+            if (!got) return;
+            if (in.kind != InKind::Key) {
+                host()->message("The counter hotkey has to be a keyboard key.");
+                return;
+            }
+            fps_key_ = in;
+            key_text_->set_text(input_label(fps_key_));
+            host()->changed();
+        });
         return true;
     }
 
 private:
-    HWND key_text_ = nullptr;
+    Row* key_text_ = nullptr;
     int key_button_ = -1;
     InputId fps_key_;
     GameOptionRows rows_;
-    HWND prep_hint_ = nullptr;
-    HWND prep_button_ = nullptr;
+    Row* prep_hint_ = nullptr;
+    Row* prep_button_ = nullptr;
     int prep_id_ = -1;
 };
 

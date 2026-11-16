@@ -59,30 +59,37 @@ bool PadCapture::open() {
     return true;
 }
 
+int PadCapture::on_event(const SDL_Event& ev) {
+    if (!inited_) return -1;
+    switch (ev.type) {
+        case SDL_EVENT_GAMEPAD_ADDED:
+            add_pad(ev.gdevice.which);
+            break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            remove_pad(ev.gdevice.which);
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+            const int row = pad_source_for_gamepad_button(ev.gbutton.button);
+            if (row >= 0) return row;
+            break;
+        }
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            if (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+                if (ev.gaxis.value > kTriggerHalf) return pad_source_for_trigger(ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+            }
+            break;
+        default:
+            break;
+    }
+    return -1;
+}
+
 int PadCapture::poll() {
     if (!inited_) return -1;
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
-        switch (ev.type) {
-            case SDL_EVENT_GAMEPAD_ADDED:
-                add_pad(ev.gdevice.which);
-                break;
-            case SDL_EVENT_GAMEPAD_REMOVED:
-                remove_pad(ev.gdevice.which);
-                break;
-            case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
-                const int row = pad_source_for_gamepad_button(ev.gbutton.button);
-                if (row >= 0) return row;
-                break;
-            }
-            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-                if (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
-                    if (ev.gaxis.value > kTriggerHalf) return pad_source_for_trigger(ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
-                }
-                break;
-            default:
-                break;
-        }
+        const int row = on_event(ev);
+        if (row >= 0) return row;
     }
     return -1;
 }

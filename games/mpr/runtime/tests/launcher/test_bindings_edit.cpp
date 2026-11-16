@@ -77,8 +77,8 @@ Binding binding(const char* key_name, Ctx ctx, Act act) {
 NXTEST(every_row_has_an_action_name) {
     CHECK(!key_rows().empty());
     for (const nxl::KeyRow& r : key_rows()) {
-        CHECK(r.label != nullptr && r.label[0] != L'\0');
-        CHECK(r.group != nullptr && r.group[0] != L'\0');
+        CHECK(r.label != nullptr && r.label[0] != '\0');
+        CHECK(r.group != nullptr && r.group[0] != '\0');
         const char* name = nxrt::play::act_info(r.act).name;
         CHECK(name != nullptr && name[0] != '\0');
     }
@@ -259,7 +259,7 @@ NXTEST(inputs_for_without_bindings_is_empty) {
 }
 
 NXTEST(act_label_comes_from_the_rows) {
-    CHECK(act_label(Act::Jump) == L"Jump");
-    CHECK(act_label(mact::AltForm) == L"Morph ball");
+    CHECK(act_label(Act::Jump) == "Jump");
+    CHECK(act_label(mact::AltForm) == "Morph ball");
     CHECK(act_label(Act::BtnA).empty());
 }

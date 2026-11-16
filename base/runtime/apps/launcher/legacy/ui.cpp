@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "nxrt/game/launcher_ui.h"
+#include "nxrt/game/launcher_ui_win32.h"
 
 #include <algorithm>
 #include <cstdio>
