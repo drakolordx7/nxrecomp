@@ -6,8 +6,6 @@
 #endif
 #include "fs_mods.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -22,6 +20,8 @@
 #include "nxrt/config.h"
 #include "nxrt/game.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
 #include "nxrt/services.h"
 
 namespace stdfs = std::filesystem;
@@ -31,14 +31,12 @@ namespace {
 
 constexpr int kMaxSearchDepth = 8;
 constexpr int kMaxScanDepth = 64;        // folder levels inside a romfs folder (guards against link loops)
-constexpr size_t kHostLongPath = 240;    // host paths this long or longer get the \\?\ prefix
 constexpr size_t kCaseWarnPerMod = 5;
 
 // ---- strings and paths -------------------------------------------------------------------------------------------------------------
 
 using nxrt::str::lower;
 using nxrt::str::trim;
-bool to_utf8(const std::wstring& w, std::string& out) { return nxrt::str::narrow_strict(w, out); }
 bool ieq(const std::string& a, const std::string& b) { return a.size() == b.size() && lower(a) == lower(b); }
 bool ends_with_i(const std::string& s, const char* suffix) {
     const size_t n = std::strlen(suffix);
@@ -52,23 +50,10 @@ std::string path_u8(const stdfs::path& p) {
     return std::string(s.begin(), s.end());
 }
 
-// A host path the Win32 file calls accept whatever its length: absolute, backslashes, \\?\ prefix when long.
-std::wstring ready_path(const stdfs::path& p) {
-    std::error_code ec;
-    stdfs::path a = stdfs::absolute(p, ec);
-    std::wstring w = (ec ? p : a).lexically_normal().wstring();
-    std::replace(w.begin(), w.end(), L'/', L'\\');
-    if (w.size() < kHostLongPath || w.compare(0, 4, L"\\\\?\\") == 0) return w;
-    if (w.compare(0, 2, L"\\\\") == 0) return L"\\\\?\\UNC\\" + w.substr(2);
-    return L"\\\\?\\" + w;
-}
+// A host path as os::fs takes it: absolute and normalised (UTF-8; os::fs adds what a long path needs).
+std::string ready_path(const stdfs::path& p) { return os::fs::absolute(path_u8(p)); }
 
-stdfs::path exe_dir() {
-    wchar_t buf[4096];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, 4096);
-    if (n == 0 || n >= 4096) return stdfs::path(".");
-    return stdfs::path(std::wstring(buf, n)).parent_path();
-}
+stdfs::path exe_dir() { return u8(os::process::exe_dir()); }
 
 bool is_title_id(const std::string& s) {
     if (s.size() != 16) return false;
@@ -118,28 +103,16 @@ struct Ent {
 // Entries of a host folder (links are followed). Names that are not valid UTF-8 are counted in *bad and left out.
 bool list_entries(const stdfs::path& dir, std::vector<Ent>& out, size_t* bad = nullptr) {
     out.clear();
-    std::error_code ec;
-    stdfs::directory_iterator it(dir, stdfs::directory_options::skip_permission_denied, ec);
-    const stdfs::directory_iterator end;
-    if (ec) return false;
-    for (; !ec && it != end; it.increment(ec)) {
-        const stdfs::directory_entry& e = *it;
+    std::vector<os::fs::DirEntry> ents;
+    const std::string d = path_u8(dir);
+    if (!os::fs::list_dir(d, &ents, bad)) return false;
+    for (os::fs::DirEntry& e : ents) {
         Ent x;
-        if (!to_utf8(e.path().filename().wstring(), x.name) || x.name.empty()) {
-            if (bad) ++*bad;
-            continue;
-        }
-        std::error_code se;
-        const stdfs::file_status st = e.status(se);
-        if (se) continue;
-        x.path = e.path();
-        x.dir = stdfs::is_directory(st);
-        x.reg = stdfs::is_regular_file(st);
-        if (x.reg) {
-            std::error_code fe;
-            x.size = e.file_size(fe);
-            if (fe) continue;
-        }
+        x.path = u8(d + "/" + e.name);
+        x.name = std::move(e.name);
+        x.dir = e.is_dir;
+        x.reg = e.is_file;
+        x.size = e.size;
         out.push_back(std::move(x));
     }
     std::sort(out.begin(), out.end(), [](const Ent& a, const Ent& b) { return a.name < b.name; });
@@ -400,14 +373,14 @@ bool write_ini(const std::string& path, ModsIni& ini, const std::vector<std::str
     std::string text;
     for (const std::string& l : out) text += l + "\r\n";
     const stdfs::path p = u8(path);
-    const stdfs::path tmp = stdfs::path(p.wstring() + L".tmp");
+    const stdfs::path tmp = stdfs::path(path_u8(p) + ".tmp");
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         f.write(text.data(), static_cast<std::streamsize>(text.size()));
         f.flush();
         if (!f) return false;
     }
-    if (!MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+    if (!os::fs::rename_replace(path_u8(tmp), path_u8(p), true)) {
         std::error_code ec;
         stdfs::remove(tmp, ec);
         return false;
@@ -424,7 +397,7 @@ const ModSource* ModOverlay::find_file(const std::string& path) const {
     return it == files_.end() ? nullptr : &it->second.src;
 }
 
-const std::wstring* ModOverlay::dir_host(const std::string& path) const {
+const std::string* ModOverlay::dir_host(const std::string& path) const {
     auto it = dirs_.find(path);
     return it == dirs_.end() ? nullptr : &it->second.host;
 }
@@ -452,7 +425,7 @@ public:
 
     void begin_mod(uint32_t idx) { cur_ = idx; }
 
-    void ensure_dir(const std::string& path, const std::wstring& host) {
+    void ensure_dir(const std::string& path, const std::string& host) {
         if (o_.dirs_.count(path)) return;
         if (path != "/") {
             const std::string par = parent_path(path);
@@ -582,7 +555,7 @@ public:
         if (path.size() < 2 || path[0] != '/' || path.size() > kRomfsMaxPath || leaf_name(path).size() > kRomfsMaxName) return false;
         if (o_.dirs_.count(path)) return false;
         const std::string dir = parent_path(path), name = leaf_name(path);
-        ensure_dir(dir, std::wstring());
+        ensure_dir(dir, std::string());
         ModSource src;
         src.size = data->size();
         src.mem = std::move(data);
@@ -822,7 +795,7 @@ bool scan_ext(OverlayBuilder& b, const stdfs::path& dir, const std::string& img_
 
 // ---- packed RomFS images -----------------------------------------------------------------------------------------------------------
 
-bool read_packed_romfs(const std::wstring& file, std::vector<PackedEntry>* files, std::vector<std::string>* dirs, size_t* skipped, std::string* err) {
+bool read_packed_romfs(const std::string& file, std::vector<PackedEntry>* files, std::vector<std::string>* dirs, size_t* skipped, std::string* err) {
     files->clear();
     dirs->clear();
     *skipped = 0;
@@ -830,31 +803,11 @@ bool read_packed_romfs(const std::wstring& file, std::vector<PackedEntry>* files
         if (err) *err = m;
         return false;
     };
-    HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return fail("cannot be opened");
-    struct Closer {
-        HANDLE h;
-        ~Closer() { CloseHandle(h); }
-    } closer{h};
-    LARGE_INTEGER li;
-    if (!GetFileSizeEx(h, &li)) return fail("cannot be sized");
-    const uint64_t fsize = static_cast<uint64_t>(li.QuadPart);
-    auto rd = [&](uint64_t off, void* dst, uint64_t n) {
-        uint8_t* out = static_cast<uint8_t*>(dst);
-        while (n > 0) {
-            const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(n, 1u << 28));
-            OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(off & 0xFFFFFFFFull);
-            ov.OffsetHigh = static_cast<DWORD>(off >> 32);
-            DWORD got = 0;
-            if (!ReadFile(h, out, chunk, &got, &ov) || got != chunk) return false;
-            out += chunk;
-            off += chunk;
-            n -= chunk;
-        }
-        return true;
-    };
+    const os::fs::File f = os::fs::File::open(file, os::fs::kRead);
+    if (!f.ok()) return fail("cannot be opened");
+    uint64_t fsize = 0;
+    if (!f.size(&fsize)) return fail("cannot be sized");
+    auto rd = [&](uint64_t off, void* dst, uint64_t n) { return f.read_exact(off, dst, n); };
     auto le = [](const uint8_t* p, int n) {
         uint64_t v = 0;
         for (int i = 0; i < n; i++) v |= static_cast<uint64_t>(p[i]) << (8 * i);
@@ -958,34 +911,16 @@ namespace {
 std::mutex g_hook_mu;
 ModsIndexHook g_hook;
 
-bool read_host_range(const std::wstring& host, uint64_t off, uint64_t size, bool to_end, std::vector<uint8_t>* out) {
-    HANDLE h = CreateFileW(host.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    struct Closer {
-        HANDLE h;
-        ~Closer() { CloseHandle(h); }
-    } closer{h};
-    LARGE_INTEGER li;
-    if (!GetFileSizeEx(h, &li)) return false;
-    const uint64_t fsize = static_cast<uint64_t>(li.QuadPart);
+bool read_host_range(const std::string& host, uint64_t off, uint64_t size, bool to_end, std::vector<uint8_t>* out) {
+    const os::fs::File f = os::fs::File::open(host, os::fs::kRead);
+    if (!f.ok()) return false;
+    uint64_t fsize = 0;
+    if (!f.size(&fsize)) return false;
     if (off > fsize) return false;
     if (to_end) size = fsize - off;
     if (size > fsize - off || size > (1ull << 31)) return false;
     out->resize(static_cast<size_t>(size));
-    uint8_t* p = out->data();
-    while (size > 0) {
-        const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(size, 1u << 28));
-        OVERLAPPED ov{};
-        ov.Offset = static_cast<DWORD>(off & 0xFFFFFFFFull);
-        ov.OffsetHigh = static_cast<DWORD>(off >> 32);
-        DWORD got = 0;
-        if (!ReadFile(h, p, chunk, &got, &ov) || got != chunk) return false;
-        p += chunk;
-        off += chunk;
-        size -= chunk;
-    }
-    return true;
+    return size == 0 || f.read_exact(off, out->data(), size);
 }
 
 }
@@ -1109,7 +1044,7 @@ std::shared_ptr<const ModOverlay> load_mods(const ModsConfig& cfg, const std::st
             std::vector<std::string> dirs;
             size_t skipped = 0;
             std::string err;
-            const std::wstring host = ready_path(bin);
+            const std::string host = ready_path(bin);
             if (!read_packed_romfs(host, &files, &dirs, &skipped, &err)) {
                 NXLOG_W("mods", "mod '%s': '%s' is not usable: it %s; ignored", m.name.c_str(), path_u8(bin).c_str(), err.c_str());
                 continue;

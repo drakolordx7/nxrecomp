@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Host sockets for bsd (nn::socket::sf::IClient) when [net] sockets = host: guest socket calls run on real Winsock sockets, so a title
+// Host sockets for bsd (nn::socket::sf::IClient) when [net] sockets = host: guest socket calls run on real host sockets (nxrt/os/net.h), so a title
 // can reach a server on this PC (or the LAN). Guest descriptors are small ints from 0 up (the first free slot), each mapped to a host
 // SOCKET; DuplicateSocket shares one. Blocking calls block the calling host thread (guest threads are host threads).
 // Name lookups (sfdnsres, network.cpp) resolve through [net] hosts first; [net] dns = host lets other names reach the PC's resolver.
@@ -15,20 +15,12 @@
 //
 // Logs (Info, tag "net"): the first Connect of each socket ("bsd connect fd=3 -> 127.0.0.1:8443 (mapped from 443)") and errors that are
 // not EAGAIN / EINPROGRESS, once per socket, command and errno.
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-
 #include "net_host.h"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -36,11 +28,13 @@
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "nxrt/strutil.h"
 #include "nxrt/config.h"
 #include "nxrt/log.h"
+#include "nxrt/os/net.h"
 #include "nxrt/services.h"
 
 namespace nxrt::services::nethost {
@@ -49,56 +43,6 @@ namespace {
 // ---- Linux errno numbers (Ryujinx LinuxError.cs) ----------------------------------------------------------------------------------------
 constexpr uint32_t kEBADF = 9, kEAGAIN = 11, kEFAULT = 14, kEINVAL = 22, kEMFILE = 24, kENOTSOCK = 88,
                    kENOPROTOOPT = 92, kEOPNOTSUPP = 95, kEAFNOSUPPORT = 97, kEINPROGRESS = 115;
-
-// Winsock error -> Linux errno (Ryujinx WinSockHelper._errorMap), WSAEWOULDBLOCK -> EAGAIN.
-uint32_t linux_errno(int wsa) {
-    switch (wsa) {
-        case 0: return 0;
-        case WSAEINTR: return 4;
-        case WSAEBADF: return kEBADF;
-        case WSAEACCES: return 13;
-        case WSAEFAULT: return kEFAULT;
-        case WSAEINVAL: return kEINVAL;
-        case WSAEMFILE: return kEMFILE;
-        case WSAEWOULDBLOCK: return kEAGAIN;
-        case WSAEINPROGRESS: return kEINPROGRESS;
-        case WSAEALREADY: return 114;
-        case WSAENOTSOCK: return kENOTSOCK;
-        case WSAEDESTADDRREQ: return 89;
-        case WSAEMSGSIZE: return 90;
-        case WSAEPROTOTYPE: return 91;
-        case WSAENOPROTOOPT: return kENOPROTOOPT;
-        case WSAEPROTONOSUPPORT: return 93;
-        case WSAESOCKTNOSUPPORT: return 94;
-        case WSAEOPNOTSUPP: return kEOPNOTSUPP;
-        case WSAEPFNOSUPPORT: return 96;
-        case WSAEAFNOSUPPORT: return kEAFNOSUPPORT;
-        case WSAEADDRINUSE: return 98;
-        case WSAEADDRNOTAVAIL: return 99;
-        case WSAENETDOWN: return 100;
-        case WSAENETUNREACH: return 101;
-        case WSAENETRESET: return 102;
-        case WSAECONNABORTED: return 103;
-        case WSAECONNRESET: return 104;
-        case WSAENOBUFS: return 105;
-        case WSAEISCONN: return 106;
-        case WSAENOTCONN: return 107;
-        case WSAESHUTDOWN: return 108;
-        case WSAETOOMANYREFS: return 109;
-        case WSAETIMEDOUT: return 110;
-        case WSAECONNREFUSED: return 111;
-        case WSAELOOP: return 40;
-        case WSAENAMETOOLONG: return 36;
-        case WSAEHOSTDOWN: return 112;
-        case WSAEHOSTUNREACH: return 113;
-        case WSAENOTEMPTY: return 39;
-        case WSAEUSERS: return 87;
-        case WSAEDQUOT: return 122;
-        case WSAESTALE: return 116;
-        case WSAEREMOTE: return 66;
-        default: return kEINVAL;
-    }
-}
 
 // ---- BSD constants (Ryujinx Bsd/Types) ---------------------------------------------------------------------------------------------------
 constexpr int kBsdAfInet = 2;
@@ -109,6 +53,8 @@ constexpr uint16_t kPollIn = 1, kPollPri = 2, kPollOut = 4, kPollErr = 8, kPollH
 constexpr uint32_t kFionread = 0x4004667F, kFionbio = 0x8004667E, kSiocatmark = 0x40047307;   // FreeBSD _IOR/_IOW('f', 127/126), ('s', 7)
 constexpr int kFGetFl = 3, kFSetFl = 4, kONonBlock = 0x800;
 constexpr int kSolSocket = 0xFFFF, kIpprotoIp = 0, kIpprotoTcp = 6;
+constexpr int kSockStream = 1, kSockDgram = 2;   // BSD socket types
+namespace hn = nxrt::os::net;
 
 // ---- config ------------------------------------------------------------------------------------------------------------------------------
 using nxrt::str::lower;
@@ -131,9 +77,13 @@ std::vector<std::pair<std::string, std::string>> pairs(const std::string& text) 
 }
 
 bool parse_ipv4(const std::string& s, uint8_t ip[4]) {
-    in_addr a{};
-    if (inet_pton(AF_INET, s.c_str(), &a) != 1) return false;
-    std::memcpy(ip, &a, 4);
+    unsigned v[4];
+    char tail = 0;
+    if (std::sscanf(s.c_str(), "%3u.%3u.%3u.%3u%c", &v[0], &v[1], &v[2], &v[3], &tail) != 4) return false;
+    for (int i = 0; i < 4; ++i) {
+        if (v[i] > 255) return false;
+        ip[i] = static_cast<uint8_t>(v[i]);
+    }
     return true;
 }
 
@@ -148,24 +98,15 @@ uint16_t map_port(uint16_t port) {
     return port;
 }
 
-void wsa_start() {
-    static std::once_flag once;
-    std::call_once(once, [] {
-        WSADATA d{};
-        const int rc = WSAStartup(MAKEWORD(2, 2), &d);
-        if (rc != 0) NXLOG_E("net", "WSAStartup failed: %d", rc);
-    });
-}
-
 // ---- descriptor table ------------------------------------------------------------------------------------------------------------------
 struct HostSock {
-    SOCKET s = INVALID_SOCKET;
+    hn::Socket s = hn::kInvalidSocket;
     bool nonblock = false;
     bool connect_logged = false;
     bool sendto_target_logged = false;
     std::set<std::string> errors_logged;
     ~HostSock() {
-        if (s != INVALID_SOCKET) closesocket(s);
+        if (s != hn::kInvalidSocket) hn::close(s);
     }
 };
 using SockPtr = std::shared_ptr<HostSock>;
@@ -214,95 +155,86 @@ uint32_t reply(ipc::Response& rsp, int32_t ret, uint32_t err) {
     return 0;
 }
 
-void log_error(const SockPtr& p, int fd, const char* what, uint32_t err, int wsa) {
+void log_error(const SockPtr& p, int fd, const char* what, uint32_t err) {
     if (err == 0 || err == kEAGAIN || err == kEINPROGRESS) return;
     if (p) {
         std::lock_guard<std::mutex> lk(tab().mu);
         if (!p->errors_logged.insert(std::string(what) + " " + std::to_string(err)).second) return;
     }
-    NXLOG_I("net", "bsd %s fd=%d: errno %u (WSA %d)", what, fd, err, wsa);
+    NXLOG_I("net", "bsd %s fd=%d: errno %u", what, fd, err);
 }
 
-uint32_t last_error(const SockPtr& p, int fd, const char* what) {
-    const int wsa = WSAGetLastError();
-    const uint32_t e = linux_errno(wsa);
-    log_error(p, fd, what, e, wsa);
+// The errno of a failed os::net call (they return the negative errno), logged once per socket, command and errno.
+uint32_t fail_errno(const SockPtr& p, int fd, const char* what, int64_t rc) {
+    const uint32_t e = static_cast<uint32_t>(rc < 0 ? -rc : rc);
+    log_error(p, fd, what, e);
     return e;
 }
 
 // ---- sockaddr ---------------------------------------------------------------------------------------------------------------------------
 // BSD sockaddr_in: u8 sin_len, u8 sin_family, u16 sin_port (big-endian), u8 sin_addr[4], u8 zero[8].
-bool read_sockaddr(const ipc::Buffer& b, sockaddr_in& out) {
+bool read_sockaddr(const ipc::Buffer& b, hn::Ipv4& out) {
     uint8_t raw[16] = {};
     if (!b.addr || b.size < 8) return false;
     buf_read(b, raw, 16);
     if (raw[1] != kBsdAfInet && raw[1] != 0) return false;
     out = {};
-    out.sin_family = AF_INET;
-    std::memcpy(&out.sin_port, raw + 2, 2);
-    std::memcpy(&out.sin_addr, raw + 4, 4);
+    out.port = static_cast<uint16_t>(raw[2] << 8 | raw[3]);
+    std::memcpy(out.ip, raw + 4, 4);
     return true;
 }
-void write_sockaddr(const ipc::Buffer& b, const sockaddr_in& a) {
+void write_sockaddr(const ipc::Buffer& b, const hn::Ipv4& a) {
     uint8_t raw[16] = {};
     raw[0] = 16;
     raw[1] = kBsdAfInet;
-    std::memcpy(raw + 2, &a.sin_port, 2);
-    std::memcpy(raw + 4, &a.sin_addr, 4);
+    raw[2] = static_cast<uint8_t>(a.port >> 8);
+    raw[3] = static_cast<uint8_t>(a.port & 0xFF);
+    std::memcpy(raw + 4, a.ip, 4);
     buf_write(b, raw, 16);
 }
-std::string addr_text(const sockaddr_in& a) {
-    char ip[INET_ADDRSTRLEN] = {};
-    inet_ntop(AF_INET, &a.sin_addr, ip, sizeof ip);
-    return std::string(ip) + ":" + std::to_string(ntohs(a.sin_port));
+std::string addr_text(const hn::Ipv4& a) {
+    return std::to_string(a.ip[0]) + "." + std::to_string(a.ip[1]) + "." + std::to_string(a.ip[2]) + "." + std::to_string(a.ip[3]) + ":" + std::to_string(a.port);
 }
 
-int host_msg_flags(uint32_t f) {
-    int h = 0;
-    if (f & kMsgOob) h |= MSG_OOB;
-    if (f & kMsgPeek) h |= MSG_PEEK;
-    if (f & kMsgDontRoute) h |= MSG_DONTROUTE;
-    if (f & kMsgWaitAll) h |= MSG_WAITALL;
+uint32_t host_msg_flags(uint32_t f) {
+    uint32_t h = 0;
+    if (f & kMsgOob) h |= hn::kMsgOob;
+    if (f & kMsgPeek) h |= hn::kMsgPeek;
+    if (f & kMsgDontRoute) h |= hn::kMsgDontRoute;
+    if (f & kMsgWaitAll) h |= hn::kMsgWaitAll;
     return h;
-}
-
-void set_nonblock(SOCKET s, bool on) {
-    u_long v = on ? 1 : 0;
-    ioctlsocket(s, FIONBIO, &v);
 }
 
 // MSG_DONTWAIT on a blocking socket: non-blocking for this one call (Ryujinx ManagedSocket.Receive).
 struct DontWait {
-    SOCKET s;
+    hn::Socket s;
     bool active;
     DontWait(const HostSock& h, uint32_t flags) : s(h.s), active(!h.nonblock && (flags & kMsgDontWait)) {
-        if (active) set_nonblock(s, true);
+        if (active) hn::set_nonblocking(s, true);
     }
     ~DontWait() {
-        if (active) set_nonblock(s, false);
+        if (active) hn::set_nonblocking(s, false);
     }
 };
-
-int clamp_len(uint64_t n) { return n > 0x7FFFFFFF ? 0x7FFFFFFF : static_cast<int>(n); }
 
 // ---- commands ---------------------------------------------------------------------------------------------------------------------------
 
 uint32_t do_socket(ipc::Request& req, ipc::Response& rsp) {
-    wsa_start();
+    hn::init();
     const int32_t domain = req.arg<int32_t>(0);
     const uint32_t type_raw = req.arg<uint32_t>(4);
     int32_t protocol = req.arg<int32_t>(8);
     const uint32_t flags = type_raw >> kBsdFlagsShift;
     const int type = static_cast<int>(type_raw & kBsdTypeMask);
     if (domain != kBsdAfInet && domain != 0) return reply(rsp, -1, kEAFNOSUPPORT);   // IPv4 only (the sockaddr layout here is sockaddr_in)
-    if (protocol == 0) protocol = type == SOCK_STREAM ? IPPROTO_TCP : (type == SOCK_DGRAM ? IPPROTO_UDP : 0);
-    SOCKET s = ::socket(AF_INET, type, protocol);
-    if (s == INVALID_SOCKET) return reply(rsp, -1, last_error(nullptr, -1, "socket"));
+    if (type != kSockStream && type != kSockDgram) return reply(rsp, -1, kEINVAL);
+    hn::Socket s = hn::kInvalidSocket;
+    if (const int rc = hn::open(type == kSockStream ? hn::Type::Stream : hn::Type::Datagram, protocol, &s)) return reply(rsp, -1, fail_errno(nullptr, -1, "socket", rc));
     auto p = std::make_shared<HostSock>();
     p->s = s;
     if (flags & kBsdNonBlockingFlag) {
         p->nonblock = true;
-        set_nonblock(s, true);
+        hn::set_nonblocking(s, true);
     }
     return reply(rsp, fd_add(std::move(p)), 0);
 }
@@ -311,11 +243,11 @@ uint32_t do_connect(ipc::Request& req, ipc::Response& rsp) {
     const int fd = req.arg<int32_t>(0);
     SockPtr p = fd_get(fd);
     if (!p) return reply(rsp, -1, kEBADF);
-    sockaddr_in a{};
+    hn::Ipv4 a;
     if (!read_sockaddr(req.in_buf(0), a)) return reply(rsp, -1, kEAFNOSUPPORT);
-    const uint16_t asked = ntohs(a.sin_port);
+    const uint16_t asked = a.port;
     const uint16_t port = map_port(asked);
-    a.sin_port = htons(port);
+    a.port = port;
     bool log_it = false;
     {
         std::lock_guard<std::mutex> lk(tab().mu);
@@ -325,30 +257,27 @@ uint32_t do_connect(ipc::Request& req, ipc::Response& rsp) {
         if (port != asked) NXLOG_I("net", "bsd connect fd=%d -> %s (mapped from %u)", fd, addr_text(a).c_str(), asked);
         else NXLOG_I("net", "bsd connect fd=%d -> %s", fd, addr_text(a).c_str());
     }
-    if (::connect(p->s, reinterpret_cast<const sockaddr*>(&a), sizeof a) == 0) return reply(rsp, 0, 0);
-    const int wsa = WSAGetLastError();
-    uint32_t e = linux_errno(wsa);
-    if (wsa == WSAEWOULDBLOCK) e = kEINPROGRESS;   // a non-blocking connect under way: BSD says EINPROGRESS
-    log_error(p, fd, "connect", e, wsa);
-    return reply(rsp, -1, e);
+    const int rc = hn::connect(p->s, a);
+    if (rc == 0) return reply(rsp, 0, 0);
+    return reply(rsp, -1, fail_errno(p, fd, "connect", rc));
 }
 
 uint32_t do_bind(ipc::Request& req, ipc::Response& rsp) {
     const int fd = req.arg<int32_t>(0);
     SockPtr p = fd_get(fd);
     if (!p) return reply(rsp, -1, kEBADF);
-    sockaddr_in a{};
+    hn::Ipv4 a;
     if (!read_sockaddr(req.in_buf(0), a)) return reply(rsp, -1, kEAFNOSUPPORT);
-    if (::bind(p->s, reinterpret_cast<const sockaddr*>(&a), sizeof a) == 0) return reply(rsp, 0, 0);
-    return reply(rsp, -1, last_error(p, fd, "bind"));
+    const int rc = hn::bind(p->s, a);
+    return rc == 0 ? reply(rsp, 0, 0) : reply(rsp, -1, fail_errno(p, fd, "bind", rc));
 }
 
 uint32_t do_listen(ipc::Request& req, ipc::Response& rsp) {
     const int fd = req.arg<int32_t>(0);
     SockPtr p = fd_get(fd);
     if (!p) return reply(rsp, -1, kEBADF);
-    if (::listen(p->s, req.arg<int32_t>(4)) == 0) return reply(rsp, 0, 0);
-    return reply(rsp, -1, last_error(p, fd, "listen"));
+    const int rc = hn::listen(p->s, req.arg<int32_t>(4));
+    return rc == 0 ? reply(rsp, 0, 0) : reply(rsp, -1, fail_errno(p, fd, "listen", rc));
 }
 
 // Accept(u32 socket) -> (i32 ret, u32 bsd_errno, u32 addrlen, buffer<sockaddr_in, 0x22> addr)
@@ -360,17 +289,18 @@ uint32_t do_accept(ipc::Request& req, ipc::Response& rsp) {
         rsp.push(uint32_t{0});
         return 0;
     }
-    sockaddr_in a{};
-    int len = sizeof a;
-    SOCKET s = ::accept(p->s, reinterpret_cast<sockaddr*>(&a), &len);
-    if (s == INVALID_SOCKET) {
-        reply(rsp, -1, last_error(p, fd, "accept"));
+    hn::Socket s = hn::kInvalidSocket;
+    hn::Ipv4 a;
+    const int rc = hn::accept(p->s, &s, &a);
+    if (rc != 0) {
+        reply(rsp, -1, fail_errno(p, fd, "accept", rc));
         rsp.push(uint32_t{0});
         return 0;
     }
     auto n = std::make_shared<HostSock>();
     n->s = s;
-    n->nonblock = p->nonblock;   // Winsock accepted sockets keep the listener's mode (as FreeBSD does)
+    n->nonblock = p->nonblock;   // an accepted socket keeps the listener's mode (as FreeBSD does)
+    hn::set_nonblocking(s, n->nonblock);
     write_sockaddr(req.out_buf(0), a);
     reply(rsp, fd_add(std::move(n)), 0);
     rsp.push(uint32_t{16});
@@ -385,17 +315,13 @@ uint32_t do_name(ipc::Request& req, ipc::Response& rsp, bool peer) {
         rsp.push(uint32_t{0});
         return 0;
     }
-    sockaddr_in a{};
-    int len = sizeof a;
-    const int rc = peer ? ::getpeername(p->s, reinterpret_cast<sockaddr*>(&a), &len) : ::getsockname(p->s, reinterpret_cast<sockaddr*>(&a), &len);
+    hn::Ipv4 a;
+    const int rc = peer ? hn::peer_addr(p->s, &a) : hn::local_addr(p->s, &a);
     if (rc != 0) {
-        const int wsa = WSAGetLastError();
-        if (!peer && wsa == WSAEINVAL) {   // not bound yet: the any address, port 0 (Ryujinx writes an empty sockaddr)
+        if (!peer && -rc == static_cast<int>(kEINVAL)) {   // not bound yet: the any address, port 0 (Ryujinx writes an empty sockaddr)
             a = {};
-            a.sin_family = AF_INET;
         } else {
-            const uint32_t e = linux_errno(wsa);
-            log_error(p, fd, peer ? "getpeername" : "getsockname", e, wsa);
+            const uint32_t e = fail_errno(p, fd, peer ? "getpeername" : "getsockname", rc);
             reply(rsp, -1, e);
             rsp.push(uint32_t{0});
             return 0;
@@ -413,24 +339,24 @@ uint32_t do_send(ipc::Request& req, ipc::Response& rsp, bool to, bool plain_writ
     SockPtr p = fd_get(fd);
     if (!p) return reply(rsp, -1, kEBADF);
     const ipc::Buffer data = req.in_buf(0);
-    const char* ptr = reinterpret_cast<const char*>(static_cast<uintptr_t>(data.addr));
+    const void* ptr = reinterpret_cast<const void*>(static_cast<uintptr_t>(data.addr));
+    const size_t len = static_cast<size_t>(std::min<uint64_t>(data.size, 0x7FFFFFFF));
     DontWait dw(*p, flags);
-    int n;
+    int64_t n;
     if (to) {
-        sockaddr_in a{};
+        hn::Ipv4 a;
         if (!read_sockaddr(req.in_buf(1), a)) return reply(rsp, -1, kEAFNOSUPPORT);
-        a.sin_port = htons(map_port(ntohs(a.sin_port)));
-        n = ::sendto(p->s, ptr, clamp_len(data.size), host_msg_flags(flags), reinterpret_cast<const sockaddr*>(&a), sizeof a);
-        if (n == SOCKET_ERROR) {   // name the target once per fd: a bad address (0.0.0.0, port 0) is the usual cause
-            const uint8_t* ip = reinterpret_cast<const uint8_t*>(&a.sin_addr);
+        a.port = map_port(a.port);
+        n = hn::send(p->s, ptr, len, host_msg_flags(flags), &a);
+        if (n < 0) {   // name the target once per fd: a bad address (0.0.0.0, port 0) is the usual cause
             if (!p->sendto_target_logged && (p->sendto_target_logged = true))
-                NXLOG_I("net", "bsd sendto fd=%d target %u.%u.%u.%u:%u (%u bytes)", fd, ip[0], ip[1], ip[2], ip[3], ntohs(a.sin_port), static_cast<unsigned>(data.size));
+                NXLOG_I("net", "bsd sendto fd=%d target %u.%u.%u.%u:%u (%u bytes)", fd, a.ip[0], a.ip[1], a.ip[2], a.ip[3], a.port, static_cast<unsigned>(data.size));
         }
     } else {
-        n = ::send(p->s, ptr, clamp_len(data.size), host_msg_flags(flags));
+        n = hn::send(p->s, ptr, len, host_msg_flags(flags), nullptr);
     }
-    if (n == SOCKET_ERROR) return reply(rsp, -1, last_error(p, fd, to ? "sendto" : "send"));
-    return reply(rsp, n, 0);
+    if (n < 0) return reply(rsp, -1, fail_errno(p, fd, to ? "sendto" : "send", n));
+    return reply(rsp, static_cast<int32_t>(n), 0);
 }
 
 // Recv / Read: (i32 ret, u32 bsd_errno, buffer<0x22> message). RecvFrom adds (u32 addrlen) and the sockaddr in output buffer 1.
@@ -445,25 +371,13 @@ uint32_t do_recv(ipc::Request& req, ipc::Response& rsp, bool from, bool plain_re
     };
     if (!p) return fail(kEBADF);
     const ipc::Buffer data = req.out_buf(0);
-    char* ptr = reinterpret_cast<char*>(static_cast<uintptr_t>(data.addr));
+    void* ptr = reinterpret_cast<void*>(static_cast<uintptr_t>(data.addr));
+    const size_t len = static_cast<size_t>(std::min<uint64_t>(data.size, 0x7FFFFFFF));
     DontWait dw(*p, flags);
-    int n;
-    sockaddr_in a{};
-    if (from) {
-        int len = sizeof a;
-        n = ::recvfrom(p->s, ptr, clamp_len(data.size), host_msg_flags(flags), reinterpret_cast<sockaddr*>(&a), &len);
-    } else {
-        n = ::recv(p->s, ptr, clamp_len(data.size), host_msg_flags(flags));
-    }
-    if (n == SOCKET_ERROR) {
-        // A datagram larger than the buffer: BSD returns the truncated part, Winsock fails with WSAEMSGSIZE after filling the buffer.
-        if (WSAGetLastError() == WSAEMSGSIZE) {
-            n = clamp_len(data.size);
-        } else {
-            return fail(last_error(p, fd, from ? "recvfrom" : "recv"));
-        }
-    }
-    reply(rsp, n, 0);
+    hn::Ipv4 a;
+    const int64_t n = hn::recv(p->s, ptr, len, host_msg_flags(flags), from ? &a : nullptr);
+    if (n < 0) return fail(fail_errno(p, fd, from ? "recvfrom" : "recv", n));
+    reply(rsp, static_cast<int32_t>(n), 0);
     if (from) {
         const ipc::Buffer ab = req.out_buf(1);
         if (ab.addr && ab.size >= 16) {
@@ -476,37 +390,68 @@ uint32_t do_recv(ipc::Request& req, ipc::Response& rsp, bool from, bool plain_re
     return 0;
 }
 
-// Option (level, BSD name) -> Winsock name. -1: unknown (ENOPROTOOPT), -2: accepted and ignored.
-int host_opt(int level, int name) {
+// A guest option (level, BSD name) as a host option. False: unknown (ENOPROTOOPT). `ignored`: accepted and not applied.
+struct HostOpt {
+    hn::Level level = hn::Level::Socket;
+    hn::Opt opt = hn::Opt::Debug;
+    bool ignored = false;
+};
+bool host_opt(int level, int name, HostOpt* o) {
+    using hn::Opt;
     if (level == kSolSocket) {
+        o->level = hn::Level::Socket;
         switch (name) {
-            case 0x1: case 0x2: case 0x4: case 0x8: case 0x10: case 0x20: case 0x40: case 0x80: case 0x100:   // DEBUG..OOBINLINE: same values
-            case 0x1001: case 0x1002: case 0x1003: case 0x1004: case 0x1005: case 0x1006: case 0x1007: case 0x1008:
-                return name;
-            case 0x200: return SO_REUSEADDR;   // SO_REUSEPORT (Ryujinx maps it to ReuseAddress)
-            case 0x800: return -2;             // SO_NOSIGPIPE: Winsock raises no signal
-            default: return -1;
+            case 0x1: o->opt = Opt::Debug; return true;
+            case 0x2: o->opt = Opt::AcceptConn; return true;
+            case 0x4: o->opt = Opt::ReuseAddr; return true;
+            case 0x8: o->opt = Opt::KeepAlive; return true;
+            case 0x10: o->opt = Opt::DontRoute; return true;
+            case 0x20: o->opt = Opt::Broadcast; return true;
+            case 0x40: o->opt = Opt::UseLoopback; return true;
+            case 0x80: o->opt = Opt::Linger; return true;
+            case 0x100: o->opt = Opt::OobInline; return true;
+            case 0x200: o->opt = Opt::ReusePort; return true;   // Ryujinx maps it to ReuseAddress
+            case 0x800: o->ignored = true; return true;          // SO_NOSIGPIPE: the host raises no signal
+            case 0x1001: o->opt = Opt::SndBuf; return true;
+            case 0x1002: o->opt = Opt::RcvBuf; return true;
+            case 0x1003: o->opt = Opt::SndLowat; return true;
+            case 0x1004: o->opt = Opt::RcvLowat; return true;
+            case 0x1005: o->opt = Opt::SndTimeo; return true;
+            case 0x1006: o->opt = Opt::RcvTimeo; return true;
+            case 0x1007: o->opt = Opt::Error; return true;
+            case 0x1008: o->opt = Opt::SockType; return true;
+            default: return false;
         }
     }
     if (level == kIpprotoIp) {
+        o->level = hn::Level::Ip;
         switch (name) {
-            case 1: case 2: case 3: case 4: case 9: case 10: case 11: case 12: case 13: return name;   // OPTIONS..DROP_MEMBERSHIP: same values
-            case 67: return IP_DONTFRAGMENT;
-            default: return -1;
+            case 1: o->opt = Opt::IpOptions; return true;
+            case 2: o->opt = Opt::IpHdrIncl; return true;
+            case 3: o->opt = Opt::IpTos; return true;
+            case 4: o->opt = Opt::IpTtl; return true;
+            case 9: o->opt = Opt::IpMulticastIf; return true;
+            case 10: o->opt = Opt::IpMulticastTtl; return true;
+            case 11: o->opt = Opt::IpMulticastLoop; return true;
+            case 12: o->opt = Opt::IpAddMembership; return true;
+            case 13: o->opt = Opt::IpDropMembership; return true;
+            case 67: o->opt = Opt::IpDontFragment; return true;
+            default: return false;
         }
     }
     if (level == kIpprotoTcp) {
+        o->level = hn::Level::Tcp;
         switch (name) {
-            case 1: return TCP_NODELAY;
-            case 2: return TCP_MAXSEG;
-            case 0x100: return TCP_KEEPIDLE;
-            case 0x200: return TCP_KEEPINTVL;
-            case 0x400: return TCP_KEEPCNT;
-            case 4: return -2;   // TCP_NOPUSH
-            default: return -1;
+            case 1: o->opt = Opt::TcpNoDelay; return true;
+            case 2: o->opt = Opt::TcpMaxSeg; return true;
+            case 0x100: o->opt = Opt::TcpKeepIdle; return true;
+            case 0x200: o->opt = Opt::TcpKeepIntvl; return true;
+            case 0x400: o->opt = Opt::TcpKeepCnt; return true;
+            case 4: o->ignored = true; return true;   // TCP_NOPUSH
+            default: return false;
         }
     }
-    return -1;
+    return false;
 }
 bool is_timeo(int level, int name) { return level == kSolSocket && (name == 0x1005 || name == 0x1006); }
 bool is_linger(int level, int name) { return level == kSolSocket && name == 0x80; }
@@ -516,41 +461,39 @@ uint32_t do_setsockopt(ipc::Request& req, ipc::Response& rsp) {
     const int level = req.arg<int32_t>(4), name = req.arg<int32_t>(8);
     SockPtr p = fd_get(fd);
     if (!p) return reply(rsp, -1, kEBADF);
-    const int hname = host_opt(level, name);
-    if (hname == -2) return reply(rsp, 0, 0);
-    if (hname == -1) {
-        log_error(p, fd, "setsockopt", kENOPROTOOPT, 0);
+    HostOpt ho;
+    if (!host_opt(level, name, &ho)) {
+        log_error(p, fd, "setsockopt", kENOPROTOOPT);
         return reply(rsp, -1, kENOPROTOOPT);
     }
+    if (ho.ignored) return reply(rsp, 0, 0);
     const ipc::Buffer b = req.in_buf(0);
     uint8_t raw[16] = {};
     const uint64_t got = buf_read(b, raw, sizeof raw);
     int rc;
-    if (is_timeo(level, name)) {   // BSD struct timeval { s64 sec; s64 usec } -> DWORD milliseconds
+    if (is_timeo(level, name)) {   // BSD struct timeval { s64 sec; s64 usec } -> milliseconds
         int64_t sec = 0, usec = 0;
         std::memcpy(&sec, raw, 8);
         std::memcpy(&usec, raw + 8, 8);
         const int64_t ms64 = sec * 1000 + usec / 1000;
-        DWORD ms = ms64 <= 0 ? 0 : static_cast<DWORD>(std::min<int64_t>(ms64, 0x7FFFFFFF));
+        int64_t ms = ms64 <= 0 ? 0 : std::min<int64_t>(ms64, 0x7FFFFFFF);
         if (ms == 0 && (sec > 0 || usec > 0)) ms = 1;
-        rc = ::setsockopt(p->s, SOL_SOCKET, hname, reinterpret_cast<const char*>(&ms), sizeof ms);
-    } else if (is_linger(level, name)) {   // BSD { int l_onoff; int l_linger } -> Winsock { u_short, u_short }
+        rc = hn::set_timeout_ms(p->s, ho.opt, ms);
+    } else if (is_linger(level, name)) {   // BSD { int l_onoff; int l_linger }
         int32_t on = 0, secs = 0;
         std::memcpy(&on, raw, 4);
         std::memcpy(&secs, raw + 4, 4);
-        linger l{static_cast<u_short>(on ? 1 : 0), static_cast<u_short>(std::clamp<int32_t>(secs, 0, 0xFFFF))};
-        rc = ::setsockopt(p->s, SOL_SOCKET, SO_LINGER, reinterpret_cast<const char*>(&l), sizeof l);
-    } else if (level == kIpprotoIp && (name == 12 || name == 13)) {   // ip_mreq: two in_addr, same layout
-        rc = ::setsockopt(p->s, IPPROTO_IP, hname, reinterpret_cast<const char*>(raw), 8);
+        rc = hn::set_linger(p->s, on != 0, std::clamp<int32_t>(secs, 0, 0xFFFF));
+    } else if (level == kIpprotoIp && (name == 12 || name == 13)) {   // ip_mreq: two in_addr
+        rc = hn::set_membership(p->s, ho.opt, raw);
     } else {
         int32_t v = 0;
         if (got >= 4) std::memcpy(&v, raw, 4);
         else if (got >= 1) v = raw[0];   // u_char options (IP_MULTICAST_TTL / LOOP)
-        DWORD dv = static_cast<DWORD>(v);
-        rc = ::setsockopt(p->s, level == kSolSocket ? SOL_SOCKET : level, hname, reinterpret_cast<const char*>(&dv), sizeof dv);
+        rc = hn::set_int(p->s, ho.level, ho.opt, v);
     }
     if (rc == 0) return reply(rsp, 0, 0);
-    return reply(rsp, -1, last_error(p, fd, "setsockopt"));
+    return reply(rsp, -1, fail_errno(p, fd, "setsockopt", rc));
 }
 
 // GetSockOpt(u32 socket, u32 level, u32 option_name) -> (i32 ret, u32 bsd_errno, u32 optlen, buffer<0x22> value)
@@ -565,47 +508,38 @@ uint32_t do_getsockopt(ipc::Request& req, ipc::Response& rsp) {
     };
     if (!p) return fail(kEBADF);
     const ipc::Buffer out = req.out_buf(0);
-    const int hname = host_opt(level, name);
-    if (hname == -2) {   // ignored option: reads back as 0
+    HostOpt ho;
+    if (!host_opt(level, name, &ho)) {
+        log_error(p, fd, "getsockopt", kENOPROTOOPT);
+        return fail(kENOPROTOOPT);
+    }
+    if (ho.ignored) {   // ignored option: reads back as 0
         const int32_t z = 0;
         buf_write(out, &z, 4);
         reply(rsp, 0, 0);
         rsp.push(uint32_t{4});
         return 0;
     }
-    if (hname == -1) {
-        log_error(p, fd, "getsockopt", kENOPROTOOPT, 0);
-        return fail(kENOPROTOOPT);
-    }
-    const int hlevel = level == kSolSocket ? SOL_SOCKET : level;
-    uint8_t raw[16] = {};
-    int len = sizeof raw;
-    if (::getsockopt(p->s, hlevel, hname, reinterpret_cast<char*>(raw), &len) != 0) return fail(last_error(p, fd, "getsockopt"));
     uint8_t res[16] = {};
     uint32_t res_len = 4;
     if (is_timeo(level, name)) {
-        DWORD ms = 0;
-        std::memcpy(&ms, raw, 4);
+        int64_t ms = 0;
+        if (const int rc = hn::get_timeout_ms(p->s, ho.opt, &ms)) return fail(fail_errno(p, fd, "getsockopt", rc));
         const int64_t sec = ms / 1000, usec = (ms % 1000) * 1000;
         std::memcpy(res, &sec, 8);
         std::memcpy(res + 8, &usec, 8);
         res_len = 16;
     } else if (is_linger(level, name)) {
-        linger l{};
-        std::memcpy(&l, raw, sizeof l);
-        const int32_t on = l.l_onoff ? 1 : 0, secs = l.l_linger;
-        std::memcpy(res, &on, 4);
-        std::memcpy(res + 4, &secs, 4);
+        bool on = false;
+        int secs = 0;
+        if (const int rc = hn::get_linger(p->s, &on, &secs)) return fail(fail_errno(p, fd, "getsockopt", rc));
+        const int32_t o = on ? 1 : 0, s = secs;
+        std::memcpy(res, &o, 4);
+        std::memcpy(res + 4, &s, 4);
         res_len = 8;
-    } else if (level == kSolSocket && name == 0x1007) {   // SO_ERROR: the pending Winsock error as a Linux errno
-        int32_t wsa = 0;
-        std::memcpy(&wsa, raw, 4);
-        const int32_t e = static_cast<int32_t>(linux_errno(wsa));
-        std::memcpy(res, &e, 4);
     } else {
         int32_t v = 0;
-        std::memcpy(&v, raw, std::min<int>(len, 4));
-        if (len == 1) v = raw[0];
+        if (const int rc = hn::get_int(p->s, ho.level, ho.opt, &v)) return fail(fail_errno(p, fd, "getsockopt", rc));   // SO_ERROR: a Linux errno
         std::memcpy(res, &v, 4);
     }
     if (out.size < res_len) res_len = static_cast<uint32_t>(out.size);
@@ -625,13 +559,13 @@ uint32_t do_ioctl(ipc::Request& req, ipc::Response& rsp) {
         int32_t v = 0;
         buf_read(req.in_buf(0), &v, 4);
         p->nonblock = v != 0;
-        set_nonblock(p->s, p->nonblock);
+        hn::set_nonblocking(p->s, p->nonblock);
         return reply(rsp, 0, 0);
     }
     if (request == kFionread) {
-        u_long n = 0;
-        if (::ioctlsocket(p->s, FIONREAD, &n) != 0) return reply(rsp, -1, last_error(p, fd, "ioctl"));
-        const int32_t v = static_cast<int32_t>(std::min<u_long>(n, 0x7FFFFFFF));
+        uint32_t n = 0;
+        if (const int rc = hn::bytes_available(p->s, &n)) return reply(rsp, -1, fail_errno(p, fd, "ioctl", rc));
+        const int32_t v = static_cast<int32_t>(std::min<uint32_t>(n, 0x7FFFFFFF));
         buf_write(req.out_buf(0), &v, 4);
         return reply(rsp, 0, 0);
     }
@@ -640,7 +574,7 @@ uint32_t do_ioctl(ipc::Request& req, ipc::Response& rsp) {
         buf_write(req.out_buf(0), &z, 4);
         return reply(rsp, 0, 0);
     }
-    log_error(p, fd, "ioctl", kEOPNOTSUPP, 0);
+    log_error(p, fd, "ioctl", kEOPNOTSUPP);
     return reply(rsp, -1, kEOPNOTSUPP);
 }
 
@@ -653,7 +587,7 @@ uint32_t do_fcntl(ipc::Request& req, ipc::Response& rsp) {
     if (cmd == kFGetFl) return reply(rsp, p->nonblock ? kONonBlock : 0, 0);
     if (cmd == kFSetFl) {
         p->nonblock = (arg & kONonBlock) != 0;
-        set_nonblock(p->s, p->nonblock);
+        hn::set_nonblocking(p->s, p->nonblock);
         return reply(rsp, 0, 0);
     }
     return reply(rsp, -1, kEOPNOTSUPP);
@@ -665,8 +599,8 @@ uint32_t do_shutdown(ipc::Request& req, ipc::Response& rsp) {
     SockPtr p = fd_get(fd);
     if (!p) return reply(rsp, -1, kEBADF);
     if (how < 0 || how > 2) return reply(rsp, -1, kEINVAL);
-    if (::shutdown(p->s, how) == 0) return reply(rsp, 0, 0);   // SHUT_RD/WR/RDWR = SD_RECEIVE/SEND/BOTH
-    return reply(rsp, -1, last_error(p, fd, "shutdown"));
+    const int rc = hn::shutdown(p->s, static_cast<hn::Shut>(how));   // SHUT_RD/WR/RDWR
+    return rc == 0 ? reply(rsp, 0, 0) : reply(rsp, -1, fail_errno(p, fd, "shutdown", rc));
 }
 
 uint32_t do_shutdown_all(ipc::Request& req, ipc::Response& rsp) {
@@ -678,29 +612,8 @@ uint32_t do_shutdown_all(ipc::Request& req, ipc::Response& rsp) {
         for (const SockPtr& p : tab().fds)
             if (p) all.push_back(p);
     }
-    for (const SockPtr& p : all) ::shutdown(p->s, how);
+    for (const SockPtr& p : all) hn::shutdown(p->s, static_cast<hn::Shut>(how));
     return reply(rsp, 0, 0);
-}
-
-// BSD poll events -> WSAPoll events (POLLPRI is not accepted by WSAPoll; urgent data maps to POLLRDBAND).
-SHORT host_events(uint16_t e) {
-    SHORT h = 0;
-    if (e & (kPollIn | kPollRdNorm)) h |= POLLRDNORM;
-    if (e & (kPollPri | kPollRdBand)) h |= POLLRDBAND;
-    if (e & kPollOut) h |= POLLWRNORM;
-    if (e & kPollWrBand) h |= POLLWRBAND;
-    return h;
-}
-uint16_t bsd_revents(SHORT r, uint16_t asked) {
-    uint16_t b = 0;
-    if (r & POLLRDNORM) b |= asked & (kPollIn | kPollRdNorm);
-    if (r & POLLRDBAND) b |= asked & (kPollPri | kPollRdBand);
-    if (r & POLLWRNORM) b |= kPollOut;
-    if (r & POLLWRBAND) b |= asked & kPollWrBand;
-    if (r & POLLERR) b |= kPollErr;
-    if (r & POLLHUP) b |= kPollHup;
-    if (r & POLLNVAL) b |= kPollNval;
-    return b;
 }
 
 // Poll(u32 nfds, i32 timeout_ms, buffer<pollfd, 0x21>) -> (i32 ret, u32 bsd_errno, buffer<pollfd, 0x22>). pollfd = {i32 fd, u16 events, u16 revents}.
@@ -711,7 +624,7 @@ uint32_t do_poll(ipc::Request& req, ipc::Response& rsp) {
     if (nfds < 0 || timeout < -1 || static_cast<uint64_t>(nfds) * 8 > in.size) return reply(rsp, -1, kEINVAL);
     std::vector<uint8_t> fds(static_cast<size_t>(nfds) * 8);
     buf_read(in, fds.data(), fds.size());
-    std::vector<WSAPOLLFD> host;
+    std::vector<hn::PollItem> host;
     std::vector<int> slot_of;
     std::vector<SockPtr> keep;
     int ready = 0;
@@ -726,9 +639,9 @@ uint32_t do_poll(ipc::Request& req, ipc::Response& rsp) {
                 rev = kPollNval;
                 ++ready;
             } else {
-                WSAPOLLFD w{};
-                w.fd = p->s;
-                w.events = host_events(ev);
+                hn::PollItem w;
+                w.s = p->s;
+                w.events = ev;   // the poll bits of os::net are the BSD ones
                 host.push_back(w);
                 slot_of.push_back(i);
                 keep.push_back(std::move(p));
@@ -737,18 +650,16 @@ uint32_t do_poll(ipc::Request& req, ipc::Response& rsp) {
         std::memcpy(&fds[i * 8 + 6], &rev, 2);
     }
     if (!host.empty()) {
-        const int rc = WSAPoll(host.data(), static_cast<ULONG>(host.size()), ready ? 0 : timeout);
-        if (rc == SOCKET_ERROR) return reply(rsp, -1, last_error(nullptr, -1, "poll"));
+        const int rc = hn::poll(host.data(), host.size(), ready ? 0 : timeout);
+        if (rc < 0) return reply(rsp, -1, fail_errno(nullptr, -1, "poll", rc));
         for (size_t k = 0; k < host.size(); ++k) {
             const int i = slot_of[k];
-            uint16_t ev;
-            std::memcpy(&ev, &fds[i * 8 + 4], 2);
-            const uint16_t rev = bsd_revents(host[k].revents, ev);
+            const uint16_t rev = host[k].revents;
             if (rev) ++ready;
             std::memcpy(&fds[i * 8 + 6], &rev, 2);
         }
     } else if (!ready && timeout > 0) {
-        Sleep(static_cast<DWORD>(timeout));
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
     }
     buf_write(req.out_buf(0), fds.data(), fds.size());
     return reply(rsp, ready, 0);
@@ -774,7 +685,7 @@ uint32_t do_select(ipc::Request& req, ipc::Response& rsp) {
     }
     auto bit = [](const std::vector<uint8_t>& v, int fd) { return static_cast<size_t>(fd >> 3) < v.size() && (v[fd >> 3] >> (fd & 7)) & 1; };
     struct Entry { int fd; uint8_t want; };
-    std::vector<WSAPOLLFD> host;
+    std::vector<hn::PollItem> host;
     std::vector<Entry> ent;
     std::vector<SockPtr> keep;
     for (int fd = 0; fd < nfds; ++fd) {
@@ -782,25 +693,25 @@ uint32_t do_select(ipc::Request& req, ipc::Response& rsp) {
         if (!want) continue;
         SockPtr p = fd_get(fd);
         if (!p) return reply(rsp, -1, kEBADF);
-        WSAPOLLFD w{};
-        w.fd = p->s;
-        if (want & 1) w.events |= POLLRDNORM;
-        if (want & 2) w.events |= POLLWRNORM;
-        if (want & 4) w.events |= POLLRDBAND;
+        hn::PollItem w;
+        w.s = p->s;
+        if (want & 1) w.events |= kPollRdNorm;
+        if (want & 2) w.events |= kPollOut;
+        if (want & 4) w.events |= kPollRdBand;
         host.push_back(w);
         ent.push_back({fd, want});
         keep.push_back(std::move(p));
     }
     int count = 0;
     if (!host.empty()) {
-        const int rc = WSAPoll(host.data(), static_cast<ULONG>(host.size()), timeout);
-        if (rc == SOCKET_ERROR) return reply(rsp, -1, last_error(nullptr, -1, "select"));
+        const int rc = hn::poll(host.data(), host.size(), timeout);
+        if (rc < 0) return reply(rsp, -1, fail_errno(nullptr, -1, "select", rc));
         for (size_t k = 0; k < host.size(); ++k) {
-            const SHORT r = host[k].revents;
+            const uint16_t r = host[k].revents;
             const int fd = ent[k].fd;
-            const bool err = (r & (POLLERR | POLLHUP)) != 0;
-            const bool hit[3] = {(ent[k].want & 1) && ((r & POLLRDNORM) || err), (ent[k].want & 2) && ((r & POLLWRNORM) || err),
-                                 (ent[k].want & 4) && ((r & POLLRDBAND) || (r & POLLERR))};
+            const bool err = (r & (kPollErr | kPollHup)) != 0;
+            const bool hit[3] = {(ent[k].want & 1) && ((r & kPollRdNorm) || err), (ent[k].want & 2) && ((r & kPollOut) || err),
+                                 (ent[k].want & 4) && ((r & kPollRdBand) || (r & kPollErr))};
             for (int s = 0; s < 3; ++s) {
                 if (hit[s] && static_cast<size_t>(fd >> 3) < set_out[s].size()) {
                     set_out[s][fd >> 3] |= static_cast<uint8_t>(1u << (fd & 7));
@@ -809,7 +720,7 @@ uint32_t do_select(ipc::Request& req, ipc::Response& rsp) {
             }
         }
     } else if (timeout > 0) {
-        Sleep(static_cast<DWORD>(timeout));
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeout));
     }
     for (int k = 0; k < 3; ++k) buf_write(req.out_buf(static_cast<size_t>(k)), set_out[k].data(), set_out[k].size());
     return reply(rsp, count, 0);
@@ -862,7 +773,7 @@ void install_bsd(ipc::Service& s) {
             return rc;
         });
     };
-    wsa_start();
+    hn::init();
     add(0, "RegisterClient", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
         rsp.push(uint32_t{0});   // bsd_errno; the transfer memory is not used
         return 0;
@@ -923,20 +834,8 @@ bool resolve_ipv4(const std::string& name_in, uint8_t ip[4], const char** how) {
         return said("hosts");
     }
     if (lower(trim(config_get_str("net", "dns", "hosts"))) != "host") return false;
-    wsa_start();
-    addrinfo hints{}, *res = nullptr;
-    hints.ai_family = AF_INET;
-    if (getaddrinfo(name.c_str(), nullptr, &hints, &res) != 0 || !res) return false;
-    bool ok = false;
-    for (addrinfo* a = res; a; a = a->ai_next) {
-        if (a->ai_family == AF_INET && a->ai_addrlen >= sizeof(sockaddr_in)) {
-            std::memcpy(ip, &reinterpret_cast<const sockaddr_in*>(a->ai_addr)->sin_addr, 4);
-            ok = true;
-            break;
-        }
-    }
-    freeaddrinfo(res);
-    return ok ? said("dns") : false;
+    hn::init();
+    return hn::resolve_ipv4(name, ip) ? said("dns") : false;
 }
 
 void reset() {

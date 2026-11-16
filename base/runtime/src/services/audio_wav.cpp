@@ -17,6 +17,7 @@
 
 #include "nxrt/audio_sink.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
 
 namespace nxrt::audio {
 namespace {
@@ -202,7 +203,7 @@ WavWriter::~WavWriter() { close(); }
 bool WavWriter::open(const std::string& path, uint32_t sample_rate, uint32_t channels) {
     close();
     if (sample_rate == 0 || channels == 0) return false;
-    file_ = _wfopen(std::filesystem::path(path).c_str(), L"wb+");
+    file_ = os::fs::fopen(path, "wb+");
     if (!file_) return false;
 
     sample_rate_ = sample_rate;

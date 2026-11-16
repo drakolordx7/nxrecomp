@@ -3,7 +3,7 @@
 // Request bytes and expected reply bytes are written out from Switchbrew "Applet Manager services" and ScarletNX am.swipc, and from
 // Ryujinx for the result codes (module 128: result = module | description << 9), not read from the service.
 #include <filesystem>
-#include <windows.h>
+#include "nxrt/os/process.h"
 #include <cstring>
 
 #include "nxrt/config.h"

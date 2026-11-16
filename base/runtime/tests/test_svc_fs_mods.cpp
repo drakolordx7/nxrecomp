@@ -7,8 +7,6 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -29,6 +27,7 @@
 #include "../src/services/fs_volume.h"
 #include "nxrt/config.h"
 #include "nxrt/log.h"
+#include "nxrt/os/process.h"
 #include "nxrt/services.h"
 #include "nxrt/services_api.h"
 #include "svc_test_util.h"
@@ -57,7 +56,7 @@ struct TempTree {
     TempTree() {
         static std::atomic<unsigned> seq{0};
         std::error_code ec;
-        root = stdfs::temp_directory_path(ec) / ("nxrt_mods_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(seq++));
+        root = stdfs::temp_directory_path(ec) / ("nxrt_mods_" + std::to_string(nxrt::os::process::pid()) + "_" + std::to_string(seq++));
         stdfs::create_directories(root, ec);
     }
     ~TempTree() {
@@ -945,7 +944,7 @@ NXTEST(read_packed_romfs_lists_files_with_offsets) {
     std::vector<std::string> dirs;
     size_t skipped = 9;
     std::string err;
-    REQUIRE(read_packed_romfs((out.root / "x.bin").wstring(), &files, &dirs, &skipped, &err));
+    REQUIRE(read_packed_romfs((out.root / "x.bin").string(), &files, &dirs, &skipped, &err));
     CHECK_EQ(skipped, 0u);
     CHECK_EQ(files.size(), 2u);
     const std::string image = slurp(out.root / "x.bin");
@@ -1075,9 +1074,7 @@ NXTEST(everything_at_once_image_and_volume_agree) {
 // ---- configuration -----------------------------------------------------------------------------------------------------------------
 
 NXTEST(config_keys_mods_enabled_and_dir) {
-    wchar_t buf[MAX_PATH];
-    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
-    const stdfs::path exe_dir = stdfs::path(std::wstring(buf, n)).parent_path();
+    const stdfs::path exe_dir = stdfs::u8path(nxrt::os::process::exe_dir());
     nxrt::config_set("mods", "dir", "");
     nxrt::config_set("mods", "enabled", "true");
     ModsConfig c = mods_config_from_runtime();

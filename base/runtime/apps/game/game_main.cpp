@@ -22,13 +22,10 @@
 // controls.ini, the log) is found wherever the exe is started from (double click, shortcut, terminal), the ExeFS is ./exefs and the
 // settings file is the game ini (Info::game_ini, written by setup). Without it (development runs) the ExeFS and RomFS of the game folder
 // (games/<id>/game) are the defaults.
-#include <windows.h>
-
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cwctype>
 #include <memory>
 #include <string>
 #include <utility>
@@ -47,6 +44,8 @@
 #include "nxrt/module.h"
 #include "nxrt/nvn.h"
 #include "nxrt/nvn_backend.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
 #include "nxrt/nxmodule.h"
 #include "nxrt/platform.h"
 #include "nxrt/play.h"
@@ -111,33 +110,15 @@ std::unique_ptr<nxrt::gfx::Renderer> g_gfx_renderer;
 #ifdef NXGAME_GUI_SUBSYSTEM
     char msg[1024];     // a double-clicked exe has no console: say what is wrong in a box
     std::snprintf(msg, sizeof msg, fmt, a, b);
-    MessageBoxA(nullptr, msg, nxrt::game::info().title, MB_OK | MB_ICONERROR);
+    nxrt::os::process::error_box(nxrt::game::info().title, msg);
 #endif
-    TerminateProcess(GetCurrentProcess(), 1);
-    for (;;) {}
+    nxrt::os::process::terminate(1);
 }
 
-using nxrt::str::widen;
-using nxrt::str::narrow;
-std::wstring exe_dir() {
-    std::wstring buf(32768, L'\0');
-    const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
-    buf.resize(n);
-    const size_t slash = buf.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? L"." : buf.substr(0, slash);
-}
-bool file_exists(const std::wstring& p) {
-    const DWORD a = GetFileAttributesW(p.c_str());
-    return a != INVALID_FILE_ATTRIBUTES && !(a & FILE_ATTRIBUTE_DIRECTORY);
-}
-std::string absolute_utf8(const std::string& p) {
-    const std::wstring w = widen(p);
-    std::wstring buf(32768, L'\0');
-    const DWORD n = GetFullPathNameW(w.c_str(), static_cast<DWORD>(buf.size()), buf.data(), nullptr);
-    if (!n || n >= buf.size()) return p;
-    buf.resize(n);
-    return narrow(buf);
-}
+namespace os = nxrt::os;
+
+// Held for the life of the process: one game per game folder.
+os::process::NamedLock g_instance_lock;
 
 // The game side of the wall deadline: what the NVN back end had done when it hit.
 void deadline_report() {
@@ -204,11 +185,7 @@ int main(int argc, char** argv) {
     const nxrt::game::Info& gi = nxrt::game::info();
 #ifdef NXGAME_GUI_SUBSYSTEM
     // Started from a terminal: show the output there. When the output is redirected to a file or a pipe (<id> --version > v.txt), leave it alone.
-    const HANDLE out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if ((!out_handle || out_handle == INVALID_HANDLE_VALUE) && AttachConsole(ATTACH_PARENT_PROCESS)) {
-        std::freopen("CONOUT$", "w", stdout);
-        std::freopen("CONOUT$", "w", stderr);
-    }
+    os::process::attach_parent_console();
 #endif
     std::string exefs = game_env("EXEFS") ? game_env("EXEFS") : NXGAME_EXEFS_DEFAULT;
     bool exefs_given = game_env("EXEFS") != nullptr;
@@ -228,7 +205,7 @@ int main(int argc, char** argv) {
         else if (arg("--max-seconds")) boot_opts.emplace_back("max_seconds", argv[++i]);
         else if (arg("--link")) boot_opts.emplace_back("link", argv[++i]);
         else if (!std::strcmp(argv[i], "--version")) { std::printf("%s %s\n", gi.id, NXRT_VERSION); return 0; }
-        else if (!std::strcmp(argv[i], "--prepare-shaders")) { prepare = true; _putenv("NXRT_DIAG_WATCHDOG_SECONDS=0"); }
+        else if (!std::strcmp(argv[i], "--prepare-shaders")) { prepare = true; os::process::setenv("NXRT_DIAG_WATCHDOG_SECONDS", "0"); }
         else if (!std::strcmp(argv[i], "--if-needed")) prepare_if_needed = true;
         else if (arg("--threads")) prepare_threads = std::atoi(argv[++i]);
         else if (arg("--programs")) prepare_programs = argv[++i];
@@ -241,28 +218,27 @@ int main(int argc, char** argv) {
     std::string ini_abs, log_abs;
     bool installed = false;
     {
-        const std::wstring base = game.empty() ? exe_dir() : widen(absolute_utf8(game));
-        installed = !game.empty() || file_exists(base + L"\\exefs\\main");
+        const std::string base = game.empty() ? os::process::exe_dir() : os::fs::absolute(game);
+        installed = !game.empty() || os::fs::is_file(os::fs::resolve_case(base + "/exefs/main"));
         if (installed) {
-            if (exefs_given) exefs = absolute_utf8(exefs);
-            if (ini) { ini_abs = absolute_utf8(ini); ini = ini_abs.c_str(); }
-            if (logp) { log_abs = absolute_utf8(logp); logp = log_abs.c_str(); }
-            if (!SetCurrentDirectoryW(base.c_str())) die("cannot use the game folder %s", narrow(base).c_str());
+            if (exefs_given) exefs = os::fs::absolute(exefs);
+            if (ini) { ini_abs = os::fs::absolute(ini); ini = ini_abs.c_str(); }
+            if (logp) { log_abs = os::fs::absolute(logp); logp = log_abs.c_str(); }
+            if (!os::fs::set_current_dir(base)) die("cannot use the game folder %s", base.c_str());
             // One game (or one shader preparation) per game folder: two would write the same log, pipeline cache and saves. The name comes from
             // the game's save folder name and the folder's full path; NXRT_ALLOW_MULTIPLE=1 lifts the check for test rigs.
             if (!std::getenv("NXRT_ALLOW_MULTIPLE")) {
-                std::wstring full(32768, L'\0');
-                full.resize(GetFullPathNameW(base.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr));
+                const std::string full = nxrt::str::lower(os::fs::absolute(base));
                 unsigned long long h = 1469598103934665603ull;
-                for (wchar_t ch : full) h = (h ^ static_cast<unsigned long long>(std::towlower(ch))) * 1099511628211ull;
-                const std::wstring name = L"Local\\" + widen(*gi.save_folder ? gi.save_folder : gi.id) + L"_" + std::to_wstring(h);
-                if (CreateMutexW(nullptr, FALSE, name.c_str()) && GetLastError() == ERROR_ALREADY_EXISTS)
+                for (char ch : full) h = (h ^ static_cast<unsigned char>(ch)) * 1099511628211ull;
+                g_instance_lock = os::process::NamedLock::acquire(std::string(*gi.save_folder ? gi.save_folder : gi.id) + "_" + std::to_string(h), false);
+                if (!g_instance_lock.held())
                     die("The game is already running from this folder (or its shaders are being prepared). Close that one first.");
             }
             if (!exefs_given) exefs = "exefs";
             if (!logp) logp = NXGAME_LOG;
             const char* game_ini = gi.game_ini;     // written by setup
-            if (!ini && !std::getenv("NXRT_INI") && *game_ini && file_exists(widen(game_ini))) ini = game_ini;
+            if (!ini && !std::getenv("NXRT_INI") && *game_ini && os::fs::is_file(game_ini)) ini = game_ini;
         }
     }
 
@@ -337,8 +313,8 @@ int main(int argc, char** argv) {
         lo.name = g.file;
         lo.base = g.nx->base;
         std::string err;
-        const std::string path = exefs + "\\" + g.file;
-        if (!file_exists(widen(path)))
+        const std::string path = os::fs::resolve_case(exefs + "/" + g.file);
+        if (!os::fs::is_file(path))
             die("The game files were not found (%s). Run %s from this folder first, then start the game again.", path.c_str(), gi.setup_exe_name);
         nxrt::Module* m = nxrt::module_load_nso_file(path.c_str(), lo, &err);
         if (!m) die("cannot load %s: %s", path.c_str(), err.c_str());
@@ -370,6 +346,9 @@ int main(int argc, char** argv) {
     nxrt::tt::start_wall_deadline(static_cast<double>(nxrt::config_get_int("boot", "max_seconds", 0)), deadline_report);
 
     // 4. the main thread: [boot] main_stack_kb (1 MiB by default, the npdm's usual stack)
+    // TODO(linux, thread helper): on Linux the guest main thread must run on a thread with a big stack made by the os::thread layer (the process
+    // main thread's stack is the 8 MiB ulimit, the lifted code needs more, and Windows gets 64 MiB from the linker). When that layer lands, run this
+    // function's remainder (main_thread_adopt .. dispatch_call) on that thread and join it here, instead of adopting the calling thread.
     const uint64_t stack = static_cast<uint64_t>(nxrt::config_get_int("boot", "main_stack_kb", 1024)) << 10;
     const uint32_t h = nxrt::kernel::main_thread_adopt(stack, "main");
     if (!h) die("cannot create the main thread");

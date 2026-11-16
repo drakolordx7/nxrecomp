@@ -4,8 +4,6 @@
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
 #include "fs_volume.h"
 
-#include <windows.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -17,6 +15,8 @@
 
 #include "fs_mods.h"
 #include "nxrt/log.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/os/process.h"
 #include "nxrt/write_watch.h"
 
 namespace stdfs = std::filesystem;
@@ -42,11 +42,8 @@ std::string parent_of(const std::string& path) {
 
 class HostFile final : public VFile {
 public:
-    HostFile(HANDLE h, uint32_t mode, bool windowed = false, uint64_t base = 0, uint64_t length = 0)
-        : h_(h), mode_(mode), windowed_(windowed), base_(base), length_(length) {}
-    ~HostFile() override {
-        if (h_ != INVALID_HANDLE_VALUE) CloseHandle(h_);
-    }
+    HostFile(os::fs::File f, uint32_t mode, bool windowed = false, uint64_t base = 0, uint64_t length = 0)
+        : f_(std::move(f)), mode_(mode), windowed_(windowed), base_(base), length_(length) {}
     uint32_t read(int64_t offset, void* dst, uint64_t size, uint64_t* got) override {
         *got = 0;
         if (offset < 0) return rc::kOutOfRange;
@@ -55,26 +52,8 @@ public:
             if (static_cast<uint64_t>(offset) >= length_) return 0;
             size = std::min<uint64_t>(size, length_ - static_cast<uint64_t>(offset));
         }
-        uint8_t* d = static_cast<uint8_t*>(dst);
-        const mem::ww::OsWriteScope ws(d, size);   // ReadFile fails on a page the write tracker made read-only
-        while (size) {
-            const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(size, 0x40000000));
-            OVERLAPPED ov{};
-            const uint64_t at = static_cast<uint64_t>(offset) + base_;
-            ov.Offset = static_cast<DWORD>(at & 0xFFFFFFFFu);
-            ov.OffsetHigh = static_cast<DWORD>(at >> 32);
-            DWORD n = 0;
-            if (!ReadFile(h_, d, chunk, &n, &ov)) {
-                if (GetLastError() == ERROR_HANDLE_EOF) break;
-                return rc::kGenericFailure;
-            }
-            if (n == 0) break;
-            *got += n;
-            d += n;
-            offset += n;
-            size -= n;
-            if (n < chunk) break;
-        }
+        const mem::ww::OsWriteScope ws(dst, size);   // a read fails on a page the write tracker made read-only
+        if (!f_.read_at(static_cast<uint64_t>(offset) + base_, dst, size, got)) return rc::kGenericFailure;
         return 0;
     }
     uint32_t write(int64_t offset, const void* src, uint64_t size) override {
@@ -83,43 +62,28 @@ public:
         int64_t cur = 0;
         get_size(&cur);
         if (static_cast<uint64_t>(offset) + size > static_cast<uint64_t>(cur) && !(mode_ & kModeAppend)) return rc::kNoAppend;
-        const uint8_t* s = static_cast<const uint8_t*>(src);
-        while (size) {
-            const DWORD chunk = static_cast<DWORD>(std::min<uint64_t>(size, 0x40000000));
-            OVERLAPPED ov{};
-            ov.Offset = static_cast<DWORD>(static_cast<uint64_t>(offset) & 0xFFFFFFFFu);
-            ov.OffsetHigh = static_cast<DWORD>(static_cast<uint64_t>(offset) >> 32);
-            DWORD n = 0;
-            if (!WriteFile(h_, s, chunk, &n, &ov) || n == 0) return rc::kGenericFailure;
-            s += n;
-            offset += n;
-            size -= n;
-        }
-        return 0;
+        return f_.write_at(static_cast<uint64_t>(offset), src, size) ? 0 : rc::kGenericFailure;
     }
-    uint32_t flush() override { return (mode_ & kModeWrite) ? (FlushFileBuffers(h_) ? 0 : rc::kGenericFailure) : 0; }
+    uint32_t flush() override { return (mode_ & kModeWrite) ? (f_.sync() ? 0 : rc::kGenericFailure) : 0; }
     uint32_t set_size(int64_t size) override {
         if (!(mode_ & kModeWrite)) return rc::kWriteNotPermitted;
         if (size < 0) return rc::kOutOfRange;
         std::lock_guard<std::mutex> lk(size_mu_);
-        LARGE_INTEGER li;
-        li.QuadPart = size;
-        if (!SetFilePointerEx(h_, li, nullptr, FILE_BEGIN) || !SetEndOfFile(h_)) return rc::kGenericFailure;
-        return 0;
+        return f_.set_size(static_cast<uint64_t>(size)) ? 0 : rc::kGenericFailure;
     }
     uint32_t get_size(int64_t* size) override {
         if (windowed_) {
             *size = static_cast<int64_t>(length_);
             return 0;
         }
-        LARGE_INTEGER li;
-        if (!GetFileSizeEx(h_, &li)) return rc::kGenericFailure;
-        *size = li.QuadPart;
+        uint64_t n = 0;
+        if (!f_.size(&n)) return rc::kGenericFailure;
+        *size = static_cast<int64_t>(n);
         return 0;
     }
 
 private:
-    HANDLE h_;
+    os::fs::File f_;
     uint32_t mode_;
     bool windowed_;
     uint64_t base_, length_;
@@ -151,38 +115,19 @@ private:
     std::shared_ptr<const std::vector<uint8_t>> data_;
 };
 
-HANDLE open_host(const stdfs::path& p, bool write, DWORD disposition) {
-    return CreateFileW(p.c_str(), write ? (GENERIC_READ | GENERIC_WRITE) : GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                       nullptr, disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
-}
+os::fs::File open_host(const stdfs::path& p, bool write) { return os::fs::File::open(to_u8(p), write ? (os::fs::kRead | os::fs::kWrite) : os::fs::kRead); }
 
-bool pid_alive(DWORD pid) {
-    HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, pid);
-    if (!p) return GetLastError() == ERROR_ACCESS_DENIED;
-    const bool alive = WaitForSingleObject(p, 0) == WAIT_TIMEOUT;
-    CloseHandle(p);
-    return alive;
-}
-
-// A mutex shared by every process that opens the same save folder: commit and recovery do not interleave.
+// A lock shared by every process that opens the same save folder: commit and recovery do not interleave.
 class RootLock {
 public:
     explicit RootLock(const std::string& root) {
-        size_t h = std::hash<std::string>{}(root);
-        wchar_t name[64];
-        std::swprintf(name, 64, L"nxrt_save_%016llx", static_cast<unsigned long long>(h));
-        m_ = CreateMutexW(nullptr, FALSE, name);
-        if (m_) WaitForSingleObject(m_, INFINITE);
-    }
-    ~RootLock() {
-        if (m_) {
-            ReleaseMutex(m_);
-            CloseHandle(m_);
-        }
+        char name[64];
+        std::snprintf(name, sizeof name, "nxrt_save_%016llx", static_cast<unsigned long long>(std::hash<std::string>{}(root)));
+        lock_ = os::process::NamedLock::acquire(name, true);
     }
 
 private:
-    HANDLE m_ = nullptr;
+    os::process::NamedLock lock_;
 };
 
 // Applies a decided commit. Marker lines: "W <work folder>", "R <committed folder>", then "D rel" (delete), "M rel" (make folder),
@@ -286,11 +231,19 @@ struct Volume::Impl {
     std::mutex mu;
     std::set<std::string> tomb;   // committed paths deleted since the last commit (journalled volumes)
     bool journal = false, ro = false, ok = false;
+    bool fold_case = false;   // read-only direct volumes (the RomFS folder): a path with other capitalisation than the file on disk still finds it (os::fs::resolve_case)
     std::shared_ptr<const ModOverlay> mods;   // read-only direct volumes: the mods over the folder (set before the volume is shared)
 
     bool direct() const { return !journal; }
     stdfs::path cpath(const std::string& path) const { return root / u8(rel_of(path)); }
-    stdfs::path wpath(const std::string& path) const { return (journal ? work : root) / u8(rel_of(path)); }
+    stdfs::path wpath(const std::string& path) const {
+        stdfs::path p = (journal ? work : root) / u8(rel_of(path));
+        if (fold_case) {
+            const std::string s = to_u8(p), r = os::fs::resolve_case(s);
+            if (r != s) p = u8(r);
+        }
+        return p;
+    }
 
     // The committed layer shows `path` unless it or one of its parents was deleted since the last commit.
     bool committed_visible(const std::string& path) const {
@@ -320,7 +273,7 @@ struct Volume::Impl {
         if (mods) {   // mod files win; folders the mods provide exist even where the game has none; hidden game entries are gone
             if (const ModSource* m = mods->find_file(path)) {
                 f.exists = f.in_work = true;
-                f.host = stdfs::path(m->host);
+                f.host = u8(m->host);
                 f.windowed = true;
                 f.mem = m->mem;
                 f.window_off = m->offset;
@@ -329,7 +282,7 @@ struct Volume::Impl {
             }
             if (mods->is_dir(path)) {
                 f.exists = f.is_dir = f.in_work = true;
-                f.host = mods->base_dir_exists(path) && stdfs::exists(wpath(path), ec) ? wpath(path) : stdfs::path(*mods->dir_host(path));
+                f.host = mods->base_dir_exists(path) && stdfs::exists(wpath(path), ec) ? wpath(path) : u8(*mods->dir_host(path));
                 return f;
             }
             if (mods->hidden(path)) return f;
@@ -446,13 +399,14 @@ Volume::Volume(const std::string& root, bool journal, bool read_only, uint64_t c
     s.root = u8(root);
     s.journal = journal;
     s.ro = read_only;
+    s.fold_case = read_only && !journal;
     std::error_code ec;
     if (journal) {
         stdfs::create_directories(s.root, ec);
         recover(root);
         s.marker = stdfs::path(s.root.string() + ".commit");
-        s.work = stdfs::path(s.root.string() + ".work." + std::to_string(GetCurrentProcessId()));
-        s.journal_file = stdfs::path(s.root.string() + ".journal." + std::to_string(GetCurrentProcessId()));
+        s.work = stdfs::path(s.root.string() + ".work." + std::to_string(os::process::pid()));
+        s.journal_file = stdfs::path(s.root.string() + ".journal." + std::to_string(os::process::pid()));
         stdfs::remove_all(s.work, ec);   // a second open in this process starts from the committed state
         stdfs::create_directories(s.work, ec);
         s.ok = stdfs::is_directory(s.root, ec) && stdfs::is_directory(s.work, ec);
@@ -494,8 +448,8 @@ void Volume::recover(const std::string& root_s) {
         const std::string tail = name.substr(stem.size());
         const bool is_work = tail.rfind(".work.", 0) == 0, is_journal = tail.rfind(".journal.", 0) == 0;
         if (!is_work && !is_journal) continue;
-        const DWORD pid = static_cast<DWORD>(std::strtoul(tail.c_str() + (is_work ? 6 : 9), nullptr, 10));
-        if (!pid || pid == GetCurrentProcessId() || pid_alive(pid)) continue;
+        const uint32_t pid = static_cast<uint32_t>(std::strtoul(tail.c_str() + (is_work ? 6 : 9), nullptr, 10));
+        if (!pid || pid == os::process::pid() || os::process::is_alive(pid)) continue;
         std::error_code e2;
         stdfs::remove_all(it->path(), e2);
         NXLOG_I("fs", "uncommitted %s of process %lu discarded (%s)", is_work ? "work folder" : "journal", static_cast<unsigned long>(pid), name.c_str());
@@ -509,15 +463,11 @@ uint32_t Volume::create_file(const std::string& path, int64_t size) {
     if (path == "/") return rc::kPathAlreadyExists;
     if (p_->lookup(path).exists) return rc::kPathAlreadyExists;
     if (const uint32_t r = p_->ensure_parents(path)) return r;
-    HANDLE h = open_host(p_->wpath(path), true, CREATE_NEW);
-    if (h == INVALID_HANDLE_VALUE) return rc::kGenericFailure;
+    os::fs::File h = os::fs::File::open(to_u8(p_->wpath(path)), os::fs::kWrite | os::fs::kCreateNew);
+    if (!h.ok()) return rc::kGenericFailure;
     uint32_t r = 0;
-    if (size) {
-        LARGE_INTEGER li;
-        li.QuadPart = size;
-        if (!SetFilePointerEx(h, li, nullptr, FILE_BEGIN) || !SetEndOfFile(h)) r = rc::kGenericFailure;
-    }
-    CloseHandle(h);
+    if (size && !h.set_size(static_cast<uint64_t>(size))) r = rc::kGenericFailure;
+    h.close();
     p_->tomb.erase(path);   // harmless when absent; a re-created path is served from the work layer
     return r;
 }
@@ -643,9 +593,9 @@ uint32_t Volume::open_file(const std::string& path, uint32_t mode, std::shared_p
         if (const uint32_t r = p_->materialize_file(path)) return r;
         host = p_->wpath(path);
     }
-    HANDLE h = open_host(host, write, OPEN_EXISTING);
-    if (h == INVALID_HANDLE_VALUE) return rc::kPathNotFound;
-    *out = std::make_shared<HostFile>(h, mode, f.windowed, f.window_off, f.window_len);
+    os::fs::File h = open_host(host, write);
+    if (!h.ok()) return rc::kPathNotFound;
+    *out = std::make_shared<HostFile>(std::move(h), mode, f.windowed, f.window_off, f.window_len);
     return 0;
 }
 
@@ -662,15 +612,11 @@ uint32_t Volume::file_times(const std::string& path, FileTimes* out) {
         *out = FileTimes{};
         return 0;
     }
-    WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!GetFileAttributesExW(f.host.c_str(), GetFileExInfoStandard, &d)) return rc::kGenericFailure;
-    auto posix = [](const FILETIME& ft) {
-        const uint64_t t = (static_cast<uint64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
-        return static_cast<int64_t>(t / 10000000ull) - 11644473600ll;
-    };
-    out->created = posix(d.ftCreationTime);
-    out->modified = posix(d.ftLastWriteTime);
-    out->accessed = posix(d.ftLastAccessTime);
+    os::fs::Stat st;
+    if (!os::fs::stat(to_u8(f.host), &st)) return rc::kGenericFailure;
+    out->created = st.created;
+    out->modified = st.modified;
+    out->accessed = st.accessed;
     out->valid = true;
     return 0;
 }
@@ -707,11 +653,7 @@ uint32_t Volume::commit() {
             dirs.push_back(g);
         } else {
             files.push_back(g);
-            HANDLE h = CreateFileW(it->path().c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-            if (h != INVALID_HANDLE_VALUE) {
-                FlushFileBuffers(h);
-                CloseHandle(h);
-            }
+            os::fs::sync_path(to_u8(it->path()));
         }
     }
     for (const std::string& d : dirs) body += "M " + d + "\n";
@@ -723,14 +665,8 @@ uint32_t Volume::commit() {
         j.flush();
         if (!j) return rc::kGenericFailure;
     }
-    {
-        HANDLE h = CreateFileW(s.journal_file.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-        if (h != INVALID_HANDLE_VALUE) {
-            FlushFileBuffers(h);
-            CloseHandle(h);
-        }
-    }
-    if (!MoveFileExW(s.journal_file.c_str(), s.marker.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return rc::kGenericFailure;
+    os::fs::sync_path(to_u8(s.journal_file));
+    if (!os::fs::rename_replace(to_u8(s.journal_file), to_u8(s.marker), true)) return rc::kGenericFailure;
     if (g_crash_point == 1) return rc::kGenericFailure;
 
     const int applied = apply_marker(s.marker, g_crash_point == 2 ? 1 : 0);

@@ -4,7 +4,7 @@
 // fsp-srv at IPC level: RomFS storage, read-only data file system, save data (create / open / write / commit / drop), SD card, account
 // save API. Request bytes follow Switchbrew "Filesystem services" / libnx fs_service.c layouts.
 #define _SILENCE_CXX20_U8PATH_DEPRECATION_WARNING
-#include <windows.h>
+#include "nxrt/os/process.h"
 
 #include <cstring>
 #include <filesystem>
@@ -30,7 +30,7 @@ struct Fixture {
     stdfs::path dir, rom, save;
     nxsvc::Env env;
     Fixture() {
-        dir = stdfs::temp_directory_path() / ("nxrt_svcfs_" + std::to_string(GetCurrentProcessId()));
+        dir = stdfs::temp_directory_path() / ("nxrt_svcfs_" + std::to_string(nxrt::os::process::pid()));
         std::error_code ec;
         stdfs::remove_all(dir, ec);
         rom = dir / "romfs";

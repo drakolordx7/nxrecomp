@@ -1,18 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Host sockets ([net] sockets = host): sfdnsres answers from [net] hosts in the serialized formats libnx's resolver reads (runtime/resolver.c),
-// and bsd commands run on real Winsock sockets against a loopback listener opened here. The request layouts are libnx's (services/bsd.c,
+// and bsd commands run on real sockets against a loopback listener opened here. The request layouts are libnx's (services/bsd.c,
 // services/sfdnsres.c); the expected bytes are written out from those layouts, not read from the service under test.
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
-
 #include "nxrt/config.h"
+#include "nxrt/os/net.h"
 #include "svc_test_util.h"
 
 NXTEST_GROUP(svc_network_host)
@@ -88,18 +79,16 @@ NXTEST(sfdnsres_resolves_listed_name) {
 
 NXTEST(bsd_loopback_tcp_exchange) {
     nxsvc::Env env;
-    WSADATA wd{};
-    REQUIRE(WSAStartup(MAKEWORD(2, 2), &wd) == 0);
-    SOCKET ls = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    REQUIRE(ls != INVALID_SOCKET);
-    sockaddr_in la{};
-    la.sin_family = AF_INET;
-    la.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    REQUIRE(::bind(ls, reinterpret_cast<sockaddr*>(&la), sizeof la) == 0);
-    int la_len = sizeof la;
-    REQUIRE(::getsockname(ls, reinterpret_cast<sockaddr*>(&la), &la_len) == 0);
-    REQUIRE(::listen(ls, 4) == 0);
-    const uint16_t real_port = ntohs(la.sin_port);
+    namespace on = nxrt::os::net;
+    REQUIRE(on::init());
+    on::Socket ls = on::kInvalidSocket;
+    REQUIRE(on::open(on::Type::Stream, 0, &ls) == 0);
+    on::Ipv4 la;
+    la.ip[0] = 127, la.ip[3] = 1;
+    REQUIRE(on::bind(ls, la) == 0);
+    REQUIRE(on::local_addr(ls, &la) == 0);
+    REQUIRE(on::listen(ls, 4) == 0);
+    const uint16_t real_port = la.port;
 
     config_clear();
     config_set("net", "sockets", "host");
@@ -122,8 +111,8 @@ NXTEST(bsd_loopback_tcp_exchange) {
     nxsvc::Reply c = bsd.call(14, nxsvc::Args().i32(fd).buf_a(sa, sizeof sa));
     CHECK_EQ(c.get<int32_t>(0), 0);
     CHECK_EQ(c.get<uint32_t>(4), 0u);
-    SOCKET peer = ::accept(ls, nullptr, nullptr);
-    REQUIRE(peer != INVALID_SOCKET);
+    on::Socket peer = on::kInvalidSocket;
+    REQUIRE(on::accept(ls, &peer, nullptr) == 0);
 
     // Send(fd, flags 0, A: data) -> (i32 sent, u32 errno)
     char hello[] = "hello";
@@ -132,7 +121,7 @@ NXTEST(bsd_loopback_tcp_exchange) {
     char got[16] = {};
     int n = 0;
     while (n < 5) {
-        const int k = ::recv(peer, got + n, 5 - n, 0);
+        const int64_t k = on::recv(peer, got + n, 5 - n, 0, nullptr);
         if (k <= 0) break;
         n += k;
     }
@@ -140,7 +129,7 @@ NXTEST(bsd_loopback_tcp_exchange) {
     CHECK(std::memcmp(got, "hello", 5) == 0);
 
     // Recv(fd, flags 0, B: buffer) -> (i32 received, u32 errno)
-    REQUIRE(::send(peer, "world!", 6, 0) == 6);
+    REQUIRE(on::send(peer, "world!", 6, 0, nullptr) == 6);
     char back[64] = {};
     nxsvc::Reply rv = bsd.call(8, nxsvc::Args().i32(fd).i32(0).buf_b(back, sizeof back));
     CHECK_EQ(rv.get<uint32_t>(4), 0u);
@@ -155,8 +144,8 @@ NXTEST(bsd_loopback_tcp_exchange) {
     CHECK_EQ(cl2.get<int32_t>(0), -1);
     CHECK_EQ(cl2.get<uint32_t>(4), 9u);
 
-    ::closesocket(peer);
-    ::closesocket(ls);
+    on::close(peer);
+    on::close(ls);
     config_clear();
 }
 

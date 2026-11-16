@@ -50,7 +50,7 @@ ModsConfig mods_config_from_runtime();
 
 // Where the bytes of one mod file are: a host file, or a member of a packed romfs.bin (offset/size inside that file).
 struct ModSource {
-    std::wstring host;
+    std::string host;   // UTF-8, absolute (os::fs)
     uint64_t offset = 0;
     uint64_t size = 0;
     std::shared_ptr<const std::vector<uint8_t>> mem;   // generated content (ModsIndexEdit::replace_file): host and offset are unused
@@ -87,7 +87,7 @@ public:
         return it == dirs_.end() || it->second.base;
     }
     // A folder some mod provides: a host folder it exists in (only for times), or null.
-    const std::wstring* dir_host(const std::string& path) const;
+    const std::string* dir_host(const std::string& path) const;
     const std::vector<Child>* children(const std::string& dir) const;
     // True when `path` or one of its parents is hidden from the game's own tree (a mod entry at that path can still exist).
     bool hidden(const std::string& path) const;
@@ -105,7 +105,7 @@ private:
     };
     struct DirRec {
         bool base = true;
-        std::wstring host;
+        std::string host;   // UTF-8, absolute (os::fs)
         std::vector<Child> kids;
     };
     std::unordered_map<std::string, FileRec> files_;
@@ -171,7 +171,7 @@ struct PackedEntry {
     uint64_t offset = 0;
     uint64_t size = 0;
 };
-bool read_packed_romfs(const std::wstring& file, std::vector<PackedEntry>* files, std::vector<std::string>* dirs, size_t* skipped,
+bool read_packed_romfs(const std::string& file, std::vector<PackedEntry>* files, std::vector<std::string>* dirs, size_t* skipped,
                        std::string* err);
 
 }

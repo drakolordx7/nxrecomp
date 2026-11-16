@@ -7,7 +7,7 @@ them lives in `src/os/win32/` (Windows) and `src/os/posix/` (Linux) and CMake bu
 Rule: no `#ifdef _WIN32`, no `<windows.h>` and no other OS header outside `src/os/` (and the headers in this folder). Everything else calls
 `nxrt/os/*.h`. A new OS call is added here once, with one implementation per platform, so a fix applies to both.
 
-This folder is empty for now. The planned modules (each one a header here and one source file per platform):
+The modules (each one a header here and one source file per platform; `fs.h`, `process.h` and `net.h` exist, the rest are planned):
 
 | module | what |
 | --- | --- |
@@ -16,9 +16,9 @@ This folder is empty for now. The planned modules (each one a header here and on
 | `thread` | host threads (stack size, priority, affinity, names), TLS, suspend/capture for the watchdog |
 | `sync` | host mutexes, events, futex-style waits |
 | `time` | monotonic clock, high-resolution sleep and wait, wall clock |
-| `process` | environment, exe path, child processes, command line |
-| `fs` | paths and folders (save, config, cache locations), file handles, memory-mapped files |
-| `net` | sockets and their error codes |
+| `process` | (done) pid, exe path and folder, environment, user/portable folders, language, random bytes, locks between processes; planned: child processes, command line |
+| `fs` | (done) UTF-8 paths, positioned file I/O, stat, folder listing, durable rename, case-insensitive path resolver; planned: memory-mapped files |
+| `net` | (done) IPv4 sockets, poll, options; errors come back as Linux errno numbers |
 | `dynlib` | loading shared libraries and finding symbols in them |
 | `symbols` | host address to name (map file or ELF symbols), stack capture |
 
