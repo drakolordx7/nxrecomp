@@ -2,8 +2,6 @@
 // Thread, event, synchronisation, time and diagnostic SVCs. Semantics from the Switchbrew SVC page; structure of the handlers
 // adapted from SuperMarioWonderRecomp runtime/src/kernel.cpp svc_impl (MIT, Copyright (c) 2026 BelmanteGu; see THIRD_PARTY_NOTICES.md).
 // Argument registers (AArch64): see include/nxrt/svc.h.
-#include <windows.h>
-
 #include <cstring>
 #include <string>
 
@@ -28,7 +26,7 @@ void svc_exit_process(::Ctx* c) {
     NXLOG_I("svc", "svcExitProcess from thread %s", current_thread() ? current_thread()->name.c_str() : "?");
     NXLOG_I("runtime", "state at svcExitProcess:\n%s", summary().c_str());
     log_flush();
-    ExitProcess(0);
+    os::terminate(0);
 }
 
 void svc_create_thread(::Ctx* c) {            // x1 entry, x2 arg, x3 stack top, w4 priority, w5 core -> x1 handle

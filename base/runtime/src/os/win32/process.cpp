@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 #include "nxrt/os/fs.h"
 #include "nxrt/strutil.h"
@@ -24,11 +26,6 @@ bool is_alive(uint32_t pid) {
     const bool alive = WaitForSingleObject(p, 0) == WAIT_TIMEOUT;
     CloseHandle(p);
     return alive;
-}
-
-[[noreturn]] void terminate(int code) {
-    TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
-    for (;;) {}
 }
 
 std::string exe_path() {
@@ -111,6 +108,92 @@ void NamedLock::release() {
     ReleaseMutex(m);
     CloseHandle(m);
     h_ = 0;
+}
+
+// ---- child processes ----------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+// One job object for the process: every child that must not outlive it joins, and the system ends them when this process does.
+HANDLE kill_job() {
+    static HANDLE job = [] {
+        HANDLE j = CreateJobObjectW(nullptr, nullptr);
+        if (!j) return static_cast<HANDLE>(nullptr);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
+        lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(j, JobObjectExtendedLimitInformation, &lim, sizeof lim);
+        return j;
+    }();
+    return job;
+}
+
+// One argument as CreateProcess's command line wants it (the rules of CommandLineToArgvW).
+void append_arg(std::wstring& cl, const std::wstring& a) {
+    if (!cl.empty()) cl += L' ';
+    if (!a.empty() && a.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
+        cl += a;
+        return;
+    }
+    cl += L'"';
+    for (size_t i = 0;; i++) {
+        size_t bs = 0;
+        while (i < a.size() && a[i] == L'\\') { i++; bs++; }
+        if (i == a.size()) {
+            cl.append(bs * 2, L'\\');
+            break;
+        }
+        if (a[i] == L'"') cl.append(bs * 2 + 1, L'\\');
+        else cl.append(bs, L'\\');
+        cl += a[i];
+    }
+    cl += L'"';
+}
+
+}  // namespace
+
+Child Child::spawn(const std::string& exe, const std::vector<std::string>& args, const SpawnOptions& opt) {
+    Child c;
+    std::wstring cl;
+    append_arg(cl, str::widen(exe));
+    for (const std::string& a : args) append_arg(cl, str::widen(a));
+    STARTUPINFOW su{};
+    su.cb = sizeof su;
+    PROCESS_INFORMATION pi{};
+    const DWORD flags = CREATE_SUSPENDED | NORMAL_PRIORITY_CLASS | (opt.hidden ? CREATE_NO_WINDOW : 0);
+    if (!CreateProcessW(nullptr, cl.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr, &su, &pi)) return c;
+    if (opt.kill_with_parent)
+        if (HANDLE job = kill_job()) AssignProcessToJobObject(job, pi.hProcess);
+    if (opt.cpu_mask) SetProcessAffinityMask(pi.hProcess, static_cast<DWORD_PTR>(opt.cpu_mask));
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    c.h_ = reinterpret_cast<intptr_t>(pi.hProcess);
+    c.pid_ = pi.dwProcessId;
+    return c;
+}
+
+bool Child::wait(uint32_t timeout_ms, int* exit_code) {
+    if (!h_) return true;
+    HANDLE p = reinterpret_cast<HANDLE>(h_);
+    if (WaitForSingleObject(p, timeout_ms) != WAIT_OBJECT_0) return false;
+    DWORD code = 0;
+    GetExitCodeProcess(p, &code);
+    if (exit_code) *exit_code = static_cast<int>(code);
+    return true;
+}
+
+void Child::kill() {
+    if (!h_) return;
+    HANDLE p = reinterpret_cast<HANDLE>(h_);
+    TerminateProcess(p, 1);
+    WaitForSingleObject(p, 10000);
+}
+
+void Child::close() {
+    if (!h_) return;
+    kill();
+    CloseHandle(reinterpret_cast<HANDLE>(h_));
+    h_ = 0;
+    pid_ = 0;
 }
 
 void error_box(const char* title, const char* text) { MessageBoxA(nullptr, text, title, MB_OK | MB_ICONERROR); }

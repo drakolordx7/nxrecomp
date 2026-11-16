@@ -7,6 +7,8 @@
 
 #include <atomic>
 
+#include "nxrt/strutil.h"
+
 #pragma comment(lib, "winmm.lib")
 
 namespace nxrt::os {
@@ -74,6 +76,65 @@ void timer_resolution_acquire() {
 
 void timer_resolution_release() {
     if (g_resolution_holders.fetch_sub(1) == 1) timeEndPeriod(1);
+}
+
+// ---- the host's time zone -----------------------------------------------------------------------------------------------------------
+
+namespace {
+
+int64_t days_from_civil(int64_t y, int64_t m, int64_t d) {      // Howard Hinnant's algorithm (public domain)
+    y -= m <= 2 ? 1 : 0;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const int64_t yoe = y - era * 400;
+    const int64_t doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+int64_t floor_mod7(int64_t a) { return ((a % 7) + 7) % 7; }
+int days_in_month(int64_t y, int m) {
+    static const int d[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    const bool leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    return m == 2 && leap ? 29 : d[m - 1];
+}
+
+// Local wall time of a SYSTEMTIME as seconds since the epoch in that wall clock. A wYear of 0 is a recurring rule:
+// wDay is the n-th wDayOfWeek of the month, 5 meaning the last.
+int64_t resolve_systemtime(const SYSTEMTIME& st, int year) {
+    const int64_t y = st.wYear != 0 ? st.wYear : year;
+    const int64_t first = days_from_civil(y, st.wMonth, 1);
+    int64_t day_of_month;
+    if (st.wYear != 0) {
+        day_of_month = st.wDay;
+    } else {
+        const int64_t first_wd = floor_mod7(first + 4);
+        day_of_month = 1 + floor_mod7(st.wDayOfWeek - first_wd) + 7 * (st.wDay - 1);
+        while (day_of_month > days_in_month(y, st.wMonth)) day_of_month -= 7;
+    }
+    return (first + day_of_month - 1) * 86400 + st.wHour * 3600 + st.wMinute * 60 + st.wSecond;
+}
+
+}  // namespace
+
+bool host_timezone(HostZone* out, int first_year, int last_year) {
+    DYNAMIC_TIME_ZONE_INFORMATION dtzi{};
+    if (GetDynamicTimeZoneInformation(&dtzi) == TIME_ZONE_ID_INVALID) return false;
+    out->key = str::narrow(dtzi.TimeZoneKeyName);
+    out->years.clear();
+    for (int year = first_year; year <= last_year; ++year) {
+        TIME_ZONE_INFORMATION tzi{};
+        if (!GetTimeZoneInformationForYear(static_cast<USHORT>(year), &dtzi, &tzi)) return false;
+        HostZoneYear y;
+        y.std_off = -(tzi.Bias + tzi.StandardBias) * 60;
+        y.dst_off = -(tzi.Bias + tzi.DaylightBias) * 60;
+        if (tzi.DaylightDate.wMonth != 0 && tzi.StandardDate.wMonth != 0) {
+            y.has_dst = true;
+            // DaylightDate is given in standard wall time, StandardDate in daylight wall time.
+            y.dst_start = resolve_systemtime(tzi.DaylightDate, year) - y.std_off;
+            y.dst_end = resolve_systemtime(tzi.StandardDate, year) - y.dst_off;
+        }
+        out->years.push_back(y);
+    }
+    return true;
 }
 
 }  // namespace nxrt::os

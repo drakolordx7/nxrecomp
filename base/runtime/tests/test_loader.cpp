@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Loader tests on the synthetic AArch64 ELF fixture (tests/data/fixture_aarch64.elf, facts in tests/data/fixture_info.txt).
-#include <windows.h>
 
 #include <cstring>
 #include <fstream>
 #include <vector>
 
+#include "nxrt/os/mem.h"
 #include "nxrt/dispatch.h"
 #include "nxrt/log.h"
 #include "nxrt/memory.h"
@@ -44,10 +44,9 @@ void reset() {
 }
 
 uint64_t peek64(uint64_t a) { return *reinterpret_cast<uint64_t*>(a); }
-uint32_t page_protect(uint64_t a) {
-    MEMORY_BASIC_INFORMATION mbi{};
-    VirtualQuery(reinterpret_cast<void*>(a), &mbi, sizeof mbi);
-    return mbi.Protect;
+nxrt::os::mem::Prot page_protect(uint64_t a) {
+    nxrt::os::mem::Region r;
+    return nxrt::os::mem::query(a, &r) ? r.prot : nxrt::os::mem::Prot::None;
 }
 
 Module* load_linked(const char* path = kFull) {
@@ -219,10 +218,10 @@ NXTEST(segment_protections) {
     Module* m = load_linked();
     REQUIRE(m);
     const uint64_t b = m->base();
-    CHECK_EQ(page_protect(b + 0x0), (uint32_t)PAGE_READONLY);          // headers / rodata
-    CHECK_EQ(page_protect(b + 0x2000), (uint32_t)PAGE_EXECUTE_READ);   // text
-    CHECK_EQ(page_protect(b + 0x4000), (uint32_t)PAGE_READONLY);       // RELRO, read-only once relocated
-    CHECK_EQ(page_protect(b + 0x5000), (uint32_t)PAGE_READWRITE);      // data + bss
+    CHECK(page_protect(b + 0x0) == nxrt::os::mem::Prot::R);          // headers / rodata
+    CHECK(page_protect(b + 0x2000) == nxrt::os::mem::Prot::RX);   // text
+    CHECK(page_protect(b + 0x4000) == nxrt::os::mem::Prot::R);       // RELRO, read-only once relocated
+    CHECK(page_protect(b + 0x5000) == nxrt::os::mem::Prot::RW);      // data + bss
     mem::VmInfo v = mem::vm_query(b + 0x2000);
     CHECK_EQ(v.state, (uint32_t)mem::kMemCode);
     CHECK_EQ(mem::vm_query(b + 0x5000).state, (uint32_t)mem::kMemCodeData);

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "test_framework.h"
 
-#include <windows.h>
 
 #include <cstdint>
 #include <cstring>
@@ -10,6 +9,7 @@
 #include <vector>
 
 #include "data/hipc_vectors.h"
+#include "nxrt/os/mem.h"
 #include "nxrt/hipc.h"
 
 NXTEST_GROUP(hipc)
@@ -151,21 +151,20 @@ Message random_message(std::mt19937& rng) {
     return m;
 }
 
-// Two committed pages followed by the guard: the second page is PAGE_NOACCESS, so any read or write that runs
+// Two committed pages followed by the guard: the second page is inaccessible (os::mem Prot::None), so any read or write that runs
 // past guard() faults the test process.
 class GuardedPages {
 public:
     GuardedPages() {
-        base_ = static_cast<uint8_t*>(VirtualAlloc(nullptr, 2 * kPage, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        base_ = static_cast<uint8_t*>(nxrt::os::mem::alloc(2 * kPage, nxrt::os::mem::Prot::RW));
         if (!base_) return;
-        DWORD old = 0;
-        if (!VirtualProtect(base_ + kPage, kPage, PAGE_NOACCESS, &old)) {
-            VirtualFree(base_, 0, MEM_RELEASE);
+        if (!nxrt::os::mem::protect(reinterpret_cast<uint64_t>(base_ + kPage), kPage, nxrt::os::mem::Prot::None)) {
+            nxrt::os::mem::free(base_, 2 * kPage);
             base_ = nullptr;
         }
     }
     ~GuardedPages() {
-        if (base_) VirtualFree(base_, 0, MEM_RELEASE);
+        if (base_) nxrt::os::mem::free(base_, 2 * kPage);
     }
     GuardedPages(const GuardedPages&) = delete;
     GuardedPages& operator=(const GuardedPages&) = delete;

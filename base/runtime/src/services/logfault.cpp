@@ -14,6 +14,7 @@
 // fatal: ThrowFatal / ThrowFatalWithPolicy / ThrowFatalWithCpuContext write a crash report (<exe>_fatal.txt next to the exe, or
 // [fatal] report_path), log it at Error, signal the fatal event of fatal:p and terminate the process with exit code 5 unless
 // [fatal] terminate is false.
+#include "nxrt/os/fault.h"
 #include "nxrt/os/process.h"
 
 #include <cstdio>
@@ -378,7 +379,7 @@ uint32_t throw_fatal(uint64_t code, uint32_t policy, uint64_t pid, const uint8_t
         g.fatal_event.signal();
     }
     log_flush();
-    if (config_get_bool("fatal", "terminate", true)) os::process::terminate(5);
+    if (config_get_bool("fatal", "terminate", true)) os::terminate(5);
     return 0;
 }
 

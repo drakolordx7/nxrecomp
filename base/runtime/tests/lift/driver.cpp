@@ -14,8 +14,6 @@
 //
 // Besides the results, a normal run checks that test_main returned with the callee-saved registers (x19..x29, d8..d15) and SP it was
 // entered with: that is what the unwinder's register restoring has to get right.
-#include <windows.h>
-
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +30,8 @@
 #include "nxrt/memory.h"
 #include "nxrt/module.h"
 #include "nxrt/nxmodule.h"
+#include "nxrt/os/fault.h"
+#include "nxrt/os/process.h"
 #include "nxrt/runtime.h"
 
 extern "C" const NxModule nxmod_main;
@@ -114,7 +114,7 @@ void on_terminate(::Ctx* c, const char* why) {
     std::printf("terminate reached (%s); backtrace:\n%s%s\n", why, bt.c_str(), ok ? "TERMINATE-OK" : "TERMINATE-FAILED");
     std::fflush(stdout);
     nxrt::log_flush();
-    ExitProcess(ok ? 0 : 1);
+    nxrt::os::terminate(ok ? 0 : 1);
 }
 
 int terminate_hook(::Ctx* c, uint64_t, void*) {
@@ -249,24 +249,24 @@ int run() {
     return ok ? 0 : 1;
 }
 
+int g_argc = 0;
+char** g_argv = nullptr;
+
 int spawn() {
-    std::string cmd = std::string("\"") + __argv[0] + "\"";
-    for (int i = 1; i < __argc; i++) {
-        std::string a = __argv[i];
+    std::vector<std::string> args;
+    for (int i = 1; i < g_argc; i++) {
+        std::string a = g_argv[i];
         if (a == "--spawn-expect-exit" || a == "--log-contains") { i++; continue; }
-        cmd += " \"" + a + "\"";
+        args.push_back(a);
     }
-    cmd += " --child";
-    DeleteFileA(g_opt.log.c_str());
-    STARTUPINFOA si{};
-    si.cb = sizeof si;
-    PROCESS_INFORMATION pi{};
-    if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) { std::fprintf(stderr, "cannot start the child: %lu\n", GetLastError()); return 2; }
-    WaitForSingleObject(pi.hProcess, 120000);
-    DWORD code = 0xdead;
-    GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hProcess);
-    CloseHandle(pi.hThread);
+    args.push_back("--child");
+    std::remove(g_opt.log.c_str());
+    nxrt::os::process::SpawnOptions so;
+    so.hidden = false;
+    nxrt::os::process::Child child = nxrt::os::process::Child::spawn(nxrt::os::process::exe_path(), args, so);
+    if (!child.valid()) { std::fprintf(stderr, "cannot start the child\n"); return 2; }
+    int code = 0xdead;
+    if (!child.wait(120000, &code)) code = 0xdead;
     bool ok = static_cast<int>(code) == g_opt.spawn_exit;
     if (!ok) std::fprintf(stderr, "child exit code %d, expected %d\n", static_cast<int>(code), g_opt.spawn_exit);
     std::string text;
@@ -285,6 +285,8 @@ int spawn() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    g_argc = argc;
+    g_argv = argv;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };

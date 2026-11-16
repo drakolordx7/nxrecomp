@@ -6,14 +6,15 @@
 // threads never CHECK. They store results in atomics and the test thread checks them after joining.
 // Timing rule: sleeps and timeouts are only ever asserted as lower bounds (with 1 ms slack for the Windows timer) and upper bounds
 // that are generous enough for a loaded machine.
-#include <windows.h>
-
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string>
 #include <memory>
@@ -25,6 +26,7 @@
 #include "nxrt/dispatch.h"
 #include "nxrt/kernel.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/process.h"
 #include "nxrt/os/thread.h"
 #include "nxrt/svc.h"
 #include "test_framework.h"
@@ -1032,12 +1034,7 @@ NXTEST(exclusion_twice_after_reset) {
 
 NXTEST_CHILD(kernel_sync_hog) {
     const double seconds = argc > 1 ? std::atof(argv[1]) : 60.0;
-    if (argc > 0) {
-        if (HANDLE ready = OpenSemaphoreA(SEMAPHORE_MODIFY_STATE, FALSE, argv[0])) {
-            ReleaseSemaphore(ready, 1, nullptr);
-            CloseHandle(ready);
-        }
-    }
+    if (argc > 0) std::ofstream(argv[0]).put('r');        // the ready file: this hog runs
     const auto until = Clock::now() + std::chrono::duration<double>(seconds);
     volatile uint64_t sink = 0;
     while (Clock::now() < until)
@@ -1047,64 +1044,55 @@ NXTEST_CHILD(kernel_sync_hog) {
 
 namespace {
 
-// CPU-bound child processes at normal priority, pinned to the console cores' host processors. A job object ends them with the test.
+// CPU-bound child processes at normal priority, pinned to the console cores' host processors. They end with the test (or with this process).
 class Hogs {
 public:
     ~Hogs() { stop(); }
 
     bool start() {
         const ks::SchedInfo info = ks::sched_info();
-        DWORD_PTR mask = 0;
+        uint64_t mask = 0;
         int count = 0;
         if (info.active) {
-            for (int i = 0; i < 3; i++) mask |= static_cast<DWORD_PTR>(info.host_masks[i]);
+            for (int i = 0; i < 3; i++) mask |= info.host_masks[i];
             count = 6;
         } else {
-            DWORD_PTR sys = 0;
-            GetProcessAffinityMask(GetCurrentProcess(), &mask, &sys);
-            count = static_cast<int>(GetActiveProcessorCount(ALL_PROCESSOR_GROUPS));
+            mask = nxrt::os::process_cpu_mask();
+            count = std::popcount(mask);
         }
-        job_ = CreateJobObjectA(nullptr, nullptr);
-        if (!job_) return false;
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION lim{};
-        lim.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &lim, sizeof lim);
-        const std::string sem_name = "Local\\nxrt_ks_hog_" + std::to_string(GetCurrentProcessId());
-        HANDLE ready = CreateSemaphoreA(nullptr, 0, 1000, sem_name.c_str());
-        if (!ready) return false;
-        char exe[MAX_PATH];
-        GetModuleFileNameA(nullptr, exe, MAX_PATH);
+        ready_base_ = (std::filesystem::temp_directory_path(ec_) / ("nxrt_ks_hog_" + std::to_string(nxrt::os::process::pid()))).string();
+        nxrt::os::process::SpawnOptions opt;
+        opt.cpu_mask = mask;
         for (int i = 0; i < count; i++) {
-            std::string cmd = std::string("\"") + exe + "\" --child kernel_sync_hog " + sem_name + " 120";
-            STARTUPINFOA su{};
-            su.cb = sizeof su;
-            PROCESS_INFORMATION pi{};
-            if (!CreateProcessA(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED | CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
-                                nullptr, nullptr, &su, &pi))
-                break;
-            AssignProcessToJobObject(job_, pi.hProcess);
-            SetProcessAffinityMask(pi.hProcess, mask);
-            ResumeThread(pi.hThread);
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
-            started_++;
+            rm(ready_file(i));
+            nxrt::os::process::Child c = nxrt::os::process::Child::spawn(nxrt::os::process::exe_path(), {"--child", "kernel_sync_hog", ready_file(i), "120"}, opt);
+            if (!c.valid()) break;
+            hogs_.push_back(std::move(c));
         }
         // Every hog counts itself in once it runs, so the contention is real before the workload starts.
         int up = 0;
-        while (up < started_ && WaitForSingleObject(ready, 10000) == WAIT_OBJECT_0) up++;
-        CloseHandle(ready);
-        return started_ == count && up == count;
+        for (int i = 0; i < static_cast<int>(hogs_.size()); i++) {
+            const auto limit = Clock::now() + std::chrono::seconds(10);
+            while (!has(ready_file(i)) && Clock::now() < limit) sleep_ms(5);
+            if (has(ready_file(i))) up++;
+        }
+        return static_cast<int>(hogs_.size()) == count && up == count;
     }
 
     void stop() {
-        if (job_) CloseHandle(job_);       // KILL_ON_JOB_CLOSE ends every hog
-        job_ = nullptr;
-        started_ = 0;
+        for (nxrt::os::process::Child& c : hogs_) c.kill();
+        for (size_t i = 0; i < hogs_.size(); i++) rm(ready_file(static_cast<int>(i)));
+        hogs_.clear();
     }
 
 private:
-    HANDLE job_ = nullptr;
-    int started_ = 0;
+    static void rm(const std::string& p) { std::error_code ec; std::filesystem::remove(p, ec); }
+    static bool has(const std::string& p) { std::error_code ec; return std::filesystem::exists(p, ec); }
+    std::string ready_file(int i) const { return ready_base_ + "_" + std::to_string(i); }
+
+    std::error_code ec_;
+    std::string ready_base_;
+    std::vector<nxrt::os::process::Child> hogs_;
 };
 
 }  // namespace
