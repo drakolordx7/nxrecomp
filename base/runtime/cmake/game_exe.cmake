@@ -100,6 +100,7 @@ function(nxrt_add_game_exe id)
                                NXGAME_EXEFS_DEFAULT="${exefs_default}" NXGAME_ROMFS_DEFAULT="${romfs_default}")
     target_link_libraries(${id} PRIVATE ${libs} nxrt_game_${id} nxrt_gfx nxrt)
     set_target_properties(${id} PROPERTIES OUTPUT_NAME "${exe_stem}" RUNTIME_OUTPUT_DIRECTORY "${out}")
+    nxrt_ffmpeg_deploy(${id})   # the FFmpeg libraries next to the exe
     if(NXRT_RELEASE)
         target_compile_definitions(${id} PRIVATE NXGAME_GUI_SUBSYSTEM=1)
         if(NX_PLATFORM STREQUAL "win32")

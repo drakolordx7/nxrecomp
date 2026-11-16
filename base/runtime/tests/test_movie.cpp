@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// movie:: on Media Foundation (src/media/movie_mf.cpp), driven the way the game drives it: through the HLE entry points (guest registers in,
-// result in x0), with a fake ClientStreamReader whose callbacks are HLE thunks too.
+// movie:: (src/media/movie_hle.cpp on the FFmpeg backend; Media Foundation with NXRT_MEDIA_BACKEND=mf on Windows), driven the way the game
+// drives it: through the HLE entry points (guest registers in, result in x0), with a fake ClientStreamReader whose callbacks are HLE thunks too.
 //
-// movie_import_table and movie_mediadata_buffer need nothing. movie_all_fmv plays real movies and checks them against what the container and
-// ffmpeg say; it needs the movie folder made by tools/media/movie_oracle.py (game data read at test time, never committed) and skips without
+// movie_import_table and movie_mediadata_buffer need nothing. movie_clip_mp4 and movie_clip_webm play the small clips of tests/data/movie (H.264 +
+// AAC in an MP4, VP9 + Opus in a WebM; ffmpeg testsrc2 160x96 at 15 fps and a 440 Hz sine, 1 s) through the extractor and two decoders, and
+// movie_clip_loop plays each again after a seek to 0 (a looping movie). movie_all_fmv plays real movies and checks them against what the
+// container and ffmpeg say; it needs the movie folder made by tools/media/movie_oracle.py (game data read at test time, never committed) and skips without
 // it:   NXRT_MOVIE_DIR=<dir with expected.tsv, <id>.mp4, <id>.md5, <id>.pts, <id>.ref.pcm>   [NXRT_MOVIE_OUT=<dir for decoded PCM>]
 //       [NXRT_MOVIE_ONLY=<id prefix>]  [NXRT_MOVIE_THREADS=8]  [NXRT_MOVIE_FRAME_STEP=1 (check every n-th frame hash)]
-#include <windows.h>
-#include <bcrypt.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -29,8 +28,6 @@
 #include "nxrt/module.h"
 #include "nxrt/movie.h"
 #include "test_framework.h"
-
-#pragma comment(lib, "bcrypt.lib")
 
 NXTEST_GROUP(media_movie)
 
@@ -119,14 +116,45 @@ struct FakeReader {
     }
 };
 
+// MD5 (RFC 1321), for the frame hashes of the oracle folder.
 std::string md5_hex(const uint8_t* d, size_t n) {
-    BCRYPT_ALG_HANDLE alg = nullptr;
-    uint8_t h[16] = {};
-    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_MD5_ALGORITHM, nullptr, 0) != 0) return "";
-    BCryptHash(alg, nullptr, 0, const_cast<uint8_t*>(d), static_cast<ULONG>(n), h, 16);
-    BCryptCloseAlgorithmProvider(alg, 0);
+    static const uint32_t K[64] = {
+        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+        0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+        0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed, 0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+        0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+        0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1, 0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+        0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
+    static const int R[64] = {7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+                              4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
+    uint32_t h[4] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476};
+    std::vector<uint8_t> m(d, d + n);
+    m.push_back(0x80);
+    while (m.size() % 64 != 56) m.push_back(0);
+    const uint64_t bits = static_cast<uint64_t>(n) * 8;
+    for (int i = 0; i < 8; i++) m.push_back(static_cast<uint8_t>(bits >> (8 * i)));
+    for (size_t off = 0; off < m.size(); off += 64) {
+        uint32_t w[16];
+        for (int i = 0; i < 16; i++) w[i] = m[off + 4 * i] | (m[off + 4 * i + 1] << 8) | (m[off + 4 * i + 2] << 16) | (static_cast<uint32_t>(m[off + 4 * i + 3]) << 24);
+        uint32_t a = h[0], b = h[1], c = h[2], dd = h[3];
+        for (int i = 0; i < 64; i++) {
+            uint32_t f;
+            int g;
+            if (i < 16) { f = (b & c) | (~b & dd); g = i; }
+            else if (i < 32) { f = (dd & b) | (~dd & c); g = (5 * i + 1) % 16; }
+            else if (i < 48) { f = b ^ c ^ dd; g = (3 * i + 5) % 16; }
+            else { f = c ^ (b | ~dd); g = (7 * i) % 16; }
+            const uint32_t t = dd;
+            dd = c;
+            c = b;
+            const uint32_t x = a + f + K[i] + w[g];
+            b = b + ((x << R[i]) | (x >> (32 - R[i])));
+            a = t;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += dd;
+    }
     char s[33];
-    for (int i = 0; i < 16; i++) std::snprintf(s + 2 * i, 3, "%02x", h[i]);
+    for (int i = 0; i < 16; i++) std::snprintf(s + 2 * i, 3, "%02x", static_cast<unsigned>((h[i / 4] >> (8 * (i % 4))) & 0xff));
     return s;
 }
 
@@ -144,7 +172,7 @@ std::vector<uint8_t> read_file(const std::string& path) {
 // ---- playing one movie the way the game's player does --------------------------------------------------------------------------------
 struct Result {
     std::string id, error;
-    int frames = 0, w = 0, h = 0, audio_ch = 0, audio_rate = 0;
+    int frames = 0, w = 0, h = 0, audio_ch = 0, audio_rate = 0, colorspace = -1;
     std::vector<int64_t> video_ts, audio_ts;
     std::vector<uint32_t> audio_sizes;
     std::vector<std::string> md5;     // per frame (every FRAME_STEP-th, "" otherwise)
@@ -165,18 +193,19 @@ struct DecoderSide {
 uint64_t new_md() { uint64_t* h = new uint64_t(0); call(kMdCtor, {P(h)}); return P(h); }
 void free_md(uint64_t h) { call(kMdDtor, {h}); delete reinterpret_cast<uint64_t*>(h); }
 
-Result play(const std::string& dir, const std::string& id, size_t frame_step, bool keep_pcm) {
+// container: 1 mp4, 2 mkv, 3 webm
+Result play(const std::string& path, int container, size_t frame_step, bool keep_pcm) {
     Result r;
-    r.id = id;
+    r.id = path;
     const auto t0 = std::chrono::steady_clock::now();
-    const std::vector<uint8_t> file = read_file(dir + "/" + id + ".mp4");
-    if (file.empty()) { r.error = "cannot read the movie"; return r; }
+    const std::vector<uint8_t> file = read_file(path);
+    if (file.empty()) { r.error = "cannot read the movie " + path; return r; }
     t_file = &file;
     FakeReader reader;
     alignas(16) uint8_t ext[16] = {};
-    call(kExtCtor, {P(ext), 1, 2});
+    call(kExtCtor, {P(ext), static_cast<uint64_t>(container), 2});
     auto fail = [&](const std::string& m) { if (r.error.empty()) r.error = m; };
-    if (call(kExtSetSource, {P(ext), P(&reader), P("movie.mp4")}) != 0) { fail("SetDataSource failed"); call(kExtDtor, {P(ext)}); return r; }
+    if (call(kExtSetSource, {P(ext), P(&reader), P("movie")}) != 0) { fail("SetDataSource failed"); call(kExtDtor, {P(ext)}); return r; }
     int n = 0;
     call(kExtTrackCount, {P(ext), P(&n)});
     DecoderSide dv, da;
@@ -189,14 +218,17 @@ Result play(const std::string& dir, const std::string& id, size_t frame_step, bo
         call(kMdStr, {md, P("mime"), P(&mime)});
         if (!mime) { fail("no mime"); continue; }
         const std::string m = mime;
-        DecoderSide* d = m == "video/avc" ? &dv : m == "audio/mp4a-latm" ? &da : nullptr;
-        if (!d) { fail("unexpected track " + m); continue; }
+        const bool is_video = m.rfind("video/", 0) == 0 && m != "video/unknown";
+        const bool is_audio = m.rfind("audio/", 0) == 0 && m != "audio/unknown";
+        DecoderSide* d = is_video ? &dv : is_audio ? &da : nullptr;
+        if (!d || d->present) { fail("unexpected track " + m); continue; }
         d->present = true;
-        d->video = m == "video/avc";
+        d->video = is_video;
         d->track = i;
         d->md_cfg = new_md();
         call(kMdCopy, {d->md_cfg, md});
-        call(kDecCtor, {P(d->obj), d->video ? 1ull : 4ull, d->video ? 4ull : 1ull, 1, 0});
+        const uint64_t dtype = m == "video/avc" ? 1ull : m == "video/x-vnd.on2.vp8" ? 2ull : m == "video/x-vnd.on2.vp9" ? 3ull : m == "audio/mp4a-latm" ? 4ull : 5ull;
+        call(kDecCtor, {P(d->obj), dtype, d->video ? 4ull : 1ull, 1, 0});
         uint64_t ev[4] = {};
         call(kDecEvents, {P(d->obj), P(ev)});
         if (call(kDecConfigure, {P(d->obj), d->md_cfg}) != 0) fail("Configure failed");
@@ -243,7 +275,7 @@ Result play(const std::string& dir, const std::string& id, size_t frame_step, bo
                 call(kMdI32, {md, P("nv12-uv-offset"), P(&uo)});
                 call(kMdI32, {fm, P("nv12-colorspace"), P(&cs)});
                 if (got != static_cast<uint32_t>(w) * h * 3 / 2 || yo != 0 || uo != w * h) fail("video frame geometry: size " + std::to_string(got));
-                if (cs != 2 && r.frames == 0) fail("nv12-colorspace " + std::to_string(cs) + " (BT.709 limited expected)");
+                if (r.frames == 0) r.colorspace = cs;
                 const size_t k = r.video_ts.size();
                 r.video_ts.push_back(ts);
                 r.md5.push_back(frame_step && k % frame_step == 0 ? md5_hex(d.out.data(), got) : std::string());
@@ -353,23 +385,17 @@ std::vector<std::string> load_lines(const std::string& path) {
 
 }  // namespace
 
-// Plays the shortest movie of the oracle folder through the extractor only (no decoders) to its end, seeks to 0 like a looping movie does and plays it again:
-// both passes must hold the same samples with the same timestamps, whether the loop restart came from the samples decoded ahead (S21) or from a fresh seek.
-NXTEST(movie_loop_restart) {
-    const char* dirv = std::getenv("NXRT_MOVIE_DIR");
-    if (!dirv || !*dirv) { nxtest::skip("NXRT_MOVIE_DIR is not set (run tools/media/movie_oracle.py)"); return; }
+// Plays a movie through the extractor only (no decoders) to its end, seeks to 0 like a looping movie does and plays it again: both passes must hold
+// the same samples with the same timestamps, whether the loop restart came from the samples decoded ahead (S21) or from a fresh seek.
+void loop_restart(const std::string& path, int container) {
     REQUIRE(media::install_movie_hle());
-    std::vector<Expected> all = load_expected(dirv);
-    REQUIRE(!all.empty());
-    const Expected* pick = &all[0];
-    for (const Expected& e : all) if (e.frames < pick->frames && e.frames > 30) pick = &e;
-    const std::vector<uint8_t> file = read_file(std::string(dirv) + "/" + pick->id + ".mp4");
+    const std::vector<uint8_t> file = read_file(path);
     REQUIRE(!file.empty());
     t_file = &file;
     FakeReader reader;
     alignas(16) uint8_t ext[16] = {};
-    call(kExtCtor, {P(ext), 1, 2});
-    REQUIRE(call(kExtSetSource, {P(ext), P(&reader), P("movie.mp4")}) == 0);
+    call(kExtCtor, {P(ext), static_cast<uint64_t>(container), 2});
+    REQUIRE(call(kExtSetSource, {P(ext), P(&reader), P("movie")}) == 0);
     int n = 0;
     call(kExtTrackCount, {P(ext), P(&n)});
     REQUIRE(n >= 1);
@@ -405,6 +431,66 @@ NXTEST(movie_loop_restart) {
     }
     call(kExtDtor, {P(ext)});
     t_file = nullptr;
+}
+
+// The oracle folder's shortest movie.
+NXTEST(movie_loop_restart) {
+    const char* dirv = std::getenv("NXRT_MOVIE_DIR");
+    if (!dirv || !*dirv) { nxtest::skip("NXRT_MOVIE_DIR is not set (run tools/media/movie_oracle.py)"); return; }
+    std::vector<Expected> all = load_expected(dirv);
+    REQUIRE(!all.empty());
+    const Expected* pick = &all[0];
+    for (const Expected& e : all) if (e.frames < pick->frames && e.frames > 30) pick = &e;
+    loop_restart(std::string(dirv) + "/" + pick->id + ".mp4", 1);
+}
+
+// ---- the clips of tests/data/movie ----------------------------------------------------------------------------------------------------
+void check_clip(const std::string& file, int container, const char* what) {
+    REQUIRE(media::install_movie_hle());
+    const Result r = play(std::string(NXRT_TEST_DATA_DIR) + "/movie/" + file, container, 1, false);
+    CHECK_MSG(r.error.empty(), std::string(what) + ": " + r.error);
+    if (!r.error.empty()) return;
+    CHECK_MSG(r.frames == 15, std::string(what) + ": frames " + std::to_string(r.frames));
+    CHECK_MSG(r.w == 160 && r.h == 96, std::string(what) + ": size " + std::to_string(r.w) + "x" + std::to_string(r.h));
+    CHECK_MSG(r.colorspace >= 0 && r.colorspace <= 3, std::string(what) + ": nv12-colorspace " + std::to_string(r.colorspace));
+    CHECK_MSG(r.audio_ch == 2 && r.audio_rate == 48000, std::string(what) + ": audio format " + std::to_string(r.audio_ch) + " ch " + std::to_string(r.audio_rate));
+    CHECK_MSG(!r.video_ts.empty() && r.video_ts[0] >= 0 && r.video_ts[0] < 70000, std::string(what) + ": the first frame is not at 0");
+    int bad_ts = 0;
+    for (size_t k = 1; k < r.video_ts.size(); k++) {
+        const int64_t step = r.video_ts[k] - r.video_ts[k - 1];
+        if (step < 60000 || step > 73000) bad_ts++;   // 15 fps: 66.7 ms
+    }
+    CHECK_MSG(bad_ts == 0, std::string(what) + ": " + std::to_string(bad_ts) + " frame steps that are not 1/15 s");
+    // every frame of testsrc2 differs from the next, and a frame of zeros means the converter produced nothing
+    CHECK_MSG(r.md5.size() == 15 && r.md5[0] != r.md5[1] && r.md5[0] != md5_hex(std::vector<uint8_t>(160 * 96 * 3 / 2, 0).data(), 160 * 96 * 3 / 2), std::string(what) + ": the frames look empty");
+    const double secs = static_cast<double>(r.audio_bytes) / (r.audio_ch * 2) / r.audio_rate;
+    CHECK_MSG(std::fabs(secs - 1.0) < 0.05, std::string(what) + ": audio " + std::to_string(secs) + " s, 1.0 expected");
+    CHECK_MSG(!r.audio_ts.empty() && r.audio_ts[0] == 0, std::string(what) + ": the first audio block is not at 0");
+    uint64_t acc = 0;
+    int bad_a = 0;
+    for (size_t k = 0; k < r.audio_ts.size(); k++) {   // block k starts where the data before it ends
+        const int64_t expect = static_cast<int64_t>(acc / (r.audio_ch * 2) * 1000000ull / r.audio_rate);
+        if (std::llabs(r.audio_ts[k] - expect) > 100) bad_a++;
+        acc += r.audio_sizes[k];
+    }
+    CHECK_MSG(bad_a == 0, std::string(what) + ": " + std::to_string(bad_a) + " audio blocks whose timestamp does not follow the data before them");
+    const media::MovieStats st = media::movie_stats();
+    CHECK_EQ(st.extractors_created, st.extractors_destroyed);
+    CHECK_EQ(st.decoders_created, st.decoders_destroyed);
+}
+
+NXTEST(movie_clip_mp4) { check_clip("clip_h264_aac.mp4", 1, "h264+aac mp4"); }
+NXTEST(movie_clip_webm) {
+    // Media Foundation (the Windows fallback) has no VP9 or Opus decoder without the Store extensions: only the FFmpeg backend plays the WebM.
+    const char* b = std::getenv("NXRT_MEDIA_BACKEND");
+    if (b && std::string(b) == "mf") { nxtest::skip("backend mf cannot decode VP9/Opus"); return; }
+    check_clip("clip_vp9_opus.webm", 3, "vp9+opus webm");
+}
+NXTEST(movie_clip_loop_mp4) { loop_restart(std::string(NXRT_TEST_DATA_DIR) + "/movie/clip_h264_aac.mp4", 1); }
+NXTEST(movie_clip_loop_webm) {
+    const char* b = std::getenv("NXRT_MEDIA_BACKEND");
+    if (b && std::string(b) == "mf") { nxtest::skip("backend mf cannot decode VP9/Opus"); return; }
+    loop_restart(std::string(NXRT_TEST_DATA_DIR) + "/movie/clip_vp9_opus.webm", 3);
 }
 
 NXTEST(movie_import_table) {
@@ -468,7 +554,7 @@ NXTEST(movie_all_fmv) {
     std::vector<std::thread> pool;
     for (unsigned t = 0; t < nthreads; t++) {
         pool.emplace_back([&] {
-            for (size_t i; (i = next.fetch_add(1)) < todo.size();) results[i] = play(dir, todo[i].id, step, outv != nullptr);
+            for (size_t i; (i = next.fetch_add(1)) < todo.size();) results[i] = play(dir + "/" + todo[i].id + ".mp4", 1, step, outv != nullptr);
         });
     }
     for (auto& t : pool) t.join();
@@ -484,6 +570,7 @@ NXTEST(movie_all_fmv) {
         if (!r.error.empty()) continue;
         CHECK_MSG(r.frames == e.frames, tag + ": frames " + std::to_string(r.frames) + " expected " + std::to_string(e.frames));
         CHECK_MSG(r.w == e.w && r.h == e.h, tag + ": size " + std::to_string(r.w) + "x" + std::to_string(r.h));
+        CHECK_MSG(r.colorspace == 2, tag + ": nv12-colorspace " + std::to_string(r.colorspace) + " (BT.709 limited expected)");
         const std::vector<int64_t> pts = load_ints(dir + "/" + e.id + ".pts");
         CHECK_MSG(pts.size() == static_cast<size_t>(e.frames), tag + ": pts file has " + std::to_string(pts.size()) + " entries");
         int bad_ts = 0, bad_md5 = 0, hashed = 0;
