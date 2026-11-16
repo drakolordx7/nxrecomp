@@ -95,16 +95,15 @@ pwsh    wt.ps1 <name> -Linux ...        (the same, from the stream script)
 | runtime + tests | `NX/build/<name>/linux/runtime` (`cmake --preset linux-release`, then `ninja -k 0`; `--test .` runs ctest) |
 | game exe | `NX/build/<name>/linux/<id>/<files.exe without .exe>` (`<id>_relpkg` with `--release`: `NXRT_RELEASE=ON`, FFmpeg bundled) |
 | lifted libraries | `NX/games/<id>/work/build/linux/<id>[_<name>]` (`lib<id>_<module>.a`; `--libs` lifts them, generated sources in `..._gen`) |
-| setup tool | `NX/build/setup-<id>-linux/bin` (`--setup`; the CLI and the tests; the GUI is Windows only) |
+| setup tool | `NX/build/setup-<id>-linux/bin` (`--setup`; the CLI, the GUI and the tests) |
 | runs | `games/<id>/work/run_linux[_<name>]` (`boot.py --game <id>` on Linux: same options and test-run rules; `playtest_linux`) |
 
 `<name>` is a worktree (`NX/wt/<name>`) or `main`; the presets of the three CMake projects (`runtime`, `runtime/cmake/game_project`,
-`recomp/game`, `tools/setup`) set the toolchain and are meant to be used with `-B <dir>` as above. The launcher is Windows only for now
-(`NXRT_BUILD_LAUNCHER`). FFmpeg (movies; `runtime/cmake/ffmpeg.cmake`): Windows fetches the pinned BtbN LGPL shared build into the archive cache and
+`recomp/game`, `tools/setup`) set the toolchain and are meant to be used with `-B <dir>` as above. The launcher and the setup window are the same SDL3 + Dear ImGui programs on both systems (below).
+FFmpeg (movies; `runtime/cmake/ffmpeg.cmake`): Windows fetches the pinned BtbN LGPL shared build into the archive cache and
 copies its DLLs next to every exe; Linux uses the system packages (`libavformat-dev libavcodec-dev libavutil-dev libswresample-dev libswscale-dev`,
 FFmpeg 4.4 or newer), or `-DNXRT_FFMPEG_BUNDLED=ON` fetches the same pinned build as `.so` files that are copied next to the exe ($ORIGIN rpath;
-what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. Much of the runtime still includes `windows.h` and does not compile on
-Linux until the diag and gfx streams merge; the setup tool does (`python3 wt.py main --game <id> --setup --test`, 14 of 16 test groups
+what a release uses). `-DNXRT_FFMPEG_DIR=<prefix>` takes any other build. The setup tool: (`python3 wt.py main --game <id> --setup --test`, 14 of 16 test groups
 need nothing else: `shadercache` wants the Python module `zstandard`, `texcache` a real ispc build).
 
 ### Setup tool and release on Linux
@@ -135,3 +134,10 @@ together (a test compares the archive hashes). The Linux `.so` hashes are `null`
 The merge batch check (`bash batch_test.sh <game>`) ends with a Linux pass (`linux_check.py`): runtime, tests, game module and exe
 built in `nx-linux`, ctest, a headless boot when the exe exists; it prints `LINUX OK`, `LINUX SUSPECT` or `LINUX SKIPPED` with the reason
 (a Linux build that does not link yet is SKIPPED with its first errors).
+
+### Launcher and setup window
+
+The launcher (`NXRT_BUILD_LAUNCHER`, on by default) is the same SDL3 + Dear ImGui program on both systems (`base/ui` is the shell, `runtime/apps/launcher` the pages; the setup window `tools/setup/gui/main_ui.cpp` uses the same shell); `-DNXRT_LAUNCHER_LEGACY=ON` (Windows) builds the old Win32 launcher in its place, `-DNXS_GUI_LEGACY=ON` the old setup window. With `NXUI_SHOT=<file.bmp>` set, either program saves its window after a few frames and exits (a test aid; `SDL_VIDEO_DRIVER=offscreen SDL_RENDER_DRIVER=software` runs it headless).
+
+The ASTC transcoder (`tools/textures`) needs `ispc` on PATH on Linux, or a prebuilt copy in `NX/build/textures/linux`.
+

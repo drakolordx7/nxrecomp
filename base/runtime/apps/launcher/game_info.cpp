@@ -1,42 +1,73 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "game_info.h"
 
-#include "nxrt/strutil.h"
-#include "nxrt/game.h"
-#include "nx_formats.h"
+#include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <filesystem>
-#include <fstream>
-#include <iterator>
 #include <string>
-#include <system_error>
 #include <vector>
+
+#include "nx_formats.h"
+#include "nxrt/game.h"
+#include "nxrt/os/fs.h"
+#include "nxrt/strutil.h"
+
+#ifndef NXRT_EXE_SUFFIX
+#define NXRT_EXE_SUFFIX ""
+#endif
 
 namespace nxl {
 
-namespace fs = std::filesystem;
+namespace fs = nxrt::os::fs;
+namespace proc = nxrt::os::process;
 
 namespace {
 
-void set_err(std::wstring* err, const std::wstring& msg) {
+void set_err(std::string* err, const std::string& msg) {
     if (err) *err = msg;
 }
 
 bool is_blank(char c) { return c == ' ' || c == '\t'; }
 
-using nxrt::str::trim;
 using nxrt::str::lower;
+using nxrt::str::trim;
 
-
-bool utf8_to_wide(const std::string& in, std::wstring* out) { return nxrt::str::widen_strict(in, *out); }
-
-std::wstring brand(const char* utf8) {
-    std::wstring w;
-    if (utf8 && *utf8) utf8_to_wide(utf8, &w);
-    return w;
+// Valid UTF-8 (no overlong forms, surrogates or values past U+10FFFF).
+bool valid_utf8(const std::string& s) {
+    size_t i = 0;
+    const size_t n = s.size();
+    while (i < n) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t len;
+        uint32_t cp;
+        if (c < 0x80) {
+            ++i;
+            continue;
+        } else if ((c & 0xE0) == 0xC0) {
+            len = 2;
+            cp = c & 0x1F;
+        } else if ((c & 0xF0) == 0xE0) {
+            len = 3;
+            cp = c & 0x0F;
+        } else if ((c & 0xF8) == 0xF0) {
+            len = 4;
+            cp = c & 0x07;
+        } else {
+            return false;
+        }
+        if (i + len > n) return false;
+        for (size_t k = 1; k < len; ++k) {
+            const unsigned char d = static_cast<unsigned char>(s[i + k]);
+            if ((d & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (d & 0x3F);
+        }
+        if ((len == 2 && cp < 0x80) || (len == 3 && cp < 0x800) || (len == 4 && cp < 0x10000) || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
+        i += len;
+    }
+    return true;
 }
-
-using nxrt::str::narrow;
 
 // Value part of a "key = value" line. Either "quoted" (kept as is, may hold ';' and '#') or plain.
 // A ';' or '#' that is first or comes after a space or tab starts a comment.
@@ -57,116 +88,119 @@ std::string parse_value(const std::string& raw) {
     return trim(raw.substr(i, end - i));
 }
 
-// Starts <exe dir>\exe_name with the given argument text. Waits for nothing. The handle goes to *process if given,
-// otherwise it is closed here.
-bool launch_in_exe_dir(const std::wstring& exe_name, const std::wstring& args, HANDLE* process, std::wstring* err) {
-    if (process) *process = nullptr;
-    const std::wstring dir = launcher_exe_dir();
-    const std::wstring exe = (fs::path(dir) / exe_name).wstring();
-    std::error_code ec;
-    if (!fs::exists(exe, ec)) {
-        set_err(err, exe_name + L" was not found next to the launcher.");
-        return false;
-    }
-    std::wstring cmd = quote_arg(exe) + L" " + args;
-    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
-    buf.push_back(L'\0');
+// "mpr.exe" in the manifest -> the name of the program on this system.
+std::string exe_name_of(const char* manifest_name) {
+    std::string n = manifest_name ? manifest_name : "";
+    if (n.size() > 4 && lower(n.substr(n.size() - 4)) == ".exe") n.erase(n.size() - 4);
+    return n.empty() ? n : n + NXRT_EXE_SUFFIX;
+}
 
-    STARTUPINFOW si{};
-    si.cb = sizeof(si);
-    PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(exe.c_str(), buf.data(), nullptr, nullptr, FALSE, 0, nullptr,
-                                   dir.empty() ? nullptr : dir.c_str(), &si, &pi);
-    if (!ok) {
-        const DWORD code = GetLastError();
-        set_err(err, L"Could not start " + exe_name + L" (Windows error " + std::to_wstring(code) + L").");
+bool read_file(const std::string& path, std::string* out) {
+    std::FILE* f = fs::fopen(path, "rb");
+    if (!f) return false;
+    out->clear();
+    char buf[8192];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) out->append(buf, n);
+    const bool bad = std::ferror(f) != 0;
+    std::fclose(f);
+    return !bad;
+}
+
+bool has_entries(const std::string& dir) {
+    std::vector<fs::DirEntry> v;
+    return fs::list_dir(dir, &v) && !v.empty();
+}
+
+bool setup_finished_in(const std::string& state_file) {
+    std::string text;
+    return read_file(state_file, &text) && nxfmt::setup_state_finished(text);
+}
+
+// The program `name` next to the launcher, started with `args`; the launcher folder is the current folder. The child is not tied to this
+// process (it goes on when the launcher ends).
+bool launch_in_exe_dir(const std::string& name, const std::vector<std::string>& args, proc::Child* child, std::string* err) {
+    if (child) *child = proc::Child();
+    const std::string dir = launcher_exe_dir();
+    const std::string exe = join_path(dir, name);
+    if (!fs::is_file(exe)) {
+        set_err(err, name + " was not found next to the launcher.");
         return false;
     }
-    CloseHandle(pi.hThread);
-    if (process) {
-        *process = pi.hProcess;
+    if (!dir.empty() && dir != ".") fs::set_current_dir(dir);
+    proc::SpawnOptions opt;
+    opt.kill_with_parent = false;
+    opt.hidden = false;
+    proc::Child c = proc::Child::spawn(exe, args, opt);
+    if (!c.valid()) {
+        set_err(err, "Could not start " + name + ".");
+        return false;
+    }
+    if (child) {
+        *child = std::move(c);
     } else {
-        CloseHandle(pi.hProcess);
+        // Child's destructor ends a running process; the game is meant to outlive the launcher, so the object is left to the end of the
+        // process (no destructor runs for it).
+        new proc::Child(std::move(c));
     }
     return true;
-}
-
-bool path_exists(const fs::path& p) {
-    std::error_code ec;
-    return fs::exists(p, ec);
-}
-
-bool has_entries(const fs::path& dir) {
-    std::error_code ec;
-    if (!fs::is_directory(dir, ec)) return false;
-    fs::directory_iterator it(dir, ec);
-    return !ec && it != fs::directory_iterator();
-}
-
-bool setup_finished_in(const fs::path& state_file) {
-    std::ifstream f(state_file, std::ios::binary);
-    if (!f) return false;
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    return nxfmt::setup_state_finished(text);
 }
 
 }  // namespace
 
 bool GameStatus::ready() const { return exefs && romfs; }
 
-std::wstring GameStatus::summary() const {
+std::string GameStatus::summary() const {
     if (ready()) {
-        if (setup_finished) return L"Ready to play.";
-        return L"Game files found, but setup did not finish. Run setup again to finish it.";
+        if (setup_finished) return "Ready to play.";
+        return "Game files found, but setup did not finish. Run setup again to finish it.";
     }
     if (!exefs && !romfs && !textures && !shaders) {
-        return L"No game files in this folder yet. Run setup to create them from your own game dump.";
+        return "No game files in this folder yet. Run setup to create them from your own game dump.";
     }
-    return L"Some game files are missing. Run setup again.";
+    return "Some game files are missing. Run setup again.";
 }
 
-GameStatus check_game_dir(const std::wstring& dir) {
+std::string join_path(const std::string& a, const std::string& b) {
+    if (a.empty()) return b;
+    if (a.back() == '/' || a.back() == '\\') return a + b;
+    char sep = static_cast<char>(std::filesystem::path::preferred_separator);
+    if (a.find('\\') != std::string::npos && a.find('/') == std::string::npos) sep = '\\';
+    else if (a.find('/') != std::string::npos && a.find('\\') == std::string::npos) sep = '/';
+    return a + sep + b;
+}
+
+GameStatus check_game_dir(const std::string& dir) {
     GameStatus s;
     if (dir.empty()) return s;
-    const fs::path root(dir);
-    s.exefs = path_exists(root / L"exefs" / L"main");
-    s.romfs = has_entries(root / L"romfs");
-    s.textures = has_entries(root / L"bc7_cache");
-    s.shaders = has_entries(root / L"shader_cache");
-    s.setup_finished = setup_finished_in(root / nxfmt::kSetupStateName);
+    s.exefs = fs::exists(join_path(join_path(dir, "exefs"), "main"));
+    s.romfs = has_entries(join_path(dir, "romfs"));
+    s.textures = has_entries(join_path(dir, "bc7_cache"));
+    s.shaders = has_entries(join_path(dir, "shader_cache"));
+    s.setup_finished = setup_finished_in(join_path(dir, nxfmt::kSetupStateName));
     return s;
 }
 
-std::wstring launcher_exe_dir() {
-    std::vector<wchar_t> buf(MAX_PATH);
-    for (;;) {
-        const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
-        if (n == 0) return {};
-        if (n < buf.size()) break;
-        if (buf.size() >= 65536) return {};
-        buf.resize(buf.size() * 2);
-    }
-    return fs::path(buf.data()).parent_path().wstring();
+std::string launcher_exe_dir() { return proc::exe_dir(); }
+
+std::string default_game_dir() { return launcher_exe_dir(); }
+
+std::string controls_path(const std::string& game_dir) { return join_path(game_dir, "controls.ini"); }
+
+std::string product_name() { return nxrt::game::info().product ? nxrt::game::info().product : ""; }
+std::string game_text(const char* utf8, const char* fallback) {
+    std::string s = utf8 ? utf8 : "";
+    return s.empty() && fallback ? std::string(fallback) : s;
 }
-
-std::wstring default_game_dir() { return launcher_exe_dir(); }
-
-std::wstring controls_path(const std::wstring& game_dir) { return (fs::path(game_dir) / L"controls.ini").wstring(); }
-
-std::wstring product_name() { return brand(nxrt::game::info().product); }
-std::wstring game_text(const char* utf8, const wchar_t* fallback) {
-    std::wstring w = brand(utf8);
-    return w.empty() && fallback ? std::wstring(fallback) : w;
-}
-std::wstring game_exe_name() { return brand(nxrt::game::info().exe_name); }
-std::wstring setup_exe_name() { return brand(nxrt::game::info().setup_exe_name); }
-std::wstring shader_pack_name() { return brand(nxrt::game::info().shader_pack); }
-std::wstring launcher_config_path() { return (fs::path(launcher_exe_dir()) / brand(nxrt::game::info().launcher_ini)).wstring(); }
+std::string game_exe_name() { return exe_name_of(nxrt::game::info().exe_name); }
+std::string setup_exe_name() { return exe_name_of(nxrt::game::info().setup_exe_name); }
+std::string shader_pack_name() { return nxrt::game::info().shader_pack ? nxrt::game::info().shader_pack : ""; }
+std::string launcher_config_path() { return join_path(launcher_exe_dir(), nxrt::game::info().launcher_ini ? nxrt::game::info().launcher_ini : ""); }
 
 std::string format_launcher_config(const LauncherConfig& cfg) {
-    std::string v = narrow(cfg.game_dir);
+    std::string v = cfg.game_dir;
     // Quote the value when a plain read would cut it: spaces at the ends, or a ';' or '#' (a comment marker after a space).
-    // Windows paths never hold a double quote, so quoting is always safe.
+    // Paths never hold a double quote, so quoting is always safe.
     bool quote = false;
     if (!v.empty()) {
         if (is_blank(v.front()) || is_blank(v.back())) quote = true;
@@ -185,7 +219,7 @@ bool parse_launcher_config(const std::string& utf8_text, LauncherConfig* out) {
 
     std::string section;
     bool have_dir = false;
-    std::wstring game_dir;
+    std::string game_dir;
     size_t pos = 0;
     while (pos < text.size()) {
         size_t eol = text.find('\n', pos);
@@ -205,115 +239,119 @@ bool parse_launcher_config(const std::string& utf8_text, LauncherConfig* out) {
 
         const std::string value = parse_value(t.substr(eq + 1));
         if (value.empty()) continue;
-        std::wstring w;
-        if (!utf8_to_wide(value, &w)) return false;
-        game_dir = w;
+        if (!valid_utf8(value)) return false;
+        game_dir = value;
         have_dir = true;
     }
     if (have_dir) out->game_dir = game_dir;
     return true;
 }
 
-bool load_launcher_config(const std::wstring& path, LauncherConfig* out) {
+bool load_launcher_config(const std::string& path, LauncherConfig* out) {
     if (!out) return false;
     out->game_dir = default_game_dir();
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (f.bad()) return false;
+    std::string text;
+    if (!read_file(path, &text)) return false;
     return parse_launcher_config(text, out);
 }
 
-bool save_launcher_config(const std::wstring& path, const LauncherConfig& cfg, std::wstring* err) {
-    const std::wstring tmp = path + L".tmp";
+bool save_launcher_config(const std::string& path, const LauncherConfig& cfg, std::string* err) {
+    const std::string tmp = path + ".tmp";
     const std::string text = format_launcher_config(cfg);
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            set_err(err, L"Could not write the launcher settings file.");
-            return false;
-        }
-        f.write(text.data(), static_cast<std::streamsize>(text.size()));
-        f.close();
-        if (f.fail()) {
-            std::error_code ec;
-            fs::remove(tmp, ec);
-            set_err(err, L"Could not write the launcher settings file.");
-            return false;
-        }
+    std::FILE* f = fs::fopen(tmp, "wb");
+    if (!f) {
+        set_err(err, "Could not write the launcher settings file.");
+        return false;
     }
-    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        const DWORD code = GetLastError();
+    const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    const bool closed = std::fclose(f) == 0;
+    if (!ok || !closed) {
         std::error_code ec;
-        fs::remove(tmp, ec);
-        set_err(err, L"Could not save the launcher settings (Windows error " + std::to_wstring(code) + L").");
+        std::filesystem::remove(fs::native_path(tmp), ec);
+        set_err(err, "Could not write the launcher settings file.");
+        return false;
+    }
+    if (!fs::rename_replace(tmp, path, true)) {
+        std::error_code ec;
+        std::filesystem::remove(fs::native_path(tmp), ec);
+        set_err(err, "Could not save the launcher settings.");
         return false;
     }
     return true;
 }
 
-std::wstring quote_arg(const std::wstring& s) {
-    if (!s.empty() && s.find_first_of(L" \t\"") == std::wstring::npos) return s;
-    std::wstring out = L"\"";
-    size_t i = 0;
-    for (;;) {
-        size_t backslashes = 0;
-        while (i < s.size() && s[i] == L'\\') {
-            ++backslashes;
-            ++i;
-        }
-        if (i == s.size()) {
-            out.append(backslashes * 2, L'\\');   // backslashes before the closing quote are doubled
-            break;
-        }
-        if (s[i] == L'"') {
-            out.append(backslashes * 2 + 1, L'\\');
-            out.push_back(L'"');
+std::vector<std::string> split_args(const std::string& text) {
+    std::vector<std::string> out;
+    std::string cur;
+    bool have = false, quoted = false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const char c = text[i];
+        if (c == '\\') {
+            size_t n = 0;
+            while (i < text.size() && text[i] == '\\') ++n, ++i;
+            if (i < text.size() && text[i] == '"') {
+                cur.append(n / 2, '\\');
+                if (n % 2) {
+                    cur += '"';
+                } else {
+                    quoted = !quoted;
+                }
+            } else {
+                cur.append(n, '\\');
+                --i;
+            }
+            have = true;
+        } else if (c == '"') {
+            quoted = !quoted;
+            have = true;
+        } else if ((c == ' ' || c == '\t') && !quoted) {
+            if (have) out.push_back(cur);
+            cur.clear();
+            have = false;
         } else {
-            out.append(backslashes, L'\\');
-            out.push_back(s[i]);
+            cur += c;
+            have = true;
         }
-        ++i;
     }
-    out.push_back(L'"');
+    if (have) out.push_back(cur);
     return out;
 }
 
-bool start_game(const std::wstring& game_dir, std::wstring* err, const std::wstring& extra_args) {
-    std::wstring args = L"--game " + quote_arg(game_dir);
-    if (!extra_args.empty()) args += L" " + extra_args;
+bool start_game(const std::string& game_dir, std::string* err, const std::string& extra_args) {
+    std::vector<std::string> args = {"--game", game_dir};
+    for (std::string& a : split_args(extra_args)) args.push_back(std::move(a));
     return launch_in_exe_dir(game_exe_name(), args, nullptr, err);
 }
 
-bool start_setup(const std::wstring& game_dir, HANDLE* process, std::wstring* err, const std::wstring& extra_args) {
-    std::wstring args = L"--out " + quote_arg(game_dir);
-    if (!extra_args.empty()) args += L" " + extra_args;
+bool start_setup(const std::string& game_dir, proc::Child* child, std::string* err, const std::string& extra_args) {
+    std::vector<std::string> args = {"--out", game_dir};
+    for (std::string& a : split_args(extra_args)) args.push_back(std::move(a));
     // The shader pack sits next to the launcher in a release. Say so explicitly, so setup finds it even when it is started from a
     // different working folder. Scripted runs that name their own shaders (or none) in --setup-args keep their choice.
-    const bool has_choice = extra_args.find(L"--shader-pack") != std::wstring::npos ||
-                            extra_args.find(L"--no-shaders") != std::wstring::npos;
+    const bool has_choice = extra_args.find("--shader-pack") != std::string::npos || extra_args.find("--no-shaders") != std::string::npos;
     if (!has_choice) {
-        std::error_code ec;
-        const fs::path pack = fs::path(launcher_exe_dir()) / shader_pack_name();
-        if (fs::exists(pack, ec)) args += L" --shader-pack " + quote_arg(pack.wstring());
+        const std::string pack = join_path(launcher_exe_dir(), shader_pack_name());
+        if (!shader_pack_name().empty() && fs::exists(pack)) {
+            args.push_back("--shader-pack");
+            args.push_back(pack);
+        }
     }
-    return launch_in_exe_dir(setup_exe_name(), args, process, err);
+    return launch_in_exe_dir(setup_exe_name(), args, child, err);
 }
 
 // ---- Shader preparation ----------------------------------------------------------------------------------------------
 
 PrepareLine parse_prepare_line(const std::string& raw) { return nxfmt::prepare_line_parse(raw); }
 
-bool shader_prepare_available(const std::wstring& game_dir) {
+bool shader_prepare_available(const std::string& game_dir) {
     if (game_dir.empty()) return false;
-    return path_exists(fs::path(game_dir) / L"shader_cache" / L"programs.bin");
+    return fs::exists(join_path(join_path(game_dir, "shader_cache"), "programs.bin"));
 }
 
-bool shader_prepare_done(const std::wstring& game_dir) {
+bool shader_prepare_done(const std::string& game_dir) {
     if (game_dir.empty()) return false;
-    std::ifstream f(fs::path(game_dir) / L"shader_cache" / nxfmt::kPrepareStateName, std::ios::binary);
-    if (!f) return false;
-    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    std::string text;
+    if (!read_file(join_path(join_path(game_dir, "shader_cache"), nxfmt::kPrepareStateName), &text)) return false;
     return nxfmt::prepare_state_decode(text).complete;
 }
 
@@ -324,72 +362,42 @@ PrepareRun::~PrepareRun() {
     }
 }
 
-bool PrepareRun::start(const std::wstring& game_dir, bool if_needed, HWND notify, UINT msg_update, UINT msg_finished, std::wstring* err) {
+bool PrepareRun::start(const std::string& game_dir, bool if_needed, std::function<void()> notify, std::string* err) {
     if (active_) {
-        set_err(err, L"Shader preparation is already running.");
+        set_err(err, "Shader preparation is already running.");
         return false;
     }
-    const std::wstring dir = launcher_exe_dir();
-    const std::wstring exe = (fs::path(dir) / game_exe_name()).wstring();
-    std::error_code ec;
     if (game_dir.empty()) {
-        set_err(err, L"No game folder is set.");
+        set_err(err, "No game folder is set.");
         return false;
     }
-    if (!fs::exists(exe, ec)) {
-        set_err(err, game_exe_name() + L" was not found next to the launcher.");
+    const std::string exe = join_path(launcher_exe_dir(), game_exe_name());
+    if (!fs::is_file(exe)) {
+        set_err(err, game_exe_name() + " was not found next to the launcher.");
         return false;
     }
-
-    SECURITY_ATTRIBUTES sa{};
-    sa.nLength = sizeof sa;
-    sa.bInheritHandle = TRUE;
-    HANDLE rd = nullptr, wr = nullptr;
-    if (!CreatePipe(&rd, &wr, &sa, 0)) {
-        const DWORD code = GetLastError();
-        set_err(err, L"Could not start shader preparation (Windows error " + std::to_wstring(code) + L").");
+    const char* args[4] = {exe.c_str(), "--prepare-shaders", if_needed ? "--if-needed" : nullptr, nullptr};
+    SDL_PropertiesID p = SDL_CreateProperties();
+    SDL_SetPointerProperty(p, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
+    SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_NULL);
+    SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_APP);
+    SDL_SetBooleanProperty(p, SDL_PROP_PROCESS_CREATE_STDERR_TO_STDOUT_BOOLEAN, true);
+    SDL_SetStringProperty(p, SDL_PROP_PROCESS_CREATE_WORKING_DIRECTORY_STRING, game_dir.c_str());
+    proc_ = SDL_CreateProcessWithProperties(p);
+    SDL_DestroyProperties(p);
+    if (!proc_) {
+        set_err(err, std::string("Could not start shader preparation: ") + SDL_GetError());
         return false;
     }
-    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);   // only the child gets the write end
-    HANDLE nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr);
-    if (nul == INVALID_HANDLE_VALUE) nul = nullptr;
-
-    std::wstring cmd = quote_arg(exe) + L" --prepare-shaders";
-    if (if_needed) cmd += L" --if-needed";
-    std::vector<wchar_t> buf(cmd.begin(), cmd.end());
-    buf.push_back(L'\0');
-
-    STARTUPINFOW si{};
-    si.cb = sizeof si;
-    si.dwFlags = STARTF_USESTDHANDLES;
-    si.hStdInput = nul;
-    si.hStdOutput = wr;
-    si.hStdError = wr;
-    PROCESS_INFORMATION pi{};
-    const BOOL ok = CreateProcessW(exe.c_str(), buf.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, game_dir.c_str(), &si, &pi);
-    const DWORD code = ok ? 0 : GetLastError();
-    CloseHandle(wr);
-    if (nul) CloseHandle(nul);
-    if (!ok) {
-        CloseHandle(rd);
-        set_err(err, L"Could not start shader preparation (Windows error " + std::to_wstring(code) + L").");
-        return false;
-    }
-    CloseHandle(pi.hThread);
-
-    proc_ = pi.hProcess;
-    pipe_ = rd;
-    notify_ = notify;
-    msg_update_ = msg_update;
-    msg_finished_ = msg_finished;
+    notify_ = std::move(notify);
     {
         std::lock_guard<std::mutex> lk(mu_);
         progress_ = PrepareLine{};
         result_ = PrepareLine{};
     }
-    update_pending_ = false;
+    done_ = false;
     cancel_requested_ = false;
-    exit_code_ = 0xFFFFFFFFu;
+    exit_code_ = -1;
     active_ = true;
     thread_ = std::thread(&PrepareRun::worker, this);
     return true;
@@ -398,10 +406,8 @@ bool PrepareRun::start(const std::wstring& game_dir, bool if_needed, HWND notify
 void PrepareRun::cancel() {
     if (!active_ || !proc_) return;
     cancel_requested_ = true;
-    TerminateProcess(proc_, 3);   // only this run's child; the next run starts from zero
+    SDL_KillProcess(proc_, true);   // only this run's child; the next run starts from zero
 }
-
-void PrepareRun::ack_update() { update_pending_ = false; }
 
 PrepareLine PrepareRun::progress() const {
     std::lock_guard<std::mutex> lk(mu_);
@@ -413,14 +419,10 @@ PrepareLine PrepareRun::result() const {
     return result_;
 }
 
-DWORD PrepareRun::finish() {
+int PrepareRun::finish() {
     if (thread_.joinable()) thread_.join();
-    if (pipe_) {
-        CloseHandle(pipe_);
-        pipe_ = nullptr;
-    }
     if (proc_) {
-        CloseHandle(proc_);
+        SDL_DestroyProcess(proc_);
         proc_ = nullptr;
     }
     active_ = false;
@@ -438,30 +440,30 @@ void PrepareRun::handle_line(const std::string& line) {
             result_ = pl;
         }
     }
-    // Coalesced: one message is in the queue until the UI thread acknowledges it. ack_update() clears the flag before the
-    // UI reads, so a change made after that read posts again.
-    if (notify_ && !update_pending_.exchange(true)) PostMessageW(notify_, msg_update_, 0, 0);
+    if (notify_) notify_();
 }
 
 void PrepareRun::worker() {
     std::string acc;
     char buf[4096];
-    for (;;) {
-        DWORD n = 0;
-        if (!ReadFile(pipe_, buf, static_cast<DWORD>(sizeof buf), &n, nullptr) || n == 0) break;   // the child closed its output
-        acc.append(buf, n);
-        size_t p;
-        while ((p = acc.find('\n')) != std::string::npos) {
-            handle_line(acc.substr(0, p));
-            acc.erase(0, p + 1);
+    if (SDL_IOStream* out = SDL_GetProcessOutput(proc_)) {
+        for (;;) {
+            const size_t n = SDL_ReadIO(out, buf, sizeof buf);
+            if (n == 0) break;   // the child closed its output
+            acc.append(buf, n);
+            size_t p;
+            while ((p = acc.find('\n')) != std::string::npos) {
+                handle_line(acc.substr(0, p));
+                acc.erase(0, p + 1);
+            }
         }
     }
     if (!acc.empty()) handle_line(acc);
-    WaitForSingleObject(proc_, INFINITE);
-    DWORD code = 0xFFFFFFFFu;
-    if (!GetExitCodeProcess(proc_, &code)) code = 0xFFFFFFFFu;
+    int code = -1;
+    if (!SDL_WaitProcess(proc_, true, &code)) code = -1;
     exit_code_ = code;
-    if (notify_) PostMessageW(notify_, msg_finished_, 0, 0);
+    done_ = true;
+    if (notify_) notify_();
 }
 
 }  // namespace nxl

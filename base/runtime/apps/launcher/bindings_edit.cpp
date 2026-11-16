@@ -20,25 +20,25 @@ using nxrt::play::Trig;
 // The registered game's rows (nxrt::play::GameVocabulary::labels). Without a game: the
 // movement, menu and d-pad rows under generic names.
 const std::vector<KeyRow>& key_rows() {
-    static std::vector<std::wstring> text;
+    static std::vector<std::string> text;
     static const std::vector<KeyRow> rows = [] {
         std::vector<KeyRow> r;
         const nxrt::play::GameVocabulary* v = nxrt::play::game_vocabulary();
         if (v && v->labels && v->label_count) {
             text.reserve(2 * v->label_count);
             for (unsigned i = 0; i < v->label_count; ++i) {
-                text.push_back(game_text(v->labels[i].label, L""));
-                text.push_back(game_text(v->labels[i].group, L""));
+                text.push_back(game_text(v->labels[i].label, ""));
+                text.push_back(game_text(v->labels[i].group, ""));
                 r.push_back({v->labels[i].act, text[text.size() - 2].c_str(), text.back().c_str()});
             }
             return r;
         }
         return std::vector<KeyRow>{
-            {Act::MoveForward, L"Move forward", L"Movement"}, {Act::MoveBack, L"Move back", L"Movement"},
-            {Act::MoveLeft, L"Move left", L"Movement"},       {Act::MoveRight, L"Move right", L"Movement"},
-            {Act::Map, L"Map", L"Menus"},                     {Act::Pause, L"Pause", L"Menus"},
-            {Act::DpadUp, L"D-pad up", L"Menus"},             {Act::DpadDown, L"D-pad down", L"Menus"},
-            {Act::DpadLeft, L"D-pad left", L"Menus"},         {Act::DpadRight, L"D-pad right", L"Menus"},
+            {Act::MoveForward, "Move forward", "Movement"}, {Act::MoveBack, "Move back", "Movement"},
+            {Act::MoveLeft, "Move left", "Movement"},       {Act::MoveRight, "Move right", "Movement"},
+            {Act::Map, "Map", "Menus"},                     {Act::Pause, "Pause", "Menus"},
+            {Act::DpadUp, "D-pad up", "Menus"},             {Act::DpadDown, "D-pad down", "Menus"},
+            {Act::DpadLeft, "D-pad left", "Menus"},         {Act::DpadRight, "D-pad right", "Menus"},
         };
     }();
     return rows;
@@ -131,10 +131,10 @@ void reset_shown_bindings(Settings& s) {
     s.bindings = std::move(out);
 }
 
-std::wstring act_label(Act a) {
+std::string act_label(Act a) {
     for (const KeyRow& r : key_rows())
         if (r.act == a) return r.label;
-    return L"";
+    return "";
 }
 
 }  // namespace nxl

@@ -3,14 +3,13 @@
 // checks. Only temp folders are touched; no game process is started.
 #include "test_framework.h"
 
-#include <windows.h>
-
 #include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "game_info.h"
+#include "nxrt/os/process.h"
 
 NXTEST_GROUP(launcher_prepare)
 
@@ -32,7 +31,7 @@ struct TempDir {
         static std::atomic<unsigned> counter{0};
         std::error_code ec;
         const fs::path base = fs::temp_directory_path(ec);
-        path = base / (L"nxl_prepare_test_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(counter++));
+        path = base / ("nxl_prepare_test_" + std::to_string(nxrt::os::process::pid()) + "_" + std::to_string(counter++));
         fs::remove_all(path, ec);
         fs::create_directories(path, ec);
     }
@@ -40,7 +39,10 @@ struct TempDir {
         std::error_code ec;
         fs::remove_all(path, ec);
     }
-    std::wstring str() const { return path.wstring(); }
+    std::string str() const {
+        const auto u = path.u8string();
+        return std::string(reinterpret_cast<const char*>(u.c_str()), u.size());
+    }
 };
 
 }  // namespace
@@ -106,20 +108,20 @@ NXTEST(prepare_line_everything_else_is_other) {
 // ---- shader_prepare_available / shader_prepare_done ------------------------------------------------------------------
 
 NXTEST(prepare_available_needs_programs_bin) {
-    CHECK(!nxl::shader_prepare_available(L""));
+    CHECK(!nxl::shader_prepare_available(""));
     TempDir t;
     CHECK(!nxl::shader_prepare_available(t.str()));
-    write_file(t.path / L"shader_cache" / L"prepare.state", "complete: 1\n");
+    write_file(t.path / "shader_cache" / "prepare.state", "complete: 1\n");
     CHECK(!nxl::shader_prepare_available(t.str()));
-    write_file(t.path / L"shader_cache" / L"programs.bin", "MPRPRG01");
+    write_file(t.path / "shader_cache" / "programs.bin", "MPRPRG01");
     CHECK(nxl::shader_prepare_available(t.str()));
 }
 
 NXTEST(prepare_done_needs_complete_line) {
-    CHECK(!nxl::shader_prepare_done(L""));
+    CHECK(!nxl::shader_prepare_done(""));
     TempDir t;
     CHECK(!nxl::shader_prepare_done(t.str()));   // no prepare.state
-    const fs::path state = t.path / L"shader_cache" / L"prepare.state";
+    const fs::path state = t.path / "shader_cache" / "prepare.state";
     write_file(state, "key: abc\nprograms: 5\ncomplete: 0\n");
     CHECK(!nxl::shader_prepare_done(t.str()));
     write_file(state, "complete: 10\n");

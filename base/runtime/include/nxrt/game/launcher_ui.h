@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Launcher UI toolkit: plain Win32 with Common Controls v6, the same toolkit and look as the setup tool (system message font,
-// white window colour, grey hint text, 16 px margins). A launcher page is a child window of the tab control. A page builds its
-// controls with a Form (rows of label + control) and the Form remembers how each control reads from and writes to a Settings
-// copy, so a page rarely needs more than a few lines per setting.
+// The launcher's page API, the same on every system: a page describes its rows once (labelled check boxes, drop-downs, sliders, number boxes,
+// buttons, texts, colour swatches) with a Form; the launcher draws them (SDL3 + Dear ImGui, apps/launcher) and the Form remembers how each row
+// reads from and writes to a Settings copy, so a page rarely needs more than a few lines per setting. There is no window-system type in here:
+// a game's pages are written once and show on Windows and Linux alike. All text is UTF-8.
+//
+// What a game adds to the launcher (nxrt/game.h Info::launcher): tabs after the base's own and rows at the end of the Extras tab (GameLauncher).
+// The pages are compiled into the launcher exe by the game module (its launcher library).
 #pragma once
-#include <windows.h>
-#include <commctrl.h>
-
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -18,163 +19,149 @@ namespace nxl {
 
 using nxrt::play::Settings;
 
-constexpr COLORREF kGray = RGB(0x5F, 0x5F, 0x5F);
-constexpr COLORREF kGreen = RGB(0x0F, 0x6B, 0x2F);
-constexpr COLORREF kRed = RGB(0xB3, 0x1B, 0x1B);
-constexpr COLORREF kAmber = RGB(0x8A, 0x5A, 0x00);
+class Page;
 
-// Fonts and scale of the window the pages live in.
-struct Env {
-    HINSTANCE inst = nullptr;
-    int dpi = 96;
-    HFONT font = nullptr;
-    HFONT bold = nullptr;
-    int S(int px) const { return MulDiv(px, dpi, 96); }
+// A row of a page. The page's code reaches a row through the pointer its Form call returned: to read what the player chose, or to change the
+// row (its value, text, drop-down items, enabled and visible state). The pointer stays valid as long as the page.
+struct Row {
+    enum class Kind { Heading, Hint, Gap, Check, Combo, Slider, Number, Button, Text, Swatch, Custom };
+
+    // ---- for the page's code
+    int value() const { return value_; }     // check box 0/1, drop-down index, slider position, number as typed
+    void set_value(int v) {                  // not a change by the player: nothing is marked unsaved
+        value_ = v;
+        if (kind == Kind::Number) number_buf = std::to_string(v);
+    }
+    void set_text(std::string t) { text = std::move(t); }   // Text rows: the shown text
+    void set_items(std::vector<std::string> items) { this->items = std::move(items); }   // Combo rows
+    void set_enabled(bool e) { enabled = e; }
+    void set_visible(bool v) { visible = v; }
+    void flash() { flash_frames = 180; }     // draws the row highlighted for a moment and scrolls it into view
+
+    // ---- the launcher's (drawing and layout); a page does not touch these
+    Kind kind = Kind::Gap;
+    std::string label;                       // left of the control (Check: the text next to the box)
+    std::string text;                        // Hint, Heading, Text value, Button caption, Number suffix
+    std::vector<std::string> items;
+    int lo = 0, hi = 0;
+    int value_ = 0;
+    std::string number_buf;                  // Number: what is typed
+    int width = 0;                           // Number and Button: logical px
+    int cols = 1, col = 0;                   // the grid the row sits in (Form::columns)
+    bool compact = false;
+    bool full_width = false;                 // Hint: from the left margin instead of the control column
+    bool at_left = false;                    // Button: at the left of its cell instead of the control column
+    bool joined = false;                     // Number: on the line of the row before, behind an "x"
+    bool enabled = true, visible = true;
+    int button_id = 0;
+    int gap_px = 0;
+    int flash_frames = 0;
+    std::function<void(const Settings&)> load;
+    std::function<void(Settings&)> store;
+    std::function<std::string(int)> format;  // Slider: the text for a position
+    std::function<void()> after;             // the player changed it
+    std::function<uint32_t()> rgb;           // Swatch: 0xRRGGBB
+    std::function<void(float)> draw;         // Custom: ImGui calls (launcher-internal pages only); the argument is the width available
 };
 
+// What a page can ask of the launcher.
 class Host {
 public:
     virtual ~Host() = default;
-    virtual void changed() = 0;                          // the player changed a control: unsaved changes
-    virtual HWND window() const = 0;                     // the launcher window (owner of dialogs)
-    virtual const Env& env() const = 0;
-    virtual bool controller_connected() const = 0;       // an XInput pad answers
-    virtual bool shader_prepare_offered() const = 0;     // the game folder has a shader list (programs.bin)
-    virtual bool shader_prepare_busy() const = 0;        // setup or shader preparation is running
-    virtual void prepare_shaders_now() = 0;              // run the full shader preparation now (Extras button)
+    virtual void changed() = 0;                           // the player changed a control: unsaved changes
+    virtual bool controller_connected() const = 0;        // a game controller is connected
+    virtual bool shader_prepare_offered() const = 0;      // the game folder has a shader list (programs.bin)
+    virtual bool shader_prepare_busy() const = 0;         // setup or shader preparation is running
+    virtual void prepare_shaders_now() = 0;               // run the full shader preparation now (Extras button)
+    // A box with one OK button. Returns at once.
+    virtual void message(const std::string& text) = 0;
+    // A box with these buttons; `done` gets the index of the one pressed, later.
+    virtual void ask(const std::string& text, std::vector<std::string> buttons, std::function<void(int)> done) = 0;
+    // "Press a key or click a mouse button": `done(true, input)` with what was pressed, `done(false, {})` when cancelled. `what` names the thing
+    // being bound ("Jump").
+    virtual void capture_input(const std::string& what, std::function<void(bool, nxrt::play::InputId)> done) = 0;
+    // "Press the controller button you want to change": `done` gets the row of the Controller tab (pad_capture.h) or -1 when cancelled.
+    virtual void capture_pad_button(std::function<void(int)> done) = 0;
 };
 
-class Form;
-
-class Page {
-public:
-    virtual ~Page();
-    virtual const wchar_t* title() const = 0;
-    virtual void build(Form& f) = 0;                     // create the controls of the page
-    virtual void load(const Settings& s);                // controls <- settings (default: every control the Form registered)
-    virtual void store(Settings* s);                     // controls -> settings
-    // Messages of the page's controls, before the Form's own handling. Return true when handled.
-    virtual bool command(int id, int code, HWND ctl) { return false; }
-    virtual LRESULT notify(NMHDR* hdr, bool* handled) { *handled = false; return 0; }
-    virtual void rebuilt() {}                            // after build() ran again (DPI change)
-    virtual void state_changed() {}                      // the game folder or a running job changed: update the controls that depend on it
-
-    HWND hwnd() const { return hwnd_; }
-    Host* host() const { return host_; }
-
-private:
-    friend class Form;
-    friend class PageWindow;
-    friend class PageWindowProc;
-    struct Binder {
-        HWND ctl = nullptr;
-        HWND value_label = nullptr;                      // slider: the text that shows the value
-        int kind = 0;                                    // see ui.cpp
-        int id = 0;
-        std::function<void(const Settings&)> load;
-        std::function<void(Settings&)> store;
-        std::function<std::wstring()> format;            // slider: text of the current position
-        std::function<void()> after;                     // called after the player changed it (before changed())
-    };
-    HWND hwnd_ = nullptr;
-    Host* host_ = nullptr;
-    std::vector<Binder> binders_;
-    std::vector<HWND> hints_;                            // grey static texts
-    std::vector<HWND> bolds_;                            // headings
-    int next_id_ = 0;
-    int id_base_ = 0;
-    bool loading_ = false;                               // load() is running: control changes are not the player's
-};
-
-// Row builder. All sizes are logical pixels (96 DPI) and scaled by the Env.
+// Row builder. Rows go down the page in the order of the calls; columns(n) makes them fill left to right in a grid of n cells.
 class Form {
 public:
-    Form(Page& page, int page_width);
-
-    void heading(const wchar_t* text);                   // bold title with some space above
-    HWND hint(const wchar_t* text, int lines = 1, bool full_width = false);   // grey text under the previous row (control column, or the page width)
-    void gap(int px = 8);
-
-    // One column (default) or two: rows then fill left to right. Switching back to 1 starts a new row.
-    void columns(int n);
-    // Narrow labels and slider values in multi-column rows (for pages that put several sliders side by side); off by default.
-    void compact(bool on) { compact_ = on; }
-
     using GetBool = std::function<bool(const Settings&)>;
     using SetBool = std::function<void(Settings&, bool)>;
     using GetInt = std::function<int(const Settings&)>;
     using SetInt = std::function<void(Settings&, int)>;
     using After = std::function<void()>;
 
-    void checkbox(const wchar_t* text, GetBool get, SetBool set, After after = nullptr);
-    // A drop-down list. get() returns the index of the item to show (-1: none).
-    HWND combo(const wchar_t* label, const std::vector<std::wstring>& items, GetInt get, SetInt set, After after = nullptr);
-    // A trackbar from lo to hi (integers); format() turns the position into the text shown next to it.
-    HWND slider(const wchar_t* label, int lo, int hi, GetInt get, SetInt set, std::function<std::wstring(int)> format, After after = nullptr);
-    // A single-line number box.
-    HWND number(const wchar_t* label, int lo, int hi, GetInt get, SetInt set, After after = nullptr, int width = 80);
-    // A push button in the control column (or the full width of a column) that calls command() with its id. Returns the id.
-    int button(const wchar_t* label, int width = 150, bool at_left = false);
-    // A static text row: label on the left, text on the right. The returned window can be changed with SetWindowTextW.
-    HWND text_row(const wchar_t* label, const wchar_t* text);
-    // Free space for a custom control: label (may be null) and a rectangle (control column x, current y, width, height) in pixels.
-    RECT custom_row(const wchar_t* label, int height_px);
-    // Creates any child window of the page with the page's font and the next free id (set *id when not null).
-    HWND create(const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int* id = nullptr, DWORD ex_style = 0);
+    explicit Form(Page& page) : page_(page) {}
 
-    int y() const { return y_; }                         // pixels
-    int width() const { return width_; }                 // pixels
-    int control_x() const;                               // pixels
-    int control_w() const;
+    void heading(std::string text);                                        // accent title with a rule, some space above
+    Row* hint(std::string text, bool full_width = false);                  // grey text under the previous row (control column, or the page width)
+    void gap(int px = 8);
+
+    // One column (default) or two or three: rows then fill left to right. Switching back to 1 starts a new row.
+    void columns(int n);
+    // Narrow labels and slider values in multi-column rows (for pages that put several sliders side by side); off by default.
+    void compact(bool on) { compact_ = on; }
+
+    Row* checkbox(std::string text, GetBool get, SetBool set, After after = nullptr);
+    // A drop-down list. get() returns the index of the item to show (-1: none).
+    Row* combo(std::string label, std::vector<std::string> items, GetInt get, SetInt set, After after = nullptr);
+    // A slider from lo to hi (integers); format() turns the position into the text shown next to it.
+    Row* slider(std::string label, int lo, int hi, GetInt get, SetInt set, std::function<std::string(int)> format, After after = nullptr);
+    // A single-line number box (clamped to lo..hi when stored).
+    Row* number(std::string label, int lo, int hi, GetInt get, SetInt set, After after = nullptr, int width = 80);
+    // Two number boxes on one line, "<a> x <b> <suffix>". Returns the first; the second follows it in the page (Page::row_after).
+    Row* number_pair(std::string label, int lo, int hi, GetInt get_a, SetInt set_a, GetInt get_b, SetInt set_b, After after = nullptr,
+                     std::string suffix = "");
+    // A push button in the control column (or at the left of its cell). Returns its id: the page's command() gets it when pressed.
+    int button(std::string label, int width = 150, bool at_left = false);
+    // A static text row: label on the left, text on the right.
+    Row* text_row(std::string label, std::string text);
+    // A box filled with one colour (0xRRGGBB from rgb()) in the control column.
+    Row* swatch(std::string label, std::function<uint32_t()> rgb, int height_px = 28);
+    // Free drawing with Dear ImGui (for the base's own pages; a game's pages stay with the rows above).
+    Row* custom(std::function<void(float)> draw);
 
 private:
-    HWND make(const wchar_t* cls, const wchar_t* text, DWORD style, int x, int y, int w, int h, int* id, DWORD ex_style = 0);
-    void label(const wchar_t* text, int x, int y, int w);
-    void next_cell(int row_h);                           // moves the cursor after a control of this height
-    int cell_x() const;
-    int cell_w() const;
-    int label_w() const;
-
+    Row* add(Row::Kind k);
+    void place(Row* r);                                    // the grid cell of a control row
     Page& page_;
-    const Env& env_;
-    int width_;       // page width in pixels
-    int y_;           // pixels
-    int cols_ = 1;
+    int cols_ = 1, col_ = 0;
     bool compact_ = false;
-    int col_ = 0;
-    int row_h_ = 0;   // tallest control of the current row (pixels)
+    int next_button_ = 1;
 };
 
-// What a game adds to the launcher (nxrt/game.h Info::launcher): tabs after the base's own and rows at the end of the Extras tab. A game
-// without one gets only the base's pages. The pages are compiled into the launcher exe by the game module (its launcher library).
+class Page {
+public:
+    virtual ~Page();
+    virtual const char* title() const = 0;                 // the tab's name
+    virtual void build(Form& f) = 0;                       // describe the rows
+    virtual void load(const Settings& s);                  // rows <- settings (default: every row the Form registered)
+    virtual void store(Settings* s);                       // rows -> settings
+    virtual bool command(int id) { return false; }         // a button of the page was pressed (its id from Form::button); true when handled
+    virtual void state_changed() {}                        // the game folder or a running job changed: update the rows that depend on it
+
+    Host* host() const { return host_; }
+    // The row that follows `r` in the page (the second box of number_pair), or null.
+    Row* row_after(const Row* r);
+
+    // ---- the launcher's
+    std::vector<std::unique_ptr<Row>>& rows() { return rows_; }
+    void attach(Host* h) { host_ = h; }
+
+private:
+    friend class Form;
+    Host* host_ = nullptr;
+    std::vector<std::unique_ptr<Row>> rows_;
+};
+
+// What a game adds to the launcher (nxrt/game.h Info::launcher): tabs after the base's own and rows at the end of the Extras tab.
 using PageFactory = std::unique_ptr<Page> (*)();
 struct GameLauncher {
     const PageFactory* tabs = nullptr;
     unsigned tab_count = 0;
     void (*extras_rows)(Form& f) = nullptr;
-};
-
-// Looks at the system for a pad (XInput); cheap, no state.
-bool xinput_pad_connected();
-
-// A modal "press a key or click a mouse button" window. Returns true with *out set, false when the player cancelled (Escape or
-// closed it). Keys become keyboard inputs, the mouse buttons Mouse1..Mouse5, the wheel WheelUp/WheelDown. `what` names the thing
-// being bound ("Jump").
-bool capture_input(HWND owner, const Env& env, const std::wstring& what, nxrt::play::InputId* out);
-
-// A modal "press the controller button you want to change" window for the Controller tab. Polls the game controllers until one button
-// (or a trigger pulled past half) is pressed, then returns true with *out_source set to that row (pad_capture.h). Returns false when
-// the player cancelled (Escape or closed it). Without a controller it says so and keeps waiting for one.
-bool capture_pad_button(HWND owner, const Env& env, int* out_source);
-
-int message(HWND owner, const std::wstring& text, UINT type = MB_OK | MB_ICONINFORMATION);
-std::wstring input_label(const nxrt::play::InputId& id);   // the player-facing name of an input ("Left Ctrl", "Left mouse button", "Wheel up")
-
-// Registers the window class pages live in, and makes a page window (child of `parent`), builds and loads it. Pages are owned by the caller.
-class PageWindow {
-public:
-    static bool register_class(HINSTANCE inst);
-    static HWND create(Page& page, HWND parent, Host& host, int id_base, const RECT& area);
 };
 
 }  // namespace nxl

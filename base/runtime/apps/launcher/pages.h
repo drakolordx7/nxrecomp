@@ -27,9 +27,8 @@ public:
 private:
     void toggled(unsigned idx);
     void refresh_enabled();
-    std::vector<std::wstring> texts_;       // the rows' text, kept as long as the page
     std::vector<int> orig_;                 // a slider's position as loaded: a slider the player did not move writes nothing
-    std::vector<HWND> rows_;                // the row's control, for the rows that can be disabled
+    std::vector<Row*> rows_;                // the row's control, for the rows that can be disabled
     std::vector<char> state_;               // the value of each Bool or Choice option as the player has it (non-zero)
 };
 

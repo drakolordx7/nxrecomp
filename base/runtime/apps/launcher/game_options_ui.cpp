@@ -31,16 +31,16 @@ int slider_pos(const GameOption& o, double stored) {
     return static_cast<int>(std::clamp(std::llround(stored * o.ui_scale * k), std::llround(o.ui_lo * k), std::llround(o.ui_hi * k)));
 }
 
-std::wstring pos_text(const GameOption& o, int pos) {
+std::string pos_text(const GameOption& o, int pos) {
     const double k = pow10i(o.ui_decimals);
-    std::wstring t;
+    std::string t;
     if (o.ui_decimals == 0) {
-        t = std::to_wstring(pos);
+        t = std::to_string(pos);
     } else {
         const long long whole = static_cast<long long>(k);
-        t = std::to_wstring(pos / whole) + L"." + std::to_wstring(pos % whole);
+        t = std::to_string(pos / whole) + "." + std::to_string(pos % whole);
     }
-    return t + game_text(o.ui_unit, L"");
+    return t + game_text(o.ui_unit, "");
 }
 
 }  // namespace
@@ -54,25 +54,23 @@ void GameOptionRows::build(Form& f, OptTab tab) {
         if (!(o.ui & nxrt::play::kOptLauncher) || o.tab != tab) continue;
         if (o.group && o.group != group) {
             group = o.group;
-            texts_.push_back(game_text(o.group, L""));
-            f.heading(texts_.back().c_str());
+            f.heading(game_text(o.group, ""));
         }
-        texts_.push_back(game_text(o.label, L""));
-        const wchar_t* label = texts_.back().c_str();
+        const std::string label = game_text(o.label, "");
         const GameOption* op = &o;
         const unsigned idx = i;
         orig_.resize(gs->option_count, 0);
         state_.resize(gs->option_count, 0);
-        rows_.resize(gs->option_count);
+        rows_.resize(gs->option_count, nullptr);
         switch (o.kind) {
-            case OptKind::Bool:
+            case OptKind::Bool:   // (a check box is never disabled by another option, as before)
                 f.checkbox(
                     label, [op](const Settings& s) { return (op->get(s.game) != 0) != op->inverted; },
                     [op](Settings& s, bool v) { op->set(s.game, (v != op->inverted) ? 1.0 : 0.0); }, [this, idx]() { toggled(idx); });
                 break;
             case OptKind::Choice: {
-                std::vector<std::wstring> items;
-                for (unsigned w = 0; w < o.word_count; ++w) items.push_back(game_text(o.labels ? o.labels[w] : o.words[w], L""));
+                std::vector<std::string> items;
+                for (unsigned w = 0; w < o.word_count; ++w) items.push_back(game_text(o.labels ? o.labels[w] : o.words[w], ""));
                 rows_[idx] = f.combo(
                     label, items, [op](const Settings& s) { return static_cast<int>(op->get(s.game)); },
                     [op](Settings& s, int v) { op->set(s.game, v); }, [this, idx]() { toggled(idx); });
@@ -91,10 +89,7 @@ void GameOptionRows::build(Form& f, OptTab tab) {
                 break;
             }
         }
-        if (o.hint) {
-            texts_.push_back(game_text(o.hint, L""));
-            f.hint(texts_.back().c_str(), 3);
-        }
+        if (o.hint) f.hint(game_text(o.hint, ""));
     }
 }
 
@@ -112,7 +107,7 @@ void GameOptionRows::load(const Settings& s) {
 void GameOptionRows::toggled(unsigned idx) {
     const GameSection* gs = nxrt::game::info().settings;
     if (!gs) return;
-    if (gs->options[idx].kind == OptKind::Choice && rows_[idx]) state_[idx] = SendMessageW(rows_[idx], CB_GETCURSEL, 0, 0) != 0;
+    if (gs->options[idx].kind == OptKind::Choice && rows_[idx]) state_[idx] = rows_[idx]->value() != 0;
     else state_[idx] = !state_[idx];
     refresh_enabled();
 }
@@ -123,7 +118,7 @@ void GameOptionRows::refresh_enabled() {
         const GameOption& o = gs->options[i];
         if (!o.depends || !rows_[i]) continue;
         for (unsigned j = 0; j < gs->option_count; ++j)
-            if (std::string(gs->options[j].key) == o.depends) EnableWindow(rows_[i], state_[j] != 0);
+            if (std::string(gs->options[j].key) == o.depends) rows_[i]->set_enabled(state_[j] != 0);
     }
 }
 

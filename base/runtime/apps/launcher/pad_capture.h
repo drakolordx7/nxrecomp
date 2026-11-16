@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // "Find a button" on the Controller tab: which row of the tab a physical controller button belongs to, and a poller that waits for the
-// first press on a connected game controller. No window code here; the modal window is in ui.cpp (capture_pad_button).
+// first press on a connected game controller. No window code here; the dialog is the launcher's (launcher_app.cpp).
 #pragma once
 #include <cstdint>
 #include <vector>
 
 struct SDL_Gamepad;
+union SDL_Event;
 
 namespace nxl {
 
@@ -28,6 +29,8 @@ public:
     // Pumps the SDL event queue (opens controllers that are plugged in, closes the ones that are unplugged) and returns the row index of
     // the first mapped button pressed, or of a trigger pulled past half its travel. -1 when there is none yet.
     int poll();
+    // The same for a program that runs the SDL event loop itself: one event; opens and closes controllers on the added and removed events.
+    int on_event(const SDL_Event& ev);
     bool has_pad() const { return !pads_.empty(); }
     void close();                                      // closes the controllers and stops the subsystem; open() may be called again
 

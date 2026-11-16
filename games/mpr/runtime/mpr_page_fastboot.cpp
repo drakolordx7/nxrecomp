@@ -17,19 +17,19 @@ namespace {
 // Language names as the settings service reads them (services/common.cpp), in nn::settings::Language order, with the label the drop-down shows.
 struct LangRow {
     const char* name;
-    const wchar_t* label;
+    const char* label;
 };
 constexpr LangRow kLangRows[] = {
-    {"Japanese", L"\u65e5\u672c\u8a9e (Japanese)"}, {"AmericanEnglish", L"English (US)"}, {"French", L"Fran\u00e7ais (French)"},
-    {"German", L"Deutsch (German)"}, {"Italian", L"Italiano (Italian)"}, {"Spanish", L"Espa\u00f1ol (Spain)"},
-    {"Chinese", L"\u4e2d\u6587 (Chinese)"}, {"Korean", L"\ud55c\uad6d\uc5b4 (Korean)"}, {"Dutch", L"Nederlands (Dutch)"},
-    {"Portuguese", L"Portugu\u00eas (Portugal)"}, {"Russian", L"\u0420\u0443\u0441\u0441\u043a\u0438\u0439 (Russian)"}, {"Taiwanese", L"\u4e2d\u6587 (Taiwan)"},
-    {"BritishEnglish", L"English (UK)"}, {"CanadianFrench", L"Fran\u00e7ais (Canada)"}, {"LatinAmericanSpanish", L"Espa\u00f1ol (Latin America)"},
-    {"SimplifiedChinese", L"\u7b80\u4f53\u4e2d\u6587 (Simplified Chinese)"}, {"TraditionalChinese", L"\u7e41\u9ad4\u4e2d\u6587 (Traditional Chinese)"},
-    {"BrazilianPortuguese", L"Portugu\u00eas (Brasil)"},
+    {"Japanese", "\u65e5\u672c\u8a9e (Japanese)"}, {"AmericanEnglish", "English (US)"}, {"French", "Fran\u00e7ais (French)"},
+    {"German", "Deutsch (German)"}, {"Italian", "Italiano (Italian)"}, {"Spanish", "Espa\u00f1ol (Spain)"},
+    {"Chinese", "\u4e2d\u6587 (Chinese)"}, {"Korean", "\ud55c\uad6d\uc5b4 (Korean)"}, {"Dutch", "Nederlands (Dutch)"},
+    {"Portuguese", "Portugu\u00eas (Portugal)"}, {"Russian", "\u0420\u0443\u0441\u0441\u043a\u0438\u0439 (Russian)"}, {"Taiwanese", "\u4e2d\u6587 (Taiwan)"},
+    {"BritishEnglish", "English (UK)"}, {"CanadianFrench", "Fran\u00e7ais (Canada)"}, {"LatinAmericanSpanish", "Espa\u00f1ol (Latin America)"},
+    {"SimplifiedChinese", "\u7b80\u4f53\u4e2d\u6587 (Simplified Chinese)"}, {"TraditionalChinese", "\u7e41\u9ad4\u4e2d\u6587 (Traditional Chinese)"},
+    {"BrazilianPortuguese", "Portugu\u00eas (Brasil)"},
 };
 
-// The game's languages (nxrt/game.h Info::languages), as rows of kLangRows; index 0 of the drop-down is "Match Windows".
+// The game's languages (nxrt/game.h Info::languages), as rows of kLangRows; index 0 of the drop-down is "Match the system".
 const std::vector<const LangRow*>& game_langs() {
     static const std::vector<const LangRow*> v = [] {
         std::vector<const LangRow*> out;
@@ -52,12 +52,12 @@ bool same_name(const std::string& a, const char* b) {
 }
 
 void add_fastboot_rows(Form& f) {
-    f.heading(L"Language");
+    f.heading("Language");
     {
-        std::vector<std::wstring> items{L"Match Windows"};
+        std::vector<std::string> items{"Match the system"};
         for (const LangRow* r : game_langs()) items.push_back(r->label);
         f.combo(
-            L"Game language", items,
+            "Game language", items,
             [](const Settings& s) {
                 const auto& v = game_langs();
                 for (size_t i = 0; i < v.size(); ++i)
@@ -68,19 +68,19 @@ void add_fastboot_rows(Form& f) {
                 const auto& v = game_langs();
                 mpr_settings(s).fastboot.language = (i >= 1 && static_cast<size_t>(i) <= v.size()) ? v[i - 1]->name : "";
             });
-        f.hint(L"Sets the language of the game's text and voices. Match Windows uses your Windows display language when the game has it, else English. Takes effect the next time the game starts.", 2);
+        f.hint("Sets the language of the game's text and voices. Match the system uses your system display language when the game has it, else English. Takes effect the next time the game starts.");
     }
-    f.heading(L"Start-up and menus");
-    f.checkbox(L"Skip the opening cutscene of a new game", [](const Settings& s) { return mpr_settings(s).fastboot.skip_intro; },
+    f.heading("Start-up and menus");
+    f.checkbox("Skip the opening cutscene of a new game", [](const Settings& s) { return mpr_settings(s).fastboot.skip_intro; },
                [](Settings& s, bool v) { mpr_settings(s).fastboot.skip_intro = v; });
-    f.checkbox(L"Skip the title intro movie", [](const Settings& s) { return mpr_settings(s).fastboot.skip_boot_logos; },
+    f.checkbox("Skip the title intro movie", [](const Settings& s) { return mpr_settings(s).fastboot.skip_boot_logos; },
                [](Settings& s, bool v) { mpr_settings(s).fastboot.skip_boot_logos = v; });
-    f.checkbox(L"Faster menus", [](const Settings& s) { return mpr_settings(s).fastboot.fast_menus; }, [](Settings& s, bool v) { mpr_settings(s).fastboot.fast_menus = v; });
+    f.checkbox("Faster menus", [](const Settings& s) { return mpr_settings(s).fastboot.fast_menus; }, [](Settings& s, bool v) { mpr_settings(s).fastboot.fast_menus = v; });
     f.slider(
-        L"Menu speed", 1, 4, [](const Settings& s) { return mpr_settings(s).fastboot.menu_speed; }, [](Settings& s, int v) { mpr_settings(s).fastboot.menu_speed = v; },
-        [](int v) { return std::to_wstring(v) + L"x"; });
-    f.hint(L"New Game then starts in the docking hangar, after the game's own cutscene skip. Faster menus speed up the title, main menu and save "
-           L"slots (used only with Faster menus on). Everything here is off by default.", 2, true);
+        "Menu speed", 1, 4, [](const Settings& s) { return mpr_settings(s).fastboot.menu_speed; }, [](Settings& s, int v) { mpr_settings(s).fastboot.menu_speed = v; },
+        [](int v) { return std::to_string(v) + "x"; });
+    f.hint("New Game then starts in the docking hangar, after the game's own cutscene skip. Faster menus speed up the title, main menu and save "
+           "slots (used only with Faster menus on). Everything here is off by default.", true);
 }
 
 }
