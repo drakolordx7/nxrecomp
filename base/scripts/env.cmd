@@ -19,6 +19,8 @@ if not defined NX_ROOT call :find_root "%NX_CHECKOUT%"
 if /i "%NX_CHECKOUT%"=="%NX_ROOT%" (set "NX_CHECKOUT_NAME=main") else for %%I in ("%NX_CHECKOUT%") do set "NX_CHECKOUT_NAME=%%~nxI"
 if defined VSCMD_ARG_TGT_ARCH goto :vs_done
 set "NX_VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+rem vcvars calls vswhere by name: shells without the Installer folder on PATH (Git Bash) need it added
+set "PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%PATH%"
 for /f "usebackq delims=" %%I in (`call "%NX_VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "NX_VS=%%I"
 if defined NX_VS call "%NX_VS%\VC\Auxiliary\Build\vcvars64.bat" >nul
 :vs_done
