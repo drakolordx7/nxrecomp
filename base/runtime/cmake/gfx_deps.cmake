@@ -3,7 +3,7 @@
 # SHA256. The archives are cached in NXRT_DEPS_DIR (shared by checkouts and worktrees, survives a clean build); the
 # extracted sources and the SDL build live in the build directory. Licences and pins are listed in THIRD_PARTY_NOTICES.md and README.md.
 include(FetchContent)
-set(NXRT_DEPS_DIR "$ENV{LOCALAPPDATA}/nxrt/deps" CACHE PATH "Where the pinned third-party sources are downloaded to")
+set(NXRT_DEPS_DIR "${NX_CACHE_DIR}/deps" CACHE PATH "Where the pinned third-party sources are downloaded to")
 set(FETCHCONTENT_QUIET OFF)
 set(CMAKE_POLICY_DEFAULT_CMP0135 NEW)   # extracted files take the time of extraction
 
@@ -51,7 +51,11 @@ FetchContent_MakeAvailable(sdl3 vulkan_headers volk vma imgui)
 # volk (loader) next to the Vulkan headers; the Vulkan headers come from the pin, not from the installed SDK.
 add_library(nxrt_volk STATIC "${volk_SOURCE_DIR}/volk.c")
 target_include_directories(nxrt_volk SYSTEM PUBLIC "${volk_SOURCE_DIR}" "${vulkan_headers_SOURCE_DIR}/include")
-target_compile_definitions(nxrt_volk PUBLIC VK_NO_PROTOTYPES VK_USE_PLATFORM_WIN32_KHR)
+target_compile_definitions(nxrt_volk PUBLIC VK_NO_PROTOTYPES)
+if(NX_PLATFORM STREQUAL "win32")
+    target_compile_definitions(nxrt_volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+endif()
+# (Linux: surfaces come from SDL_Vulkan_CreateSurface, which needs no VK_USE_PLATFORM_* define)
 set_target_properties(nxrt_volk PROPERTIES C_STANDARD 11)
 
 # VMA is header only; one translation unit in src/gfx defines VMA_IMPLEMENTATION.

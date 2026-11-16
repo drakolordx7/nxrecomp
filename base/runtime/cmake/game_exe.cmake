@@ -8,6 +8,8 @@
 #                   launcher pages of its own), with the same resource templates
 # VERSION is the release version ("0.1.0"; default "dev") shown by both programs and in their file properties. NXRT_RELEASE (runtime
 # CMakeLists.txt) builds the package flavour: a Windows GUI program that looks for ./exefs, with no build paths in it.
+# Linux: the libraries are lib<id>_<module>.a (cmake/nx_platform.cmake), there are no resources or manifests, and the launcher is not built
+# (NXRT_BUILD_LAUNCHER, cmake/launcher.cmake).
 # Both land in the build folder's top level, next to the ASTC decoder DLLs and fonts\ (the shared-font fallback).
 include_guard(GLOBAL)
 get_filename_component(_nxrt_gad "${CMAKE_CURRENT_LIST_DIR}/../apps/game" ABSOLUTE)
@@ -42,7 +44,8 @@ function(nxrt_add_game_exe id)
     foreach(m ${mods})
         if(NOT TARGET ${id}_${m})
             add_library(${id}_${m} STATIC IMPORTED GLOBAL)
-            set_target_properties(${id}_${m} PROPERTIES IMPORTED_LOCATION "${A_LIB_DIR}/${id}_${m}.lib")
+            nx_platform_static_lib_path(_nxrt_lib_path "${A_LIB_DIR}" ${id}_${m})
+            set_target_properties(${id}_${m} PROPERTIES IMPORTED_LOCATION "${_nxrt_lib_path}")
         endif()
         string(APPEND inc "NXGAME_MODULE(${m})\n")
         list(APPEND libs ${id}_${m})
@@ -63,18 +66,23 @@ function(nxrt_add_game_exe id)
 
     get_filename_component(exe_stem "${G_EXE}" NAME_WE)
     get_filename_component(launcher_stem "${G_LAUNCHER}" NAME_WE)
-    configure_file("${NXRT_GAME_APP_DIR}/game.manifest.in" "${gen}/${exe_stem}.manifest" @ONLY)
-    configure_file("${NXRT_GAME_APP_DIR}/launcher.manifest.in" "${gen}/${launcher_stem}.manifest" @ONLY)
-    set(NXG_EXE "${G_EXE}")
-    set(NXG_INTERNAL "${exe_stem}")
-    set(NXG_DESCRIPTION "${G_PRODUCT}")
-    set(NXG_MANIFEST "${exe_stem}.manifest")
-    configure_file("${NXRT_GAME_APP_DIR}/game.rc.in" "${gen}/${exe_stem}.rc" @ONLY)
-    set(NXG_EXE "${G_LAUNCHER}")
-    set(NXG_INTERNAL "${launcher_stem}")
-    set(NXG_DESCRIPTION "${G_PRODUCT} - Launcher")
-    set(NXG_MANIFEST "${launcher_stem}.manifest")
-    configure_file("${NXRT_GAME_APP_DIR}/game.rc.in" "${gen}/${launcher_stem}.rc" @ONLY)
+    if(NX_PLATFORM STREQUAL "win32")
+        configure_file("${NXRT_GAME_APP_DIR}/game.manifest.in" "${gen}/${exe_stem}.manifest" @ONLY)
+        configure_file("${NXRT_GAME_APP_DIR}/launcher.manifest.in" "${gen}/${launcher_stem}.manifest" @ONLY)
+        set(NXG_EXE "${G_EXE}")
+        set(NXG_INTERNAL "${exe_stem}")
+        set(NXG_DESCRIPTION "${G_PRODUCT}")
+        set(NXG_MANIFEST "${exe_stem}.manifest")
+        configure_file("${NXRT_GAME_APP_DIR}/game.rc.in" "${gen}/${exe_stem}.rc" @ONLY)
+        set(NXG_EXE "${G_LAUNCHER}")
+        set(NXG_INTERNAL "${launcher_stem}")
+        set(NXG_DESCRIPTION "${G_PRODUCT} - Launcher")
+        set(NXG_MANIFEST "${launcher_stem}.manifest")
+        configure_file("${NXRT_GAME_APP_DIR}/game.rc.in" "${gen}/${launcher_stem}.rc" @ONLY)
+        set(_nxrt_game_rc "${gen}/${exe_stem}.rc")
+    else()
+        set(_nxrt_game_rc "")
+    endif()
 
     if(NXRT_RELEASE)
         set(exefs_default "exefs")
@@ -83,20 +91,28 @@ function(nxrt_add_game_exe id)
         set(exefs_default "${G_DIR}/game/exefs")
         set(romfs_default "${G_DIR}/game/romfs")
     endif()
-    add_executable(${id} "${NXRT_GAME_APP_DIR}/game_main.cpp" "${gen}/${exe_stem}.rc")
-    set_source_files_properties("${gen}/${exe_stem}.rc" PROPERTIES OBJECT_DEPENDS "${gen}/${exe_stem}.manifest")
+    add_executable(${id} "${NXRT_GAME_APP_DIR}/game_main.cpp" ${_nxrt_game_rc})
+    if(_nxrt_game_rc)
+        set_source_files_properties("${_nxrt_game_rc}" PROPERTIES OBJECT_DEPENDS "${gen}/${exe_stem}.manifest")
+    endif()
     target_include_directories(${id} PRIVATE "${gen}")
     target_compile_definitions(${id} PRIVATE NXRT_GAME_REGISTER=nxrt_register_game_${id} NXRT_VERSION="${A_VERSION}" NXGAME_LOG="${G_LOG}"
                                NXGAME_EXEFS_DEFAULT="${exefs_default}" NXGAME_ROMFS_DEFAULT="${romfs_default}")
     target_link_libraries(${id} PRIVATE ${libs} nxrt_game_${id} nxrt_gfx nxrt)
     set_target_properties(${id} PROPERTIES OUTPUT_NAME "${exe_stem}" RUNTIME_OUTPUT_DIRECTORY "${out}")
-    # A linker map next to the exe (host frames get names), a big main stack (lifted code nests deeply), low host allocations so the guest
-    # ranges at 0x71_0000_0000 and up stay free.
     if(NXRT_RELEASE)
         target_compile_definitions(${id} PRIVATE NXGAME_GUI_SUBSYSTEM=1)
-        target_link_options(${id} PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /PDBALTPATH:${exe_stem}.pdb)
+        if(NX_PLATFORM STREQUAL "win32")
+            target_link_options(${id} PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup /PDBALTPATH:${exe_stem}.pdb)
+        endif()
     endif()
-    target_link_options(${id} PRIVATE /MAP /STACK:134217728 /HIGHENTROPYVA:NO /DEBUG /MANIFEST:NO)   # the .rc carries the manifest
+    # Windows: a linker map next to the exe (host frames get names), a big main stack (lifted code nests deeply), low host allocations so the
+    # guest ranges at 0x71_0000_0000 and up stay free. Linux: the guest main thread gets its big stack from the code (cmake/nx_platform.cmake).
+    nx_platform_exe_link_options(_nxrt_exe_link STACK 134217728 LOW_VA)
+    target_link_options(${id} PRIVATE ${_nxrt_exe_link})
+    if(NX_PLATFORM STREQUAL "win32")
+        target_link_options(${id} PRIVATE /MANIFEST:NO)   # the .rc carries the manifest
+    endif()
     # The ASTC decoder DLLs astc2bc7 loads at run time (NVN textures in ASTC are transcoded to BC7 on first use), and the shared-font
     # fallback (src/services/pl.cpp looks in fonts\ next to the exe when the dump has no shared font).
     foreach(dll ${NXRT_A2B_DLLS})
@@ -114,7 +130,9 @@ function(nxrt_add_game_exe id)
         set(_launcher_lib nxrt_game_${id}_data)
         set(_launcher_reg nxrt_register_game_${id}_data)
     endif()
-    nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB ${_launcher_lib} REGISTER ${_launcher_reg}
-                      RC "${gen}/${launcher_stem}.rc" OUTPUT_NAME "${launcher_stem}" OUTPUT_DIR "${out}")
-    set_source_files_properties("${gen}/${launcher_stem}.rc" PROPERTIES OBJECT_DEPENDS "${gen}/${launcher_stem}.manifest")
+    if(NXRT_BUILD_LAUNCHER)
+        nxrt_add_launcher(${id}_launcher VERSION "${A_VERSION}" GAME_LIB ${_launcher_lib} REGISTER ${_launcher_reg}
+                          RC "${gen}/${launcher_stem}.rc" OUTPUT_NAME "${launcher_stem}" OUTPUT_DIR "${out}")
+        set_source_files_properties("${gen}/${launcher_stem}.rc" PROPERTIES OBJECT_DEPENDS "${gen}/${launcher_stem}.manifest")
+    endif()
 endfunction()

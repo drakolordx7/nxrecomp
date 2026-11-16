@@ -51,9 +51,10 @@ endif()
 # Metroid Prime Remastered's tables).
 if(NXRT_BUILD_TESTS)
     file(GLOB _mpr_core_tests CONFIGURE_DEPENDS "${_mpr}/tests/core/*.cpp")
+    nx_platform_exe_link_options(_mpr_core_link STACK 67108864 LOW_VA)
     nxrt_add_test_exe(mpr_core_tests SOURCES ${_mpr_core_tests} LINK nxrt_game_mpr_core nxrt_internal_for_tests REGISTER nxrt_register_game_mpr_core
                       INCLUDES "${_mpr}/tests" DEFINES NXRT_TEST_DATA_DIR="${_rt}/tests/data"
-                      LINK_OPTIONS /MAP /STACK:67108864 /HIGHENTROPYVA:NO /DEBUG)
+                      LINK_OPTIONS ${_mpr_core_link})
     if(TARGET nxrt_game_mpr)
         # The tests that need this game's translated shaders (games/mpr/work/shader_cache; they skip without it) and name its shader hashes: the NVN draw
         # path scenes, the pipeline caches, the SPIR-V patches, the tone-map patch. The harness (tests/gfx/nvn_app.h) is the base's.
@@ -69,9 +70,10 @@ if(NXRT_BUILD_TESTS)
         if(NOT IS_DIRECTORY "${NXRT_TEST_DATA_GAME_DIR}/work" AND IS_DIRECTORY "${NX_ROOT}/games/mpr/work")   # a worktree has no data: the main checkout's
             set(NXRT_TEST_DATA_GAME_DIR "${NX_ROOT}/games/mpr")
         endif()
+        nx_platform_exe_link_options(_mpr_gfx_link STACK 8388608)
         nxrt_add_test_exe(mpr_gfx_tests SOURCES ${_mpr_gfx_tests} LINK nxrt_game_mpr nxrt_internal_for_tests REGISTER nxrt_register_game_mpr
                           INCLUDES ${_mpr_gfx_incs} DEFINES ${_mpr_gfx_defs} TIMEOUT 300 ENVIRONMENT "NXRT_GFX_HIDDEN=1"
-                          LINK_OPTIONS /MAP /STACK:8388608 /DEBUG)
+                          LINK_OPTIONS ${_mpr_gfx_link})
         foreach(dll ${NXRT_A2B_DLLS})
             add_custom_command(TARGET mpr_gfx_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${dll}" "$<TARGET_FILE_DIR:mpr_gfx_tests>")
         endforeach()

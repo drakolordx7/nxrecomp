@@ -4,6 +4,17 @@
 # and starts the game exe. Included from gfx.cmake (needs the SDL3 target). Its branding and factory settings are those of one game module:
 # the data library (names, controls.ini defaults) and the launcher resources (cmake/game_exe.cmake builds <id>_launcher per game).
 # Without a game the base builds nxrt_launcher, unbranded and without resources.
+# Windows only for now (NXRT_BUILD_LAUNCHER defaults to OFF elsewhere: the Linux launcher is a separate decision); with the option off this file
+# defines nothing, and the games' `if(TARGET nxrt_launcher_core)` guards skip their launcher pages.
+if(NX_PLATFORM STREQUAL "win32")
+    set(_nxrt_launcher_default ON)
+else()
+    set(_nxrt_launcher_default OFF)
+endif()
+option(NXRT_BUILD_LAUNCHER "Build the launcher (apps/launcher, plain Win32) and its tests" ${_nxrt_launcher_default})
+if(NOT NXRT_BUILD_LAUNCHER)
+    return()
+endif()
 set(NXRT_LAUNCHER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/apps/launcher")
 add_library(nxrt_launcher_core STATIC
     "${NXRT_LAUNCHER_DIR}/keymap_win.cpp" "${NXRT_LAUNCHER_DIR}/game_info.cpp" "${NXRT_LAUNCHER_DIR}/bindings_edit.cpp"
@@ -11,7 +22,10 @@ add_library(nxrt_launcher_core STATIC
 # The public SDK (include/nxrt/game) is all a game module sees; the base's own tests reach the private headers through their own INCLUDES.
 target_include_directories(nxrt_launcher_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${NX_BASE_DIR}/formats" PRIVATE "${NXRT_LAUNCHER_DIR}")
 target_compile_definitions(nxrt_launcher_core PUBLIC UNICODE _UNICODE)
-target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings shell32 shlwapi)
+target_link_libraries(nxrt_launcher_core PUBLIC nxrt_settings)
+if(NX_PLATFORM STREQUAL "win32")
+    target_link_libraries(nxrt_launcher_core PUBLIC shell32 shlwapi)
+endif()
 set(NXRT_LAUNCHER_APP_SOURCES
     "${NXRT_LAUNCHER_DIR}/main.cpp" "${NXRT_LAUNCHER_DIR}/ui.cpp" "${NXRT_LAUNCHER_DIR}/page_display.cpp" "${NXRT_LAUNCHER_DIR}/page_controls.cpp"
     "${NXRT_LAUNCHER_DIR}/page_keys.cpp" "${NXRT_LAUNCHER_DIR}/page_pad.cpp" "${NXRT_LAUNCHER_DIR}/game_options_ui.cpp" CACHE INTERNAL "the launcher exe sources (nxrt_add_launcher)")
@@ -25,13 +39,16 @@ function(nxrt_add_launcher target)
         set(A_VERSION "dev")
     endif()
     add_executable(${target} WIN32 ${NXRT_LAUNCHER_APP_SOURCES} ${A_RC})
-    target_link_libraries(${target} PRIVATE nxrt_launcher_core comctl32 uxtheme dwmapi shlwapi ole32 shell32)
+    target_link_libraries(${target} PRIVATE nxrt_launcher_core)
+    if(NX_PLATFORM STREQUAL "win32")
+        target_link_libraries(${target} PRIVATE comctl32 uxtheme dwmapi shlwapi ole32 shell32)
+    endif()
     target_compile_definitions(${target} PRIVATE NXRT_VERSION="${A_VERSION}")
     if(A_GAME_LIB)
         target_link_libraries(${target} PRIVATE ${A_GAME_LIB})
         target_compile_definitions(${target} PRIVATE NXRT_LAUNCHER_GAME_REGISTER=${A_REGISTER})
     endif()
-    if(A_RC)
+    if(A_RC AND NX_PLATFORM STREQUAL "win32")
         target_link_options(${target} PRIVATE /MANIFEST:NO)   # the resource script carries the manifest
     endif()
     if(A_OUTPUT_NAME)
