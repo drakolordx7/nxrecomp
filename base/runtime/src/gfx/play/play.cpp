@@ -36,6 +36,7 @@
 #include "nxrt/audio_sink.h"
 #include "nxrt/config.h"
 #include "nxrt/memory.h"
+#include "nxrt/os/fault.h"
 #include "nxrt/os/fs.h"
 #include "nxrt/os/process.h"
 #include "nxrt/dispatch.h"
@@ -419,7 +420,7 @@ void vib_sink(uint32_t slot, int hand, const hid::VibrationValue& v, void*) {
     NXLOG_I(kTag, "audio at exit: %s", audio::stats_report().c_str());   // this path never closes the sink, which is where its counters are logged otherwise
     nxrt::log_flush();
     if (tt::enabled() && !tt::finished()) tt::end_run(code, verdict, message);     // writes result.json, then terminates
-    os::process::terminate(code);
+    os::terminate(code);
 }
 
 namespace {
@@ -1048,7 +1049,7 @@ bool start(const StartOptions& opt) {
         if (!st.selftest.parse(script, &err)) {
             NXLOG_E(kTag, "[play] selftest: %s", err.c_str());
             nxrt::log_flush();
-            os::process::terminate(2);
+            os::terminate(2);
         }
         NXLOG_I(kTag, "selftest script: %s", script.c_str());
     }
